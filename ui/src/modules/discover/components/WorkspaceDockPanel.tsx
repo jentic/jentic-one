@@ -3,7 +3,8 @@
  * catalog (sticky on xl, like Monitor's Live activity panel). High-level and
  * human: each block answers one question, in the order an operator asks it.
  *
- *   1. Does anything need me?   — only non-zero attention items, else "All good"
+ *   1. Does anything need me?   — only non-zero attention items (collapsible,
+ *                                 `NeedsAttention`), else "All good"
  *   2. What's importing?        — the catalog's own in-flight imports (transient)
  *   3. What's in my workspace?  — the FULL list (newest first), narrowed by a
  *                                 text filter + Live / Draft / Update toggle
@@ -28,17 +29,13 @@
  */
 import { memo, useId, useMemo, useState, type Ref } from 'react';
 import {
-	AlertTriangle,
 	Bot,
 	CheckCircle2,
 	ChevronDown,
-	FileClock,
 	Filter,
-	GitPullRequestArrow,
 	KeyRound,
 	Loader2,
 	Plus,
-	RefreshCw,
 	Upload,
 	X,
 	Zap,
@@ -65,16 +62,11 @@ import {
 	isCredentialMissing,
 	useAgentFigures,
 } from '@/shared/credentials/api/apiHealth';
-import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAgentStreamOptional, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { newestFirst } from '@/shared/lib/newestFirst';
-import type {
-	AttentionEntry,
-	AttentionId,
-	WorkspaceDigest,
-	WorkspaceDigestRow,
-} from '@/modules/discover/api';
+import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
+import { NeedsAttention } from '@/modules/discover/components/NeedsAttention';
 import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
 import {
 	matchesStatus,
@@ -85,116 +77,12 @@ import {
 
 const RECENT_LIMIT = 5;
 
-const ATTENTION_ICON: Record<AttentionId, typeof AlertTriangle> = {
-	updates: RefreshCw,
-	overlays: GitPullRequestArrow,
-	failures: AlertTriangle,
-	credentials: KeyRound,
-	drafts: FileClock,
-};
-
-const ATTENTION_TONE: Record<AttentionId, string> = {
-	updates: 'text-warning',
-	overlays: 'text-primary',
-	failures: 'text-danger',
-	credentials: 'text-accent-orange',
-	drafts: 'text-muted-foreground',
-};
-
-/** Names an attention item lists before "+N more" (which expands the rest in place). */
-const ATTENTION_PREVIEW = 3;
-
 /** Sentence-case heading for a block of the panel (section-title style, not an eyebrow). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
 	return (
 		<h3 className="font-heading text-foreground mb-1.5 px-1 text-sm font-semibold">
 			{children}
 		</h3>
-	);
-}
-
-function hrefFor(row: WorkspaceDigestRow, entry: AttentionEntry): string {
-	// Without an in-place flow, "No credential" still names one API per
-	// link, each opening that API's hub straight onto its Add credential form.
-	return ROUTE_PATHS.workspaceApiHub(row.ref, entry.tab, {
-		addCredential: entry.id === 'credentials',
-	});
-}
-
-function AttentionItem({
-	entry,
-	onAddCredential,
-}: {
-	entry: AttentionEntry;
-	onAddCredential?: (row: WorkspaceDigestRow) => void;
-}) {
-	const [expanded, setExpanded] = useState(false);
-	const listId = useId();
-	const Icon = ATTENTION_ICON[entry.id];
-	const count = entry.rows.length;
-	// "+N more" expands the names in place; every name behaves like the first
-	// ones (a "no credential" name still opens Add credential in place).
-	const shown = expanded ? entry.rows : entry.rows.slice(0, ATTENTION_PREVIEW);
-	const rest = count - ATTENTION_PREVIEW;
-	const noun = count === 1 ? 'API' : 'APIs';
-	return (
-		<li className="flex items-start gap-2.5 px-1 py-1.5" data-testid={`attention-${entry.id}`}>
-			<Icon
-				className={`mt-0.5 h-4 w-4 shrink-0 ${ATTENTION_TONE[entry.id]}`}
-				aria-hidden="true"
-			/>
-			<div className="min-w-0 flex-1">
-				<p className="text-foreground text-sm">
-					<strong className="font-semibold">
-						{count}
-						{entry.atLeast ? '+' : ''}
-					</strong>{' '}
-					{noun} · {entry.label}
-				</p>
-				<p id={listId} className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs">
-					{shown.map((row) =>
-						entry.id === 'credentials' && onAddCredential ? (
-							<Button
-								key={row.key}
-								variant="ghost"
-								size="sm"
-								onClick={() => onAddCredential(row)}
-								aria-label={`Add a credential for ${row.title}`}
-								title={`Add a credential for ${row.title}`}
-								className="text-primary hover:text-primary h-auto min-w-0 truncate rounded-sm p-0 text-xs font-normal hover:bg-transparent hover:underline active:scale-100"
-								data-testid="attention-add-credential"
-							>
-								{row.title}
-							</Button>
-						) : (
-							<AppLink
-								key={row.key}
-								href={hrefFor(row, entry)}
-								className="text-primary truncate hover:underline"
-							>
-								{row.title}
-								{entry.id === 'failures' && row.usage
-									? ` (${row.usage.failed})`
-									: ''}
-							</AppLink>
-						),
-					)}
-					{rest > 0 && (
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => setExpanded((v) => !v)}
-							aria-expanded={expanded}
-							aria-controls={listId}
-							className="text-muted-foreground hover:text-foreground h-auto rounded-sm p-0 text-xs font-normal hover:bg-transparent active:scale-100"
-							data-testid="attention-more"
-						>
-							{expanded ? 'Show fewer' : `+${rest} more`}
-						</Button>
-					)}
-				</p>
-			</div>
-		</li>
 	);
 }
 
@@ -552,25 +440,10 @@ export function WorkspacePanelBody({
 			) : (
 				<>
 					{digest.attention.length > 0 ? (
-						<div
-							className="border-warning/30 bg-warning/10 rounded-lg border px-2 pt-2 pb-1"
-							data-testid="workspace-panel-attention"
-							data-tone="warning"
-						>
-							<h3 className="font-heading text-warning mb-1 flex items-center gap-1.5 px-1 text-sm font-semibold">
-								<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-								Needs attention
-							</h3>
-							<ul className="divide-warning/15 divide-y">
-								{digest.attention.map((entry) => (
-									<AttentionItem
-										key={entry.id}
-										entry={entry}
-										onAddCredential={onAddCredential}
-									/>
-								))}
-							</ul>
-						</div>
+						<NeedsAttention
+							attention={digest.attention}
+							onAddCredential={onAddCredential}
+						/>
 					) : digest.attentionComplete ? (
 						<div
 							className="border-border/60 bg-muted/30 rounded-lg border px-2 py-2"

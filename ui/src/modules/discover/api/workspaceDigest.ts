@@ -71,6 +71,21 @@ export interface WorkspaceDigestRow {
 
 export type AttentionId = 'updates' | 'overlays' | 'credentials' | 'failures' | 'drafts';
 
+/**
+ * The order "Needs attention" lists its items in — by impact on agents, so
+ * the collapsed view's first two are the ones breaking agents today:
+ * calls already failing, then APIs agents can't call at all (no credential),
+ * then APIs with nothing live yet (draft only). Overlays awaiting review and
+ * upstream updates are improvements, not breakage, so they come last.
+ */
+export const ATTENTION_ORDER: readonly AttentionId[] = [
+	'failures',
+	'credentials',
+	'drafts',
+	'overlays',
+	'updates',
+];
+
 export interface AttentionEntry {
 	id: AttentionId;
 	/** Sentence fragment after the count, e.g. "have an update available". */
@@ -84,7 +99,7 @@ export interface AttentionEntry {
 
 export interface WorkspaceDigest {
 	rows: WorkspaceDigestRow[];
-	/** Non-empty entries only, most urgent first. */
+	/** Non-empty entries only, in {@link ATTENTION_ORDER}. */
 	attention: AttentionEntry[];
 	/** Every attention source answered — only then may "All good" be claimed. */
 	attentionComplete: boolean;
@@ -210,7 +225,9 @@ export function useWorkspaceDigest(): WorkspaceDigest {
 
 		return {
 			rows,
-			attention: attention.filter((a) => a.rows.length > 0),
+			attention: attention
+				.filter((a) => a.rows.length > 0)
+				.sort((x, y) => ATTENTION_ORDER.indexOf(x.id) - ATTENTION_ORDER.indexOf(y.id)),
 			attentionComplete: apis.complete && overlays.complete && health.credentialsComplete,
 			attentionSettled:
 				apis.complete &&

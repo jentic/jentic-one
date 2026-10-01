@@ -112,6 +112,13 @@ describe('useWorkspaceDigest attention rules', () => {
 		expect(screen.getByTestId('rule-drafts')).toHaveTextContent('Draft');
 		// Usage is admin-only; the test user can't read it, so no failure rule is claimed.
 		expect(screen.queryByTestId('rule-failures')).not.toBeInTheDocument();
+		// Ordered by impact on agents (ATTENTION_ORDER), not by the order they're computed.
+		expect(screen.getAllByTestId(/^rule-/).map((el) => el.dataset.testid)).toEqual([
+			'rule-credentials',
+			'rule-drafts',
+			'rule-overlays',
+			'rule-updates',
+		]);
 	});
 
 	it('counts one API with more than a page of pending overlays as exactly one API (no "+")', async () => {
@@ -172,7 +179,9 @@ describe('WorkspacePanelBody attention links', () => {
 				onImportOwn={() => {}}
 			/>,
 		);
-		expect(screen.getByRole('heading', { level: 3, name: 'Needs attention' })).toBeVisible();
+		expect(
+			screen.getByRole('heading', { level: 3, name: /^Needs attention · 1$/ }),
+		).toBeVisible();
 		const item = screen.getByTestId('attention-credentials');
 		expect(within(item).getByRole('link', { name: 'Alpha' })).toHaveAttribute(
 			'href',
