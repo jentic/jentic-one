@@ -107,15 +107,18 @@ function RegistrationRow({
 						{row.is_active ? 'Active' : 'Inactive'}
 					</Badge>
 				</div>
-				<p className="text-muted-foreground mt-0.5 truncate text-xs">
-					<span className="font-mono">{row.client_id}</span>
-					{' · '}
-					{row.api_vendor}
-					{' · '}
-					{FLOW_KIND_LABEL[row.flow_kind] ?? row.flow_kind}
-					{' · '}
-					{credentials}
-					{rotated && ` · ${rotated}`}
+				{/* Wraps rather than truncates: at phone widths the tail (credential
+				    count, rotation age) is what got cut. Only the id truncates. */}
+				<p className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs">
+					<span className="max-w-full truncate font-mono">{row.client_id}</span>
+					{[row.api_vendor, FLOW_KIND_LABEL[row.flow_kind] ?? row.flow_kind, credentials]
+						.concat(rotated ? [rotated] : [])
+						.map((item) => (
+							<span key={item} className="whitespace-nowrap">
+								<span aria-hidden="true">· </span>
+								{item}
+							</span>
+						))}
 				</p>
 			</div>
 			<span className="ml-auto flex shrink-0 items-center gap-1">

@@ -121,7 +121,9 @@ export function SharedOAuthAppsSection({ onRegister }: SharedOAuthAppsSectionPro
 				</div>
 			</div>
 
-			<div id={bodyId} hidden={!expanded}>
+			{/* Capped so an expanded list never pushes the credential inventory
+			    below it out of the sheet. */}
+			<div id={bodyId} hidden={!expanded} className="max-h-[40vh] overflow-y-auto">
 				{expanded && (
 					<OAuthAppRegistrationsTable
 						registrations={listQuery.data}

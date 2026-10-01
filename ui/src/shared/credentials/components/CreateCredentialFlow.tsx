@@ -13,14 +13,13 @@ import {
 	Skeleton,
 	toast,
 } from '@/shared/ui';
-import { ORG_ADMIN, usePermission } from '@/shared/auth/usePermission';
+import { ORG_ADMIN, useOptionalPermission } from '@/shared/auth/usePermission';
 import {
 	OAuthAppRegistrationFlowKind,
-	OAuthAppRegistrationsService,
 	type AuthorizationCodeRegistrationCreateRequest,
 	type DeviceAuthorizationRegistrationCreateRequest,
 } from '@/shared/api';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCreateOAuthAppRegistration } from '@/shared/credentials/oauth-app-registrations/api/hooks';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -157,6 +156,11 @@ function isShareableGrant(grantType: string): boolean {
 	return g === 'authorization_code' || g === 'device_code';
 }
 
+/** The server keys a shared app to a `<domain>/<api>` catalog id. */
+function isShareableCatalogId(apiId: string): boolean {
+	return /^[^/].*\/.*[^/]$/.test(apiId);
+}
+
 /**
  * The guided flow for creating a credential.
  *
@@ -205,8 +209,8 @@ export function CreateCredentialFlow({
 	// can SSO through the resulting shared OAuth app. Only meaningful on the
 	// direct_oauth2 provider path (user provides their own client_id/secret).
 	const [shareWithOrg, setShareWithOrg] = useState(initialShareWithOrg);
-	const isAdmin = usePermission(ORG_ADMIN);
-	const registrationMutation = useCreateRegistrationMutation();
+	const isAdmin = useOptionalPermission(ORG_ADMIN);
+	const registrationMutation = useCreateOAuthAppRegistration();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
 	// The empty form's provider must fit the initial type — ``static`` is no
@@ -536,6 +540,7 @@ export function CreateCredentialFlow({
 		isAdmin &&
 		!manualMode &&
 		!!selectedApi?.apiId &&
+		isShareableCatalogId(selectedApi.apiId) &&
 		type === CredentialType.OAUTH2 &&
 		state.provider === 'direct_oauth2' &&
 		(oauth2Flows.length === 0 || specHasShareableFlow);
@@ -575,28 +580,12 @@ export function CreateCredentialFlow({
 			setErrors(commonMissing);
 			return;
 		}
-		// The catalog API id + family label ride off the picked API. The
-		// wizard's picker step gates the form: the admin has to pick an API
-		// before ``shareWithOrg`` is even reachable, so ``selectedApi`` is
-		// present with a real ``apiId`` for any registration create.
-		if (!selectedApi?.apiId) {
-			setErrors({
-				name:
-					'Pick a catalog API before sharing this OAuth app. ' +
-					'The registration needs a real API id so users see operations for it.',
-			});
-			return;
-		}
+		// The catalog API id + family label ride off the picked API;
+		// ``canShareWithOrg`` already required a shareable id, and an API that
+		// lacks one is explained up front (``shareBlockedReason``).
+		if (!selectedApi?.apiId) return;
 		const catalogApiId = selectedApi.apiId;
 		const displayName = selectedApi.label;
-		// The server requires a `<domain>/<sub>` catalog id for shared apps;
-		// say so up front rather than surfacing a bare 422.
-		if (!/^[^/].*\/.*[^/]$/.test(catalogApiId)) {
-			setErrors({
-				name: `Shared OAuth apps need a catalog API id of the form <domain>/<api> — "${catalogApiId}" can't be shared yet.`,
-			});
-			return;
-		}
 
 		try {
 			if (grantType === 'authorization_code') {
@@ -737,6 +726,30 @@ export function CreateCredentialFlow({
 	// auth UI behind `!isLoadingSchemes`). Manual mode has no spec to wait on.
 	const specPending = !manualMode && !!selectedApi && schemesResult.loading;
 
+	// Entered through "Register shared app": the picked API either can be
+	// shared, or we say why it can't — the flow never quietly falls back to
+	// creating a personal credential.
+	const registerMode = initialShareWithOrg && isAdmin;
+	const shareBlockedReason = ((): string | null => {
+		if (!registerMode || step !== 'form' || specPending || canShareWithOrg) return null;
+		if (manualMode || !selectedApi?.apiId) {
+			return 'Shared OAuth apps are registered against a catalog API. Go back and pick the API to share an app for.';
+		}
+		if (!isShareableCatalogId(selectedApi.apiId)) {
+			return `Shared OAuth apps need a catalog API id of the form <domain>/<api> — "${selectedApi.apiId}" can't be shared yet.`;
+		}
+		if (type !== CredentialType.OAUTH2) {
+			return typeOptions.includes(CredentialType.OAUTH2)
+				? 'Shared apps sign people in with OAuth 2.0 — pick OAuth 2.0 below.'
+				: `${selectedApi.label} doesn't offer OAuth 2.0 sign-in, so it can't be registered as a shared app.`;
+		}
+		if (state.provider !== 'direct_oauth2') {
+			return 'Shared apps use your own OAuth client — pick the direct provider below.';
+		}
+		return `${selectedApi.label} only offers non-interactive OAuth grants (such as client credentials). Shared apps need an authorization code or device code flow.`;
+	})();
+	const registering = sharing || shareBlockedReason != null;
+
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
 	const title = approvalSession
 		? 'Approve integration'
@@ -746,10 +759,10 @@ export function CreateCredentialFlow({
 				: 'Add credential'
 			: step === 'vendor' && selectedVendor
 				? `Connect ${selectedVendor.display_name}`
-				: sharing
+				: registering
 					? `Register shared OAuth app${titleSuffix}`
 					: `Add credential${titleSuffix}`;
-	const formStepHint = sharing
+	const formStepHint = registering
 		? 'Fill in the shared app details'
 		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
@@ -849,9 +862,11 @@ export function CreateCredentialFlow({
 						importMutation.isPending ||
 						registrationMutation.isPending
 					}
-					disabled={specPending || sharingNeedsShareableGrant}
+					disabled={
+						specPending || sharingNeedsShareableGrant || shareBlockedReason != null
+					}
 				>
-					{sharing ? 'Register shared app' : 'Create credential'}
+					{registering ? 'Register shared app' : 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -870,7 +885,9 @@ export function CreateCredentialFlow({
 			{step === 'pick' && (
 				<ApiPicker
 					onSelect={handlePickApi}
-					onVendorSelect={handlePickVendor}
+					// One-click sign-in tiles connect a personal credential, which
+					// isn't what "Register shared app" is for.
+					onVendorSelect={registerMode ? undefined : handlePickVendor}
 					onManualEntry={handleManualEntry}
 					emptyAction={
 						<Button variant="secondary" size="sm" onClick={openUpload} type="button">
@@ -914,8 +931,10 @@ export function CreateCredentialFlow({
 						// scrolls through vendor / auth-type / scope fields.
 						// ``-mx-5 -mt-4 px-5 pt-4`` extends edge-to-edge inside
 						// the scroll container — both the Sheet and Dialog
-						// surfaces pad it with ``px-5 py-4``.
-						<div className="bg-card border-border sticky top-0 z-10 -mx-5 -mt-4 space-y-3 border-b px-5 pt-4 pb-3">
+						// surfaces pad it with ``px-5 py-4``. Sticky offsets are
+						// measured inside that padding, so ``-top-4`` pins the bar
+						// flush with the scroll edge instead of 16px below it.
+						<div className="bg-card border-border sticky -top-4 z-10 -mx-5 -mt-4 space-y-3 border-b px-5 pt-4 pb-3">
 							<Checkbox
 								checked={shareWithOrg}
 								onChange={(checked): void => setShareWithOrg(checked)}
@@ -957,13 +976,12 @@ export function CreateCredentialFlow({
 						</div>
 					)}
 
-					{initialShareWithOrg && isAdmin && manualMode && (
+					{shareBlockedReason && (
 						<p
 							className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
 							role="note"
 						>
-							Shared OAuth apps are registered against a catalog API. Go back and pick
-							the API to share an app for — this form creates a personal credential.
+							{shareBlockedReason}
 						</p>
 					)}
 
@@ -1299,30 +1317,6 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
 			{children}
 		</p>
 	);
-}
-
-/**
- * Colocated mutation that POSTs to `/oauth-app-registrations` when the admin
- * flips the "Register as a shared OAuth app" toggle in the create flow.
- *
- * Lives here (not in the oauth-app-registrations module's api/hooks) because
- * this dialog is the shared surface where an org-shared registration might
- * be created — hoisting one small hook keeps the dialog self-contained and
- * avoids `@/shared/credentials` importing a feature module. The admin
- * management page uses its own module-scoped hook for reads/updates.
- */
-function useCreateRegistrationMutation() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (
-			body:
-				| AuthorizationCodeRegistrationCreateRequest
-				| DeviceAuthorizationRegistrationCreateRequest,
-		) => OAuthAppRegistrationsService.createOauthAppRegistration({ requestBody: body }),
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['oauth-app-registrations'] });
-		},
-	});
 }
 
 /**

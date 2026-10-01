@@ -5,18 +5,22 @@
  * This hides/disables affordances (nav entries, buttons, tabs) the backend
  * would 403 anyway — a UX nicety, NOT a security boundary. The server remains
  * the source of truth; never rely on this alone to protect data.
- *
- * Safe to call outside an `AuthProvider` — returns `false` rather than
- * throwing, so components that gate optional affordances on a permission
- * (e.g. an admin-only toggle inside a shared dialog) can be rendered in
- * unwrapped test setups without pulling the whole auth machinery in.
  */
-import { useContext } from 'react';
-import { AuthContext } from '@/shared/auth/AuthContext';
+import { useAuth, useOptionalCurrentUser } from '@/shared/auth/AuthContext';
 
 export function usePermission(required: string): boolean {
-	const ctx = useContext(AuthContext);
-	return ctx?.user?.permissions?.includes(required) ?? false;
+	const { user } = useAuth();
+	return user?.permissions?.includes(required) ?? false;
+}
+
+/**
+ * `usePermission` for shared components that may render outside an
+ * `AuthProvider` (the credential create flow and inventory sheet are hosted by
+ * many modules). No provider means no known user, so the permission reads as
+ * not held and the gated affordance stays hidden.
+ */
+export function useOptionalPermission(required: string): boolean {
+	return useOptionalCurrentUser()?.permissions?.includes(required) ?? false;
 }
 
 /** The org-wide admin permission. */

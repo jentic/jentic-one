@@ -14,7 +14,10 @@ import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-
  * registration path. These tests pin (a) the visibility gate: non-admins
  * never see the toggle, and admins don't either on manual entry (a shared
  * app is keyed to a catalog API); (b) the admin submit path maps the form
- * onto the registration API for both sign-in flows.
+ * onto the registration API for both sign-in flows; (c) "Register shared
+ * app" never quietly creates a personal credential — an API that can't be
+ * shared says why and blocks submit, and the picker drops the one-click
+ * (personal) sign-in tiles.
  *
  * The admin path pins a catalog API with no ``specUrl``, so no spec loads
  * and the "Sign-in flow" selector owns the grant type.
@@ -55,8 +58,8 @@ function renderAdminSharedFlow(onClose = vi.fn()): void {
 
 // Stub the permission hook per-test rather than wiring the full ``AuthContext``
 // (the value type carries a large auth-mutation surface irrelevant here).
-// The dialog reads permission via ``usePermission(ORG_ADMIN)`` — this is the
-// single seam that flips ``canShareWithOrg``.
+// The dialog reads permission via ``useOptionalPermission(ORG_ADMIN)`` — this
+// is the single seam that flips ``canShareWithOrg``.
 const usePermissionMock = vi.fn<() => boolean>(() => false);
 vi.mock('@/shared/auth/usePermission', async () => {
 	const actual = await vi.importActual<typeof import('@/shared/auth/usePermission')>(
@@ -64,7 +67,7 @@ vi.mock('@/shared/auth/usePermission', async () => {
 	);
 	return {
 		...actual,
-		usePermission: () => usePermissionMock(),
+		useOptionalPermission: () => usePermissionMock(),
 	};
 });
 
@@ -199,5 +202,74 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 		});
 		expect(body).not.toHaveProperty('client_secret');
 		expect(body).not.toHaveProperty('authorize_url');
+	});
+
+	it('register mode explains an API that cannot be shared and blocks submit', async () => {
+		usePermissionMock.mockReturnValue(true);
+		// No ``<domain>/<api>`` catalog id — the server would reject the registration.
+		renderWithProviders(
+			<CreateCredentialFlow
+				open={true}
+				onClose={vi.fn()}
+				onCreated={vi.fn()}
+				pinnedApi={{ ...PINNED_API, apiId: 'github' }}
+				initialType={CredentialType.OAUTH2}
+				initialShareWithOrg={true}
+			/>,
+		);
+
+		const note = await screen.findByRole('note');
+		expect(note).toHaveTextContent(/catalog api id of the form <domain>\/<api>/i);
+		// Still register mode: no personal-credential fallback.
+		expect(
+			screen.queryByRole('checkbox', { name: /register as a shared oauth app/i }),
+		).toBeNull();
+		const submit = screen.getByRole('button', { name: /register shared app/i });
+		expect(submit).toBeDisabled();
+		expect(screen.queryByRole('button', { name: /create credential/i })).toBeNull();
+		// The reason is not pinned to the Name field.
+		expect(screen.getByLabelText(/^name/i)).not.toHaveAttribute('aria-invalid');
+	});
+
+	it('register mode on manual entry explains why and blocks submit', async () => {
+		usePermissionMock.mockReturnValue(true);
+		renderWithProviders(
+			<CreateCredentialFlow
+				open={true}
+				onClose={vi.fn()}
+				onCreated={vi.fn()}
+				initialType={CredentialType.OAUTH2}
+				initialShareWithOrg={true}
+			/>,
+		);
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
+
+		expect(await screen.findByRole('note')).toHaveTextContent(
+			/registered against a catalog api/i,
+		);
+		expect(screen.getByRole('button', { name: /register shared app/i })).toBeDisabled();
+	});
+
+	it('register mode hides the one-click sign-in tiles', async () => {
+		usePermissionMock.mockReturnValue(true);
+		const { unmount } = renderWithProviders(
+			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
+		);
+		// Baseline: the personal flow offers the tiles.
+		expect(await screen.findByText(/one-click sign-in/i)).toBeInTheDocument();
+		unmount();
+
+		renderWithProviders(
+			<CreateCredentialFlow
+				open={true}
+				onClose={vi.fn()}
+				onCreated={vi.fn()}
+				initialType={CredentialType.OAUTH2}
+				initialShareWithOrg={true}
+			/>,
+		);
+		await screen.findByRole('button', { name: /enter manually/i });
+		expect(screen.queryByText(/one-click sign-in/i)).not.toBeInTheDocument();
 	});
 });

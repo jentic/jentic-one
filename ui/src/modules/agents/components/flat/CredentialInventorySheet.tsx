@@ -20,7 +20,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
-import { ORG_ADMIN, usePermission } from '@/shared/auth/usePermission';
+import { ORG_ADMIN, useOptionalPermission } from '@/shared/auth/usePermission';
 import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrations/components/SharedOAuthAppsSection';
 import {
 	useAgents,
@@ -80,7 +80,7 @@ export function CredentialInventorySheet({
 }) {
 	const headingId = 'credential-inventory-sheet-title';
 
-	const isAdmin = usePermission(ORG_ADMIN);
+	const isAdmin = useOptionalPermission(ORG_ADMIN);
 
 	const [search, setSearch] = useState('');
 	const [typeFilter, setTypeFilter] = useState<CredentialTypeFilter>('all');
@@ -407,7 +407,28 @@ export function CredentialInventorySheet({
 						</div>
 					</header>
 
+					{/* Above the credential filters, which don't apply to it. */}
+					{isAdmin && (
+						<div className="border-border border-b px-5 py-3">
+							<SharedOAuthAppsSection
+								onRegister={(): void => {
+									setCreateShared(true);
+									setCreateOpen(true);
+								}}
+							/>
+						</div>
+					)}
+
 					<div className="border-border flex flex-wrap items-center gap-2 border-b px-5 py-3">
+						{isAdmin && (
+							// With the shared-apps section above, the list needs its own name.
+							<h2
+								id="credential-inventory-list-heading"
+								className="font-heading text-foreground w-full text-base font-semibold"
+							>
+								All credentials
+							</h2>
+						)}
 						{/* A credential bound to zero agents is reachable from no agent's screen —
 						    the sheet's one unique power, so it leads the toolbar. */}
 						<div className="flex shrink-0 items-center gap-2">
@@ -444,16 +465,6 @@ export function CredentialInventorySheet({
 					</div>
 
 					<div className="flex-1 overflow-y-auto px-5 py-4">
-						{isAdmin && (
-							<div className="mb-6">
-								<SharedOAuthAppsSection
-									onRegister={(): void => {
-										setCreateShared(true);
-										setCreateOpen(true);
-									}}
-								/>
-							</div>
-						)}
 						{unboundUnknown ? (
 							// Withheld, not guessed: the list would read as "used by nobody",
 							// and the next move on that reading is to delete them.
