@@ -40,15 +40,15 @@ export function SharedOAuthAppsSection({ onRegister }: SharedOAuthAppsSectionPro
 	const [deleteTarget, setDeleteTarget] = useState<OAuthAppRegistration | null>(null);
 	const [deactivateTarget, setDeactivateTarget] = useState<OAuthAppRegistration | null>(null);
 
-	const pendingId =
-		typeof toggleActive.variables === 'object' && toggleActive.variables !== null
-			? (toggleActive.variables as { id: string }).id
-			: null;
+	// ``variables`` outlives the mutation, so only a toggle still in flight
+	// locks its row.
+	const pendingId = toggleActive.isPending ? (toggleActive.variables?.id ?? null) : null;
 
+	/** Resolves ``true`` once the change is saved; failures toast and resolve ``false``. */
 	const setActive = async (
 		registration: OAuthAppRegistration,
 		isActive: boolean,
-	): Promise<void> => {
+	): Promise<boolean> => {
 		try {
 			await toggleActive.mutateAsync({
 				id: registration.id,
@@ -60,12 +60,14 @@ export function SharedOAuthAppsSection({ onRegister }: SharedOAuthAppsSectionPro
 					: `${registration.name} deactivated`,
 				variant: 'success',
 			});
+			return true;
 		} catch (err) {
 			toast({
 				title: 'Failed to update shared app',
 				description: err instanceof Error ? err.message : undefined,
 				variant: 'error',
 			});
+			return false;
 		}
 	};
 
@@ -185,10 +187,10 @@ export function SharedOAuthAppsSection({ onRegister }: SharedOAuthAppsSectionPro
 								variant="danger"
 								loading={toggleActive.isPending}
 								onClick={(): void => {
-									const target = deactivateTarget;
-									void setActive(target, false).then(() =>
-										setDeactivateTarget(null),
-									);
+									// Stay open on failure so the admin sees it didn't happen.
+									void setActive(deactivateTarget, false).then((saved) => {
+										if (saved) setDeactivateTarget(null);
+									});
 								}}
 							>
 								Deactivate

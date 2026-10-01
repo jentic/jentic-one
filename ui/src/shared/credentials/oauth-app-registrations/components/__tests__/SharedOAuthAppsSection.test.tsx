@@ -12,7 +12,8 @@ import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-
  * ``onRegister``. These tests pin: (a) the section starts collapsed and
  * the disclosure reveals the seeded registrations, (b) both the header
  * action and the empty-state CTA fire ``onRegister``, (c) deactivating asks
- * for confirmation while re-activating goes straight through.
+ * for confirmation while re-activating goes straight through, (d) a settled
+ * toggle unlocks its row, and a failed deactivate keeps the confirm open.
  */
 
 async function expandSection(user: ReturnType<typeof userEvent.setup>): Promise<void> {
@@ -105,6 +106,49 @@ describe('SharedOAuthAppsSection', () => {
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 		expect(
 			await screen.findByRole('button', { name: 'Deactivate Slack (paused)' }),
+		).toBeInTheDocument();
+	});
+
+	it('unlocks the row once a toggle settles', async () => {
+		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
+		const user = userEvent.setup();
+		await expandSection(user);
+
+		await user.click(await screen.findByRole('button', { name: 'Activate Slack (paused)' }));
+		await screen.findByRole('button', { name: 'Deactivate Slack (paused)' });
+		expect(screen.getByRole('button', { name: 'Edit Slack (paused)' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Delete Slack (paused)' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Deactivate Slack (paused)' })).toBeEnabled();
+	});
+
+	it('keeps the deactivate confirm open when the PATCH fails', async () => {
+		worker.use(
+			http.patch('/oauth-app-registrations/:id', () =>
+				HttpResponse.json(
+					{ type: 'about:blank', title: 'Internal error', status: 500 },
+					{ status: 500 },
+				),
+			),
+		);
+		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
+		const user = userEvent.setup();
+		await expandSection(user);
+
+		await user.click(
+			await screen.findByRole('button', { name: 'Deactivate GitHub production app' }),
+		);
+		const dialog = await screen.findByRole('dialog', {
+			name: /deactivate github production app\?/i,
+		});
+		const confirm = within(dialog).getByRole('button', { name: /^deactivate$/i });
+		await user.click(confirm);
+
+		await waitFor(() => expect(confirm).toBeEnabled());
+		expect(
+			screen.getByRole('dialog', { name: /deactivate github production app\?/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole('button', { name: 'Deactivate GitHub production app' }),
 		).toBeInTheDocument();
 	});
 });

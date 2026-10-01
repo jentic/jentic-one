@@ -83,14 +83,19 @@ export function OAuthAppRegistrationDeleteDialog({
 			}
 		>
 			<div className="space-y-3">
-				<div className="text-danger bg-danger/10 border-danger/30 flex items-start gap-2 rounded-md border p-3 text-sm">
-					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-					<p>
-						Deleting removes this shared OAuth app. Nobody in the organization can
-						connect through it afterwards.
-					</p>
-				</div>
-				{inUseError && <ErrorAlert message={inUseError} />}
+				{/* Once the server says it's still in use, the "deleting removes…"
+				    warning no longer describes what will happen — the error does. */}
+				{inUseError ? (
+					<ErrorAlert message={inUseError} />
+				) : (
+					<div className="text-danger bg-danger/10 border-danger/30 flex items-start gap-2 rounded-md border p-3 text-sm">
+						<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+						<p>
+							Deleting removes this shared OAuth app. Nobody in the organization can
+							connect through it afterwards.
+						</p>
+					</div>
+				)}
 				{genericError && <ErrorAlert message={genericError} />}
 			</div>
 		</Dialog>

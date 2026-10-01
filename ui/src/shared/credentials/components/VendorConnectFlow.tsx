@@ -20,6 +20,7 @@ import {
 	Checkbox,
 	CopyButton,
 	ErrorAlert,
+	Input,
 	Label,
 	RadioCardGroup,
 	SearchInput,
@@ -1164,8 +1165,8 @@ function SharedAppLine({ display }: { display: VendorDisplay }) {
 }
 
 // Variant of :func:`VendorHeader` where the vendor name is inline-editable.
-// Renders an unadorned ``<input>`` styled to match the read-only display so
-// the user can type over the label directly. Pre-filled with the vendor's
+// Renders the shared ``Input`` at heading weight so the user can type over the
+// label directly. Pre-filled with the vendor's
 // display name; the caller drives state.
 function EditableVendorHeader({
 	display,
@@ -1184,15 +1185,18 @@ function EditableVendorHeader({
 		<div className="flex items-center gap-3">
 			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
 			<div className="min-w-0 flex-1">
-				<input
-					type="text"
-					className="text-foreground border-border/60 focus:border-primary focus:ring-primary/20 w-full max-w-xs rounded border bg-transparent px-2 py-1 text-base font-semibold outline-none focus:ring-2 disabled:opacity-60"
-					value={name}
-					placeholder={display.displayName}
-					aria-label="Credential name"
-					disabled={disabled}
-					onChange={(e): void => onNameChange(e.target.value)}
-				/>
+				<div className="max-w-xs">
+					<Input
+						type="text"
+						size="sm"
+						className="px-2 py-1 text-base font-semibold disabled:opacity-60"
+						value={name}
+						placeholder={display.displayName}
+						aria-label="Credential name"
+						disabled={disabled}
+						onChange={(e): void => onNameChange(e.target.value)}
+					/>
+				</div>
 				<SharedAppLine display={display} />
 				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>

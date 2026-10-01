@@ -53,13 +53,48 @@ describe('OAuth app registration dialogs', () => {
 		await waitFor(() => expect(patched).not.toBeNull());
 		expect(patched).toMatchObject({
 			name: 'GitHub (renamed)',
-			is_active: true,
 			default_scopes: ['read:user', 'repo'],
 			authorize_url: 'https://github.com/login/oauth/authorize',
 			token_url: 'https://github.com/login/oauth/access_token',
 		});
 		// Auth-code apps don't send device-flow endpoints.
 		expect(patched).not.toHaveProperty('authorization_endpoint');
+		// Activation belongs to the row action, never to Save.
+		expect(patched).not.toHaveProperty('is_active');
+	});
+
+	it('saving a kept draft does not reactivate an app deactivated since', async () => {
+		const user = await openSection();
+
+		// Open Edit, dismiss it — the draft is kept for this app.
+		await user.click(screen.getByRole('button', { name: 'Edit GitHub production app' }));
+		let dialog = await screen.findByRole('dialog', { name: /edit github production app/i });
+		await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+		await waitFor(() => expect(dialog).not.toHaveAttribute('open'));
+
+		// Deactivate from the row.
+		await user.click(screen.getByRole('button', { name: 'Deactivate GitHub production app' }));
+		const confirm = await screen.findByRole('dialog', {
+			name: /deactivate github production app\?/i,
+		});
+		await user.click(within(confirm).getByRole('button', { name: /^deactivate$/i }));
+		await screen.findByRole('button', { name: 'Activate GitHub production app' });
+
+		let patched: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/oauth-app-registrations/:id', async ({ request, params }) => {
+				patched = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({ id: params.id, ...patched });
+			}),
+		);
+		await user.click(screen.getByRole('button', { name: 'Edit GitHub production app' }));
+		dialog = await screen.findByRole('dialog', { name: /edit github production app/i });
+		expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+		await user.type(within(dialog).getByLabelText(/display name/i), ' 2');
+		await user.click(within(dialog).getByRole('button', { name: /^save$/i }));
+
+		await waitFor(() => expect(patched).not.toBeNull());
+		expect(patched).not.toHaveProperty('is_active');
 	});
 
 	it('edit keeps the draft across a dismiss and reopen of the same app', async () => {
@@ -140,6 +175,8 @@ describe('OAuth app registration dialogs', () => {
 			await within(dialog).findByText(/still referenced by 2 credentials/i),
 		).toBeInTheDocument();
 		expect(confirm).toBeDisabled();
+		// The "deleting removes…" warning gives way to the in-use explanation.
+		expect(within(dialog).queryByText(/deleting removes/i)).not.toBeInTheDocument();
 		// The row stays — nothing was deleted.
 		expect(screen.getByText('GitHub production app')).toBeInTheDocument();
 	});

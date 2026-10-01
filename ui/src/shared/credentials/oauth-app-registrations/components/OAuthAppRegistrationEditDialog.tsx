@@ -1,7 +1,9 @@
 /**
  * Edit dialog for an existing OAuth app registration — labels, endpoints,
- * default scopes, active flag. `client_id` is immutable server-side and
- * `client_secret` rotates via the dedicated action, so neither appears here.
+ * default scopes. `client_id` is immutable server-side and `client_secret`
+ * rotates via the dedicated action, so neither appears here. Activation is the
+ * row's action (with its own confirm): a kept draft would otherwise carry a
+ * stale active flag and silently re-enable an app deactivated since.
  *
  * Registration *creation* runs through the credential create flow ("Register
  * as a shared OAuth app") — this dialog is only for lifecycle changes on
@@ -12,7 +14,8 @@
  * and resets only after a successful save.
  */
 import { useEffect, useId, useRef, useState } from 'react';
-import { Button, Checkbox, CopyButton, Dialog, ErrorAlert, Input, Label, toast } from '@/shared/ui';
+import { X } from 'lucide-react';
+import { Badge, Button, CopyButton, Dialog, ErrorAlert, Input, Label, toast } from '@/shared/ui';
 import {
 	useUpdateOAuthAppRegistration,
 	usePlatformRedirectUri,
@@ -33,7 +36,6 @@ interface EditDraft {
 	authorization_endpoint: string;
 	token_endpoint: string;
 	default_scopes: string[];
-	is_active: boolean;
 }
 
 const emptyEditDraft: EditDraft = {
@@ -43,7 +45,6 @@ const emptyEditDraft: EditDraft = {
 	authorization_endpoint: '',
 	token_endpoint: '',
 	default_scopes: [],
-	is_active: true,
 };
 
 function draftFromRegistration(reg: OAuthAppRegistration): EditDraft {
@@ -54,7 +55,6 @@ function draftFromRegistration(reg: OAuthAppRegistration): EditDraft {
 		authorization_endpoint: reg.authorization_endpoint ?? '',
 		token_endpoint: reg.token_endpoint ?? '',
 		default_scopes: reg.default_scopes ?? [],
-		is_active: reg.is_active,
 	};
 }
 
@@ -118,7 +118,6 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 				id: registration.id,
 				input: {
 					name: draft.name.trim(),
-					is_active: draft.is_active,
 					default_scopes: draft.default_scopes.length > 0 ? draft.default_scopes : null,
 					...(isAuthCode
 						? {
@@ -305,29 +304,22 @@ export function OAuthAppRegistrationEditDialog({ open, onClose, registration }: 
 					{draft.default_scopes.length > 0 && (
 						<div className="flex flex-wrap gap-1.5">
 							{draft.default_scopes.map((scope) => (
-								<button
-									key={scope}
-									type="button"
-									onClick={(): void => removeScope(scope)}
-									className="border-border hover:bg-muted rounded-md border px-2 py-0.5 font-mono text-xs"
-									aria-label={`Remove scope ${scope}`}
-								>
-									{scope} ×
-								</button>
+								<Badge key={scope} className="pr-1">
+									{scope}
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className="text-primary h-4 w-4 p-0"
+										onClick={(): void => removeScope(scope)}
+										aria-label={`Remove scope ${scope}`}
+									>
+										<X className="h-3 w-3" aria-hidden="true" />
+									</Button>
+								</Badge>
 							))}
 						</div>
 					)}
-				</div>
-
-				<div className="border-border border-t pt-3">
-					<Checkbox
-						checked={draft.is_active}
-						onChange={(checked): void => patch({ is_active: checked })}
-					>
-						<span className="text-foreground">
-							Active — people in the organization can connect through this app
-						</span>
-					</Checkbox>
 				</div>
 			</form>
 		</Dialog>
