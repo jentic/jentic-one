@@ -16,7 +16,7 @@
  * The selected operation resets whenever the open entity changes.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ChevronLeft, ExternalLink, Plus } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ExternalLink, Plus, X } from 'lucide-react';
 import {
 	ApiStateBadge,
 	AppLink,
@@ -153,12 +153,24 @@ export function ApiDetailSheet({
 								{entity.registered && entity.updateAvailable && !importPending && (
 									<ApiStateBadge state="update" />
 								)}
-								<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs">
-									{entity.apiId}
+								<span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs">
+									<span className="truncate">{entity.apiId}</span>
 									<CopyButton value={entity.apiId} />
 								</span>
 							</div>
 						</div>
+						{/* Last in the header so Tab reaches the content first; 40px
+						    touch target on mobile, the app's compact 32px from `sm`. */}
+						<Button
+							variant="ghost"
+							size="icon"
+							onClick={onClose}
+							aria-label="Close"
+							className="-mt-1 -mr-2 h-10 w-10 shrink-0 p-0 sm:h-8 sm:w-8"
+							data-testid="api-detail-sheet-close"
+						>
+							<X className="h-4 w-4" aria-hidden="true" />
+						</Button>
 					</header>
 
 					<div className="min-h-0 flex-1 overflow-y-auto p-5">

@@ -245,6 +245,26 @@ describe('LibraryPage', () => {
 		expect(within(dialog).getByText('Create an issue')).toBeInTheDocument();
 	});
 
+	it('closes the detail sheet from its header X and returns focus to the card', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('github.com');
+		const card = screen.getByRole('button', { name: 'View github.com' });
+		await user.click(card);
+
+		const dialog = await screen.findByRole('dialog');
+		const close = within(dialog).getByRole('button', { name: 'Close' });
+		// After the copy-id control in tab order, so it's the header's last stop.
+		const copy = within(dialog).getByRole('button', { name: 'Copy to clipboard' });
+		expect(copy.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		await user.click(close);
+		await waitFor(() => {
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+		await waitFor(() => expect(card).toHaveFocus());
+	});
+
 	it('drills into an operation and back', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);

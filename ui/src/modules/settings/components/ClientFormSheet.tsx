@@ -350,15 +350,27 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 			initialFocus={nameRef}
 			className="flex flex-col"
 		>
-			<header className="border-border border-b p-5">
-				<h2 className="text-foreground text-lg font-semibold">
-					{isEdit ? 'Edit OAuth client' : 'Create OAuth client'}
-				</h2>
-				<p className="text-muted-foreground mt-1 text-sm">
-					{isEdit
-						? 'Update the client configuration. The client type and consent model are fixed at creation.'
-						: 'Register a third-party application that authenticates users via Jentic One.'}
-				</p>
+			<header className="border-border flex items-start gap-3 border-b p-5">
+				<div className="min-w-0 flex-1">
+					<h2 className="text-foreground text-lg font-semibold">
+						{isEdit ? 'Edit OAuth client' : 'Create OAuth client'}
+					</h2>
+					<p className="text-muted-foreground mt-1 text-sm">
+						{isEdit
+							? 'Update the client configuration. The client type and consent model are fixed at creation.'
+							: 'Register a third-party application that authenticates users via Jentic One.'}
+					</p>
+				</div>
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={onClose}
+					disabled={isPending}
+					aria-label="Close"
+					className="-mt-1 -mr-2 h-10 w-10 shrink-0 p-0 sm:h-8 sm:w-8"
+				>
+					<X className="h-4 w-4" aria-hidden="true" />
+				</Button>
 			</header>
 
 			<form
