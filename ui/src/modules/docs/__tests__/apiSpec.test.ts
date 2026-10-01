@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpec, refName, derefSchema } from '@/modules/docs/lib/apiSpec';
+import { parseSpec, refName, derefSchema, withDeploymentServer } from '@/modules/docs/lib/apiSpec';
 import { operationAnchorId } from '@/modules/docs/lib/anchor';
 import type { OpenApiDocument } from '@/modules/docs/api/types';
 
@@ -234,5 +234,27 @@ describe('derefSchema', () => {
 describe('operationAnchorId', () => {
 	it('is stable, slug-safe, and uppercases the method', () => {
 		expect(operationAnchorId('get', '/credentials/{id}')).toBe('op-GET--credentials-id-');
+	});
+});
+
+describe('withDeploymentServer', () => {
+	const placeholder: OpenApiDocument = {
+		openapi: '3.1.0',
+		servers: [{ url: 'https://broker.your-instance.example', description: 'Production' }],
+	};
+
+	it('replaces the servers with the advertised deployment URL', () => {
+		const spec = withDeploymentServer(placeholder, 'https://broker.acme.test');
+		expect(parseSpec(spec).servers).toEqual([
+			{ url: 'https://broker.acme.test', description: 'This deployment' },
+		]);
+		// The input document is not mutated.
+		expect(placeholder.servers).toEqual([
+			{ url: 'https://broker.your-instance.example', description: 'Production' },
+		]);
+	});
+
+	it.each([null, undefined, ''])('keeps the spec untouched for %j', (url) => {
+		expect(withDeploymentServer(placeholder, url)).toBe(placeholder);
 	});
 });

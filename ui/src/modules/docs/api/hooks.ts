@@ -7,20 +7,24 @@
  * native API reference renders the spec directly and joins each operation to
  * its scope/actor data from the reference payload.
  */
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+	fetchAdvertisedBrokerUrl,
 	fetchBrokerSpec,
 	fetchCliReference,
 	fetchOpenApiDocument,
 	fetchReferencePayload,
 } from '@/modules/docs/api/client';
 import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
+import { withDeploymentServer } from '@/modules/docs/lib/apiSpec';
 
 export const docsKeys = {
 	all: ['docs'] as const,
 	bundle: ['docs', 'bundle'] as const,
 	cli: ['docs', 'cli'] as const,
 	broker: ['docs', 'broker'] as const,
+	brokerUrl: ['docs', 'broker-url'] as const,
 };
 
 export interface DocsBundle {
@@ -95,6 +99,10 @@ export function useCliReference() {
  * spec is never part of this instance's `/openapi.json`, so the docs render this
  * build-time artifact instead. Like the other static assets it never changes
  * for the process lifetime — cache it indefinitely.
+ *
+ * The artifact's `servers` are placeholders; when `/instance` advertises this
+ * deployment's broker URL it replaces them. A failed or withheld lookup keeps
+ * the placeholders rather than blocking the reference.
  */
 export function useBrokerSpec() {
 	const query = useQuery<OpenApiDocument>({
@@ -102,9 +110,21 @@ export function useBrokerSpec() {
 		queryFn: fetchBrokerSpec,
 		staleTime: Infinity,
 	});
+	const brokerUrl = useQuery<string | null>({
+		queryKey: docsKeys.brokerUrl,
+		queryFn: fetchAdvertisedBrokerUrl,
+		staleTime: Infinity,
+		retry: false,
+	});
+	const data = useMemo(
+		() => (query.data ? withDeploymentServer(query.data, brokerUrl.data) : undefined),
+		[query.data, brokerUrl.data],
+	);
 	return {
-		data: query.data,
-		isPending: query.isPending,
+		data,
+		// Hold the reference until the lookup settles so the placeholder hosts
+		// never flash before the real one.
+		isPending: query.isPending || brokerUrl.isPending,
 		error: query.error as Error | null,
 		refetch: () => {
 			void query.refetch();

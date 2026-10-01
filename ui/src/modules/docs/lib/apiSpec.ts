@@ -254,6 +254,21 @@ function readSecurity(op: Obj, specDefault: string[]): string[] {
 const UNTAGGED = 'Other';
 
 /** Parse the whole document into the render model. */
+/**
+ * Point a spec's `servers` at the deployment's own host when it is known.
+ *
+ * The committed Broker spec ships placeholder hosts (it is generated outside any
+ * deployment); when the backend advertises its broker URL the docs show that
+ * instead. With no URL the spec is returned untouched, placeholders and all.
+ */
+export function withDeploymentServer(
+	spec: OpenApiDocument,
+	url: string | null | undefined,
+): OpenApiDocument {
+	if (!url) return spec;
+	return { ...spec, servers: [{ url, description: 'This deployment' }] };
+}
+
 export function parseSpec(spec: OpenApiDocument): ParsedSpec {
 	const info = isObj(spec.info) ? spec.info : {};
 	const components = isObj(spec.components) ? spec.components : {};

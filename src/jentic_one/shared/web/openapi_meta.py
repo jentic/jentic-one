@@ -55,7 +55,7 @@ SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
 # The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
 # outside any deployment (API catalogues, client generators), where a relative
 # server is meaningless. It carries placeholder hosts mirroring the Broker spec;
-# the live app keeps ``SERVERS`` so ``/openapi.json`` resolves same-origin.
+# the live app serves ``deployment_servers`` (its real origin, else same-origin).
 PUBLISHED_SERVERS = [
     {
         "url": "https://control.your-instance.example",
@@ -949,14 +949,27 @@ def generate_operation_id(route: APIRoute) -> str:
     return _camelize(route.name)
 
 
-def fastapi_metadata_kwargs() -> dict[str, Any]:
+def deployment_servers(public_base_url: str = "") -> list[dict[str, str]]:
+    """The live document's ``servers``: the deployment's public origin, else ``SERVERS``.
+
+    ``server.public_base_url`` names the origin clients reach the control
+    surfaces on, so a spec downloaded from a configured deployment stays
+    callable outside the browser. Unset, the same-origin relative server is the
+    only honest value.
+    """
+    if public_base_url:
+        return [{"url": public_base_url, "description": "This deployment"}]
+    return SERVERS
+
+
+def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     """Keyword arguments to spread into ``FastAPI(...)`` for document metadata."""
     return {
         "title": API_TITLE,
         "summary": API_SUMMARY,
         "description": API_DESCRIPTION,
         "version": API_VERSION,
-        "servers": SERVERS,
+        "servers": deployment_servers(public_base_url),
         "contact": CONTACT,
         "license_info": LICENSE_INFO,
         "openapi_tags": OPENAPI_TAGS,
