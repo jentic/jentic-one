@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
 import { Badge, Button, SheetPrimitive } from '@/shared/ui';
+import { apiIdentityTuple } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
@@ -471,8 +472,15 @@ function ActivePane({
 					<p className="text-foreground truncate text-sm font-medium">
 						{entry.api.label}
 					</p>
-					<p className="text-muted-foreground font-mono text-xs">
-						{entry.api.vendor}/{entry.api.name}
+					<p
+						data-testid="queue-active-identity"
+						className="text-muted-foreground font-mono text-xs"
+					>
+						{/* A catalog pick's name is its whole `api_id`, which already
+						    leads with the vendor (or is just the vendor). */}
+						{entry.api.name === entry.api.vendor
+							? entry.api.name
+							: apiIdentityTuple({ vendor: entry.api.vendor, name: entry.api.name })}
 					</p>
 				</div>
 				{working && (

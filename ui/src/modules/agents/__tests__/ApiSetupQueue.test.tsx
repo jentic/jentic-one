@@ -284,6 +284,42 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		).toBeVisible();
 	});
 
+	it('names a workspace pick by vendor/name', async () => {
+		renderWithProviders(<QueueHarness items={[makeItem('slack.com', 'form')]} />);
+		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
+			/^slack\.com\/main$/,
+		);
+	});
+
+	it('names a catalog pick by its api_id, not the vendor twice', async () => {
+		const catalogItem = (apiId: string, vendor: string) =>
+			makeItem(vendor, 'form', {
+				key: apiId,
+				api: {
+					source: 'catalog',
+					vendor,
+					name: apiId,
+					version: '1.0.0',
+					apiId,
+					label: 'GitHub',
+				},
+				importsApi: true,
+			});
+		const { unmount } = renderWithProviders(
+			<QueueHarness items={[catalogItem('github.com/api.github.com', 'github.com')]} />,
+		);
+		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
+			/^github\.com\/api\.github\.com$/,
+		);
+		unmount();
+
+		// An api_id that is the vendor alone.
+		renderWithProviders(<QueueHarness items={[catalogItem('stripe.com', 'stripe.com')]} />);
+		expect(await screen.findByTestId('queue-active-identity')).toHaveTextContent(
+			/^stripe\.com$/,
+		);
+	});
+
 	it('warns before a second credential is added to an API the agent already reaches', async () => {
 		renderWithProviders(
 			<QueueHarness
