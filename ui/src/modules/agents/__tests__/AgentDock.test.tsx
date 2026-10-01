@@ -84,7 +84,7 @@ describe('AgentDock — fixed bottom action dock', () => {
 		// The dock is agent-scoped only — the org-wide Credentials verb lives on
 		// the page header instead.
 		expect(dock.queryByRole('button', { name: 'Credentials' })).not.toBeInTheDocument();
-		// Settings is a sheet verb, never a link out to the console.
+		// Settings is a sheet verb, never a link out of the page.
 		expect(dock.queryByRole('link', { name: /Settings/ })).not.toBeInTheDocument();
 		expect(dock.getByRole('button', { name: /Archive support-agent/ })).toBeEnabled();
 	});

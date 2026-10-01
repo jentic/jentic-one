@@ -34,6 +34,7 @@ import {
 	type StreamEvent,
 } from '@/shared/lib/agentStream';
 import { clearToken, setToken, type EventResponse } from '@/shared/api';
+import { seedRailEvents } from '@/shared/app/rail/mocks/handlers';
 
 /** A location probe so navigation from the rail can be asserted. */
 function LocationProbe() {
@@ -427,23 +428,27 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const kinds = actions.map((a) => a.kind);
 		expect(kinds).toContain('view_agent');
 		expect(kinds).toContain('acknowledge');
-		// Review deep-links to the agent's approval page.
+		// Review deep-links to the agent as selected on the Agents page.
 		const review = actions.find((a) => a.kind === 'view_agent');
 		expect(review?.label).toBe('Review');
-		expect(review?.href?.(ev)).toBe('/agents/agt_42');
+		expect(review?.href?.(ev)).toBe('/agents?agent=agt_42');
 		// Once acknowledged the row keeps only the passive deep-link.
 		const acked = inlineActionsFor({ ...ev, acknowledged: true });
 		expect(acked.map((a) => a.kind)).toEqual(['view_agent']);
 		expect(acked[0]?.label).toBe('View agent');
 	});
 
-	it('primaryDestinationFor routes agent events to the agent page', () => {
+	it('primaryDestinationFor routes agent events to the agent on the Agents page', () => {
 		const ev = makeEvent({
 			type: 'agent.self_registered',
 			kind: 'agent',
 			tokens: { agent_id: 'agt_42' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/agents/agt_42');
+		expect(primaryDestinationFor(ev)).toBe('/agents?agent=agt_42');
+		// Ids are encoded: the selection is a query param, not a path segment.
+		expect(primaryDestinationFor({ ...ev, tokens: { agent_id: 'agt a&b' } })).toBe(
+			'/agents?agent=agt%20a%26b',
+		);
 	});
 
 	describe('buildTraceBundle', () => {
@@ -664,6 +669,29 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		);
 	});
 
+	it('opens the agent on the Agents page when an agent row is clicked', async () => {
+		seedRailEvents([
+			{
+				event_id: 'evt_agent_registered_1',
+				type: 'agent.self_registered',
+				severity: 'info',
+				summary: "Agent 'curl-agent' self-registered",
+				actor_id: 'agnt_curl_1',
+				actor_type: 'agent',
+				data: { agent_id: 'agnt_curl_1' },
+			},
+		]);
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		const row = await screen.findByRole('link', {
+			name: /curl-agent.*self-registered.*Open detail/i,
+		});
+		await user.click(row);
+		await waitFor(() =>
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents?agent=agnt_curl_1'),
+		);
+	});
+
 	it('links the footer to the activity log in Monitor', async () => {
 		renderRail(<AgentRail />);
 		const link = await screen.findByRole('link', { name: 'Open in Monitor →' });
@@ -704,7 +732,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		);
 	});
 
-	it('offers "Only this agent" on /agents/:agentId, and scoping fetches its backlog by actor', async () => {
+	it('offers "Only this agent" on a page under /agents/:agentId/, and scoping fetches its backlog by actor', async () => {
 		// The shortcut names the agent, which needs the (signed-in) actor directory.
 		setToken('test-token');
 		onTestFinished(() => clearToken());
@@ -713,7 +741,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		worker.events.on('request:start', ({ request }) => {
 			if (new URL(request.url).pathname === '/events') seen.push(request.url);
 		});
-		renderRail(<AgentRail />, '/agents/support-triage');
+		renderRail(<AgentRail />, '/agents/support-triage/claim');
 		const filter = await screen.findByRole('button', { name: /^Show activity for/ });
 		// Navigating to an agent never changes the lens by itself…
 		expect(filter).toHaveAccessibleName(/Everyone/);
@@ -1156,14 +1184,14 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 	});
 
 	it('primaryDestinationFor deep-links grant events to the agent, client events to the queue', () => {
-		// A grant row names the bound agent — its Connected-clients panel is the
-		// §4.8 surface that lists (and can revoke) the grant.
+		// A grant row names the bound agent — its Permissions sheet's Connected
+		// clients card lists (and can revoke) the grant.
 		const grant = makeEvent({
 			type: 'oauth_grant.created',
 			kind: 'oauth',
 			tokens: { grant_id: 'ocg_1', agent_id: 'agt_42' },
 		});
-		expect(primaryDestinationFor(grant)).toBe('/agents/agt_42');
+		expect(primaryDestinationFor(grant)).toBe('/agents?agent=agt_42');
 		// A client lifecycle row has no agent — it goes to the approval queue.
 		const registered = makeEvent({
 			type: 'oauth_client.registered',

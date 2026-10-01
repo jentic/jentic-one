@@ -25,7 +25,7 @@
  * Building links: prefer `monitorHref(...)` so callers don't hand-assemble
  * query strings (and so cross-references always carry their id).
  *
- * Cross-module callers (the agents console) can't import this module;
+ * Cross-module callers (the Agents page) can't import this module;
  * they build the API-calls subset via `ROUTE_PATHS.monitorExecutions`
  * in `shared/app/routes.ts` — keep the param names above in lockstep with it.
  */

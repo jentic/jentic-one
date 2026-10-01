@@ -13,8 +13,11 @@ interface CopyButtonProps {
 	 */
 	label?: string;
 	/**
-	 * Override the button's accessible name. Only used when `label`
-	 * is omitted (icon-only mode). Defaults to "Copy to clipboard".
+	 * Override the button's accessible name. It wins over a visible `label`
+	 * (use it for a more specific name than the text, e.g. "Copy the command")
+	 * and stays the name after a copy, so the visible "Copied!" swap is not
+	 * announced through it — the toast carries the confirmation. Icon-only
+	 * buttons default to "Copy to clipboard".
 	 */
 	ariaLabel?: string;
 	className?: string;
@@ -74,7 +77,7 @@ export function CopyButton({
 			size={size}
 			onClick={() => void handleClick()}
 			className={cn('shrink-0', className)}
-			aria-label={label ? undefined : (ariaLabel ?? 'Copy to clipboard')}
+			aria-label={ariaLabel ?? (label ? undefined : 'Copy to clipboard')}
 		>
 			{copied ? (
 				<>

@@ -11,6 +11,8 @@ import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 
 import {
 	Badge,
 	Button,
+	CodeSnippet,
+	CopyButton,
 	DangerZone,
 	ErrorAlert,
 	SheetPrimitive,
@@ -37,6 +39,10 @@ import {
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import {
+	MultiCredentialNote,
+	credentialIdHeader,
+} from '@/modules/agents/components/flat/MultiCredentialNote';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -92,6 +98,9 @@ export interface ApiAccessSidebarProps {
 	/** Titles of the OTHER tiles sharing this binding — the blast radius. Rules are
 	 * keyed by (agent, credential), so editing them here affects all of them. */
 	siblingApiTitles: string[];
+	/** How many of the agent's bindings serve this tile's API — above 1, the panel
+	 * says how a call picks between the credentials. */
+	accountCount?: number;
 	open: boolean;
 	onClose: () => void;
 	/** DOM id for the panel content — the tile's `aria-controls` target. */
@@ -102,6 +111,7 @@ export function ApiAccessSidebar({
 	agent,
 	tile,
 	siblingApiTitles,
+	accountCount = 1,
 	open,
 	onClose,
 	sidebarId,
@@ -388,6 +398,37 @@ export function ApiAccessSidebar({
 										<Pencil className="h-4 w-4" /> Edit credential
 									</Button>
 								</div>
+								{/* The full id, copyable: what a call names in
+								    Jentic-Credential-Id when the agent holds several. */}
+								<div
+									data-testid="credential-id-row"
+									className="flex min-w-0 items-center gap-2 text-xs"
+								>
+									<span className="text-muted-foreground shrink-0">ID</span>
+									<code className="text-foreground/90 min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
+										{shown.credentialId}
+									</code>
+									<CopyButton
+										value={shown.credentialId}
+										size="icon"
+										variant="ghost"
+										ariaLabel="Copy the credential ID"
+										toastMessage="Credential ID copied"
+									/>
+								</div>
+								{accountCount > 1 && (
+									<>
+										<MultiCredentialNote
+											apiTitle={shown.title}
+											count={accountCount}
+										/>
+										<CodeSnippet
+											label="Header that picks this credential"
+											code={credentialIdHeader(shown.credentialId)}
+											copyAriaLabel="Copy the Jentic-Credential-Id header"
+										/>
+									</>
+								)}
 							</section>
 
 							{/* Blast radius: rules are keyed by (credential, agent) —

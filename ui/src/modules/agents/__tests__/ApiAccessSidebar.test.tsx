@@ -138,6 +138,13 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// 1 — the credential (read view + the edit affordance).
 		expect(inDialog.getByText('Slack bot token')).toBeInTheDocument();
 		expect(inDialog.getByRole('button', { name: /Edit credential/ })).toBeInTheDocument();
+		// The full id, copyable, for a call that names it. One credential for the
+		// API needs no header, so no header snippet.
+		expect(inDialog.getByTestId('credential-id-row')).toHaveTextContent('IDcred_slack_1');
+		expect(
+			inDialog.getByRole('button', { name: 'Copy the credential ID' }),
+		).toBeInTheDocument();
+		expect(inDialog.queryByText(/^Jentic-Credential-Id:/)).not.toBeInTheDocument();
 
 		// 2 — the rules editor, keyed to THIS binding: the seeded rule's path.
 		expect(

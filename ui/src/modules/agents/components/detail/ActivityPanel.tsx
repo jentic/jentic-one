@@ -1,5 +1,5 @@
 /**
- * ActivityPanel — the detail page's Activity tab: the shared console chart
+ * ActivityPanel — the body of the dock's Activity sheet: the shared chart
  * pair (stacked execution volume + success-rate trend, `ExecutionVolumeCharts`)
  * plus the shared recent-executions feed (`RecentExecutionsCard`), both
  * scoped by `actor_id`. Monitor owns the full history (cursor paging, trace

@@ -1,6 +1,8 @@
 /**
- * The agent the page is about, if any — `/agents/:agentId` or
- * `/agents?agent=<id>`.
+ * The agent the page is about, if any — the Agents page's selection
+ * (`/agents?agent=<id>`), or a page mounted under `/agents/:agentId/…` (a
+ * deployment can add per-agent sub-routes; `/agents/:agentId` itself redirects
+ * to the selection).
  *
  * The Activity rail does NOT follow it on its own: the rail's actor filter is
  * one choice the user owns, the same on every page. On an agent's page the
