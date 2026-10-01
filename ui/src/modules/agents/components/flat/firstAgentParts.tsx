@@ -758,7 +758,9 @@ function AgentFacts({
 		>
 			<Fact label="How">
 				{selfRegistered ? (
-					'Self-registered from the CLI'
+					// Not "from the CLI": anything that can reach `POST /register`
+					// arrives this way.
+					'Self-registered'
 				) : agent.attribution.registeredBy ? (
 					<>
 						Registered by <ActorLabel actorId={agent.attribution.registeredBy} />
@@ -774,9 +776,25 @@ function AgentFacts({
 						? 'Its own keypair'
 						: 'Nothing yet'}
 			</Fact>
-			<Fact label="Agent ID">
-				<span className="font-mono">{agent.id}</span>
-			</Fact>
+			{/* Its own row, in full and copyable: a narrow card would otherwise
+			    cut the id short with no way to read or copy the rest. */}
+			<div data-testid="agent-id-fact" className="col-span-full min-w-0">
+				<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
+					Agent ID
+				</dt>
+				<dd className="text-foreground/90 mt-0.5 flex min-w-0 items-center gap-2 text-xs">
+					<code className="min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
+						{agent.id}
+					</code>
+					<CopyButton
+						value={agent.id}
+						size="icon"
+						variant="ghost"
+						ariaLabel="Copy the agent ID"
+						toastMessage="Agent ID copied"
+					/>
+				</dd>
+			</div>
 			{keyInfo.data && (
 				<Fact label="Key ID">
 					<span className="font-mono">{keyInfo.data.id}</span>

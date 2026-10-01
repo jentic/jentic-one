@@ -322,7 +322,7 @@ describe('Agents page — zero agents', () => {
 		// A self-registration's facts: how it came in, its keypair, its id — and
 		// none of the rows it has no data for.
 		const facts = within(screen.getByTestId('agent-facts'));
-		expect(facts.getByText('Self-registered from the CLI')).toBeInTheDocument();
+		expect(facts.getByText('Self-registered')).toBeInTheDocument();
 		expect(facts.getByText('Its own keypair')).toBeInTheDocument();
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
@@ -365,6 +365,22 @@ describe('Agents page — zero agents', () => {
 			'It registered as research-bot-2, not research-bot — the name in your command. Make sure it is yours before approving.',
 		);
 		expect(screen.queryByTestId('arrival-others-warning')).toBeNull();
+	});
+
+	it('at 390px the agent ID wraps in full on its own row, and copies', async () => {
+		await page.viewport(390, 844);
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		const id = await arrive('my-first-agent', queryClient);
+
+		const row = screen.getByTestId('agent-id-fact');
+		const code = within(row).getByText(id);
+		await waitFor(() => expect(code).toBeVisible());
+		// Nothing clipped: the id is as wide as the box it is drawn in.
+		expect(code.scrollWidth).toBeLessThanOrEqual(code.clientWidth);
+		await user.click(within(row).getByRole('button', { name: 'Copy the agent ID' }));
+		expect(await navigator.clipboard.readText()).toBe(id);
 	});
 
 	it("an arrival carrying the command's name and alone gets no warning, and its time in full", async () => {
@@ -432,7 +448,7 @@ describe('Agents page — zero agents', () => {
 			'agents:write (can change data)',
 		]);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
-		expect(facts.queryByText('Self-registered from the CLI')).toBeNull();
+		expect(facts.queryByText('Self-registered')).toBeNull();
 		expect(facts.queryByText('Parent agent')).toBeNull();
 	});
 

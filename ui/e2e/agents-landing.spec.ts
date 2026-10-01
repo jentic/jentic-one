@@ -51,7 +51,7 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 	// Arrival: the card turns into the approval, and the page stays the landing.
 	const card = page.getByTestId('first-agent-card');
 	await expect(card.getByRole('heading', { name: 'research-bot' })).toBeVisible();
-	await expect(page.getByTestId('agent-facts')).toContainText('Self-registered from the CLI');
+	await expect(page.getByTestId('agent-facts')).toContainText('Self-registered');
 	await expect(page.getByTestId('register-status')).toContainText('awaiting your approval');
 	await expect(page.getByTestId('manual-card')).toHaveCount(0);
 	await expect(page.getByTestId('register-stepper').getByRole('listitem').nth(2)).toHaveAttribute(

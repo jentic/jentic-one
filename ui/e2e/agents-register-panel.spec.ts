@@ -55,7 +55,7 @@ test('an existing fleet registers another agent from the New agent panel', async
 	});
 
 	await expect(panel.getByRole('heading', { name: 'research-bot' })).toBeVisible();
-	await expect(panel.getByTestId('agent-facts')).toContainText('Self-registered from the CLI');
+	await expect(panel.getByTestId('agent-facts')).toContainText('Self-registered');
 	await expect(panel.getByTestId('register-status')).toContainText('awaiting your approval');
 	await expect(panel.getByTestId('arrival-warnings')).toHaveCount(0);
 
