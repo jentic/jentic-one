@@ -702,6 +702,14 @@ describe('seedFormFromSelectedApi', () => {
 		expect(next.apiVersion).toBe('');
 	});
 
+	it("pins to the API's version when the host asks (a flow opened from that API)", () => {
+		const next = seedFormFromSelectedApi({ ...EMPTY_FORM }, pick, false, true);
+		expect(next.apiVersion).toBe('2.0.0');
+		expect(
+			buildCreateBody(CredentialType.BEARER_TOKEN, { ...next, token: 'sk-123' }).api,
+		).toMatchObject({ vendor: 'stripe.com', name: 'main', version: '2.0.0' });
+	});
+
 	it('keeps a credential name the user already typed', () => {
 		const next = seedFormFromSelectedApi({ ...EMPTY_FORM, name: 'Mine' }, pick, true);
 		expect(next.name).toBe('Mine');

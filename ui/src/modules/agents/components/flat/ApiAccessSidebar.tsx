@@ -18,9 +18,10 @@ import {
 	VendorIcon,
 	toast,
 } from '@/shared/ui';
+import { vendorIconPropsFor } from '@/shared/lib';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
-import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
+import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import {
 	OperationImpactPreview,
 	type OpsApiReference,
@@ -146,7 +147,7 @@ export function ApiAccessSidebar({
 	const resume = useResumeAgentCredentialBinding(agent.id);
 	const deleteCredential = useDeleteCredential();
 	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(agent.id);
-	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
+	const { connectExisting, deviceDialog } = useConnectAfterCreate();
 	const [connecting, setConnecting] = useState(false);
 
 	// Every agent bound to this credential — the "Used by" line and the delete
@@ -154,43 +155,12 @@ export function ApiAccessSidebar({
 	const credentialAgents = useCredentialAgents(credentialId ?? undefined, { enabled: open });
 	const boundAgentRows = credentialAgents.data?.data ?? [];
 
-	// Mirrors CredentialInventorySheet.handleConnect: the
-	// standalone connect keeps the credential whatever the outcome.
+	// The standalone connect keeps the credential whatever the outcome.
 	const handleConnect = async (): Promise<void> => {
 		if (!credentialId || !shown) return;
 		setConnecting(true);
-		toast({ title: `Opening sign-in for ${shown.credentialName}…` });
 		try {
-			const outcome = await runConnect(credentialId, shown.credentialName);
-			switch (outcome.status) {
-				case 'connected':
-					toast({ title: 'Connected', variant: 'success' });
-					break;
-				case 'redirected':
-					break;
-				case 'cancelled':
-					toast({ title: 'Connection cancelled' });
-					break;
-				case 'timeout':
-					toast({
-						title: 'Connection timed out',
-						description: 'Finish the sign-in and refresh to see the result.',
-						variant: 'error',
-					});
-					break;
-				case 'unsupported_challenge':
-					toast({ title: 'Unsupported sign-in challenge', variant: 'error' });
-					break;
-				case 'unsafe_challenge_url':
-					toast({
-						title: 'Sign-in link refused',
-						description: 'The provider returned an unsafe sign-in URL.',
-						variant: 'error',
-					});
-					break;
-			}
-		} catch {
-			toast({ title: 'Could not start the OAuth flow', variant: 'error' });
+			await connectExisting(credentialId, shown.credentialName);
 		} finally {
 			setConnecting(false);
 		}
@@ -250,12 +220,7 @@ export function ApiAccessSidebar({
 					<div id={sidebarId} className="flex h-full flex-col">
 						<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
 							<div className="flex min-w-0 items-start gap-3">
-								<VendorIcon
-									name={shown.title}
-									vendor={shown.vendor}
-									iconUrl={shown.iconUrl}
-									size="sm"
-								/>
+								<VendorIcon {...vendorIconPropsFor(shown)} size="sm" />
 								<div className="min-w-0">
 									<div className="flex min-w-0 items-center gap-2">
 										<h2

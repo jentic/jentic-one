@@ -2,7 +2,7 @@
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
  * Shared because uploading a spec belongs wherever a selected API is shown
- * — the Workspace page's own Import action, the agents Add-APIs tray, and the
+ * — the Library's own-spec import action (Catalog and Workspace views), the agents Add-APIs tray, and the
  * add-credential flow, where "the API I need isn't listed" is a dead end
  * without it. The mid-flow surfaces take `onImported` to select what landed.
  *

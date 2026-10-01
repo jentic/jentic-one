@@ -7,6 +7,7 @@
  * state. `Create empty` stays available, de-emphasised, for reserving an identity.
  */
 import { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
 import { useCreateAgent, type AgentEntity } from '@/modules/agents/api';
 import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
@@ -74,12 +75,25 @@ export function AgentCreateSheet({ open, onClose, onCreated }: AgentCreateSheetP
 			initialFocus={nameRef}
 			className="flex flex-col"
 		>
-			<header className="border-border border-b p-5">
-				<h2 className="text-foreground text-lg font-semibold">Create agent</h2>
-				<p className="text-muted-foreground mt-1 text-sm">
-					Agents represent autonomous actors on the platform. New agents are created as
-					active and can authenticate immediately — you pick the APIs they can reach next.
-				</p>
+			<header className="border-border flex items-start gap-3 border-b p-5">
+				<div className="min-w-0 flex-1">
+					<h2 className="text-foreground text-lg font-semibold">Create agent</h2>
+					<p className="text-muted-foreground mt-1 text-sm">
+						Agents represent autonomous actors on the platform. New agents are created
+						as active and can authenticate immediately — you pick the APIs they can
+						reach next.
+					</p>
+				</div>
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={onClose}
+					disabled={create.isPending}
+					aria-label="Close"
+					className="-mt-1 -mr-2 h-10 w-10 shrink-0 p-0 sm:h-8 sm:w-8"
+				>
+					<X className="h-4 w-4" aria-hidden="true" />
+				</Button>
 			</header>
 
 			<div className="flex-1 space-y-4 overflow-y-auto p-5">

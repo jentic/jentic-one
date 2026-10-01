@@ -1,0 +1,637 @@
+/**
+ * ApiHubOverview — the extra, real-data blocks on the API hub's Overview tab,
+ * beside the existing OverviewStrip (update banner, host, stats, description):
+ *
+ *   - Who can use it  — active credentials covering this API (`GET /credentials`,
+ *                       the shared `apiAccess` rule) and the agents bound to
+ *                       them (`GET /credentials/{id}/agents`); each credential
+ *                       row opens the shared `EditCredentialSheet` in place,
+ *                       and its Add credential opens the shared flow in place,
+ *                       already on this API's form (`?credential=new`);
+ *                       "Bind to an agent" (one card-level action)
+ *                       binds an existing agent in place (`BindAgentDialog`).
+ *                       Whether a credential is needed at all comes from the
+ *                       live spec's required security, not just the declared
+ *                       schemes (`useApiAuthRequirement`); an API with no
+ *                       schemes offers no Add credential. An API that needs
+ *                       none offers "Give an agent access": the broker still
+ *                       resolves every call through a bound credential, so it
+ *                       reuses (or creates) a `no_auth` credential for the API
+ *                       and opens the bind dialog on it
+ *   - Calls, 7 days   — `GET /monitoring/usage?group_by=api` (org:admin only;
+ *                       hidden otherwise)
+ *   - Notes           — `GET /notes?api=vendor:name:version`
+ *   - Recent activity — this API's events off the shell's live stream
+ *                       (events that carry its vendor/name/version tokens)
+ *
+ * Each block renders only what its read returned; nothing is defaulted.
+ */
+import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import {
+	Activity,
+	Bot,
+	ChevronRight,
+	KeyRound,
+	Link2,
+	LockOpen,
+	NotebookPen,
+	PauseCircle,
+	Plus,
+} from 'lucide-react';
+import {
+	AppLink,
+	Badge,
+	Button,
+	Card,
+	CardBody,
+	CardHeader,
+	CardTitle,
+	ErrorAlert,
+	Skeleton,
+	ApiUsageSummary,
+	StreamEventRow,
+	Tag,
+} from '@/shared/ui';
+import { ROUTE_PATHS } from '@/shared/app/routes';
+import { useAgentStreamOptional } from '@/shared/lib';
+import { timeAgo } from '@/shared/lib/utils';
+import { CredentialType, useCreateCredential, type Credential } from '@/shared/credentials/api';
+import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
+import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
+import {
+	CreateCredentialFlow,
+	type CreatedCredentialInfo,
+} from '@/shared/credentials/components/CreateCredentialFlow';
+import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
+import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
+import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
+import {
+	credentialIsConnected,
+	credentialIsPendingSignIn,
+} from '@/shared/credentials/components/CredentialCard';
+import {
+	agentsExhaustive,
+	apiUsageKeyFor,
+	callsInWeek,
+	workspaceApiDisplayTitle,
+	useAgentAccess,
+	useApiAccessIndex,
+	useApiAuthRequirement,
+	useApiNotes,
+	useApiUsageWeek,
+} from '@/modules/workspace/api';
+import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
+import { useOptionalCurrentUser } from '@/shared/auth';
+import {
+	credentialsBindableBy,
+	useCanBindAgents,
+	useCanCreateCredentials,
+} from '@/shared/credentials/lib/bindAuthority';
+import { BindAgentDialog } from '@/modules/workspace/components/BindAgentDialog';
+
+function HubCard({
+	title,
+	icon,
+	action,
+	children,
+	testId,
+	className,
+}: {
+	title: string;
+	icon: React.ReactNode;
+	action?: React.ReactNode;
+	children: React.ReactNode;
+	testId?: string;
+	className?: string;
+}) {
+	return (
+		<Card data-testid={testId} className={className}>
+			<CardHeader className="flex items-center justify-between gap-2 py-3">
+				<CardTitle as="h2" className="flex items-center gap-2 text-base">
+					<span className="text-muted-foreground" aria-hidden="true">
+						{icon}
+					</span>
+					{title}
+				</CardTitle>
+				{action}
+			</CardHeader>
+			<CardBody className="py-3">{children}</CardBody>
+		</Card>
+	);
+}
+
+function AccessCard({ api }: { api: WorkspaceApi }) {
+	const access = useApiAccessIndex();
+	const entry = access.entryFor(api.api);
+	const accessFor = useAgentAccess(entry ? [entry.credentials] : []);
+	const agentAccess = entry ? accessFor(entry.credentials) : null;
+	const agents = agentAccess?.agents ?? [];
+	const agentsSettled = agentAccess?.agentsSettled ?? false;
+	const agentsWhole = agentAccess != null && agentsExhaustive(agentAccess);
+	// Required-vs-declared comes from the resolved spec (see
+	// `useApiAuthRequirement`); tiles and the docked panel only see declared.
+	const auth = useApiAuthRequirement(api);
+	const needsAuth = auth.requirement === 'required';
+	// Nothing to configure: a credential form for an API with no schemes has
+	// no scheme to fill in.
+	const canAddCredential = auth.requirement !== 'none';
+
+	// The Add credential flow opens here, on this API's form — the hub already
+	// knows the API, so asking for it again would be redundant. `?credential=new`
+	// is the open state, so the docked panel's "no credential" links land
+	// straight on the form too. Mounted once; the flow owns its reset.
+	const [searchParams, setSearchParams] = useSearchParams();
+	const createOpen = searchParams.get('credential') === 'new';
+	const setCreateOpen = useCallback(
+		(open: boolean): void =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					if (open) next.set('credential', 'new');
+					else next.delete('credential');
+					return next;
+				},
+				{ replace: true },
+			),
+		[setSearchParams],
+	);
+	const initialApi = useMemo(
+		() =>
+			initialApiFor({
+				ref: api.api,
+				catalogApiId: api.catalogApiId,
+				securitySchemes: api.securitySchemes,
+				label: workspaceApiDisplayTitle(api),
+			}),
+		[api],
+	);
+	const { afterCreate, deviceDialog } = useConnectAfterCreate();
+	// The credential whose details sheet is open. `sticky…` outlives the close
+	// so the sheet keeps its content while it animates out.
+	const [viewCredentialId, setViewCredentialId] = useState<string | null>(null);
+	const [stickyCredentialId, setStickyCredentialId] = useState<string | null>(null);
+	const openCredential = (id: string): void => {
+		setStickyCredentialId(id);
+		setViewCredentialId(id);
+	};
+	// "Bind to an agent" — one card-level action; the dialog picks the
+	// credential. Mounted once, toggled.
+	const canBind = useCanBindAgents();
+	const [bindOpen, setBindOpen] = useState(false);
+	// The credential the dialog opens on (set by "Give an agent access").
+	const [bindCredentialId, setBindCredentialId] = useState<string | null>(null);
+
+	// "Give an agent access" — for an API that needs no credential. The broker
+	// resolves every call through a bound credential regardless, so this finds
+	// a `no_auth` credential the viewer can bind (or creates one: no secret,
+	// pinned to this API's version like the hub's Add credential default) and
+	// opens the bind dialog on it. Any covering no-auth credential is reused,
+	// including an unpinned one.
+	const viewer = useOptionalCurrentUser();
+	const canCreate = useCanCreateCredentials();
+	const createCredential = useCreateCredential();
+	// Held until the credentials refetch lists it, so the dialog can open on it.
+	const [createdNoAuth, setCreatedNoAuth] = useState<Credential | null>(null);
+	const reusableNoAuth = useMemo(
+		() =>
+			credentialsBindableBy(entry?.credentials ?? [], viewer).find(
+				(c) => c.type === CredentialType.NO_AUTH,
+			) ??
+			createdNoAuth ??
+			null,
+		[entry, viewer, createdNoAuth],
+	);
+	const noAuthRequirement = auth.requirement === 'none' || auth.requirement === 'optional';
+	const offerNoAuthAccess = noAuthRequirement && canBind && (reusableNoAuth != null || canCreate);
+	const bindCredentials = useMemo(() => {
+		const listed = entry?.credentials ?? [];
+		if (!createdNoAuth || listed.some((c) => c.credential_id === createdNoAuth.credential_id))
+			return listed;
+		return [...listed, createdNoAuth];
+	}, [entry, createdNoAuth]);
+	const openBind = (): void => {
+		// On an API that needs no credential, open on its no-auth credential.
+		setBindCredentialId(noAuthRequirement ? (reusableNoAuth?.credential_id ?? null) : null);
+		setBindOpen(true);
+	};
+	const giveAgentAccess = async (): Promise<void> => {
+		createCredential.reset();
+		let credentialId = reusableNoAuth?.credential_id ?? null;
+		if (!credentialId) {
+			try {
+				const created = await createCredential.mutateAsync({
+					type: CredentialType.NO_AUTH,
+					name: `${workspaceApiDisplayTitle(api)} (no auth)`,
+					provider: 'static',
+					api: {
+						vendor: api.api.vendor,
+						name: api.api.name,
+						version: api.api.version || undefined,
+						catalog_api_id: api.catalogApiId ?? undefined,
+					},
+				});
+				setCreatedNoAuth(created.credential);
+				credentialId = created.credential.credential_id;
+			} catch {
+				return; // surfaced inline from the mutation's error
+			}
+		}
+		setBindCredentialId(credentialId);
+		setBindOpen(true);
+	};
+
+	return (
+		<>
+			<HubCard
+				title="Who can use it"
+				icon={<Bot className="h-4 w-4" />}
+				testId="hub-access"
+				action={
+					canAddCredential ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={(): void => setCreateOpen(true)}
+							className="text-primary hover:text-primary h-7 gap-1 px-2 text-xs"
+							data-testid="hub-access-add-credential"
+						>
+							<Plus size={12} aria-hidden="true" />
+							Add credential
+						</Button>
+					) : undefined
+				}
+			>
+				{access.error && !access.credentialsComplete ? (
+					<ErrorAlert message={access.error} onRetry={access.retry} />
+				) : access.isPending ? (
+					<Skeleton className="h-12 w-full" />
+				) : !entry ? (
+					!access.credentialsComplete || auth.pending ? (
+						<Skeleton className="h-12 w-full" />
+					) : needsAuth ? (
+						<p className="text-muted-foreground text-sm" data-testid="hub-access-none">
+							No active credential covers this API yet, so no agent can call it. Add
+							one, then bind it to an agent.
+						</p>
+					) : (
+						<div
+							className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-6"
+							data-testid="hub-access-no-auth"
+						>
+							<div className="min-w-0 space-y-1">
+								<p className="text-foreground flex items-center gap-1.5 text-sm font-medium">
+									<LockOpen
+										className="text-muted-foreground h-3.5 w-3.5 shrink-0"
+										aria-hidden="true"
+									/>
+									No credential needed
+								</p>
+								<p className="text-muted-foreground text-sm">
+									{auth.requirement === 'optional'
+										? 'It declares security schemes, but none of its operations require one.'
+										: 'It doesn’t use authentication.'}{' '}
+									{offerNoAuthAccess
+										? 'Give an agent access to let it call this API — no secret to set up.'
+										: 'An agent still needs access bound to it before it can call this API.'}
+								</p>
+								{createCredential.error && (
+									<ErrorAlert
+										message={createCredential.error}
+										onRetry={(): void => void giveAgentAccess()}
+									/>
+								)}
+							</div>
+							{offerNoAuthAccess && (
+								<div className="shrink-0">
+									<Button
+										size="sm"
+										onClick={(): void => void giveAgentAccess()}
+										loading={createCredential.isPending}
+										disabled={createCredential.isPending}
+										data-testid="hub-access-give-agent-access"
+									>
+										<Link2 size={14} aria-hidden="true" />
+										Give an agent access
+									</Button>
+								</div>
+							)}
+						</div>
+					)
+				) : (
+					<div
+						className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6"
+						data-testid="hub-access-columns"
+					>
+						<div className="min-w-0">
+							<div className="mb-1 flex items-center justify-between gap-2">
+								<h3 className="font-heading text-foreground text-sm font-semibold">
+									Agents
+								</h3>
+								{canBind && agents.length > 0 && (
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-6 px-1.5 text-xs"
+										onClick={openBind}
+										data-testid="hub-access-bind-agent"
+									>
+										<Link2 size={12} aria-hidden="true" />
+										Bind to an agent
+									</Button>
+								)}
+							</div>
+							{agents.length === 0 ? (
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<p className="text-muted-foreground text-sm">
+										{!agentsSettled
+											? 'Loading…'
+											: agentsWhole
+												? 'No agent is bound to these credentials yet.'
+												: 'Couldn’t read the agents bound to these credentials.'}
+									</p>
+									{canBind && agentsSettled && (
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={openBind}
+											data-testid="hub-access-bind-agent"
+										>
+											<Link2 size={14} aria-hidden="true" />
+											Bind to an agent
+										</Button>
+									)}
+								</div>
+							) : (
+								<ul className="flex flex-wrap gap-1.5">
+									{agents.map((a) => (
+										<li key={a.agent_id}>
+											<AppLink
+												href={ROUTE_PATHS.agentTab(a.agent_id)}
+												className="bg-muted/60 hover:bg-muted text-foreground inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
+											>
+												<Bot className="h-3 w-3" aria-hidden="true" />
+												{a.agent_name}
+												{a.suspended && (
+													<>
+														<PauseCircle
+															className="text-warning h-3 w-3"
+															aria-hidden="true"
+														/>
+														<span className="sr-only">(suspended)</span>
+													</>
+												)}
+											</AppLink>
+										</li>
+									))}
+								</ul>
+							)}
+							{agents.length > 0 && agentsSettled && !agentsWhole && (
+								<p
+									className="text-muted-foreground mt-1 text-xs"
+									data-testid="hub-access-agents-partial"
+								>
+									{agentAccess?.agentsError
+										? 'Some credentials’ agents couldn’t be read — this list may be incomplete.'
+										: 'More agents are bound than shown — this list is the first page of each credential’s agents.'}
+								</p>
+							)}
+						</div>
+						<div className="min-w-0">
+							<h3 className="font-heading text-foreground mb-1 text-sm font-semibold">
+								Credentials
+							</h3>
+							<ul className="-mx-1.5 space-y-0.5">
+								{entry.credentials.map((c) => {
+									const hint = credentialSiblingHint(c, entry.credentials);
+									return (
+										<li key={c.credential_id}>
+											{/* The whole row opens the credential's details — the shared
+										    edit sheet every other credential surface uses — in place. */}
+											<Button
+												variant="ghost"
+												fullWidth
+												onClick={(): void =>
+													openCredential(c.credential_id)
+												}
+												data-testid="hub-access-credential"
+												className="group justify-between gap-2 rounded-md px-1.5 py-1 text-left font-normal active:scale-100"
+											>
+												<span className="text-foreground flex min-w-0 items-center gap-1.5">
+													<span className="sr-only">View </span>
+													<KeyRound
+														className="text-muted-foreground h-3.5 w-3.5 shrink-0"
+														aria-hidden="true"
+													/>
+													<span className="truncate">{c.name}</span>
+													{hint && (
+														<span
+															className="text-muted-foreground shrink-0 font-mono text-[11px]"
+															data-testid="hub-access-credential-hint"
+														>
+															{hint}
+														</span>
+													)}
+												</span>
+												<span className="flex shrink-0 items-center gap-1.5">
+													{credentialIsConnected(c) && (
+														<Badge variant="success">Connected</Badge>
+													)}
+													{credentialIsPendingSignIn(c) && (
+														<Badge variant="pending">
+															Pending sign-in
+														</Badge>
+													)}
+													<CredentialTypeBadge credential={c} />
+													<span
+														className="text-muted-foreground group-hover:text-foreground inline-flex items-center text-xs"
+														aria-hidden="true"
+													>
+														View
+														<ChevronRight
+															className="h-3.5 w-3.5"
+															aria-hidden="true"
+														/>
+													</span>
+												</span>
+											</Button>
+										</li>
+									);
+								})}
+							</ul>
+						</div>
+					</div>
+				)}
+			</HubCard>
+			<EditCredentialSheet
+				credentialId={stickyCredentialId}
+				open={viewCredentialId != null}
+				onClose={(): void => setViewCredentialId(null)}
+				// Kept through the close animation so the sheet doesn't blank mid-slide.
+				onAfterClose={(): void => setStickyCredentialId(null)}
+				// A bound-agent link leaves the hub for the Agents page.
+				onNavigateAway={(): void => setViewCredentialId(null)}
+			/>
+			<CreateCredentialFlow
+				open={createOpen}
+				onClose={(): void => setCreateOpen(false)}
+				initialApi={initialApi}
+				onCreated={(info: CreatedCredentialInfo): void => {
+					// The create invalidated the credentials slice, so this card, the
+					// docked panel and the workspace tiles all refetch from it.
+					setCreateOpen(false);
+					afterCreate(info);
+				}}
+			/>
+			{deviceDialog}
+			{bindCredentials.length > 0 && canBind && (
+				<BindAgentDialog
+					open={bindOpen}
+					onClose={(): void => setBindOpen(false)}
+					credentials={bindCredentials}
+					apiLabel={workspaceApiDisplayTitle(api)}
+					initialCredentialId={bindCredentialId}
+				/>
+			)}
+		</>
+	);
+}
+
+function UsageCard({ api, className }: { api: WorkspaceApi; className?: string }) {
+	const usage = useApiUsageWeek();
+	if (!usage.available && !usage.isLoading) return null;
+	const row = usage.byApi.get(apiUsageKeyFor(api.api)) ?? null;
+	const total = callsInWeek(row, usage.exhaustive);
+
+	return (
+		<HubCard
+			title="Calls, last 7 days"
+			icon={<Activity className="h-4 w-4" />}
+			testId="hub-usage"
+			className={className}
+			action={
+				<AppLink
+					href={ROUTE_PATHS.monitorExecutions()}
+					className="text-primary text-xs font-medium hover:underline"
+				>
+					Open Monitor →
+				</AppLink>
+			}
+		>
+			{usage.isLoading ? (
+				<Skeleton className="h-10 w-full" />
+			) : total == null ? (
+				<p className="text-muted-foreground text-sm">
+					Outside the top APIs by volume in the last 7 days — see Monitor for the
+					breakdown.
+				</p>
+			) : (
+				<ApiUsageSummary
+					size="large"
+					calls={total}
+					failed={row?.failed}
+					trend={row?.trend}
+				/>
+			)}
+		</HubCard>
+	);
+}
+
+function NotesCard({ apiKey, className }: { apiKey: ApiKey; className?: string }) {
+	const notes = useApiNotes(apiKey);
+	if (notes.isError) return null;
+	const rows = notes.data?.items ?? [];
+	return (
+		<HubCard
+			title="Notes"
+			icon={<NotebookPen className="h-4 w-4" />}
+			testId="hub-notes"
+			className={className}
+		>
+			{notes.isPending ? (
+				<Skeleton className="h-10 w-full" />
+			) : rows.length === 0 ? (
+				<p className="text-muted-foreground text-sm">
+					No notes on this API yet. Agents and operators can attach hints (auth quirks,
+					usage tips, corrections) that show up here.
+				</p>
+			) : (
+				<ul className="space-y-2.5">
+					{rows.map((n) => (
+						<li key={n.id} className="text-sm">
+							<div className="mb-0.5 flex flex-wrap items-center gap-1.5">
+								{n.type && <Tag>{n.type.replace(/_/g, ' ')}</Tag>}
+								{n.confidence && (
+									<span className="text-muted-foreground text-[11px]">
+										{n.confidence} confidence
+									</span>
+								)}
+								<span className="text-muted-foreground ml-auto text-[11px]">
+									{timeAgo(n.createdAt)}
+								</span>
+							</div>
+							<p className="text-foreground leading-snug whitespace-pre-line">
+								{n.body}
+							</p>
+						</li>
+					))}
+				</ul>
+			)}
+		</HubCard>
+	);
+}
+
+function RecentActivityCard({ api }: { api: WorkspaceApi }) {
+	const stream = useAgentStreamOptional();
+	const events = useMemo(
+		() =>
+			(stream?.events ?? [])
+				.filter(
+					(ev) =>
+						(ev.tokens.vendor === api.api.vendor &&
+							ev.tokens.name === api.api.name &&
+							(!ev.tokens.version || ev.tokens.version === api.api.version)) ||
+						(api.catalogApiId != null && ev.tokens.api_id === api.catalogApiId),
+				)
+				.slice(0, 6),
+		[stream?.events, api.api.vendor, api.api.name, api.api.version, api.catalogApiId],
+	);
+	if (events.length === 0) return null;
+	return (
+		<HubCard
+			title="Recent activity"
+			icon={<Activity className="h-4 w-4" />}
+			testId="hub-recent"
+		>
+			<ul className="space-y-1">
+				{events.map((ev) => (
+					<StreamEventRow key={ev.id} ev={ev} size="md" className="-mx-1.5" />
+				))}
+			</ul>
+		</HubCard>
+	);
+}
+
+/**
+ * "Who can use it" spans the Overview (its Agents and Credentials side by side
+ * on wide screens), then Notes | Calls as an equal-height pair, then Recent
+ * activity. Narrow screens stack one column: Who can use it, Calls, Notes —
+ * DOM order is the narrow reading order; Notes moves left on wide screens. A
+ * pair that loses a card (Calls are admin-only; Notes hide on a failed read)
+ * lets the survivor take the row.
+ */
+export function ApiHubOverview({ api }: { api: WorkspaceApi }) {
+	return (
+		<div className="space-y-4" data-testid="hub-overview-blocks">
+			<AccessCard api={api} />
+			<div
+				className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2"
+				data-testid="hub-overview-pair"
+			>
+				<UsageCard api={api} className="lg:only:col-span-2" />
+				<NotesCard apiKey={api.api} className="lg:order-first lg:only:col-span-2" />
+			</div>
+			<RecentActivityCard api={api} />
+		</div>
+	);
+}

@@ -20,6 +20,7 @@ import {
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
 import type { AgentListResponse } from '@/shared/api';
+import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import type {
 	ConfirmRequest,
 	ConfirmResponse,
@@ -173,12 +174,18 @@ export function useBindCredentialToAgents() {
 			}
 		},
 		onSuccess: (_res, { credentialId, agentIds }) => {
+			// Literal keys: `credentialKeys` lives in `./index`, which re-exports
+			// this file (importing it back would close a cycle). They mirror
+			// `agentsKeys.credentialBindings(aid)` (the agent's binding list) and
+			// `credentialKeys.agents(credentialId)` (the credential's agent roster —
+			// the slice the API hub's "Who can use it" and the Library's workspace
+			// agent counts read); the prefix also sweeps its all-pages variant.
 			for (const aid of agentIds) {
 				void client.invalidateQueries({
-					queryKey: ['agents', aid, 'credential-bindings'],
+					queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
 				});
 			}
-			void client.invalidateQueries({ queryKey: ['credentials', credentialId, 'bindings'] });
+			void client.invalidateQueries({ queryKey: ['credentials', 'agents', credentialId] });
 		},
 	});
 }

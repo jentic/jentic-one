@@ -18,10 +18,17 @@
  * Links from before the redesign carried a `?tab=` vocabulary; they're
  * rewritten on arrival (see LEGACY_TABS).
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
 import { ArrowLeft, Maximize2 } from 'lucide-react';
-import { Button, CardFooter, PageShell, PageHeader, PageHelp } from '@/shared/ui';
+import {
+	Button,
+	CardFooter,
+	PageShell,
+	PageHeader,
+	PageHelp,
+	useReportRightDock,
+} from '@/shared/ui';
 import { ActivityStreamPanel } from '@/shared/app/rail/ActivityStreamPanel';
 import { activityStreamVtStyle, withViewTransition } from '@/shared/app/viewTransitions';
 import { ACTIVITY_SOURCES, type ActivitySource } from '@/modules/monitor/api';
@@ -74,6 +81,9 @@ export default function MonitorPage() {
 	const expanded = !isAdmin || searchParams.get('view') === 'activity' || source !== 'all';
 
 	const usage = useUsageOverview({ enabled: isAdmin && !expanded });
+	// Toasts sit left of the docked Live activity panel (the grid's last column at xl).
+	const dockGridRef = useRef<HTMLDivElement>(null);
+	useReportRightDock(dockGridRef, { lastChild: true, active: !expanded });
 
 	// Arrival rewrites (replace: no history entry). Legacy `?tab=` values map
 	// onto the new vocabulary; the rest are retired params.
@@ -216,7 +226,10 @@ export default function MonitorPage() {
 						/>
 					)}
 
-					<div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,26rem)]">
+					<div
+						ref={dockGridRef}
+						className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,26rem)]"
+					>
 						<MonitorOverview
 							state={usage}
 							linkBase={linkBase}

@@ -23,7 +23,7 @@ import {
 import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
 import { useOptionalCurrentUser } from '@/shared/auth';
-import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	approveAgent,
 	archiveAgent,

@@ -472,6 +472,7 @@
 		display: none;
 	}
 
+	/* The activity stream morphs between its dockings (rail ⇄ Monitor panel). */
 	::view-transition-group(activity-stream) {
 		animation-duration: 420ms;
 		animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);

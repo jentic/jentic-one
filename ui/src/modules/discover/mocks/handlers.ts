@@ -21,15 +21,26 @@ interface CatalogFixture {
 	vendor: string;
 	registered: boolean;
 	github: string | null;
+	/**
+	 * `{sub}/{version}` directories under `apis/openapi/{domain}/` — the real
+	 * jentic-public-apis layout the backend's manifest builder emits (`sub` is
+	 * the umbrella sub-API, or `main` when there is none).
+	 */
+	dirs: string;
 }
 
+const PUBLIC_APIS_RAW = 'https://raw.githubusercontent.com/jentic/jentic-public-apis/main';
+
 function entry(f: CatalogFixture) {
+	const domain = f.api_id.split('/')[0];
+	const [sub] = f.dirs.split('/');
 	return {
 		api_id: f.api_id,
 		vendor: f.vendor,
-		path: `apis/${f.api_id}/openapi.json`,
-		spec_url: `https://raw.githubusercontent.com/jentic/catalog/main/${f.api_id}.json`,
+		path: sub === 'main' ? `apis/openapi/${domain}` : `apis/openapi/${domain}/${sub}`,
+		spec_url: `${PUBLIC_APIS_RAW}/apis/openapi/${domain}/${f.dirs}/openapi.json`,
 		registered: f.registered,
+		update_available: false,
 		_links: {
 			self: `/catalog/${f.api_id}`,
 			operations: `/catalog/${f.api_id}/operations`,
@@ -42,41 +53,68 @@ function entry(f: CatalogFixture) {
 const CATALOG_ENTRIES = [
 	entry({
 		api_id: 'stripe.com',
+		dirs: 'main/2024-01-01',
 		vendor: 'stripe',
 		registered: true,
 		github: 'https://github.com/jentic/catalog/blob/main/stripe.com.json',
 	}),
 	entry({
 		api_id: 'github.com',
+		dirs: 'main/1.1.4',
 		vendor: 'github',
 		registered: false,
 		github: 'https://github.com/jentic/catalog/blob/main/github.com.json',
 	}),
-	entry({ api_id: 'slack.com', vendor: 'slack', registered: false, github: null }),
+	entry({
+		api_id: 'slack.com',
+		dirs: 'main/1.7.0',
+		vendor: 'slack',
+		registered: false,
+		github: null,
+	}),
 	// Umbrella vendor with multiple sub-APIs that share one vendor (`nytimes.com`).
 	// These exercise the distinct-title fix: searching "nyt" must surface rows
 	// tellable apart by title, not three identical "nytimes.com" cards.
 	entry({
 		api_id: 'nytimes.com/article_search',
+		dirs: 'article_search/1.0.0',
 		vendor: 'nytimes.com',
 		registered: false,
 		github: 'https://github.com/jentic/catalog/blob/main/nytimes.com/article_search.json',
 	}),
 	entry({
 		api_id: 'nytimes.com/top_stories',
+		dirs: 'top_stories/2.0.0',
 		vendor: 'nytimes.com',
 		registered: false,
 		github: 'https://github.com/jentic/catalog/blob/main/nytimes.com/top_stories.json',
 	}),
 	entry({
 		api_id: 'nytimes.com/books',
+		dirs: 'books/3.0.0',
 		vendor: 'nytimes.com',
 		registered: false,
 		github: 'https://github.com/jentic/catalog/blob/main/nytimes.com/books.json',
 	}),
 ];
 
-const REGISTERED_TOTAL = CATALOG_ENTRIES.filter((e) => e.registered).length;
+/**
+ * Test/mock seam: flip catalog entries' real per-entry fields (`registered`,
+ * `update_available`) so a scenario can line the catalog up with the seeded
+ * registry — the backend derives both from the local registry.
+ */
+export function patchMockCatalogEntry(
+	apiId: string,
+	fields: { registered?: boolean; update_available?: boolean },
+): void {
+	const row = CATALOG_ENTRIES.find((e) => e.api_id === apiId);
+	if (row) Object.assign(row, fields);
+}
+
+/** Test/mock seam: the vendor a catalog entry resolves to. */
+export function mockCatalogVendor(apiId: string): string | null {
+	return CATALOG_ENTRIES.find((e) => e.api_id === apiId)?.vendor ?? null;
+}
 
 const GITHUB_OPERATIONS = {
 	data: [
@@ -182,12 +220,18 @@ export const discoverHandlers = [
 		if (registeredOnly) rows = rows.filter((r) => r.registered);
 		if (unregisteredOnly) rows = rows.filter((r) => !r.registered);
 		if (q) rows = rows.filter((r) => r.api_id.toLowerCase().includes(q));
+		const outdatedOnly = url.searchParams.get('outdated_only') === 'true';
+		if (outdatedOnly) rows = rows.filter((r) => r.registered && r.update_available);
 
 		// Single-page fixture: no cursor paging needed for the test corpus.
 		return HttpResponse.json({
 			data: rows,
 			catalog_total: CATALOG_ENTRIES.length,
-			registered_count: REGISTERED_TOTAL,
+			// Whole-manifest counts, recomputed per request (a scenario may flip
+			// entries), like the real service's status fields.
+			registered_count: CATALOG_ENTRIES.filter((e) => e.registered).length,
+			outdated_count: CATALOG_ENTRIES.filter((e) => e.registered && e.update_available)
+				.length,
 			manifest_age_seconds: 120,
 			has_more: false,
 			next_cursor: null,

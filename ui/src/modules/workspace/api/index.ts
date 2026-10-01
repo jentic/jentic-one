@@ -6,25 +6,46 @@
  * `client.ts` directly (the repository tier, reached only via hooks).
  */
 export {
-	useWorkspaceApis,
 	useWorkspaceApi,
 	useApiOperations,
 	useApiRevisions,
 	useApiSpec,
+	useApiAuthRequirement,
 	useRevisionActions,
 	useOverlays,
 	useOverlayActions,
 	useSnoozeCatalogUpdate,
 	useDeleteApi,
 	useReimportFromCatalog,
+	useApiNotes,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
 export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';
+export { workspaceApiDisplayTitle } from '@/modules/workspace/api/adapters';
 
-export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
-export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/specOperations';
+// Cross-module reads the API hub joins in (credentials → agents, 7-day usage).
+// They live in shared (the Library catalog panel needs them too); re-exported
+// here so the hub's views keep one api-barrel entry point.
+export {
+	useApiAccessIndex,
+	useAgentAccess,
+	agentsExhaustive,
+} from '@/shared/credentials/api/apiAccess';
+export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks';
+export { callsInWeek } from '@/shared/credentials/api/apiHealth';
+
+export {
+	parseSpecOperations,
+	opDetailKey,
+	specAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
+export type {
+	ParsedSpec,
+	SpecOperationDetail,
+	SpecAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 
 export {
 	shortOverlayId,
@@ -51,6 +72,7 @@ export { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
 export type { ApiKey } from '@/modules/workspace/api/apiId';
 
 export type {
+	ApiNote,
 	ApiRef,
 	WorkspaceApi,
 	ApiOperation,

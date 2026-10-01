@@ -9,7 +9,7 @@ import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
-import { credentialsBindableBy, type BindViewer } from '@/modules/agents/lib/bindAuthority';
+import { credentialsBindableBy, type BindViewer } from '@/shared/credentials/lib/bindAuthority';
 
 /**
  * What a pick will cost, worst-to-best as work for the operator. The tray only

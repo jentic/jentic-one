@@ -84,6 +84,17 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.githubUrl).toBeUndefined();
 	});
 
+	it('reads the version off a jentic-public-apis spec_url, and omits it otherwise', () => {
+		expect(
+			catalogEntryToEntity({
+				...registeredEntry,
+				spec_url:
+					'https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
+			}).version,
+		).toBe('2024-01-01');
+		expect(catalogEntryToEntity(registeredEntry).version).toBeUndefined();
+	});
+
 	it('defaults updateAvailable to false when the entry omits update_available', () => {
 		// The three baseline fixtures carry no `update_available` field, so the
 		// adapter must default it defensively rather than surface `undefined`.
@@ -109,6 +120,12 @@ describe('catalogEntryToEntity', () => {
 		expect(entity.summary).toBe('example.org');
 		expect(entity.subtitle).toBeUndefined();
 		expect(entity.vendor).toBe('example.org');
+		// The icon key falls back; the import identity's vendor does not.
+		expect(entity.catalogVendor).toBeUndefined();
+	});
+
+	it('keeps the catalog vendor verbatim for the import identity', () => {
+		expect(catalogEntryToEntity(umbrellaSubApi).catalogVendor).toBe('nytimes.com');
 	});
 
 	it('gives umbrella sub-APIs a distinct title with the vendor as subtitle', () => {

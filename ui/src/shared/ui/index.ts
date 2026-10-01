@@ -102,7 +102,7 @@ export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/Casca
 export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
 
-export { useCoversRightEdge, useRightEdgeInset } from '@/shared/ui/rightEdge';
+export { useCoversRightEdge, useReportRightDock, useRightEdgeInset } from '@/shared/ui/rightEdge';
 
 export { Toaster } from '@/shared/ui/Toaster';
 export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toastStore';
@@ -181,6 +181,15 @@ export {
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
 
+export {
+	ApiStateBadge,
+	ApiStateBadges,
+	apiServingState,
+	API_STATE_LABELS,
+	API_STATE_BADGE_VARIANT,
+} from '@/shared/ui/ApiStateBadge';
+export type { ApiServingState } from '@/shared/ui/ApiStateBadge';
+
 export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
 export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
 
@@ -193,6 +202,9 @@ export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
 
 export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { ApiUsageSummary } from '@/shared/ui/ApiUsageSummary';
+export { StreamEventRow } from '@/shared/ui/StreamEventRow';
+export type { ApiUsageSummaryProps } from '@/shared/ui/ApiUsageSummary';
 export { TrendLineChart } from '@/shared/ui/charts/TrendLineChart';
 export type { TrendPoint } from '@/shared/ui/charts/TrendLineChart';
 export { StackedBarChart } from '@/shared/ui/charts/StackedBarChart';

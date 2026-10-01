@@ -52,6 +52,11 @@ interface SegmentedToggleProps<T extends string = string> {
 	getControls?: (value: T) => string | undefined;
 	/** Map an option value → the `id` to give its tab button. Only for `as='tabs'`. */
 	getTabId?: (value: T) => string | undefined;
+	/**
+	 * Nothing to choose between (e.g. a filter over an empty list): every
+	 * segment is `disabled` and the group is `aria-disabled`.
+	 */
+	disabled?: boolean;
 }
 
 interface PillRect {
@@ -68,6 +73,7 @@ export function SegmentedToggle<T extends string = string>({
 	ariaLabel,
 	getControls,
 	getTabId,
+	disabled = false,
 }: SegmentedToggleProps<T>) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const btnRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -120,12 +126,14 @@ export function SegmentedToggle<T extends string = string>({
 			ref={containerRef}
 			role={isTabs ? 'tablist' : ariaLabel ? 'group' : undefined}
 			aria-label={ariaLabel}
+			aria-disabled={disabled || undefined}
 			className={cn(
 				// Structural backstop for the invariant above: even if a stale
 				// rect ever slipped through, overflow past the control's border
 				// never becomes visible or scrollable. The pill is inset
 				// (top-0.5/bottom-0.5, within p-0.5), so nothing is cut at rest.
 				'border-border bg-muted/50 relative flex overflow-x-clip rounded-lg border p-0.5',
+				disabled && 'opacity-50',
 				className,
 			)}
 		>
@@ -167,11 +175,12 @@ export function SegmentedToggle<T extends string = string>({
 							if (el) btnRefs.current.set(option.value, el);
 							else btnRefs.current.delete(option.value);
 						}}
+						disabled={disabled}
 						onClick={() => onChange(option.value)}
 						onKeyDown={handleKeyDown}
 						className={cn(
 							'relative flex items-center rounded-md px-3 py-1 text-xs font-medium transition-colors',
-							!isActive && 'cursor-pointer',
+							disabled ? 'cursor-not-allowed' : !isActive && 'cursor-pointer',
 						)}
 					>
 						<span
@@ -179,7 +188,9 @@ export function SegmentedToggle<T extends string = string>({
 								'relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors',
 								isActive
 									? 'text-foreground'
-									: 'text-muted-foreground hover:text-foreground',
+									: disabled
+										? 'text-muted-foreground'
+										: 'text-muted-foreground hover:text-foreground',
 							)}
 						>
 							{option.icon && (

@@ -24,7 +24,8 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  *    default; below `xl` the same rail body opens as a drawer from the
  *    TopNavbar. Not mounted on Monitor, whose Live activity panel already IS the
  *    activity stream (`isRailHiddenOn`),
- *  - the `ToastRegion`, bottom-right beside the rail or an open sheet.
+ *  - the `ToastRegion`, bottom-right beside the rail, an open sheet or a
+ *    page's docked side column (`useReportRightDock`).
  *
  * The shell is viewport-tall and never scrolls itself. Below the fixed navbar
  * (`pt-12` clears it) is a flex row: `<main>` takes the remaining width
@@ -42,6 +43,10 @@ import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
  * In-app link clicks run as view transitions (`useLinkViewTransitions`): pages
  * cross-fade and the activity stream morphs between wherever it's docked —
  * the rail here, the panel (and full log) on Monitor.
+ *
+ * Cross-page navigations (a pathname change, not a query-param one) land at
+ * the top of `<main>` — or at the `#hash` anchor they link to — and
+ * Back/Forward restores the entry's offset (`useShellNavigation`).
  *
  * Everything is wrapped in `AgentStreamProvider` so the rail, the drawer and
  * the ToastHost share one live event stream. Rendered behind AuthGuard, so `user` is always

@@ -23,7 +23,7 @@ import {
 } from '@/modules/discover/api/client';
 import type { CatalogFilter, DiscoveryEntity } from '@/modules/discover/api/types';
 import type { OperationPreviewListResponse, PreviewOperationResponse } from '@/shared/api';
-import { sharedQueryKeys } from '@/shared/api';
+import { invalidateApiLists } from '@/shared/credentials/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const discoverKeys = {
@@ -98,7 +98,7 @@ export function useDiscoverCatalog(params: {
 	filter: CatalogFilter;
 	/**
 	 * Poll the feed every few seconds while an import is in flight, so a card
-	 * flips Available → Imported on its own once the async job lands (the
+	 * flips Available → In your workspace on its own once the async job lands (the
 	 * catalog's `registered` flag is the only completion signal the agent-scoped
 	 * UI can observe — `/jobs` is admin-only). Off when nothing is pending.
 	 */
@@ -242,7 +242,7 @@ interface UseImportResult {
 	 * Catalog api_ids with an import job still settling — covers the whole
 	 * window from the 202 until the catalog reports `registered: true` (or the
 	 * safety timeout fires), NOT just the in-flight HTTP request. The grid + sheet
-	 * read this to keep the card in a "Importing…" pending state.
+	 * read this to keep the card in a "Adding…" pending state.
 	 */
 	pendingApiIds: Set<string>;
 	/** True while any import is settling — drives the catalog poll. */
@@ -265,7 +265,7 @@ interface UseImportResult {
  * api_ids in a set, ask the page to poll the feed while it's non-empty, and
  * clear an id (with a success toast) when `reconcileImported` sees it turn
  * registered. Each pending id also has a safety timeout so a failed/stuck job
- * can't pin a card in "Importing…" forever.
+ * can't pin a card in "Adding…" forever.
  */
 export function useImportCatalogApi(): UseImportResult {
 	const queryClient = useQueryClient();
@@ -309,8 +309,8 @@ export function useImportCatalogApi(): UseImportResult {
 		},
 		onSuccess: (res, entity) => {
 			toast({
-				title: 'Import started',
-				description: `${entity.summary} is importing into your workspace (job ${res.job_id}). This can take a moment.`,
+				title: 'Adding to workspace',
+				description: `${entity.summary} is being added to your workspace (job ${res.job_id}). This can take a moment.`,
 				variant: 'success',
 			});
 			// Enter the pending state and arm a safety timeout for this id.
@@ -328,7 +328,7 @@ export function useImportCatalogApi(): UseImportResult {
 				const label = labelsRef.current.get(entity.apiId) ?? entity.summary;
 				clearPending(entity.apiId);
 				toast({
-					title: 'Still importing',
+					title: 'Still adding to workspace',
 					description: `${label} is taking longer than expected. Refresh the catalog to check its status.`,
 					variant: 'default',
 				});
@@ -342,11 +342,11 @@ export function useImportCatalogApi(): UseImportResult {
 		onError: (error: unknown, entity) => {
 			labelsRef.current.delete(entity.apiId);
 			toast({
-				title: 'Import failed',
+				title: 'Couldn’t add to workspace',
 				description:
 					error instanceof Error
 						? error.message
-						: `Couldn't import ${entity.summary} from the public catalog.`,
+						: `Couldn't add ${entity.summary} to your workspace from the public catalog.`,
 				variant: 'error',
 			});
 		},
@@ -355,6 +355,9 @@ export function useImportCatalogApi(): UseImportResult {
 		},
 	});
 
+	// `mutateAsync` is stable across renders (the mutation result object isn't),
+	// so memoised catalog tiles don't re-render on every parent render.
+	const { mutateAsync } = mutation;
 	const importEntity = useCallback(
 		async (entity: DiscoveryEntity) => {
 			// Ignore re-clicks while an import for this id is already settling (the
@@ -363,9 +366,9 @@ export function useImportCatalogApi(): UseImportResult {
 			// POST :import calls, two toasts, and two safety timers for one id. Keyed
 			// per-id so importing a *different* API concurrently still works.
 			if (pendingApiIds.has(entity.apiId) || inFlightRef.current.has(entity.apiId)) return;
-			await mutation.mutateAsync(entity);
+			await mutateAsync(entity);
 		},
-		[mutation, pendingApiIds],
+		[mutateAsync, pendingApiIds],
 	);
 
 	const reconcileImported = useCallback(
@@ -378,20 +381,17 @@ export function useImportCatalogApi(): UseImportResult {
 					clearPending(entity.apiId);
 					landed = true;
 					toast({
-						title: 'Import complete',
+						title: 'Added to workspace',
 						description: `${label} is now in your workspace.`,
 						variant: 'success',
 					});
 				}
 			}
-			// At least one import landed: a new API now exists in the Workspace
-			// registry, so drop the stale `GET /apis` cache. The cross-module key
-			// comes from the shared registry (#511) so it can't drift from
-			// `workspaceKeys.apis()`. Hoisted out of the loop — one invalidation
-			// covers the whole batch.
-			if (landed) {
-				queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
-			}
+			// At least one import landed: a new API now exists in the registry, so
+			// drop every stale `GET /apis` list (the landed import then moves from
+			// "Adding…" into the panel's API list). Hoisted out of the loop — one
+			// invalidation covers the whole batch.
+			if (landed) invalidateApiLists(queryClient);
 		},
 		[clearPending, queryClient],
 	);

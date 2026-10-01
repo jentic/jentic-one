@@ -1173,6 +1173,16 @@ export type InlineActionSpec = {
 const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
 	traceId != null && traceId !== '' && traceId !== 'unknown';
 
+/**
+ * Overlay-lifecycle events — the backend's `overlay.*` types (today
+ * `overlay.deprecated`) and `catalog.update_conflicts_overlay` (an upstream
+ * update colliding with a confirmed overlay). Their natural home is the hub's
+ * Versions tab (revisions + overlays), not the Overview.
+ */
+function isOverlayEvent(ev: StreamEvent): boolean {
+	return ev.type.startsWith('overlay.') || ev.type === 'catalog.update_conflicts_overlay';
+}
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
@@ -1191,15 +1201,21 @@ const NAV = {
 			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
-	// Catalog/overlay events deep-link to the affected API's Workspace detail
-	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
-	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
-	// shared-layer code, so the path shape is inlined rather than imported from a
-	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	// Catalog/overlay events deep-link to the affected API's hub in the
+	// Library: `/library/workspace/:vendor/:name/:version`, each segment
+	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
+	// here since shared/lib can't import the route registry). Router-relative — the
+	// rail prepends the `/app` basename. (The retired `/workspace/...` form still
+	// redirects, so events rendered by older builds keep working.)
 	workspaceApi: (ev: StreamEvent) => {
 		const { vendor, name, version } = ev.tokens;
 		if (!vendor || !name || !version) return null;
-		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		const hub = `/library/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		// Overlay-lifecycle events (`overlay.deprecated`, and an upstream update
+		// that conflicts with a confirmed overlay) land on the hub's Versions tab,
+		// where the overlays live. A plain `catalog.update_available` keeps the
+		// Overview (default tab), where Re-import lives.
+		return isOverlayEvent(ev) ? `${hub}?tab=versions` : hub;
 	},
 	// The Settings OAuth approval queue (D7) — where the
 	// approve/deny verbs for a pending DCR registration live. Static target:

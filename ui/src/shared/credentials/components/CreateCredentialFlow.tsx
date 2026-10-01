@@ -7,6 +7,7 @@ import {
 	ErrorAlert,
 	Input,
 	Label,
+	SegmentedToggle,
 	SheetPrimitive,
 	Skeleton,
 	toast,
@@ -106,6 +107,18 @@ interface CreateCredentialFlowProps {
 	 */
 	pinnedApi?: SelectedApi;
 	/**
+	 * Open on the form (step 2) for this API — a host that is already about one
+	 * API (its hub) shouldn't make the operator find it again. Unlike
+	 * `pinnedApi` it is only a starting point: Back and `Change` still reach the
+	 * picker. Each (re)open starts from it; a different API re-seeds the flow.
+	 * `pinnedApi` wins when both are set.
+	 *
+	 * The credential defaults to this API's version (the host is about that one
+	 * registered revision); the form offers "Any version" to unpin. An API
+	 * re-picked in step 1 starts unpinned, like any other pick.
+	 */
+	initialApi?: SelectedApi;
+	/**
 	 * When provided, the flow opens directly into the vendor connect in
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
@@ -135,6 +148,9 @@ interface CreateCredentialFlowProps {
 
 type Step = 'pick' | 'form' | 'vendor';
 
+/** Which versions of the seeded API the credential covers. */
+type VersionScope = 'pinned' | 'any';
+
 /**
  * The guided flow for creating a credential.
  *
@@ -155,8 +171,15 @@ type Step = 'pick' | 'form' | 'vendor';
  * dialog for a host in the top layer. Everything between the header and the action
  * row is one implementation, so the two surfaces cannot drift.
  *
- * Neither surface dismisses on a backdrop click — a stray click would discard a
- * half-typed secret.
+ * The drawer closes on a backdrop click exactly as it does on Escape / X / Cancel:
+ * every close wipes the draft (see the reset effect — a half-typed secret is not
+ * kept around). Two exceptions keep the backdrop inert:
+ *  - a live vendor / approval connect (`step === 'vendor'`, `approvalSession`):
+ *    `VendorConnectFlow` opens a connect session on mount and cancels it on
+ *    unmount, so a stray click would silently abandon a sign-in in progress.
+ *    Escape and the flow's own Cancel still close it deliberately.
+ *  - the `dialog` surface: the native-`<dialog>` backdrop test in `Dialog` can't
+ *    tell a drag that ends outside from a click, so it would close mid-select.
  */
 export function CreateCredentialFlow({
 	open,
@@ -164,14 +187,29 @@ export function CreateCredentialFlow({
 	onCreated,
 	initialType,
 	pinnedApi,
+	initialApi,
 	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
 	back,
 }: CreateCredentialFlowProps) {
-	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
-	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
+	// The API the flow starts on: fixed (`pinnedApi`) or just preselected
+	// (`initialApi`). Only `pinnedApi` hides the way back to the picker.
+	const seedApi = pinnedApi ?? initialApi;
+	// Only a host opened from one API (`initialApi`) defaults the credential to
+	// that API's version; the setup queue's `pinnedApi` batch stays unpinned, as
+	// a catalog pick's version isn't the registry's yet.
+	const seedVersion = pinnedApi ? '' : (initialApi?.version?.trim() ?? '');
+	const seedForm = (): CredentialFormState =>
+		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false, !!seedVersion) : EMPTY_FORM;
+	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
+	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
+	/**
+	 * The version the form can pin to: the seeded API's own, until the operator
+	 * picks an API in step 1 (a pick is unpinned, with nothing to toggle).
+	 */
+	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
@@ -179,9 +217,7 @@ export function CreateCredentialFlow({
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
-	const [state, setState] = useState<CredentialFormState>(() =>
-		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
-	);
+	const [state, setState] = useState<CredentialFormState>(seedForm);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
 	const [oauth2Flows, setOAuth2Flows] = useState<OAuth2FlowDef[]>([]);
@@ -324,15 +360,16 @@ export function CreateCredentialFlow({
 	};
 
 	const reset = (): void => {
-		// A pinned API is the caller's premise, not a user choice, so a reset returns
-		// to that API's empty form rather than to the picker.
-		setStep(pinnedApi ? 'form' : 'pick');
-		setSelectedApi(pinnedApi ?? null);
+		// A pinned or preselected API is the caller's premise, not a user choice, so
+		// a reset returns to that API's empty form rather than to the picker.
+		setStep(seedApi ? 'form' : 'pick');
+		setSelectedApi(seedApi ?? null);
 		setSelectedVendor(null);
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
+		setState(seedForm());
+		setPinnableVersion(seedVersion);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -354,10 +391,23 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
 
+	// Seed-from-props: a host that stays mounted while its API changes (one hub
+	// to another) re-seeds only when the preselected API itself changes — never
+	// on an `open` flip, which the effect above already covers.
+	const seedKey = seedApi ? `${seedApi.vendor}\u0000${seedApi.name}\u0000${seedApi.version}` : '';
+	const lastSeedKey = useRef(seedKey);
+	useEffect(() => {
+		if (lastSeedKey.current === seedKey) return;
+		lastSeedKey.current = seedKey;
+		reset();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [seedKey]);
+
 	const handlePickApi = (api: SelectedApi): void => {
 		setSelectedApi(api);
 		setSelectedVendor(null);
 		setManualMode(false);
+		setPinnableVersion('');
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
@@ -374,6 +424,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(null);
 		setSelectedVendor(null);
 		setManualMode(true);
+		setPinnableVersion('');
 		setState(EMPTY_FORM);
 		setStep('form');
 	};
@@ -538,9 +589,10 @@ export function CreateCredentialFlow({
 
 	// The picked-API summary banner shown atop the form step (label + the
 	// vendor/name triple + whether saving will trigger a catalog import). The
-	// version shown is the one the credential is saved with: a catalog pick is
+	// version shown is the one the credential is saved with: a picker pick is
 	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
-	// "any version" rather than the catalog's version string.
+	// "any version" rather than the catalog's version string; a flow opened from
+	// one API reads that API's version until the operator switches to any.
 	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
@@ -760,6 +812,33 @@ export function CreateCredentialFlow({
 										</span>
 									)}
 								</p>
+								{pinnableVersion && (
+									<div className="mt-2 flex flex-wrap items-center gap-2">
+										<span
+											aria-hidden="true"
+											className="text-muted-foreground text-xs"
+										>
+											Use for
+										</span>
+										<SegmentedToggle<VersionScope>
+											ariaLabel="Use this credential for"
+											options={[
+												{
+													value: 'pinned',
+													label: `Version ${pinnableVersion}`,
+												},
+												{ value: 'any', label: 'Any version' },
+											]}
+											value={pinnedVersion ? 'pinned' : 'any'}
+											onChange={(scope): void =>
+												patch({
+													apiVersion:
+														scope === 'pinned' ? pinnableVersion : '',
+												})
+											}
+										/>
+									</div>
+								)}
 							</div>
 							{!pinnedApi && (
 								<Button
@@ -979,6 +1058,9 @@ export function CreateCredentialFlow({
 		</>
 	);
 
+	/** A connect session is open (created on `VendorConnectFlow` mount). */
+	const connectInPlay = !!approvalSession || step === 'vendor';
+
 	if (surface === 'dialog') {
 		return (
 			<Dialog
@@ -1000,7 +1082,9 @@ export function CreateCredentialFlow({
 			open={open}
 			onClose={onClose}
 			ariaLabelledBy={headingId}
-			dismissOnBackdrop={false}
+			// Same close as Escape / X (see the doc comment); inert only while a
+			// vendor / approval connect session is live.
+			dismissOnBackdrop={!connectInPlay}
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">

@@ -10,11 +10,21 @@
  *  - several Stripe credentials: two for the same API (one sharing a name with
  *    the seeded key) and one for a different Stripe API, so grouping, the
  *    "which credential" choice and the wizard's vendor-wide list are on screen;
- *  - a second GitHub credential, so adding GitHub to an agent asks which one.
+ *  - a second GitHub credential, so adding GitHub to an agent asks which one;
+ *  - a Library whose catalog and registry agree the way the backend derives
+ *    them: the seeded Stripe / GitHub / Slack registry rows carry their
+ *    `catalog_api_id`, those catalog entries read `registered`, and Stripe has
+ *    an upstream update (`update_available` on both sides);
+ *  - catalog imports that LAND: `POST /catalog/{id}:import` still answers 202,
+ *    then a few seconds later the entry flips `registered` and a registry row
+ *    appears (with `catalog_api_id`), as the real async import job does — so
+ *    the Library panel's "Adding…" row resolves into the API list.
  */
-import type { HttpHandler } from 'msw';
+import { http, HttpResponse, type HttpHandler } from 'msw';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
 import { seedMockCredentials } from '@/shared/credentials/mocks/handlers';
+import { mockCatalogVendor, patchMockCatalogEntry } from '@/modules/discover/mocks/handlers';
+import { patchMockApi, registerMockCatalogImport } from '@/modules/workspace/mocks/handlers';
 
 const STRIPE = { vendor: 'stripe', name: 'stripe-api' };
 const GITHUB = { vendor: 'github', name: 'github-api' };
@@ -75,7 +85,52 @@ const scenarioCredentials: Credential[] = [
 /** Seed the scenario's rows into the shared stores. Call once, before the worker starts. */
 export function installReviewScenario(): void {
 	seedMockCredentials(scenarioCredentials);
+	// Line the catalog up with the registry (both fields are real wire fields).
+	patchMockApi('stripe/stripe-api/2024-01-01', {
+		catalog_api_id: 'stripe.com',
+		origin: 'catalog',
+		update_available: true,
+	});
+	patchMockApi('github/github-api/1.1.4', { catalog_api_id: 'github.com', origin: 'catalog' });
+	patchMockApi('slack.com/web-api/1.0.0', { catalog_api_id: 'slack.com', origin: 'catalog' });
+	patchMockCatalogEntry('stripe.com', { registered: true, update_available: true });
+	patchMockCatalogEntry('github.com', { registered: true });
+	patchMockCatalogEntry('slack.com', { registered: true });
 }
 
-/** The scenario only seeds shared stores; it serves no routes of its own. */
-export const reviewScenarioHandlers: HttpHandler[] = [];
+/** How long a scenario catalog import takes to "land" (the async job). */
+const IMPORT_LANDS_AFTER_MS = 5_000;
+
+/** One pending "landing" per api_id, so a re-click doesn't stack timers. */
+const landing = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Overrides the default (never-landing) catalog import: same 202 + job body,
+ * then the job "completes" — the entry reads registered and the registry gains
+ * the API — so the Library's pending → imported flow is reviewable end to end.
+ */
+export const reviewScenarioHandlers: HttpHandler[] = [
+	http.post('/catalog/*', ({ request }) => {
+		const url = new URL(request.url);
+		const tail = decodeURIComponent(url.pathname.replace(/^\/catalog\//, ''));
+		if (!tail.endsWith(':import')) return undefined;
+		const apiId = tail.slice(0, -':import'.length);
+		const jobId = `job_${apiId.replace(/\W/g, '_')}`;
+		// Only in a live page (the dev worker): a timer outliving a non-browser
+		// run would mutate the shared fixtures after it ended.
+		if (typeof document !== 'undefined' && !landing.has(apiId)) {
+			landing.set(
+				apiId,
+				setTimeout(() => {
+					landing.delete(apiId);
+					registerMockCatalogImport(apiId, mockCatalogVendor(apiId) ?? apiId);
+					patchMockCatalogEntry(apiId, { registered: true });
+				}, IMPORT_LANDS_AFTER_MS),
+			);
+		}
+		return HttpResponse.json(
+			{ job_id: jobId, status: 'queued', _links: { self: `/jobs/${jobId}` } },
+			{ status: 202 },
+		);
+	}),
+];

@@ -71,8 +71,8 @@ function StepCard({ index, step }: { index: number; step: SetupStep }) {
 export function FirstRunChecklist({ onCreateAgent }: { onCreateAgent: () => void }) {
 	const steps: SetupStep[] = [
 		{
-			target: { href: ROUTES.discover },
-			title: 'Discover an API',
+			target: { href: ROUTES.library },
+			title: 'Add an API from the Library',
 			description: 'Browse the catalog and register the APIs your agents will call.',
 			icon: Compass,
 		},

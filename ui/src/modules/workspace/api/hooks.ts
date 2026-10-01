@@ -24,7 +24,7 @@ import {
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
-	listApis,
+	listApiNotes,
 	listOperations,
 	listOverlays,
 	listRevisions,
@@ -35,7 +35,12 @@ import {
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
+import {
+	specAuthRequirement,
+	type SpecAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 import type {
+	ApiNote,
 	ApiOperation,
 	ApiRevision,
 	CursorPage,
@@ -45,8 +50,9 @@ import type {
 // The job poll is shared with the spec import (which is itself shared, so the
 // Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
 // backend's terminal-status vocabulary.
-import { jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
+import { invalidateApiLists, jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
+import { pendingOverlaysRoot } from '@/shared/hooks';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const workspaceKeys = {
@@ -60,16 +66,21 @@ export const workspaceKeys = {
 	revisions: (key: ApiKey) => [...workspaceKeys.all, 'revisions', formatApiKey(key)] as const,
 	overlays: (key: ApiKey) => [...workspaceKeys.all, 'overlays', formatApiKey(key)] as const,
 	spec: (key: ApiKey) => [...workspaceKeys.all, 'spec', formatApiKey(key)] as const,
+	notes: (key: ApiKey) => [...workspaceKeys.all, 'notes', formatApiKey(key)] as const,
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
 };
 
-/** The workspace API list. */
-export function useWorkspaceApis(): UseQueryResult<CursorPage<WorkspaceApi>> {
+/**
+ * Notes attached to an API (`GET /notes?api=…`, first page). Degrades quietly:
+ * the hub renders the block only when the read succeeds with rows.
+ */
+export function useApiNotes(key: ApiKey | null): UseQueryResult<CursorPage<ApiNote>> {
 	return useQuery({
-		queryKey: workspaceKeys.apis(),
-		queryFn: () => listApis(),
-		placeholderData: keepPreviousData,
+		queryKey: key ? workspaceKeys.notes(key) : [...workspaceKeys.all, 'notes', 'disabled'],
+		queryFn: () => listApiNotes(key as ApiKey),
+		enabled: key != null,
+		retry: false,
 	});
 }
 
@@ -305,6 +316,33 @@ export function useApiSpec(
 	});
 }
 
+/**
+ * Whether this API needs a credential, for the hub.
+ *
+ * `GET /apis` only carries the DECLARED scheme types (`securitySchemes`), not
+ * whether any operation requires one, so the hub reads the resolved live spec
+ * (the same `useApiSpec` cache the Operations tab and spec viewer share) and
+ * asks it (`specAuthRequirement`). Until that read lands — or when it fails,
+ * or the API has no live revision — declared schemes count as required.
+ */
+export function useApiAuthRequirement(api: WorkspaceApi): {
+	requirement: SpecAuthRequirement;
+	/** The spec read is in flight — `requirement` may still change. */
+	pending: boolean;
+	/** Where the answer came from. */
+	source: 'spec' | 'declared';
+} {
+	const declared = api.securitySchemes.length > 0;
+	const spec = useApiSpec(api.api, declared && api.currentRevisionId !== null);
+	const fromSpec = spec.data !== undefined ? specAuthRequirement(spec.data) : null;
+	if (fromSpec != null) return { requirement: fromSpec, pending: false, source: 'spec' };
+	return {
+		requirement: declared ? 'required' : 'none',
+		pending: spec.isLoading,
+		source: 'declared',
+	};
+}
+
 /** Promote / archive a revision, invalidating the API + its revision/op/spec lists. */
 export function useRevisionActions(key: ApiKey) {
 	const queryClient = useQueryClient();
@@ -317,6 +355,8 @@ export function useRevisionActions(key: ApiKey) {
 		// per-revision specs) are stale. `spec(key)` is the prefix of both the live
 		// key and the `revisionSpec` keys, so this one call covers them all.
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+		// Live vs Draft is a list-level field too.
+		invalidateApiLists(queryClient);
 	}, [queryClient, key]);
 
 	const promote = useMutation({
@@ -402,6 +442,9 @@ export function useOverlayActions(key: ApiKey) {
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.operations(key) });
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+		// The Library's docked panel counts pending overlays per API through a
+		// shared read — refresh it so a confirm/deprecate drops the count.
+		queryClient.invalidateQueries({ queryKey: pendingOverlaysRoot });
 	}, [queryClient, key]);
 
 	const confirm = useMutation({
@@ -496,7 +539,7 @@ export function useSnoozeCatalogUpdate(key: ApiKey) {
 				description: "You won't be notified again until a newer version is published.",
 			});
 			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+			invalidateApiLists(queryClient);
 		},
 		onError: (error: unknown) => {
 			toast({
@@ -525,7 +568,7 @@ export function useDeleteApi() {
 	return useMutation<void, Error, ApiKey>({
 		mutationFn: (key) => deleteApi(key),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+			invalidateApiLists(queryClient);
 			toast({ variant: 'success', title: 'API removed' });
 		},
 		onError: (error) => {
@@ -598,6 +641,7 @@ export function useReimportFromCatalog(key: ApiKey) {
 				}
 				queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
 				queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+				invalidateApiLists(queryClient);
 			} catch (error: unknown) {
 				toast({
 					variant: 'error',

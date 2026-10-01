@@ -50,10 +50,12 @@ function redact(body: CredentialCreateRequest, id: string, now: string): Credent
 		name: body.name,
 		type: body.type as CredentialType,
 		provider: (body as { provider?: string }).provider ?? 'manual',
+		// Omitted axes are wildcards: the backend stores NULL and serialises it as
+		// `""` (the create flow saves unpinned, so `version` is usually omitted).
 		api: {
 			vendor: body.api.vendor,
-			name: body.api.name ?? 'default',
-			version: body.api.version ?? '1.0.0',
+			name: body.api.name ?? '',
+			version: body.api.version ?? '',
 		},
 		active: true,
 		details,

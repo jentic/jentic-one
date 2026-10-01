@@ -2,6 +2,26 @@
 // set, the add-APIs preflight and the tile grid key the same API the same way.
 import { slugifyApiField } from '@/shared/lib/apiSlug';
 
+/**
+ * The canonical `vendor`/`name` a catalog import registers for an entry. The
+ * importer passes the entry's `vendor` (its registrable domain, `stripe.com`)
+ * and its WHOLE `api_id` (`nytimes.com/article_search`) as the vendor/name
+ * overrides, then slugifies both (`stripe-com`, `nytimes-com-article-search`) —
+ * the identity `ApiPicker` also gives a credential saved from a catalog pick.
+ * The version comes from the spec at import time, so it isn't known here.
+ *
+ * Null without a catalog `vendor`: the importer then falls back to the spec's
+ * own `info` block, which the catalog list doesn't carry.
+ */
+export function catalogImportRef(entry: {
+	apiId: string;
+	vendor?: string | null;
+}): { vendor: string; name: string } | null {
+	const vendor = entry.vendor?.trim();
+	if (!vendor || !entry.apiId.trim()) return null;
+	return { vendor: slugifyApiField(vendor), name: slugifyApiField(entry.apiId) };
+}
+
 /** Canonical `vendor/name` identity key — the picker's selection key. */
 export function apiRefKey(ref: { vendor: string; name: string }): string {
 	return `${slugifyApiField(ref.vendor)}/${slugifyApiField(ref.name)}`;

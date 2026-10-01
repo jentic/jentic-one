@@ -115,6 +115,7 @@ export type { BasicAuthCreateRequest } from '@/shared/api/generated/models/Basic
 export type { BasicAuthUpdateRequest } from '@/shared/api/generated/models/BasicAuthUpdateRequest';
 export type { BearerTokenCreateRequest } from '@/shared/api/generated/models/BearerTokenCreateRequest';
 export type { BearerTokenUpdateRequest } from '@/shared/api/generated/models/BearerTokenUpdateRequest';
+export type { NoAuthCreateRequest } from '@/shared/api/generated/models/NoAuthCreateRequest';
 export type { OAuth2CreateRequest } from '@/shared/api/generated/models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from '@/shared/api/generated/models/OAuth2UpdateRequest';
 export type { Sigv4CreateRequest } from '@/shared/api/generated/models/Sigv4CreateRequest';
@@ -211,6 +212,12 @@ export type { ClearTokenReason } from '@/shared/api/token-store';
 // typed `any` on the generated client; the workspace module re-types them in
 // its own `api/types.ts` + `adapters.ts`. Append-only, like the rest.
 export { OverlaysService } from '@/shared/api/generated/services/OverlaysService';
+
+// Notes (`GET /notes`, any authenticated caller). Agent/operator-authored hints
+// attached to an API (auth quirks, usage hints, corrections) — read by the
+// Library's API hub Overview. List responses are typed `any` on the generated
+// client; the workspace module re-types them in its adapters. Append-only.
+export { NotesService } from '@/shared/api/generated/services/NotesService';
 
 // System version. The running vs. latest-
 // available app release, read by the shell's update banner + UserMenu version

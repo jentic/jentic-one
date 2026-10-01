@@ -8,7 +8,7 @@
  */
 import { PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Button, Card, StatusText, Tooltip, VendorIcon } from '@/shared/ui';
-import { formatApiVersion } from '@/shared/lib';
+import { formatApiVersion, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRuleSummary } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
@@ -111,7 +111,7 @@ export function ApiTile({
 				<span className="sr-only">{tile.title} — open access details</span>
 			</button>
 			<div className="flex items-start gap-3">
-				<VendorIcon name={tile.title} vendor={tile.vendor} iconUrl={tile.iconUrl} />
+				<VendorIcon {...vendorIconPropsFor(tile)} />
 				<div className="min-w-0 flex-1">
 					<h3 className="truncate text-sm font-semibold">{tile.title}</h3>
 					{/* Reserved whether or not the registry proves an identity pair,
