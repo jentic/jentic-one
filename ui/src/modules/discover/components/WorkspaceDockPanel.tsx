@@ -88,12 +88,12 @@ const ATTENTION_TONE: Record<AttentionId, string> = {
 /** Names an attention item lists before "+N more" (which expands the rest in place). */
 const ATTENTION_PREVIEW = 3;
 
-/** Eyebrow caption above a block of the panel (a label, not a heading). */
+/** Sentence-case heading for a block of the panel (section-title style, not an eyebrow). */
 function SectionLabel({ children }: { children: React.ReactNode }) {
 	return (
-		<p className="text-muted-foreground mb-1.5 px-1 text-xs tracking-wider uppercase">
+		<h3 className="font-heading text-foreground mb-1.5 px-1 text-sm font-semibold">
 			{children}
-		</p>
+		</h3>
 	);
 }
 
@@ -238,8 +238,15 @@ function ApiRow({
 								data-testid="workspace-panel-api-agents"
 							>
 								<Bot className="h-3 w-3" aria-hidden="true" />
-								{agentCount}
-								{agentsAtLeast ? '+' : ''}
+								<span aria-hidden="true">
+									{agentCount}
+									{agentsAtLeast ? '+' : ''}
+								</span>
+								<span className="sr-only">
+									{`${agentCount}${agentsAtLeast ? '+' : ''} ${
+										agentCount === 1 && !agentsAtLeast ? 'agent' : 'agents'
+									} with access`}
+								</span>
 							</span>
 						)}
 					</div>
@@ -387,10 +394,10 @@ export function WorkspacePanelBody({
 							data-testid="workspace-panel-attention"
 							data-tone="warning"
 						>
-							<p className="text-warning mb-1 flex items-center gap-1.5 px-1 text-xs font-medium tracking-wider uppercase">
+							<h3 className="font-heading text-warning mb-1 flex items-center gap-1.5 px-1 text-sm font-semibold">
 								<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
 								Needs attention
-							</p>
+							</h3>
 							<ul className="divide-warning/15 divide-y">
 								{digest.attention.map((entry) => (
 									<AttentionItem

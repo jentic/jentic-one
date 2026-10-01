@@ -211,8 +211,8 @@ export function BindAgentDialog({
 						<strong className="text-foreground">{credential?.name}</strong>.
 					</p>
 				)}
-				<div className="space-y-1.5">
-					<Label>Agents</Label>
+				<fieldset className="min-w-0 space-y-1.5">
+					<legend className="text-foreground mb-1.5 text-sm font-medium">Agents</legend>
 					{!boundKnown &&
 						(boundHere.error ? (
 							<ErrorAlert
@@ -260,7 +260,7 @@ export function BindAgentDialog({
 							);
 						})}
 					</ul>
-				</div>
+				</fieldset>
 				{bind.error && <ErrorAlert message={bind.error} />}
 			</div>
 		);

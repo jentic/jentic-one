@@ -325,9 +325,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 					>
 						<div className="min-w-0">
 							<div className="mb-1 flex items-center justify-between gap-2">
-								<p className="text-muted-foreground text-xs tracking-wider uppercase">
+								<h3 className="font-heading text-foreground text-sm font-semibold">
 									Agents
-								</p>
+								</h3>
 								{canBind && agents.length > 0 && (
 									<Button
 										variant="ghost"
@@ -373,10 +373,13 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 												<Bot className="h-3 w-3" aria-hidden="true" />
 												{a.agent_name}
 												{a.suspended && (
-													<PauseCircle
-														className="text-warning h-3 w-3"
-														aria-label="suspended"
-													/>
+													<>
+														<PauseCircle
+															className="text-warning h-3 w-3"
+															aria-hidden="true"
+														/>
+														<span className="sr-only">(suspended)</span>
+													</>
 												)}
 											</AppLink>
 										</li>
@@ -395,9 +398,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 							)}
 						</div>
 						<div className="min-w-0">
-							<p className="text-muted-foreground mb-1 text-xs tracking-wider uppercase">
+							<h3 className="font-heading text-foreground mb-1 text-sm font-semibold">
 								Credentials
-							</p>
+							</h3>
 							<ul className="-mx-1.5 space-y-0.5">
 								{entry.credentials.map((c) => {
 									const hint = credentialSiblingHint(c, entry.credentials);
@@ -411,11 +414,11 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 												onClick={(): void =>
 													openCredential(c.credential_id)
 												}
-												aria-label={`View ${c.name}`}
 												data-testid="hub-access-credential"
 												className="group justify-between gap-2 rounded-md px-1.5 py-1 text-left font-normal active:scale-100"
 											>
 												<span className="text-foreground flex min-w-0 items-center gap-1.5">
+													<span className="sr-only">View </span>
 													<KeyRound
 														className="text-muted-foreground h-3.5 w-3.5 shrink-0"
 														aria-hidden="true"
@@ -440,7 +443,10 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 														</Badge>
 													)}
 													<CredentialTypeBadge credential={c} />
-													<span className="text-muted-foreground group-hover:text-foreground inline-flex items-center text-xs">
+													<span
+														className="text-muted-foreground group-hover:text-foreground inline-flex items-center text-xs"
+														aria-hidden="true"
+													>
 														View
 														<ChevronRight
 															className="h-3.5 w-3.5"

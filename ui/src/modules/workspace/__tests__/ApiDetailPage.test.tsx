@@ -447,8 +447,10 @@ describe('ApiDetailPage', () => {
 			const user = userEvent.setup();
 			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
 
-			const row = await screen.findByRole('button', { name: 'View Stripe live' });
+			const row = await screen.findByRole('button', { name: /^View Stripe live(\s|$)/ });
 			expect(row).toHaveTextContent('Bearer token');
+			// The badges are part of the row's name (no overriding aria-label).
+			expect(row).toHaveAccessibleName(expect.stringContaining('Bearer token'));
 			await user.click(row);
 
 			// The shared edit sheet, on this credential — the hub stays underneath.
@@ -496,10 +498,10 @@ describe('ApiDetailPage', () => {
 			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
 
 			expect(
-				await screen.findByRole('button', { name: 'View Stripe any version' }),
+				await screen.findByRole('button', { name: /^View Stripe any version(\s|$)/ }),
 			).toBeVisible();
 			expect(
-				screen.queryByRole('button', { name: 'View Not Stripe' }),
+				screen.queryByRole('button', { name: /^View Not Stripe(\s|$)/ }),
 			).not.toBeInTheDocument();
 			expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
 		});
@@ -520,10 +522,10 @@ describe('ApiDetailPage', () => {
 			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
 
 			expect(
-				await screen.findByRole('button', { name: 'View Stripe this version' }),
+				await screen.findByRole('button', { name: /^View Stripe this version(\s|$)/ }),
 			).toBeVisible();
 			expect(
-				screen.queryByRole('button', { name: 'View Stripe other version' }),
+				screen.queryByRole('button', { name: /^View Stripe other version(\s|$)/ }),
 			).not.toBeInTheDocument();
 			expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
 		});
@@ -641,7 +643,7 @@ describe('ApiDetailPage', () => {
 				// The credentials list refetched, so the card now lists it.
 				expect(
 					await within(screen.getByTestId('hub-access')).findByRole('button', {
-						name: 'View BigCo (no auth)',
+						name: /^View BigCo \(no auth\)(\s|$)/,
 					}),
 				).toBeInTheDocument();
 			});
@@ -818,7 +820,9 @@ describe('ApiDetailPage', () => {
 			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
 
 			// Rows carry no per-credential Bind — just the one action on the card.
-			expect(await screen.findByRole('button', { name: 'View Stripe test' })).toBeVisible();
+			expect(
+				await screen.findByRole('button', { name: /^View Stripe test(\s|$)/ }),
+			).toBeVisible();
 			expect(screen.queryByRole('button', { name: /^Bind .* to an agent$/ })).toBeNull();
 			const actions = await screen.findAllByTestId('hub-access-bind-agent');
 			expect(actions).toHaveLength(1);
@@ -852,9 +856,14 @@ describe('ApiDetailPage', () => {
 			const access = await screen.findByTestId('hub-access');
 			const hints = await within(access).findAllByTestId('hub-access-credential-hint');
 			expect(hints.map((h) => h.textContent)).toEqual(['••••4242', '••••9999']);
+			expect(
+				within(access).getByRole('button', { name: /^View Stripe key ••••9999(\s|$)/ }),
+			).toBeVisible();
+			expect(within(access).getByRole('heading', { name: 'Credentials' })).toBeVisible();
 
 			await user.click(await screen.findByTestId('hub-access-bind-agent'));
 			const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+			expect(within(dialog).getByRole('group', { name: 'Agents' })).toBeVisible();
 			expect(
 				within(dialog)
 					.getAllByRole('option')

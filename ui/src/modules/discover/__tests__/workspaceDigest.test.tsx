@@ -172,6 +172,7 @@ describe('WorkspacePanelBody attention links', () => {
 				onImportOwn={() => {}}
 			/>,
 		);
+		expect(screen.getByRole('heading', { level: 3, name: 'Needs attention' })).toBeVisible();
 		const item = screen.getByTestId('attention-credentials');
 		expect(within(item).getByRole('link', { name: 'Alpha' })).toHaveAttribute(
 			'href',
