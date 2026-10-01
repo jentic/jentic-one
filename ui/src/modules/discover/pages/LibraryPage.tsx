@@ -157,24 +157,20 @@ export default function LibraryPage() {
 							title="About the Library"
 							intro={
 								<p>
-									The Library holds what your agents can call. Today that's APIs:
-									the public Jentic catalog on the left, and your workspace — the
-									APIs imported into this instance — docked on the right.
+									The Library holds what your agents can call — today, APIs.
+									Browse the public Jentic catalog; the APIs you've added live in{' '}
+									<strong>Your workspace</strong>, alongside it.
 								</p>
 							}
 							sections={[
 								{
-									heading: 'Catalog vs your workspace',
+									heading: 'The catalog',
 									body: (
 										<p>
-											Catalog entries marked{' '}
+											Search the public catalog and add an API with{' '}
+											<strong>Add to workspace</strong>. Cards marked{' '}
 											<strong>In your workspace</strong> are already added;{' '}
-											<strong>Available</strong> ones can be added to your
-											workspace with <strong>Add to workspace</strong>. Click
-											any card to open its preview. On an imported card,{' '}
-											<strong>Open</strong> goes to the API's hub when exactly
-											one workspace API matches it, otherwise to your
-											workspace list.
+											<strong>Open</strong> takes you to that API's page.
 										</p>
 									),
 								},
@@ -182,19 +178,20 @@ export default function LibraryPage() {
 									heading: 'Previewing operations',
 									body: (
 										<p>
-											Open any API to preview its operations before adding it
-											— no registration required.
+											Click any card to preview its operations before you add
+											it — nothing is registered until you do.
 										</p>
 									),
 								},
 								{
-									heading: 'The workspace panel',
+									heading: 'Your workspace',
 									body: (
 										<p>
-											It lists only what needs you (updates, overlays awaiting
-											review, missing credentials, failing calls, drafts),
-											what's being added, your APIs, and recent API events.
-											Expand it for the full workspace.
+											Shows what needs your attention, every API you've added
+											(filter by name or by Live / Draft / Update available),
+											and recent changes. Click an API to open its page, or
+											use <strong>Import your own API</strong> to add an
+											OpenAPI spec.
 										</p>
 									),
 								},
