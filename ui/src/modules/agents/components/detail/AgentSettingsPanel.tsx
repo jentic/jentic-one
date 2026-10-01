@@ -1,7 +1,7 @@
 /**
- * AgentSettingsPanel — the "Settings" tab of the agent detail console, built
- * from the shared console cards so it reads identically to the other
- * detail consoles' Settings tabs:
+ * AgentSettingsPanel — the body of the dock's Settings sheet, built from the
+ * shared settings cards so it reads identically to the other entity settings
+ * surfaces:
  *   - {@link IdentitySettingsCard} → the immutable, copyable agent id plus
  *     editable name / description via PATCH /agents/{id}. Only dirty fields
  *     are sent (real PATCH semantics). Ownership is intentionally NOT
@@ -11,15 +11,14 @@
  *     rejects edits to an archived agent with 409, so an editable form would
  *     invite a write that can only fail.
  *   - {@link DangerZone} → the terminal Archive action. Suspension is NOT
- *     here: the reversible Disable/Enable flip lives in the page header's
- *     kill switch. The button defers to
+ *     here: the reversible Disable/Enable flip is the dock's serving
+ *     toggle. The button defers to
  *     the page-level {@link LifecycleDialogs} via `onLifecycle` — this panel
  *     never mutates lifecycle state itself.
  *
  * Between the two sits `afterIdentity`, an optional slot for read-only facts
  * that belong with the identity but must stay above the destructive verb. The
- * flat surface's dock sheet fills it with {@link AgentProvenance}; the console
- * leaves it empty because its Overview tab already carries that block.
+ * Settings sheet fills it with {@link AgentProvenance}.
  */
 import type { ReactNode } from 'react';
 import { DangerZone, IdentitySettingsCard, type DangerZoneAction } from '@/shared/ui';

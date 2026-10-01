@@ -22,9 +22,6 @@ export type {
 	RecentExecutionsCardProps,
 } from '@/shared/ui/RecentExecutionsCard';
 
-export { KillSwitch } from '@/shared/ui/KillSwitch';
-export type { KillSwitchProps } from '@/shared/ui/KillSwitch';
-
 export { DangerZone } from '@/shared/ui/DangerZone';
 export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 

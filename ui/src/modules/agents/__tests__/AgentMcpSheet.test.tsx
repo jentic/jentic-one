@@ -1,8 +1,9 @@
 /**
  * AgentMcpSheet — the dock's MCP surface: `McpPanel` (config card + session
- * history) behind its own verb. The panel's console suite covers its internals;
- * here the pinned `--context` snippet and the session read must be scoped to the
- * SELECTED agent, and an archived agent gets history only.
+ * history) behind its own verb. Pins the pinned `--context` snippet and the
+ * session read scoped to the SELECTED agent, the config card's instance and
+ * broker derivation, the sessions card's states, and history-only for an
+ * archived agent.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page, userEvent as browserUser } from 'vitest/browser';
@@ -15,11 +16,13 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore, seedExtraAgents } from '@/modules/agents/mocks/handlers';
 import { resetApisStore, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
+import { showHttpVariant } from '@/modules/agents/components/detail/McpPanel';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 function renderPage(route = '/') {
@@ -70,7 +73,7 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 		await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
 	});
 
-	it('opens the rehosted console MCP panel wired to the selected agent', async () => {
+	it('opens the MCP panel wired to the selected agent', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
@@ -145,6 +148,233 @@ describe('AgentMcpSheet — the dock MCP surface', () => {
 				"jentic register --url 'https://jentic.example.test/$(id)' --broker-url 'https://broker.example.test/`id`'",
 			),
 		).toBeInTheDocument();
+	});
+
+	// --- The config card: what the snippet registers against -----------------
+
+	it('pins the register prerequisites and the instance it targets', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+		await sheet.findByText('Connect via MCP');
+
+		// JSON client-config variant carries the same pinned args as the CLI one.
+		expect(sheet.getByText(/"mcp", "--context", "support-agent"/)).toBeInTheDocument();
+		// Prerequisites: CLI + register against THIS instance on the AGENT machine
+		// (the stdio config encodes no base URL), or `jentic setup`. The instance
+		// URL resolves async from GET /instance, so wait for it.
+		expect(
+			await sheet.findByText('jentic register --url https://jentic.example.test'),
+		).toBeInTheDocument();
+		expect(sheet.getByText('agent machine')).toBeInTheDocument();
+		expect(sheet.getByText('jentic setup')).toBeInTheDocument();
+		expect(sheet.getByText('jentic.example.test')).toBeInTheDocument();
+		expect(sheet.getByText('local')).toBeInTheDocument();
+	});
+
+	it.each([
+		[
+			'no canonical base URL is configured',
+			() =>
+				http.get('/instance', () =>
+					HttpResponse.json({
+						backend: 'local',
+						canonical_base_url: '',
+						host: '',
+						instance_id: null,
+					}),
+				),
+		],
+		[
+			'GET /instance fails (500)',
+			() => createErrorHandler('get', '/instance', { status: 500 }),
+		],
+	])('falls back to the browser origin when %s', async (_label, handler) => {
+		worker.use(handler());
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+		await sheet.findByText('Connect via MCP');
+
+		// The operator is looking at a working address of this instance, so the
+		// register command targets the browser's origin.
+		expect(
+			await sheet.findByText(`jentic register --url ${window.location.origin}`),
+		).toBeInTheDocument();
+	});
+
+	it('survives a set-but-unparseable canonical_base_url (scheme-less) without crashing', async () => {
+		// The backend allows an unparseable canonical_base_url with host: "" — a
+		// scheme-less value must degrade to the raw string, not throw in render.
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'jentic.example.com',
+					host: '',
+					instance_id: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		expect(
+			await sheet.findByText('jentic register --url jentic.example.com'),
+		).toBeInTheDocument();
+		expect(sheet.getAllByText('jentic.example.com').length).toBeGreaterThan(0);
+	});
+
+	it('hides the HTTP variant when the instance does not serve /mcp', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+		await sheet.findByText('Connect via MCP');
+
+		// The default /instance fixture predates `mcp_enabled` (an older backend);
+		// the absent field reads as disabled — an advertised transport that 404s
+		// would be a lie. The predicate is the single gate the card renders through.
+		expect(showHttpVariant(undefined)).toBe(false);
+		expect(showHttpVariant(false)).toBe(false);
+		expect(sheet.queryByText(/Streamable HTTP/i)).not.toBeInTheDocument();
+		expect(sheet.queryByText(/"url"/)).not.toBeInTheDocument();
+	});
+
+	it('renders the Streamable HTTP variant when the instance serves /mcp', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					mcp_enabled: true,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		// The url-variant snippet points at this instance's /mcp with a bearer
+		// placeholder — per-request auth, no CLI needed on the agent machine.
+		expect(await sheet.findByText(/Streamable HTTP/i)).toBeInTheDocument();
+		expect(
+			sheet.getByText(/"url": "https:\/\/jentic\.example\.test\/mcp"/),
+		).toBeInTheDocument();
+		expect(sheet.getByText(/Bearer <agent-api-key>/)).toBeInTheDocument();
+	});
+
+	it.each([
+		['the instance reports none', undefined],
+		['the reported broker URL is empty', ''],
+	])(
+		'keeps the --broker-url placeholder on a remote install when %s',
+		async (_label, brokerUrl) => {
+			worker.use(
+				http.get('/instance', () =>
+					HttpResponse.json({
+						backend: 'remote',
+						canonical_base_url: 'https://jentic.example.test',
+						host: 'jentic.example.test',
+						instance_id: 'inst_digest_1',
+						...(brokerUrl === undefined ? {} : { broker_url: brokerUrl }),
+					}),
+				),
+			);
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_active_1');
+			const sheet = await openSheet(user);
+
+			// On a remote install the broker is never derived from the control-plane
+			// URL; without --broker-url `jentic execute` fail-closes, so the snippet
+			// carries the flag — and, with nothing reported, sends the operator to a
+			// human rather than guessing.
+			expect(
+				await sheet.findByText(
+					"jentic register --url https://jentic.example.test --broker-url '<broker-url>'",
+				),
+			).toBeInTheDocument();
+			expect(sheet.getByText(/fail-closes/)).toBeInTheDocument();
+			expect(sheet.getByText(/Ask your operator/)).toBeInTheDocument();
+		},
+	);
+
+	it('renders the real broker URL in the register snippet when the instance reports one (#1249)', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'remote',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: 'https://broker.jentic.example.test',
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		expect(
+			await sheet.findByText(
+				'jentic register --url https://jentic.example.test --broker-url https://broker.jentic.example.test',
+			),
+		).toBeInTheDocument();
+		expect(sheet.queryByText(/Ask your operator/)).not.toBeInTheDocument();
+		expect(sheet.getByText('Broker URL')).toBeInTheDocument();
+		expect(sheet.getByText('https://broker.jentic.example.test')).toBeInTheDocument();
+	});
+
+	// --- The sessions card -----------------------------------------------------
+
+	it('lists MCP sessions with client / transport / started — never "connected"', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		// Client name + version from the event's data; a version-less client and a
+		// clientInfo-less one degrade honestly (SHOULD in the MCP spec).
+		expect(await sheet.findByText('claude-desktop 1.5.2')).toBeInTheDocument();
+		expect(sheet.getByText('cursor')).toBeInTheDocument();
+		expect(sheet.getByText('unknown client')).toBeInTheDocument();
+		// Transport renders verbatim from the emitter.
+		expect(sheet.getAllByText('stdio')).toHaveLength(3);
+		// "started / last active" is the vocabulary — last active reads off the
+		// newest MCP-origin execution.
+		expect(sheet.getByText('started / last active')).toBeInTheDocument();
+		expect(await sheet.findByText(/Last active/)).toBeInTheDocument();
+		// NEVER "connected": stdio liveness is unknowable server-side.
+		expect(sheet.queryByText(/connected/i)).not.toBeInTheDocument();
+	});
+
+	it('shows a quiet permission note when the events read is gated (403)', async () => {
+		worker.use(createErrorHandler('get', '/events', { status: 403 }));
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		expect(
+			await sheet.findByText('MCP session history requires event-read permissions.'),
+		).toBeInTheDocument();
+		// A permission gate is not an error — the config card still renders.
+		expect(sheet.queryByRole('alert')).not.toBeInTheDocument();
+		expect(sheet.getByText('Connect via MCP')).toBeInTheDocument();
+	});
+
+	it('shows an error state — not a false empty state — when the sessions read fails (500)', async () => {
+		worker.use(createErrorHandler('get', '/events', { status: 500 }));
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		// A real failure surfaces as an error, never as "No MCP sessions recorded"
+		// (which would tell the operator the transport is unused).
+		expect(await sheet.findByText('Failed to load MCP sessions.')).toBeInTheDocument();
+		expect(sheet.getByRole('alert')).toBeInTheDocument();
+		expect(sheet.queryByText(/No MCP sessions recorded/)).not.toBeInTheDocument();
+		expect(sheet.getByText('Connect via MCP')).toBeInTheDocument();
 	});
 
 	// Real (CDP-driven) Escape — same pattern as the other dock-sheet specs.

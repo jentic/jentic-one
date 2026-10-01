@@ -1,9 +1,8 @@
 /**
- * McpPanel — the agent detail console's MCP tab (local-MCP 2-E2, #1188).
+ * McpPanel — the body of the dock's MCP sheet (#1188).
  *
- * MCP is a TRANSPORT of this agent, not a separate entity (master plan §3.10),
- * so the surface lives here inside the agent console rather than behind any
- * new top-level nav. Two cards:
+ * MCP is a TRANSPORT of this agent, not a separate entity, so the surface
+ * lives with the agent rather than behind any top-level nav. Two cards:
  *
  *   - McpConfigCard    → the exact copy-paste wiring for THIS agent
  *     (`jentic mcp --context <name>`, pinned — a bare `jentic mcp` follows the
@@ -302,7 +301,7 @@ export function McpSessionsCard({ agentId }: { agentId: string }) {
 	);
 }
 
-/** The MCP tab panel: config card + session history. */
+/** The MCP sheet's body: config card + session history. */
 export function McpPanel({ agentName, agentId }: McpPanelProps) {
 	return (
 		<div className="space-y-4">

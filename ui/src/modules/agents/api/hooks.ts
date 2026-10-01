@@ -5,10 +5,8 @@
  * hooks, which call the repository (`./client`), which calls `@/shared/api`.
  * Views must never reach past this layer (ESLint-enforced).
  *
- * Lifecycle mutations follow the verified response contract: approve/deny
- * return the updated row (we seed the detail cache from it), while
- * disable/enable/archive return 204, so those invalidate the affected slices to
- * force a refetch.
+ * Lifecycle mutations invalidate the roster slices they change, so every
+ * surface reading the fleet refetches the agent's new state.
  */
 import {
 	isCancelledError,
@@ -34,7 +32,6 @@ import {
 	disableAgent,
 	enableAgent,
 	generateAgentApiKey,
-	getAgent,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
 	getAgentScopes,
@@ -96,7 +93,6 @@ const agentsKeys = {
 	all: sharedQueryKeys.agentsRoot,
 	lists: () => [...agentsKeys.all, 'list'] as const,
 	list: (status: string) => [...agentsKeys.all, 'list', status] as const,
-	detail: (id: string) => [...agentsKeys.all, 'detail', id] as const,
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
 	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
@@ -183,14 +179,6 @@ export function useAgents(
 		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
 		refetchInterval: params.refetchInterval,
-	});
-}
-
-export function useAgent(id: string | null) {
-	return useQuery<AgentEntity>({
-		queryKey: agentsKeys.detail(id ?? ''),
-		queryFn: () => getAgent(id as string),
-		enabled: id != null,
 	});
 }
 
@@ -340,7 +328,7 @@ export function useAgentBindingRuleSummaries(
 
 /**
  * Candidate credentials for the bind picker — fetched only while the dialog
- * is open (``enabled``) so it costs nothing on the rest of the detail page.
+ * is open (``enabled``) so it costs nothing on the rest of the Agents page.
  */
 export function useBindableCredentialsForAgent({ enabled = true }: { enabled?: boolean } = {}) {
 	return useQuery<AgentBindableCredential[]>({
@@ -564,7 +552,6 @@ export function useApproveAgent() {
 	return useMutation({
 		mutationFn: (id: string) => approveAgent(id),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Approving removes the agent from the pending pool the
 			// Notifications bell reads, and the persistent nav badge
@@ -588,7 +575,6 @@ export function useDenyAgent() {
 	return useMutation({
 		mutationFn: ({ id, reason }: { id: string; reason: string }) => denyAgent(id, reason),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Denying also clears the agent from the pending pool — keep the
 			// Notifications bell AND the nav badge in sync
@@ -637,7 +623,6 @@ export function useSetAgentServing() {
 			else await disableAgent(id);
 
 			// The write landed. From here on, a failure is only a stale view.
-			void qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
 			try {
 				await qc.refetchQueries({ queryKey: agentsKeys.lists() }, { throwOnError: true });
 			} catch (error) {
@@ -658,25 +643,11 @@ export function useDisableAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => disableAgent(id),
-		onSuccess: (_void, id) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
 			toast({ title: 'Agent disabled', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to disable the agent.'),
-	});
-}
-
-export function useEnableAgent() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => enableAgent(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
-			toast({ title: 'Agent enabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to enable the agent.'),
 	});
 }
 
@@ -684,9 +655,8 @@ export function useArchiveAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => archiveAgent(id),
-		onSuccess: (_void, id) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
 			toast({ title: 'Agent archived', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to archive the agent.'),
@@ -719,25 +689,23 @@ export function useCreateAgent() {
 }
 
 /**
- * Partial in-place edit (PATCH /agents/{id}): rename, re-describe, or
- * reassign the owner from the detail page's Settings tab. Invalidates the
- * detail cache rather than seeding it from the PATCH response — the response
- * row is built without the `has_api_key` join (always false), so seeding it
- * would make the Keys tab forget an existing key. The roster refresh lets the
- * fleet table pick the new name up immediately, and the attention root covers
- * the Notifications bell, which lists pending agents by name.
+ * Partial in-place edit (PATCH /agents/{id}): rename or re-describe from the
+ * Settings sheet. Refetches the roster rather than seeding it from the PATCH
+ * response — the response row is built without the `has_api_key` join (always
+ * false), so seeding it would make the API key sheet forget an existing key.
+ * The attention root covers the Notifications bell, which lists pending agents
+ * by name.
  */
 export function useUpdateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: ({ id, patch }: { id: string; patch: AgentPatch }) => updateAgent(id, patch),
 		onSuccess: (agent) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
-			// audit trails, and the "Registered by / Approved
-			// by" grid on this very page all resolve names through the actor
+			// audit trails, and the Settings sheet's "Registered by / Approved
+			// by" grid all resolve names through the actor
 			// directory (5-min staleTime, no focus refetch). Invalidate it so the
 			// new name shows up immediately instead of after the staleTime.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
@@ -757,7 +725,9 @@ export function useGenerateAgentApiKey() {
 		mutationKey: agentsKeys.generateApiKey(),
 		mutationFn: (agentId: string) => generateAgentApiKey(agentId),
 		onSuccess: (_result, agentId) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agentId) });
+			// `hasApiKey` rides on the roster row, and it decides whether the next
+			// press is a first issue or a confirmed rotation.
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyInfo(agentId) });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyHistory(agentId) });
 		},
@@ -776,7 +746,7 @@ export function useRevokeAgentApiKey() {
 	return useMutation<void, Error, string>({
 		mutationFn: (agentId: string) => revokeAgentApiKey(agentId),
 		onSuccess: (_void, agentId) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agentId) });
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyInfo(agentId) });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyHistory(agentId) });
 			toast({ title: 'API key revoked', variant: 'success' });
@@ -824,8 +794,8 @@ export function useReplaceAgentScopes() {
 }
 
 /**
- * One actor's usage stats + volume buckets (trailing 7 days) for the detail
- * page's KPI strip and Activity chart. Under its own `agents-usage` root, so
+ * One actor's usage stats + volume buckets (trailing 7 days) for the Agents
+ * page's stat strip and the Activity sheet's chart. Under its own `agents-usage` root, so
  * agent lifecycle invalidations don't re-aggregate the window. `null` on 403.
  */
 export function useActorUsageDetail(actorId: string | null) {
@@ -833,7 +803,7 @@ export function useActorUsageDetail(actorId: string | null) {
 		queryKey: ['agents-usage', 'detail', actorId],
 		queryFn: () => fetchActorUsageDetail(actorId as string),
 		enabled: actorId != null,
-		// Matches useActorExecutions below: the KPI/volume chart and the
+		// Matches useActorExecutions below: the volume chart and the
 		// recent-executions feed render side by side and must go stale
 		// together, or the feed refreshes ahead of the chart and the two
 		// disagree for up to 30s (#913).
@@ -857,8 +827,8 @@ export function useCredentialUsageTotals(enabled: boolean) {
 }
 
 /**
- * The most recent executions attributed to one actor — the detail page's
- * Activity feed. Single page by design: the full, filterable history lives in
+ * The most recent executions attributed to one actor — the Activity sheet's
+ * feed and the stat strip's last-used figure. Single page by design: the full, filterable history lives in
  * Monitor (the feed carries a pre-filtered deep-link). `null` on 403.
  */
 export function useActorExecutions(actorId: string | null) {
@@ -872,8 +842,8 @@ export function useActorExecutions(actorId: string | null) {
 }
 
 /**
- * The OAuth clients holding a consent→agent grant on this agent — the detail
- * console's "Connected clients" panel. Owner-or-admin on the
+ * The OAuth clients holding a consent→agent grant on this agent — the
+ * Permissions sheet's "Connected clients" card. Owner-or-admin on the
  * backend; a 403 surfaces as an error the card renders honestly.
  *
  * Cursor-paginated like {@link useAgents}: the first page renders
@@ -935,7 +905,7 @@ export function useRevokeOauthGrant(agentId: string | null) {
 }
 
 /**
- * Actor-scoped audit trail for the detail console's "Recent changes" panel —
+ * Actor-scoped audit trail for the Activity sheet's "Recent changes" section —
  * the lifecycle events recorded against this agent as the TARGET. Non-admins resolve
  * to an empty list (the client maps 401/403), so the panel renders its
  * graceful "no entries" state instead of erroring.
@@ -961,7 +931,7 @@ export function useActorAudit(actorId: string | null) {
 
 /**
  * One agent's MCP session history (`mcp.session_started` internal events) —
- * the detail page's MCP sessions card. `null` for viewers without
+ * the MCP sheet's sessions card. `null` for viewers without
  * `events:read` (the card renders a quiet permission note).
  */
 export function useMcpSessions(actorId: string | null) {

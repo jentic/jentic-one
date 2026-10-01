@@ -621,7 +621,7 @@ function findActor(id: string): AgentRow | undefined {
 }
 
 /**
- * Per-actor usage fixture for the detail page's KPI strip + Activity chart
+ * Per-actor usage fixture for the stat strip + the Activity sheet's chart
  * (`GET /monitoring/usage?agent_id=…`). Buckets are relative (spread over the
  * trailing week at request time); actors without an entry are genuinely idle.
  * Totals roughly echo the fleet-table fixture in the monitor module so the
@@ -802,7 +802,7 @@ function auditRow(opts: {
 
 /**
  * Per-actor audit fixture (`GET /audit?target_type=…&target_id=…`) — the
- * detail console's "Recent changes" panel. Only for ids in THIS store; other
+ * Activity sheet's "Recent changes" section. Only for ids in THIS store; other
  * targets fall through to the monitor module's org-wide fixture.
  */
 const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
@@ -900,9 +900,9 @@ export const agentsHandlers = [
 	// ---- Platform permission catalogue (#615) ----
 	http.get('/permissions', () => HttpResponse.json({ data: PERMISSION_CATALOGUE })),
 
-	// ---- Per-actor monitoring enrichment (detail page KPI strip + Activity) ----
+	// ---- Per-actor monitoring enrichment (stat strip + Activity sheet) ----
 	//
-	// The detail page reads the same admin-gated monitoring endpoints Monitor
+	// The Agents page reads the same admin-gated monitoring endpoints Monitor
 	// does, filtered to one actor. These interceptors answer ONLY for ids that
 	// live in THIS module's store and return undefined otherwise, falling
 	// through to the monitor module's own `/monitoring/usage` + `/executions`

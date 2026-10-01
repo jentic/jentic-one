@@ -1,8 +1,8 @@
 /**
- * AgentKeysPanel — the detail page's Keys tab: current API-key metadata,
- * generate/regenerate/revoke actions, and the rotation history. Relocated
- * from the identity header + flat card stack so the credential story lives
- * in one place. Plaintext is still shown exactly once, via ApiKeyDialog.
+ * AgentKeysPanel — the body of the dock's API key sheet: current API-key
+ * metadata, generate/regenerate/revoke actions, and the rotation history, so
+ * the key's story lives in one place. Plaintext is shown exactly once, via
+ * ApiKeyDialog.
  *
  * Generation is only offered for `active` agents (the backend rejects keys
  * for other statuses); metadata for an already-issued key stays visible in

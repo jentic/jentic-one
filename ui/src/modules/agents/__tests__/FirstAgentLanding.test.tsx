@@ -82,7 +82,7 @@ describe('Agents page — zero agents', () => {
 			screen.getByRole('button', { name: /Create an agent manually/ }),
 		).toBeInTheDocument();
 		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
-		// The URL is the instance's canonical base URL, as the MCP tab uses.
+		// The URL is the instance's canonical base URL, as the MCP sheet uses.
 		await waitFor(() =>
 			expect(screen.getByTestId('register-command')).toHaveTextContent(
 				`$ jentic register --url ${INSTANCE_URL} --name my-first-agent`,

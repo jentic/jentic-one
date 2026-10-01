@@ -1,7 +1,7 @@
 /**
  * Where a pasted `jentic register` points: this instance's control-plane URL
  * and, on a remote install, its broker. Every surface that shows the command
- * reads it here, so the landing and the MCP tab never disagree.
+ * reads it here, so the landing and the MCP sheet never disagree.
  */
 import { useInstanceIdentity } from '@/modules/agents/api';
 import type { RegisterCommandOptions } from '@/modules/agents/lib/registerCommand';

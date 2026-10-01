@@ -1,7 +1,7 @@
 /**
  * InitialScopesField — optional "start with these scopes" section for the
  * agent create form (POST /agents already accepts `scopes[]`, so a new
- * agent shouldn't need a follow-up PUT from its detail page just to get its
+ * agent shouldn't need a follow-up PUT from its Permissions sheet just to get its
  * first grants).
  *
  * Collapsed by default behind a disclosure — most creates don't grant scopes,

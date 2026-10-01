@@ -106,8 +106,8 @@ const actorDirectorySeed = [
 	},
 	{
 		// The admin id the agents-module fixtures stamp on approvals / audit
-		// rows (approved_by, audit actor_id) — must resolve or the detail
-		// consoles' "Approved by" and "Recent changes" show a raw id.
+		// rows (approved_by, audit actor_id) — must resolve or the Settings
+		// sheet's "Approved by" and "Recent changes" show a raw id.
 		id: 'usr_000000000000000000000admin',
 		actor_type: 'user',
 		name: 'Admin User',
