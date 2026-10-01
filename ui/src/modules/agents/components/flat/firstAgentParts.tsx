@@ -248,7 +248,7 @@ export function RegisterCommand({
 					— without it <code className="font-mono">jentic execute</code> fail-closes.{' '}
 					{target.brokerUrl
 						? "The command carries this instance's broker (data plane) URL."
-						: 'Ask whoever deployed this instance for the broker (data plane) URL and put it in place of <broker-url>.'}
+						: 'Ask whoever deployed this instance for the broker (data plane) URL and put it in place of <broker-url>, inside the quotes.'}
 				</p>
 			)}
 		</div>

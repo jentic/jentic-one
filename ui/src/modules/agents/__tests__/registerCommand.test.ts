@@ -30,7 +30,7 @@ describe('registerCommand', () => {
 			'jentic register --url https://j.test --broker-url https://b.test',
 		);
 		expect(registerCommand({ url: 'https://j.test', brokerUrl: null })).toBe(
-			'jentic register --url https://j.test --broker-url <broker-url>',
+			"jentic register --url https://j.test --broker-url '<broker-url>'",
 		);
 	});
 

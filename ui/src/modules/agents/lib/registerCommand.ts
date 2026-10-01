@@ -28,8 +28,11 @@ export interface CommandToken {
 	tone: CommandTone;
 }
 
-/** The placeholder shown for a broker URL the instance can't advertise. */
-const BROKER_URL_PLACEHOLDER = '<broker-url>';
+/** The placeholder shown for a broker URL the instance can't advertise.
+ * Single-quoted: bare, a shell reads `<broker-url>` as a redirection from a
+ * file named `broker-url`, so a command pasted unedited would fail on that
+ * rather than on the CLI's own check of the URL. */
+const BROKER_URL_PLACEHOLDER = "'<broker-url>'";
 
 export interface RegisterCommandOptions {
 	/** The instance's control-plane URL (`--url`, never `--base-url` — #1204). */

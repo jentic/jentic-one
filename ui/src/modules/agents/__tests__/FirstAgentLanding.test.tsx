@@ -233,11 +233,11 @@ describe('Agents page — zero agents', () => {
 
 		await waitFor(() =>
 			expect(screen.getByTestId('register-command')).toHaveTextContent(
-				'--broker-url <broker-url> --name my-first-agent',
+				"--broker-url '<broker-url>' --name my-first-agent",
 			),
 		);
 		expect(screen.getByTestId('register-broker-note')).toHaveTextContent(
-			/without it jentic execute fail-closes\. Ask whoever deployed this instance/,
+			/without it jentic execute fail-closes\. Ask whoever deployed this instance.*put it in place of <broker-url>, inside the quotes\./,
 		);
 	});
 

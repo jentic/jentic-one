@@ -773,7 +773,7 @@ describe('AgentDetailPage', () => {
 		// so the snippet must carry the flag.
 		expect(
 			await screen.findByText(
-				'jentic register --url https://jentic.example.test --broker-url <broker-url>',
+				"jentic register --url https://jentic.example.test --broker-url '<broker-url>'",
 			),
 		).toBeInTheDocument();
 		expect(screen.getByText(/fail-closes/)).toBeInTheDocument();
@@ -804,7 +804,7 @@ describe('AgentDetailPage', () => {
 		// A bare `--broker-url ''` would register an environment with no broker.
 		expect(
 			await screen.findByText(
-				'jentic register --url https://jentic.example.test --broker-url <broker-url>',
+				"jentic register --url https://jentic.example.test --broker-url '<broker-url>'",
 			),
 		).toBeInTheDocument();
 		expect(screen.getByText(/Ask your operator/)).toBeInTheDocument();
