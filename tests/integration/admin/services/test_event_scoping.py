@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
@@ -263,3 +263,61 @@ async def test_stream_ignores_an_invisible_resume_point(
         await gen.aclose()
     assert isinstance(first, EventView)
     assert first.id == seed.agent_event_id
+
+
+async def test_owner_sees_events_naming_their_agent_as_creator(
+    integration_context: Context, seed: _Seed
+) -> None:
+    """A subject-only event (e.g. expiry of an agent-created credential) reaches the
+    agent and its owner through ``created_by``."""
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        event = await EventRepository.create(
+            session,
+            type="credential.expiring_soon",
+            severity="warning",
+            summary="agent credential expiring",
+            created_by=seed.agent_id,
+        )
+        await session.commit()
+
+    owner = _user(seed.owner_id, "events:read")
+    assert event.id in await _listed_ids(ctx, owner)
+    assert (await EventService(ctx).get_by_id(event.id, identity=owner)).id == event.id
+    agent = _agent(seed.agent_id, parent=seed.owner_id)
+    assert await _listed_ids(ctx, agent) == {seed.agent_event_id, event.id}
+    assert await _listed_ids(ctx, _user(_OTHER_SUB, "events:read")) == set()
+
+
+async def test_stream_resumes_after_a_visible_event(
+    integration_context: Context, seed: _Seed
+) -> None:
+    """A non-admin resuming from an event they can see gets only the later rows
+    visible to them."""
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            update(Event)
+            .where(Event.id == seed.owner_event_id)
+            .values(created_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+        await session.commit()
+
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        EventStreamService(ctx).stream(
+            identity=_user(seed.owner_id, "events:read"),
+            last_event_id=seed.owner_event_id,
+            poll_interval_seconds=0,
+            overlap_seconds=0,
+        ),
+    )
+    ids: set[str] = set()
+    try:
+        async for item in gen:
+            if isinstance(item, Heartbeat):
+                break
+            ids.add(item.id)
+    finally:
+        await gen.aclose()
+    assert ids == {seed.agent_event_id, seed.subject_event_id}
