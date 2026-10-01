@@ -31,6 +31,7 @@ import {
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import { FIRST_AGENT_POLL_MS } from '@/modules/agents/lib/useFirstAgentLanding';
+import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
 import {
 	catalogPage,
 	liveGithubCatalog,
@@ -311,7 +312,9 @@ describe('Agents page — zero agents', () => {
 		// The command view is gone; the steps stay.
 		await waitFor(() => expect(screen.queryByTestId('register-command')).toBeNull());
 		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
-		expect(within(card).getAllByRole('listitem')[2]).toHaveAttribute('aria-current', 'step');
+		expect(
+			within(screen.getByTestId('register-stepper')).getAllByRole('listitem')[2],
+		).toHaveAttribute('aria-current', 'step');
 		expect(status()).toHaveTextContent(
 			'my-first-agent just registered · awaiting your approval',
 		);
@@ -324,8 +327,20 @@ describe('Agents page — zero agents', () => {
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
-		// The scopes row always shows: an empty grant says so rather than vanishing.
-		expect(await facts.findByText('Requests no scopes')).toBeInTheDocument();
+		// No scopes requested: approval grants the default agent scopes, so the
+		// card lists them rather than reading as "no scopes".
+		const defaults = await screen.findByRole('list', { name: 'Default agent scopes' });
+		expect(
+			within(defaults)
+				.getAllByRole('listitem')
+				.map((li) => li.textContent),
+		).toEqual([...DEFAULT_AGENT_SCOPES]);
+		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+			'Requests none, so it gets the default agent scopes:',
+		);
+		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+			'Approving grants the default agent scopes.',
+		);
 
 		// The page stays the landing; the manual card has left.
 		expect(screen.getByTestId('agents-empty-landing')).toHaveAttribute('data-phase', 'arrived');
@@ -397,7 +412,7 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		worker.use(
 			http.get('/agents/:id/scopes', () =>
-				HttpResponse.json({ scopes: ['toolkits:read', 'executions:write'] }),
+				HttpResponse.json({ scopes: ['apis:read', 'agents:write'] }),
 			),
 		);
 		await arrive('owned-bot', queryClient, {
@@ -413,8 +428,8 @@ describe('Agents page — zero agents', () => {
 		expect(await facts.findByText('Key ID')).toBeInTheDocument();
 		const scopes = within(await screen.findByRole('list', { name: 'Requested scopes' }));
 		expect(scopes.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-			'toolkits:read',
-			'executions:write (can change data)',
+			'apis:read',
+			'agents:write (can change data)',
 		]);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
 		expect(facts.queryByText('Self-registered from the CLI')).toBeNull();
@@ -427,7 +442,18 @@ describe('Agents page — zero agents', () => {
 			'agents:write',
 			'credentials:write',
 			'org:admin',
-			...Array.from({ length: 12 }, (_, i) => `capabilities:read:${i}`),
+			'capabilities:execute',
+			'capabilities:read',
+			'users:read',
+			'jobs:read',
+			'events:read',
+			'credentials:read',
+			'executions:read',
+			'audit:read',
+			'agents:read',
+			'owner:resources:read',
+			'owner:credentials:read',
+			'owner:agents:read',
 		];
 		worker.use(http.get('/agents/:id/scopes', () => HttpResponse.json({ scopes: requested })));
 		const { container, queryClient } = renderPage();
@@ -449,7 +475,7 @@ describe('Agents page — zero agents', () => {
 		expect(risk('org:admin')).toBe('admin');
 		expect(risk('apis:read')).toBeNull();
 		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'3 of these can change data or administer your organisation. Approving grants every scope listed.',
+			'3 of these can change data or administer your organisation. Approving grants the recognised scopes listed.',
 		);
 		expect(screen.getByRole('button', { name: 'Approve scoped-bot' })).toBeEnabled();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
@@ -505,9 +531,124 @@ describe('Agents page — zero agents', () => {
 
 		healthy = true;
 		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
-		expect(await within(scopes).findByText('Requests no scopes')).toBeInTheDocument();
+		expect(
+			await within(scopes).findByRole('list', { name: 'Default agent scopes' }),
+		).toBeInTheDocument();
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeEnabled(),
+		);
+	});
+
+	it('lists requested scopes outside the catalogue apart, as not granted', async () => {
+		worker.use(
+			http.get('/agents/:id/scopes', () =>
+				HttpResponse.json({ scopes: ['apis:read', 'workflows:write', 'agents:write'] }),
+			),
+		);
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('mixed-bot', queryClient);
+
+		const granted = await screen.findByRole('list', { name: 'Requested scopes' });
+		expect(
+			within(granted)
+				.getAllByRole('listitem')
+				.map((li) => li.textContent),
+		).toEqual(['apis:read', 'agents:write (can change data)']);
+		const unrecognised = screen.getByRole('list', { name: 'Unrecognised scopes' });
+		expect(
+			within(unrecognised)
+				.getAllByRole('listitem')
+				.map((li) => li.textContent),
+		).toEqual(['workflows:write']);
+		expect(screen.getByTestId('unrecognised-scopes')).toHaveTextContent(
+			"Not recognised — won't be granted:",
+		);
+		// A non-empty request brings no defaults, and only the recognised count.
+		expect(screen.queryByRole('list', { name: 'Default agent scopes' })).toBeNull();
+		expect(screen.queryByTestId('no-scopes-warning')).toBeNull();
+		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+			'1 of these can change data or administer your organisation. Approving grants the recognised scopes listed.',
+		);
+	});
+
+	it('warns that an agent requesting only unrecognised scopes gets none', async () => {
+		worker.use(
+			http.get('/agents/:id/scopes', () =>
+				HttpResponse.json({ scopes: ['workflows:write', 'toolkits:read'] }),
+			),
+		);
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('odd-bot', queryClient);
+
+		expect(await screen.findByTestId('no-scopes-warning')).toHaveTextContent(
+			'None of these are recognised, so the agent will get no scopes.',
+		);
+		expect(screen.queryByRole('list', { name: 'Requested scopes' })).toBeNull();
+		expect(screen.queryByRole('list', { name: 'Default agent scopes' })).toBeNull();
+		expect(
+			within(screen.getByRole('list', { name: 'Unrecognised scopes' })).getAllByRole(
+				'listitem',
+			),
+		).toHaveLength(2);
+		expect(screen.getByRole('button', { name: 'Approve odd-bot' })).toBeEnabled();
+	});
+
+	it('holds Approve while the permission catalogue is still being read', async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		worker.use(
+			http.get('/permissions', async () => {
+				await gate;
+				return HttpResponse.json({ data: [] });
+			}),
+		);
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('slow-catalogue-bot', queryClient, {}, { scopesRead: false });
+
+		const approve = screen.getByRole('button', { name: 'Approve slow-catalogue-bot' });
+		expect(approve).toBeDisabled();
+		expect(screen.getByText('Reading the scopes it requests…')).toBeInTheDocument();
+		expect(screen.getByTestId('approve-waits-for-scopes')).toBeInTheDocument();
+
+		release();
+		await waitFor(() => expect(approve).toBeEnabled());
+		expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull();
+	});
+
+	it('a failed catalogue read keeps Approve off and retries in place', async () => {
+		let healthy = false;
+		worker.use(
+			http.get('/permissions', () =>
+				healthy
+					? HttpResponse.json({ data: [] })
+					: HttpResponse.json({ detail: 'Server error' }, { status: 500 }),
+			),
+		);
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('flaky-catalogue-bot', queryClient, {}, { scopesRead: false });
+
+		const scopes = screen.getByTestId('requested-scopes');
+		expect(
+			await within(scopes).findByText('Could not read the permission catalogue.'),
+		).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Approve flaky-catalogue-bot' })).toBeDisabled();
+
+		healthy = true;
+		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
+		expect(
+			await within(scopes).findByRole('list', { name: 'Default agent scopes' }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(
+				screen.getByRole('button', { name: 'Approve flaky-catalogue-bot' }),
+			).toBeEnabled(),
 		);
 	});
 

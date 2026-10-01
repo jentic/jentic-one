@@ -40,6 +40,7 @@ import {
 	ACTION_VARIANT,
 	useAgentApiKeyInfo,
 	useAgentScopes,
+	usePermissionCatalogue,
 	type AgentEntity,
 } from '@/modules/agents/api';
 import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
@@ -48,7 +49,7 @@ import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agen
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
-import { scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
+import { approvalGrant, scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
 import {
 	commandText,
 	registerCommandTokens,
@@ -561,10 +562,13 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
-	// Approval makes the requested scopes live, so Approve waits until they are
-	// read and on screen.
+	// Approval makes the requested scopes live (or the defaults, when there are
+	// none), so Approve waits until what it grants is read and on screen — the
+	// catalogue included, since it tells which requested scopes count.
 	const scopes = useAgentScopes(agent.id);
-	const scopesUnread = scopes.isPending || scopes.isError;
+	const catalogue = usePermissionCatalogue();
+	const scopesUnread =
+		scopes.isPending || scopes.isError || catalogue.isPending || catalogue.isError;
 
 	return (
 		<div data-testid="arrival-card">
@@ -593,7 +597,12 @@ export function AgentDetails({
 				}
 				badge={<ActorStatusBadge status={agent.status} />}
 			/>
-			<AgentFacts agent={agent} selfRegistered={selfRegistered} scopes={scopes} />
+			<AgentFacts
+				agent={agent}
+				selfRegistered={selfRegistered}
+				scopes={scopes}
+				catalogue={catalogue}
+			/>
 
 			<AnimatePresence mode="wait" initial={false}>
 				<motion.div
@@ -638,7 +647,7 @@ export function AgentDetails({
 									data-testid="approve-waits-for-scopes"
 									className="text-muted-foreground mt-2 text-xs"
 								>
-									Approve is available once the scopes it requests are read.
+									Approve is available once the scopes it would grant are read.
 								</p>
 							)}
 						</div>
@@ -733,10 +742,12 @@ function AgentFacts({
 	agent,
 	selfRegistered,
 	scopes,
+	catalogue,
 }: {
 	agent: AgentEntity;
 	selfRegistered: boolean;
 	scopes: ReturnType<typeof useAgentScopes>;
+	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
 
@@ -782,7 +793,7 @@ function AgentFacts({
 				</Fact>
 			)}
 			{agent.description && <Fact label="Description">{agent.description}</Fact>}
-			<RequestedScopes scopes={scopes} />
+			<RequestedScopes scopes={scopes} catalogue={catalogue} />
 		</dl>
 	);
 }
@@ -797,76 +808,137 @@ const RISK_LABEL: Record<ScopeRisk, string> = {
 	write: 'can change data',
 };
 
+/** One scope as a badge, flagged when it changes data or administers the org. */
+function ScopeBadge({ scope }: { scope: string }) {
+	const risk = scopeRisk(scope);
+	return (
+		<li className="max-w-full">
+			<Badge
+				variant={risk ? RISK_VARIANT[risk] : 'default'}
+				data-risk={risk ?? undefined}
+				className="max-w-full [overflow-wrap:anywhere]"
+			>
+				{risk && <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden="true" />}
+				{scope}
+				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
+			</Badge>
+		</li>
+	);
+}
+
 /**
- * Every scope the agent asked for, in full: approval grants all of them at
- * once, so none may hide behind an ellipsis. Scopes that change data or
- * administer the organisation are flagged; an unread list says so rather than
- * reading as "no scopes".
+ * Every scope approval grants, in full: they go live at once, so none may hide
+ * behind an ellipsis. An agent that requests none gets the default agent
+ * scopes; requested strings outside the permission catalogue grant nothing and
+ * are listed apart, and they don't bring the defaults back — so a request made
+ * only of those approves an agent with no scopes, which the card says. Scopes
+ * that change data or administer the organisation are flagged; an unread list
+ * says so rather than reading as "no scopes".
  */
-function RequestedScopes({ scopes }: { scopes: ReturnType<typeof useAgentScopes> }) {
-	const list = scopes.data ?? [];
-	const risky = list.filter((scope) => scopeRisk(scope) != null).length;
+function RequestedScopes({
+	scopes,
+	catalogue,
+}: {
+	scopes: ReturnType<typeof useAgentScopes>;
+	catalogue: ReturnType<typeof usePermissionCatalogue>;
+}) {
+	const failed = scopes.isError ? scopes : catalogue.isError ? catalogue : null;
+	let body: ReactNode;
+	if (scopes.isPending || catalogue.isPending) {
+		body = (
+			<span aria-busy="true" className="flex flex-wrap gap-1.5">
+				<span className="sr-only">Reading the scopes it requests…</span>
+				<Skeleton className="h-5 w-24 rounded-full" />
+				<Skeleton className="h-5 w-32 rounded-full" />
+			</span>
+		);
+	} else if (failed) {
+		body = (
+			<ErrorAlert
+				message={
+					failed === scopes
+						? 'Could not read the scopes this agent requests.'
+						: 'Could not read the permission catalogue.'
+				}
+				onRetry={() => void failed.refetch()}
+				retrying={failed.isFetching}
+			/>
+		);
+	} else {
+		const grant = approvalGrant(
+			scopes.data ?? [],
+			(catalogue.data ?? []).map((p) => p.name),
+		);
+		const risky = grant.granted.filter((scope) => scopeRisk(scope) != null).length;
+		const riskNote =
+			risky === 0
+				? null
+				: risky === 1
+					? '1 of these can change data or administer your organisation.'
+					: `${risky} of these can change data or administer your organisation.`;
+		body = (
+			<>
+				{grant.kind === 'defaults' ? (
+					<p className="mb-1.5">Requests none, so it gets the default agent scopes:</p>
+				) : null}
+				{grant.granted.length > 0 && (
+					<ul
+						aria-label={
+							grant.kind === 'defaults' ? 'Default agent scopes' : 'Requested scopes'
+						}
+						className="flex flex-wrap gap-1.5"
+					>
+						{grant.granted.map((scope) => (
+							<ScopeBadge key={scope} scope={scope} />
+						))}
+					</ul>
+				)}
+				{grant.granted.length > 0 && (
+					<p className="text-muted-foreground mt-1.5">
+						{riskNote}
+						{riskNote && ' '}
+						{grant.kind === 'defaults'
+							? 'Approving grants the default agent scopes.'
+							: 'Approving grants the recognised scopes listed.'}
+					</p>
+				)}
+				{grant.unrecognised.length > 0 && (
+					<div data-testid="unrecognised-scopes" className="mt-2.5">
+						<p className="text-muted-foreground mb-1.5">
+							Not recognised — won&apos;t be granted:
+						</p>
+						<ul aria-label="Unrecognised scopes" className="flex flex-wrap gap-1.5">
+							{grant.unrecognised.map((scope) => (
+								<li key={scope} className="max-w-full">
+									<Badge className="bg-muted text-muted-foreground border-border max-w-full [overflow-wrap:anywhere]">
+										{scope}
+									</Badge>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{grant.kind === 'requested' && grant.granted.length === 0 && (
+					<p
+						data-testid="no-scopes-warning"
+						className="text-foreground mt-2 flex items-start gap-2"
+					>
+						<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<span>
+							None of these are recognised, so the agent will get no scopes. A request
+							that names any scope gets no defaults.
+						</span>
+					</p>
+				)}
+			</>
+		);
+	}
 	return (
 		<div data-testid="requested-scopes" className="col-span-full min-w-0">
 			<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
 				Scopes
 			</dt>
-			<dd className="text-foreground/90 mt-1 text-xs">
-				{scopes.isPending ? (
-					<span aria-busy="true" className="flex flex-wrap gap-1.5">
-						<span className="sr-only">Reading the scopes it requests…</span>
-						<Skeleton className="h-5 w-24 rounded-full" />
-						<Skeleton className="h-5 w-32 rounded-full" />
-					</span>
-				) : scopes.isError ? (
-					<ErrorAlert
-						message="Could not read the scopes this agent requests."
-						onRetry={() => void scopes.refetch()}
-						retrying={scopes.isFetching}
-					/>
-				) : list.length === 0 ? (
-					'Requests no scopes'
-				) : (
-					<>
-						<ul aria-label="Requested scopes" className="flex flex-wrap gap-1.5">
-							{list.map((scope) => {
-								const risk = scopeRisk(scope);
-								return (
-									<li key={scope} className="max-w-full">
-										<Badge
-											variant={risk ? RISK_VARIANT[risk] : 'default'}
-											data-risk={risk ?? undefined}
-											className="max-w-full [overflow-wrap:anywhere]"
-										>
-											{risk && (
-												<TriangleAlert
-													className="h-3 w-3 shrink-0"
-													aria-hidden="true"
-												/>
-											)}
-											{scope}
-											{risk && (
-												<span className="sr-only">
-													{' '}
-													({RISK_LABEL[risk]})
-												</span>
-											)}
-										</Badge>
-									</li>
-								);
-							})}
-						</ul>
-						{risky > 0 && (
-							<p className="text-muted-foreground mt-1.5">
-								{risky === 1
-									? '1 of these can change data or administer your organisation.'
-									: `${risky} of these can change data or administer your organisation.`}{' '}
-								Approving grants every scope listed.
-							</p>
-						)}
-					</>
-				)}
-			</dd>
+			<dd className="text-foreground/90 mt-1 text-xs">{body}</dd>
 		</div>
 	);
 }

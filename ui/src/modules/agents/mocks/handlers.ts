@@ -24,6 +24,7 @@
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { findMockCredential } from '@/shared/credentials/mocks/handlers';
+import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -318,6 +319,19 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		implies: [],
 		grantable_by_caller: true,
 	},
+	{
+		name: 'catalog:import',
+		description: 'Import an API from the public catalog into the local registry',
+		implies: ['apis:read'],
+		grantable_by_caller: true,
+	},
+	{
+		name: 'credentials:connect',
+		description:
+			'Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.',
+		implies: [],
+		grantable_by_caller: true,
+	},
 ];
 
 /**
@@ -557,23 +571,6 @@ function genId(prefix: string): string {
  * Pydantic) — see {@link validateScopes}.
  */
 const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
-
-/**
- * The default baseline `AgentService.create` grants when the payload carries
- * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES).
- */
-const DEFAULT_AGENT_SCOPES_MOCK = [
-	'capabilities:execute',
-	'capabilities:read',
-	'apis:read',
-	'catalog:import',
-	'executions:read',
-	'jobs:read',
-	'events:read',
-	'owner:resources:read',
-	'owner:agents:read',
-	'owner:credentials:read',
-] as const;
 
 /** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
 const NON_GRANTABLE_SCOPES = new Set(
@@ -999,6 +996,10 @@ export const agentsHandlers = [
 		if (!res.ok) return new HttpResponse(null, { status: res.status });
 		res.row.approved_by = ADMIN;
 		res.row.approved_at = now();
+		// `AgentService.approve` grants DEFAULT_AGENT_SCOPES to an agent holding
+		// no grants; a non-empty request (recognised or not) is left as-is.
+		if ((actorScopes[res.row.id] ?? []).length === 0)
+			actorScopes[res.row.id] = [...DEFAULT_AGENT_SCOPES];
 		return HttpResponse.json(res.row);
 	}),
 	http.post('/agents/:id\\:deny', async ({ params, request }) => {
@@ -1068,7 +1069,7 @@ export const agentsHandlers = [
 		actorScopes[row.id] =
 			Array.isArray(body.scopes) && body.scopes.length > 0
 				? [...new Set(body.scopes)]
-				: [...DEFAULT_AGENT_SCOPES_MOCK];
+				: [...DEFAULT_AGENT_SCOPES];
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	// Partial in-place edit — name / description / owner_id. Mirrors
