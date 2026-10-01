@@ -1922,7 +1922,6 @@
             },
             "api_id": "stripe.com",
             "description": "The Stripe REST API.",
-            "logo_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/logo.png",
             "path": "apis/openapi/stripe.com",
             "registered": false,
             "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
@@ -1950,18 +1949,6 @@
             ],
             "description": "Short plain-text description from the manifest, when known.",
             "title": "Description"
-          },
-          "logo_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Absolute `https` URL of the API's logo image, when known.",
-            "title": "Logo Url"
           },
           "path": {
             "anyOf": [

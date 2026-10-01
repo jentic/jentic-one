@@ -128,12 +128,12 @@ def test_parse_description_and_logo_when_present() -> None:
     }
     [entry] = mb.parse_apis_json(data)
     assert entry.description == "The Stripe REST API."
-    assert entry.logo_url == "https://example.com/stripe.png"
+    assert entry.logo_source_url == "https://example.com/stripe.png"
 
 
 def test_parse_metadata_absent_is_none() -> None:
     [entry] = mb.parse_apis_json({"include": [_include(_manifest_url("acme.io", "main"))]})
-    assert (entry.title, entry.description, entry.logo_url) == (None, None, None)
+    assert (entry.title, entry.description, entry.logo_source_url) == (None, None, None)
 
 
 def test_parse_truncates_long_description() -> None:
@@ -160,16 +160,16 @@ def test_parse_truncates_long_description() -> None:
         123,
     ],
 )
-def test_parse_rejects_non_https_logo(image: object) -> None:
+def test_parse_rejects_non_https_logo_source(image: object) -> None:
     data = {"include": [{"url": _manifest_url("acme.io", "main"), "image": image}]}
     [entry] = mb.parse_apis_json(data)
-    assert entry.logo_url is None
+    assert entry.logo_source_url is None
 
 
 def test_from_dict_tolerates_snapshot_without_metadata() -> None:
     old = {"api_id": "stripe.com", "path": "p", "github_url": "g"}
     entry = mb.ManifestEntry.from_dict(old)
-    assert (entry.title, entry.description, entry.logo_url) == (None, None, None)
+    assert (entry.title, entry.description, entry.logo_source_url) == (None, None, None)
 
 
 # ── vendor derivation ────────────────────────────────────────────────────────
@@ -451,7 +451,7 @@ def test_manifest_entry_round_trips_through_dict() -> None:
         vendor="stripe.com",
         title="Stripe API",
         description="d",
-        logo_url="https://example.com/logo.png",
+        logo_source_url="https://example.com/logo.png",
     )
     assert mb.ManifestEntry.from_dict(e.to_dict()) == e
 

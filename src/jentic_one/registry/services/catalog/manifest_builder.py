@@ -51,8 +51,10 @@ class ManifestEntry:
     title: str | None = None
     #: Short description from the manifest ``include[].description``, when present.
     description: str | None = None
-    #: Absolute ``https`` logo URL from the manifest ``include[].image``, when present.
-    logo_url: str | None = None
+    #: Absolute ``https`` URL of the logo image from the manifest ``include[].image``.
+    #: Server-side only: it is an upstream source to fetch from, never returned to
+    #: clients (browsers must not be pointed at arbitrary third-party hosts).
+    logo_source_url: str | None = None
 
     def to_dict(self) -> dict[str, str | None]:
         """Serialise to the plain dict shape persisted in the snapshot blob."""
@@ -64,7 +66,7 @@ class ManifestEntry:
             "vendor": self.vendor,
             "title": self.title,
             "description": self.description,
-            "logo_url": self.logo_url,
+            "logo_source_url": self.logo_source_url,
         }
 
     @classmethod
@@ -85,7 +87,7 @@ class ManifestEntry:
             vendor=vendor_from_api_id(api_id),
             title=data.get("title"),
             description=data.get("description"),
-            logo_url=data.get("logo_url"),
+            logo_source_url=data.get("logo_source_url"),
         )
 
 
@@ -118,9 +120,9 @@ def _clean_description(value: Any) -> str | None:
     return text
 
 
-def _clean_logo_url(value: Any) -> str | None:
-    # Only absolute https URLs: the UI renders this as an <img src>, so plain
-    # http (mixed content) and non-network schemes (data:, javascript:) are dropped.
+def _clean_logo_source_url(value: Any) -> str | None:
+    # Only absolute https URLs; plain http and non-network schemes (data:,
+    # javascript:, relative paths) are dropped.
     if not isinstance(value, str):
         return None
     url = value.strip()
@@ -134,7 +136,7 @@ def parse_apis_json(data: dict[str, Any]) -> list[ManifestEntry]:
     ``api_id`` with umbrella-vendor expansion (a non-version ``sub`` segment is
     folded into the id as ``domain/sub``). Pure: takes the already-fetched dict.
 
-    Display metadata (``title``, ``description``, ``logo_url``) is taken from the
+    Display metadata (``title``, ``description``, ``logo_source_url``) is taken from the
     first ``include`` entry seen for each ``api_id``; every field is optional.
     """
     includes = data.get("include") or []
@@ -165,7 +167,7 @@ def parse_apis_json(data: dict[str, Any]) -> list[ManifestEntry]:
                 vendor=vendor_from_api_id(api_id),
                 title=title_from_include_name(entry.get("name")),
                 description=_clean_description(entry.get("description")),
-                logo_url=_clean_logo_url(entry.get("image")),
+                logo_source_url=_clean_logo_source_url(entry.get("image")),
             )
         )
     entries.sort(key=lambda e: e.api_id)

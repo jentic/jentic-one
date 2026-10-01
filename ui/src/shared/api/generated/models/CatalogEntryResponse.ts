@@ -17,10 +17,6 @@ export type CatalogEntryResponse = {
      */
     description?: (string | null);
     /**
-     * Absolute `https` URL of the API's logo image, when known.
-     */
-    logo_url?: (string | null);
-    /**
      * Manifest path of the entry within the public-APIs repo.
      */
     path: (string | null);

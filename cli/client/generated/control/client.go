@@ -1283,7 +1283,7 @@ type CatalogEntryLinksResponse struct {
 
 // CatalogEntryResponse A single browsable catalog entry.
 //
-// Examples: {"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","description":"The Stripe REST API.","logo_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/logo.png","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","title":"Stripe API","vendor":"stripe.com"}
+// Examples: {"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","description":"The Stripe REST API.","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","title":"Stripe API","vendor":"stripe.com"}
 type CatalogEntryResponse struct {
 	// UnderscoreLinks Hypermedia links for a catalog entry.
 	//
@@ -1295,9 +1295,6 @@ type CatalogEntryResponse struct {
 
 	// Description Short plain-text description from the manifest, when known.
 	Description *string `json:"description,omitempty"`
-
-	// LogoUrl Absolute `https` URL of the API's logo image, when known.
-	LogoUrl *string `json:"logo_url,omitempty"`
 
 	// Path Manifest path of the entry within the public-APIs repo.
 	Path *string `json:"path"`

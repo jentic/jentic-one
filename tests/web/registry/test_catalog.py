@@ -435,9 +435,10 @@ def test_entry_carries_manifest_display_metadata(admin_client: TestClient) -> No
     stripe = by_id["stripe.com"]
     assert stripe["title"] == "Stripe API"
     assert stripe["description"] == "The Stripe REST API."
-    assert stripe["logo_url"] == "https://example.com/stripe.png"
+    assert "logo_url" not in stripe
+    assert "logo_source_url" not in stripe
     slack = by_id["slack.com"]
-    assert (slack["title"], slack["description"], slack["logo_url"]) == (None, None, None)
+    assert (slack["title"], slack["description"]) == (None, None)
     assert admin_client.get("/catalog/stripe.com").json()["title"] == "Stripe API"
 
 
