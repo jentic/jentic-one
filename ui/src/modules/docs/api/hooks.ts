@@ -17,7 +17,12 @@ import {
 	fetchReferencePayload,
 } from '@/modules/docs/api/client';
 import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
-import { withDeploymentServer } from '@/modules/docs/lib/apiSpec';
+import {
+	CONTROL_PLACEHOLDER_ORIGIN,
+	replaceOrigins,
+	withAbsoluteServers,
+	withDeploymentServer,
+} from '@/modules/docs/lib/apiSpec';
 
 export const docsKeys = {
 	all: ['docs'] as const,
@@ -48,6 +53,9 @@ export interface UseDocsResult {
  * if it fails, we surface the error so the page can show a graceful notice
  * rather than silently dropping the scope panel. The spec is static for the
  * process lifetime, so a long staleTime is fine.
+ *
+ * The spec is served same-origin, so a relative server (`/`) is resolved
+ * against this page's origin to show the absolute base URL.
  */
 export function useDocs(): UseDocsResult {
 	const query = useQuery<DocsBundle>({
@@ -61,9 +69,19 @@ export function useDocs(): UseDocsResult {
 		},
 		staleTime: Infinity,
 	});
+	const data = useMemo(
+		() =>
+			query.data
+				? {
+						...query.data,
+						spec: withAbsoluteServers(query.data.spec, window.location.origin),
+					}
+				: undefined,
+		[query.data],
+	);
 
 	return {
-		data: query.data,
+		data,
 		isPending: query.isPending,
 		error: query.error as Error | null,
 		refetch: () => {
@@ -100,9 +118,10 @@ export function useCliReference() {
  * build-time artifact instead. Like the other static assets it never changes
  * for the process lifetime — cache it indefinitely.
  *
- * The artifact's `servers` are placeholders; when `/instance` advertises this
- * deployment's broker URL it replaces them. A failed or withheld lookup keeps
- * the placeholders rather than blocking the reference.
+ * The artifact's hosts are placeholders. Its control-plane links point at this
+ * page's origin (the control plane serving the docs); when `/instance`
+ * advertises this deployment's broker URL it replaces the broker placeholders.
+ * A failed or withheld lookup keeps them rather than blocking the reference.
  */
 export function useBrokerSpec() {
 	const query = useQuery<OpenApiDocument>({
@@ -117,7 +136,15 @@ export function useBrokerSpec() {
 		retry: false,
 	});
 	const data = useMemo(
-		() => (query.data ? withDeploymentServer(query.data, brokerUrl.data) : undefined),
+		() =>
+			query.data
+				? withDeploymentServer(
+						replaceOrigins(query.data, {
+							[CONTROL_PLACEHOLDER_ORIGIN]: window.location.origin,
+						}),
+						brokerUrl.data,
+					)
+				: undefined,
 		[query.data, brokerUrl.data],
 	);
 	return {

@@ -31,7 +31,7 @@ info:
     upstream.
 
     Credential, agent-binding, and API-revision management live on the
-    [control plane](https://control-plane.example.com), not here.
+    [control plane](https://control.your-instance.example), not here.
 
     ## Path format
 
@@ -773,7 +773,7 @@ components:
               format: uri
               description: Absolute URL of the control-plane job record. Poll this for status and result links.
               examples:
-                - https://control-plane.example.com/jobs/job_abc123
+                - https://control.your-instance.example/jobs/job_abc123
     HealthResponse:
       type: object
       title: HealthResponse
@@ -952,7 +952,7 @@ components:
               value:
                 job_id: job_abc123
                 _links:
-                  self: https://control-plane.example.com/jobs/job_abc123
+                  self: https://control.your-instance.example/jobs/job_abc123
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

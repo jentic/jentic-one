@@ -68,7 +68,7 @@ type AsyncQueuedResponse struct {
 	UnderscoreLinks struct {
 		// Self Absolute URL of the control-plane job record. Poll this for status and result links.
 		//
-		// Examples: https://control-plane.example.com/jobs/job_abc123
+		// Examples: https://control.your-instance.example/jobs/job_abc123
 		Self string `json:"self"`
 	} `json:"_links"`
 

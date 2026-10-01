@@ -35,6 +35,7 @@ from tools.openapi_export import (
     CONTROL_SPEC_PATH,
     UI_SPEC_PATH,
     dump_spec_yaml,
+    published_spec,
 )
 
 OPENAPI_DIR = Path(__file__).resolve().parent.parent.parent / "openapi"
@@ -200,7 +201,7 @@ def _drift_failure(message: str) -> None:
 @pytest.mark.arch
 def test_control_spec_matches_generated(generated_control_spec: dict[str, Any]) -> None:
     """The checked-in control spec must equal what the app generates today."""
-    expected = dump_spec_yaml(generated_control_spec)
+    expected = dump_spec_yaml(published_spec(generated_control_spec))
     actual = CONTROL_SPEC_PATH.read_text(encoding="utf-8")
     if actual != expected:
         _drift_failure(

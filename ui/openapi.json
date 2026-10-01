@@ -35267,12 +35267,8 @@
   ],
   "servers": [
     {
-      "description": "Production (placeholder — set to your deployment's Control Plane host)",
-      "url": "https://control.your-instance.example"
-    },
-    {
-      "description": "Development (placeholder — set to your deployment's Control Plane host)",
-      "url": "https://control-dev.your-instance.example"
+      "description": "Same-origin (relative)",
+      "url": "/"
     }
   ],
   "tags": [
