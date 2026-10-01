@@ -66,11 +66,13 @@ def build_control_plane_spec() -> dict[str, Any]:
     from jentic_one.shared.config import load_config
     from jentic_one.shared.context import Context
     from jentic_one.shared.web.app_factory import create_combined_app
+    from jentic_one.shared.web.openapi_meta import PUBLISHED_SERVERS
 
     config = load_config()
     ctx = Context(config, allowed_dbs={"registry", "admin", "control"})
     app = create_combined_app(ctx, list(CONTROL_PLANE_SURFACES))
-    spec: dict[str, Any] = app.openapi()
+    # Copy so the app's cached schema keeps its same-origin servers.
+    spec: dict[str, Any] = {**app.openapi(), "servers": PUBLISHED_SERVERS}
     return spec
 
 

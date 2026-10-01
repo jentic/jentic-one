@@ -52,6 +52,21 @@ LICENSE_INFO = {
 
 SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
 
+# The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
+# outside any deployment (API catalogues, client generators), where a relative
+# server is meaningless. It carries placeholder hosts mirroring the Broker spec;
+# the live app keeps ``SERVERS`` so ``/openapi.json`` resolves same-origin.
+PUBLISHED_SERVERS = [
+    {
+        "url": "https://control.your-instance.example",
+        "description": "Production (placeholder — set to your deployment's Control Plane host)",
+    },
+    {
+        "url": "https://control-dev.your-instance.example",
+        "description": "Development (placeholder — set to your deployment's Control Plane host)",
+    },
+]
+
 API_DESCRIPTION = """## Overview ##
 The **Jentic Control Plane API** is the unified HTTP surface of the
 Jentic platform's control plane — every administrative and
