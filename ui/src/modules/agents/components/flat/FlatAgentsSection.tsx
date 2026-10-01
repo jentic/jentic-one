@@ -13,7 +13,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'reac
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
-import { Button, Card, ErrorAlert, ExpandableText, Skeleton, STATUS_ICON } from '@/shared/ui';
+import {
+	ActorLabel,
+	Button,
+	Card,
+	ErrorAlert,
+	ExpandableText,
+	Skeleton,
+	STATUS_ICON,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -38,6 +46,8 @@ import {
 	useUnbindAgentCredential,
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
+	ACTION_LABEL,
+	ACTION_VARIANT,
 	type ActorStatus,
 	type AgentEntity,
 } from '@/modules/agents/api';
@@ -397,6 +407,9 @@ export function FlatAgentsSection({
 					onCloseTile={() => setOpenTileKey(null)}
 					onApprove={() => approve.mutate(selected.id)}
 					approvePending={approve.isPending && approve.variables === selected.id}
+					onDeny={() =>
+						setConfirm({ kind: 'deny', id: selected.id, name: selected.name })
+					}
 					autoOpenAddApis={addApisFor?.agentId === selected.id}
 					autoQueueApis={
 						addApisFor?.agentId === selected.id ? addApisFor.queue : EMPTY_PICKS
@@ -502,13 +515,17 @@ const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }>
 function StateBanner({
 	status,
 	denialReason,
+	deniedBy,
 	onApprove,
 	approvePending,
+	onDeny,
 }: {
 	status: BanneredStatus;
 	denialReason: string | null;
+	deniedBy: string | null;
 	onApprove: () => void;
 	approvePending: boolean;
+	onDeny: () => void;
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
@@ -534,12 +551,36 @@ function StateBanner({
 				<p className="text-muted-foreground text-xs leading-snug">
 					{NON_ACTIVE_COPY[status].detail}
 					{status === 'rejected' && denialReason && <> Reason: {denialReason}</>}
+					{status === 'rejected' && deniedBy && (
+						<>
+							{' '}
+							Denied by <ActorLabel actorId={deniedBy} />.
+						</>
+					)}
 				</p>
 			</div>
 			{status === 'pending' && (
-				<Button size="sm" loading={approvePending} onClick={onApprove} className="shrink-0">
-					Approve
-				</Button>
+				// The banner pins the longest-waiting agent only; any OTHER pending
+				// agent is decided here, so both verbs sit on its own panel.
+				<span className="flex shrink-0 items-center gap-2">
+					<Button
+						size="sm"
+						variant={ACTION_VARIANT.deny}
+						disabled={approvePending}
+						onClick={onDeny}
+						data-testid="state-banner-deny"
+					>
+						{ACTION_LABEL.deny}
+					</Button>
+					<Button
+						size="sm"
+						loading={approvePending}
+						onClick={onApprove}
+						data-testid="state-banner-approve"
+					>
+						Approve
+					</Button>
+				</span>
 			)}
 		</div>
 	);
@@ -571,6 +612,8 @@ interface SelectedAgentPanelProps {
 	onCloseTile: () => void;
 	onApprove: () => void;
 	approvePending: boolean;
+	/** Open the page's reason-required deny dialog for this (pending) agent. */
+	onDeny: () => void;
 	/** This agent was just created and its APIs are the next step. */
 	autoOpenAddApis: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
@@ -598,6 +641,7 @@ function SelectedAgentPanel({
 	onCloseTile,
 	onApprove,
 	approvePending,
+	onDeny,
 	autoOpenAddApis,
 	onAutoOpenAddApisConsumed,
 	autoQueueApis,
@@ -666,7 +710,7 @@ function SelectedAgentPanel({
 	const multiAccount = useMemo(() => multiAccountApis(tiles), [tiles]);
 	const tileAccountLabels = useMemo(() => accountLabels(tiles), [tiles]);
 
-	// The same per-actor read the console's KPI strip makes; `null` on 403.
+	// The per-actor 7-day usage rollup; `null` on 403.
 	const usageQuery = useActorUsageDetail(agent.id);
 	const executionsQuery = useActorExecutions(agent.id);
 
@@ -832,8 +876,10 @@ function SelectedAgentPanel({
 				<StateBanner
 					status={bannerStatus}
 					denialReason={agent.denialReason}
+					deniedBy={agent.attribution.deniedBy}
 					onApprove={onApprove}
 					approvePending={approvePending}
+					onDeny={onDeny}
 				/>
 			)}
 

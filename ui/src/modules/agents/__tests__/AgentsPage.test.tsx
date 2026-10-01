@@ -522,9 +522,9 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripFigure('operations')).toBeInTheDocument();
 	});
 
-	// --- Stat strip: merged console vitals ----------------------------------
+	// --- Stat strip: vitals + access stats -----------------------------------
 
-	it('merges the console vitals with the access stats in one quiet meta line', async () => {
+	it('merges the vitals with the access stats in one quiet meta line', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
@@ -534,7 +534,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripFigure('operations')).toHaveTextContent('181 operations');
 		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 
-		// Monitor clauses — the console header's sources (7-day usage rollup
+		// Monitor clauses — the per-actor sources (7-day usage rollup
 		// + newest execution), rendered from the mocked rollups.
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('1,204'));
 		expect(stripFigure('executions')).toHaveTextContent('7d');
@@ -742,9 +742,10 @@ describe('AgentsPage — flat agents surface', () => {
 		).not.toBeInTheDocument();
 		// …and no status badge duplicates the pill's dot.
 		expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
-		// …and no jump-off to the console: the dock's sheets carry everything
-		// that page holds.
-		expect(within(panel).queryByRole('link', { name: /Open console/ })).not.toBeInTheDocument();
+		// …and no jump-off to another agent page: the dock's sheets carry the rest.
+		for (const link of within(panel).queryAllByRole('link')) {
+			expect(link.getAttribute('href')).not.toMatch(/\/agents\//);
+		}
 	});
 
 	it('renders em-dashes when the monitor has no data and zeros without bindings', async () => {
@@ -1515,6 +1516,78 @@ describe('AgentsPage — flat agents surface', () => {
 
 		releaseApprove();
 		expect(await screen.findByText('Agent approved')).toBeInTheDocument();
+	});
+
+	it("denies the selected pending agent from its own panel, not only the banner's pick", async () => {
+		const user = userEvent.setup();
+		// The banner pins the longest-waiting agent (inbox-triage-bot); this one is
+		// decided on its own panel.
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+
+		await user.click(within(banner).getByRole('button', { name: 'Deny' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny release-notes-bot' });
+		// A reason is required before anything crosses the wire.
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
+
+		await user.type(within(dialog).getByLabelText('Reason'), 'Unknown publisher');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+		expect(await screen.findByTestId('agent-state-banner-rejected')).toHaveTextContent(
+			'Reason: Unknown publisher',
+		);
+	});
+
+	it('keeps the deny dialog open and toasts when the panel deny fails', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+
+		await user.click(within(banner).getByRole('button', { name: 'Deny' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny release-notes-bot' });
+		await user.type(within(dialog).getByLabelText('Reason'), 'nope');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+
+		expect(await screen.findByText('Failed to deny the agent.')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Deny release-notes-bot' })).toBeInTheDocument();
+	});
+
+	it('names the reason and who denied a rejected agent', async () => {
+		renderPage('/?agent=agnt_rejected_1');
+		const banner = await screen.findByTestId('agent-state-banner-rejected');
+		expect(banner).toHaveTextContent('Reason: Unverified publisher.');
+		// The denier resolves through the actor directory, never a raw id.
+		await waitFor(() => expect(banner).toHaveTextContent('Denied by Admin User'));
+		expect(within(banner).queryByRole('button')).not.toBeInTheDocument();
+	});
+
+	it('requests the usage window with a next-minute-ceiled until bound (#913)', async () => {
+		// The aggregate filters `started_at < until` strictly, so the request
+		// must carry an explicit `until` PAST "now" — a floored (or absent →
+		// server-floored) bound excludes the current partial minute, so fresh
+		// executions show in the Activity feed but not in the 7-day figure.
+		let captured: URLSearchParams | null = null;
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('agent_id') !== 'agnt_active_1') return undefined;
+				captured = url.searchParams;
+				return undefined; // fall through to the module's fixture handler
+			}),
+		);
+		const beforeSec = Math.floor(Date.now() / 1000);
+		renderPage('/?agent=agnt_active_1');
+
+		await waitFor(() => expect(captured).not.toBeNull());
+		const params: URLSearchParams = captured!;
+		const since = Number(params.get('since'));
+		const until = Number(params.get('until'));
+		expect(until % 60).toBe(0);
+		expect(until).toBeGreaterThan(beforeSec);
+		// Exact 7-day width: the backend derives its bucket tier from
+		// `until - since`, so the window must not stretch past the tier edge.
+		expect(until - since).toBe(7 * 86_400);
 	});
 
 	it('has no critical a11y violations', async () => {
