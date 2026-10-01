@@ -186,7 +186,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   edit.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
-  from it. To walk all executions under one logical request, use
+  from it. To walk the executions you can see under one logical request, use
   `GET /executions?trace_id=…`.
 - **Event stream.** The dashboard / operator UI consumes the
   `/events` resource (paginated list + SSE stream). Some events
@@ -461,7 +461,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not "
             "stored. Records are written by the Broker; this surface is read-only. To walk the "
             "history of a single logical request that fanned out into multiple upstream calls, "
-            "list with `?trace_id={trace_id}`."
+            "list with `?trace_id={trace_id}`. An execution is visible only to the actor "
+            "that ran it, the owner of the agent that ran it, and `org:admin`; to any other "
+            "caller it is indistinguishable from a missing execution (`404`)."
         ),
     },
     {
