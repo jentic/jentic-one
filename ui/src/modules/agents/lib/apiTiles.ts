@@ -69,6 +69,8 @@ function* tileIdentities(
 	served: ServedApiEntity;
 	api: ApiResponse | null;
 	key: string;
+	/** The API alone, as {@link tileApiKey} keys it: shared by its credentials. */
+	apiKey: string;
 }> {
 	const seen = new Set<string>();
 	for (const binding of bindings) {
@@ -76,16 +78,27 @@ function* tileIdentities(
 			const matches = apis.filter((api) => servedMatchesApi(served, api));
 			if (matches.length === 0) {
 				const key = `${binding.id}:${served.vendor}/${served.name ?? '*'}/${served.version ?? '*'}`;
+				// As its tile keys it: an unimported API's tile carries no version.
+				const apiKey = tileApiKey({
+					vendor: served.vendor,
+					apiName: served.name ?? null,
+					version: null,
+				});
 				if (seen.has(key)) continue;
 				seen.add(key);
-				yield { binding, served, api: null, key };
+				yield { binding, served, api: null, key, apiKey };
 				continue;
 			}
 			for (const api of matches) {
-				const key = `${binding.id}:${api.api.vendor}/${api.api.name}/${api.api.version}`;
+				const apiKey = tileApiKey({
+					vendor: api.api.vendor,
+					apiName: api.api.name,
+					version: api.api.version,
+				});
+				const key = `${binding.id}:${apiKey}`;
 				if (seen.has(key)) continue;
 				seen.add(key);
-				yield { binding, served, api, key };
+				yield { binding, served, api, key, apiKey };
 			}
 		}
 	}
@@ -265,17 +278,26 @@ export function accountLabels(tiles: ApiTileModel[]): Map<string, string> {
 	return labels;
 }
 
-/** How many APIs an agent reaches — the count on its tab in the strip. */
+/** How many APIs an agent reaches — the count on its tab in the strip. An API
+ * reached through several credentials counts once. */
 export function agentApiCount(
 	bindings: CredentialBindingEntity[] | undefined,
 	apis: ApiResponse[],
 ): number {
 	if (!bindings || bindings.length === 0) return 0;
-	return [...tileIdentities(bindings, apis)].length;
+	return new Set([...tileIdentities(bindings, apis)].map((t) => t.apiKey)).size;
 }
 
-/** Stat-summary math for the grid's side column. */
+/** How many APIs the grid's tiles cover — the number beside its heading. An API
+ * drawn once per credential counts once. */
+export function distinctApiCount(tiles: ApiTileModel[]): number {
+	return new Set(tiles.map(tileApiKey)).size;
+}
+
+/** Stat-summary math for the grid's side column. Counts are per API — one
+ * drawn once per credential counts once — except `needsSetup`. */
 export interface ApiTileStats {
+	/** APIs with at least one credential past its sign-in. */
 	configured: number;
 	/** Sign-ins owed, per credential — one clears all of its tiles. */
 	needsSetup: number;
@@ -286,29 +308,40 @@ export interface ApiTileStats {
 }
 
 export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
-	let configured = 0;
-	let operations = 0;
+	const configured = new Set<string>();
+	// Per API: the largest count its reachable tiles prove (its credentials reach
+	// the same operations), or null while none of them proves one.
+	const operationsByApi = new Map<string, number | null>();
 	// Deduped: several tiles can share one sign-in.
 	const awaiting = new Set<string>();
-	let counted = false;
-	let withheld = false;
 	for (const tile of tiles) {
 		if (tile.awaitingConsent) {
 			awaiting.add(tile.credentialId);
 			continue;
 		}
-		configured += 1;
+		const apiKey = tileApiKey(tile);
+		configured.add(apiKey);
 		// A pause is a deliberate exclusion, not a missing fact.
 		if (tile.suspended) continue;
-		if (tile.operationCount == null) {
+		const known = operationsByApi.get(apiKey) ?? null;
+		operationsByApi.set(
+			apiKey,
+			tile.operationCount == null ? known : Math.max(known ?? 0, tile.operationCount),
+		);
+	}
+	let operations = 0;
+	let counted = false;
+	let withheld = false;
+	for (const count of operationsByApi.values()) {
+		if (count == null) {
 			withheld = true;
 			continue;
 		}
-		operations += tile.operationCount;
+		operations += count;
 		counted = true;
 	}
 	return {
-		configured,
+		configured: configured.size,
 		needsSetup: awaiting.size,
 		operations: withheld && !counted ? null : operations,
 		operationsAtLeast: withheld && counted,

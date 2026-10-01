@@ -46,6 +46,7 @@ import {
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	distinctApiCount,
 	multiAccountApis,
 	partitionBindings,
 	tileApiKey,
@@ -703,8 +704,9 @@ function SelectedAgentPanel({
 	const joinLoading =
 		!joinFailed && (bindingsQuery.isPending || (hasBindings && sourcesDraining));
 	const stripAccess = joinLoading ? undefined : joinFailed ? null : stats;
-	// The grid's own length, so the number beside "APIs" is what is on screen.
-	const apiCount = joinLoading || joinFailed ? null : tiles.length;
+	// The grid's own APIs, so the number beside "APIs" is what is on screen —
+	// one per API, however many credentials draw it.
+	const apiCount = joinLoading || joinFailed ? null : distinctApiCount(tiles);
 	const stripCredentialCount = bindingsQuery.isPending
 		? undefined
 		: bindingsFailed

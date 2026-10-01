@@ -1853,6 +1853,10 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(badges).toHaveLength(2);
 			expect(badges[0]).toHaveTextContent('2 credentials');
 			expect(badges[0]).not.toHaveTextContent(/account/i);
+			// One API however many credentials: the heading and the stat line count
+			// it once, and the strip still counts its two credentials.
+			expect(screen.getByRole('heading', { name: 'APIs 1' })).toBeInTheDocument();
+			expect(screen.getByTestId('stat-configured')).toHaveTextContent('1 configured');
 
 			// Keyboard: the badge's trigger is focusable and described by the tooltip.
 			const trigger = badges[0].parentElement as HTMLElement;
