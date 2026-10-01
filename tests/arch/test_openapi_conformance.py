@@ -38,6 +38,8 @@ from tools.openapi_export import (
     published_spec,
 )
 
+from jentic_one.shared.web.openapi_meta import PUBLISHED_SERVERS
+
 OPENAPI_DIR = Path(__file__).resolve().parent.parent.parent / "openapi"
 
 SPECS = [
@@ -251,3 +253,18 @@ def test_broker_reference_artifact_matches_source() -> None:
             "openapi/broker/broker.openapi.yaml. Regenerate it with "
             "`make broker-reference` and commit the result."
         )
+
+
+@pytest.mark.arch
+def test_control_placeholder_origin_is_shared() -> None:
+    """The docs portal rewrites the published control placeholder by literal match.
+
+    ``PUBLISHED_SERVERS[0]`` is mirrored by ``CONTROL_PLACEHOLDER_ORIGIN`` in the
+    docs module and cited by the Broker spec's control-plane links; renaming it in
+    one place without the others would leave fake hosts on the live docs page.
+    """
+    origin = PUBLISHED_SERVERS[0]["url"]
+    docs_lib = OPENAPI_DIR.parent / "ui" / "src" / "modules" / "docs" / "lib" / "apiSpec.ts"
+    assert f"CONTROL_PLACEHOLDER_ORIGIN = '{origin}'" in docs_lib.read_text(encoding="utf-8")
+    broker_spec = (OPENAPI_DIR / "broker" / "broker.openapi.yaml").read_text(encoding="utf-8")
+    assert origin in broker_spec

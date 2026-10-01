@@ -294,8 +294,12 @@ export function withDeploymentServer(
 ): OpenApiDocument {
 	if (!url) return spec;
 	const target = url.replace(/\/+$/, '');
+	// Absolute origins only: a relative entry like `/` would match every path.
 	const placeholders = Array.isArray(spec.servers)
-		? spec.servers.filter(isObj).map((s) => str(s.url) ?? '')
+		? spec.servers
+				.filter(isObj)
+				.map((s) => str(s.url) ?? '')
+				.filter((url) => /^https?:\/\/[^/]/.test(url))
 		: [];
 	const rewritten = replaceOrigins(
 		spec,

@@ -272,6 +272,14 @@ describe('withDeploymentServer', () => {
 		);
 	});
 
+	it('never treats a relative server as a placeholder to rewrite', () => {
+		const spec = withDeploymentServer(
+			{ info: { description: 'GET /a/b' }, servers: [{ url: '/' }] },
+			'https://broker.acme.test',
+		);
+		expect(parseSpec(spec).description).toBe('GET /a/b');
+	});
+
 	it.each([null, undefined, ''])('keeps the spec untouched for %j', (url) => {
 		expect(withDeploymentServer(placeholder, url)).toBe(placeholder);
 	});
