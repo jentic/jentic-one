@@ -49,15 +49,16 @@ from jentic_one.control.services.integrations.flow_handlers import (
     DeviceAuthorizationHandler,
     handler_for,
 )
+from jentic_one.control.services.integrations.flow_handlers.auth_code import (
+    RegistrationInactiveError,
+)
 from jentic_one.control.services.integrations.flow_handlers.base import SuccessTokens
 from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.control.services.vendors.service import (
-    AmbiguousVendorError,
     ResolvedScope,
     ResolvedVendorSource,
     UnknownVendorError,
     UnsupportedFlowError,
-    VendorNotConfiguredError,
     VendorRegistryService,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -599,9 +600,7 @@ class ConnectSessionService:
         pinned_registration_id = (
             credential.oauth_app_registration_id if credential is not None else None
         )
-        source = await self._vendors.resolve_session_source(
-            row.vendor, registration_id=pinned_registration_id, flow_kind=row.resolved_flow
-        )
+        source = await self._reopen_session_source(row, pinned_registration_id)
         entry = source.entry
         resolved = self._vendors.merge_scopes(entry, row.requested_scopes or [])
         # The credential row's ``api_version`` is set at create-time to
@@ -669,7 +668,10 @@ class ConnectSessionService:
             if has_more:
                 rows = rows[:limit]
 
-            data = [await self._to_summary(r) for r in rows]
+            registration_names = await CredentialRepository.get_registration_display_names(
+                session, [r.credential_id for r in rows]
+            )
+            data = [self._to_summary(r, registration_names.get(r.credential_id)) for r in rows]
             next_cursor = None
             if has_more and rows:
                 last = rows[-1]
@@ -677,12 +679,12 @@ class ConnectSessionService:
 
         return SessionPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
-    async def _to_summary(self, row: ConnectSession) -> SessionSummary:
+    def _to_summary(self, row: ConnectSession, registration_name: str | None) -> SessionSummary:
         return SessionSummary(
             session_id=row.id,
             state=row.state,
             vendor_key=row.vendor,
-            vendor_display_name=await self._vendor_display_name(row.vendor),
+            vendor_display_name=self._vendor_display_name(row.vendor, registration_name),
             agent_id=row.agent_id,
             requested_by_actor_id=row.initiator_actor_id,
             reason=row.reason,
@@ -691,23 +693,20 @@ class ConnectSessionService:
             created_at=row.created_at,
         )
 
-    async def _vendor_display_name(self, vendor_key: str) -> str:
-        """Resolve a vendor key to its display name, tolerating removed vendors.
+    def _vendor_display_name(self, vendor_key: str, registration_name: str | None) -> str:
+        """Display name of the app a session ran through.
 
-        Either tier may drop an entry (gain a second registration, or be left
-        half-configured) after sessions referencing it were persisted, and the
-        list must not 500 on such historical rows. Fall back to the raw key.
+        ``registration_name`` comes off the session credential's
+        ``oauth_app_registration_id`` — the pin every other session read
+        uses — so a row never shows another registration's name. Without
+        one (a config session) it's the config entry's name, else the raw
+        key: the entry may have been removed since, and the list must not
+        500 on such rows.
         """
-        try:
-            entry = await self._vendors.resolve_by_pin(vendor_key)
-            return entry.display_name
-        except (
-            UnknownVendorError,
-            AmbiguousVendorError,
-            UnsupportedFlowError,
-            VendorNotConfiguredError,
-        ):
-            return vendor_key
+        if registration_name is not None:
+            return registration_name
+        cfg = self._ctx.config.vendors.entries.get(vendor_key)
+        return cfg.display_name if cfg is not None else vendor_key
 
     # ---- confirm ----------------------------------------------------------
 
@@ -765,19 +764,7 @@ class ConnectSessionService:
         # source is no longer usable — registration missing / inactive, or
         # the config entry / flow removed — cancel: the credential's aux rows
         # were written for that app, so the caller must start a new session.
-        try:
-            source = await self._vendors.resolve_session_source(
-                row.vendor,
-                registration_id=pinned_registration_id,
-                flow_kind=row.resolved_flow,
-            )
-        except (
-            InvalidOAuthAppRegistrationError,
-            UnknownVendorError,
-            UnsupportedFlowError,
-        ) as exc:
-            await self._cancel_for_app_change(row, detail=str(exc))
-            raise OAuthAppChangedError(row.id) from exc
+        source = await self._reopen_session_source(row, pinned_registration_id)
         flow = source.flow
         session_app = self._session_app_for(source)
 
@@ -1139,14 +1126,33 @@ class ConnectSessionService:
             detail=detail,
         )
 
-    async def _cancel_for_app_change(self, row: ConnectSession, *, detail: str) -> None:
-        _logger.info(
-            "connect_session.oauth_app_changed",
-            session_id=row.id,
-            vendor=row.vendor,
-            detail=detail,
-        )
-        await self._mark_terminal(row.id, "cancelled", detail, error_code="oauth_app_changed")
+    async def _reopen_session_source(
+        self, row: ConnectSession, registration_id: str | None
+    ) -> ResolvedVendorSource:
+        """Re-open a pre-confirm session's own source, or end the session.
+
+        If the source is no longer usable — registration missing / inactive,
+        or the config entry / flow removed — the session fails with
+        ``oauth_app_changed``: its aux rows were written for that app, so
+        the caller must start a new session.
+        """
+        try:
+            return await self._vendors.resolve_session_source(
+                row.vendor, registration_id=registration_id, flow_kind=row.resolved_flow
+            )
+        except (
+            InvalidOAuthAppRegistrationError,
+            UnknownVendorError,
+            UnsupportedFlowError,
+        ) as exc:
+            _logger.info(
+                "connect_session.oauth_app_changed",
+                session_id=row.id,
+                vendor=row.vendor,
+                detail=str(exc),
+            )
+            await self._mark_terminal(row.id, "failed", str(exc), error_code="oauth_app_changed")
+            raise OAuthAppChangedError(row.id) from exc
 
     async def _finalise_connected(
         self,
@@ -1638,6 +1644,12 @@ class ConnectSessionService:
 
         try:
             tokens = await handler.complete_from_callback(row, code=code)
+        except RegistrationInactiveError as exc:
+            # The admin deactivated the app between confirm and the callback.
+            await self._mark_terminal(
+                row.id, "failed", str(exc), error_code="registration_inactive"
+            )
+            return StatusResult(status="failed", error_code="registration_inactive")
         except Exception as exc:
             # Any exchange failure ⇒ terminal-failed; the human's popup will
             # observe the transition on the next status poll.

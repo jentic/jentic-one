@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.shared.models.api_identity import slugify_api_field
 
 
@@ -150,6 +151,27 @@ class CredentialRepository:
         stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
         result = await session.execute(stmt)
         return {row.id: row.created_by for row in result}
+
+    @staticmethod
+    async def get_registration_display_names(
+        session: AsyncSession, ids: list[str]
+    ) -> dict[str, str]:
+        """Batch-resolve credential IDs to the display name of their OAuth app registration.
+
+        Credentials with no registration (or missing ids) are omitted.
+        """
+        if not ids:
+            return {}
+        stmt = (
+            select(Credential.id, OAuthAppRegistration.display_name)
+            .join(
+                OAuthAppRegistration,
+                OAuthAppRegistration.id == Credential.oauth_app_registration_id,
+            )
+            .where(Credential.id.in_(ids))
+        )
+        result = await session.execute(stmt)
+        return {row.id: row.display_name for row in result}
 
     @staticmethod
     async def set_oauth_app_registration(

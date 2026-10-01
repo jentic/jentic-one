@@ -179,15 +179,17 @@ def seed_shared_vendor(integration_context: Context) -> None:
     )
 
 
-async def _seed_active_registration(ctx: Context) -> OAuthAppRegistration:
+async def _seed_active_registration(
+    ctx: Context, *, name: str = "Org GitHub App", display_name: str = "Shared Dev"
+) -> OAuthAppRegistration:
     """Insert an active auth-code registration and return the created row."""
     async with ctx.control_db.transaction() as session:
         registration = await OAuthAppRegistrationRepository.create_authorization_code(
             session,
-            name="Org GitHub App",
+            name=name,
             api_vendor=_VENDOR_KEY,
             catalog_api_id=_VENDOR_API_ID,
-            display_name="Shared Dev",
+            display_name=display_name,
             client_id="shared-registration-client",
             encrypted_client_secret=ctx.encryption.encrypt("shared-registration-secret"),
             authorize_url="https://idp.example.com/authorize",
@@ -427,6 +429,8 @@ async def test_complete_from_callback_through_registration_end_to_end(
         result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
 
     assert result.status == "connected"
+    # The same-slug config entry lends its identity probe to the registration.
+    assert result.connected_as == "alice"
     # Client material came off the DB registration, not the config vendor.
     assert posted_payloads
     payload = posted_payloads[0]
@@ -782,3 +786,120 @@ async def test_device_prepare_writes_aux_and_stamps_fk_only_for_registration(
     assert aux is not None
     assert aux.client_id == "device-client"
     assert aux.authorization_endpoint == "https://idp.example.com/device"
+
+
+async def _pinned_session_awaiting_callback(
+    ctx: Context, svc: ConnectSessionService, registration: OAuthAppRegistration
+) -> tuple[str, str]:
+    """Create + confirm a session pinned to ``registration``; return (session id, state)."""
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
+    )
+    confirmed = await svc.confirm(
+        created.session_id,
+        poll_token=created.poll_token,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        identity=_USER_IDENTITY,
+    )
+    assert isinstance(confirmed, AuthCodeConfirmResult)
+    return created.session_id, _state_from_authorize_url(confirmed.authorize_url)
+
+
+async def test_callback_fails_as_registration_inactive_when_disabled_after_confirm(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """Disabling the registration between confirm and the callback fails the
+    session as ``registration_inactive``, not a generic token-exchange failure.
+    """
+    ctx = integration_context
+    registration = await _seed_active_registration(ctx)
+    svc = ConnectSessionService(ctx)
+    session_id, raw_state = await _pinned_session_awaiting_callback(ctx, svc, registration)
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+    assert row is not None
+
+    async with ctx.control_db.transaction() as session:
+        await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
+
+    result = await svc.complete_from_callback(raw_state=raw_state, code="the-code")
+
+    assert result.status == "failed"
+    assert result.error_code == "registration_inactive"
+    await _assert_session_cancelled(ctx, session_id, row.credential_id)
+
+
+async def test_review_ends_session_when_pinned_registration_disabled(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """The review page gets the same 409 ``OAuthAppChangedError`` as confirm
+    when the session's registration is disabled, and the session ends.
+    """
+    ctx = integration_context
+    registration = await _seed_active_registration(ctx)
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+        oauth_app_registration_id=registration.id,
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+
+    async with ctx.control_db.transaction() as session:
+        await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
+
+    with pytest.raises(OAuthAppChangedError):
+        await svc.get_review_data(created.session_id, poll_token=created.poll_token)
+    await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
+
+
+async def test_session_list_names_the_app_each_session_runs_through(
+    integration_context: Context,
+    seed_shared_vendor: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    """List rows take their display name from the credential's pinned
+    registration — two same-slug registrations never borrow each other's
+    name — and config sessions take the config entry's.
+    """
+    ctx = integration_context
+    await _seed_active_registration(ctx, name="App A", display_name="Shared Dev A")
+    second = await _seed_active_registration(ctx, name="App B", display_name="Shared Dev B")
+    svc = ConnectSessionService(ctx)
+    pinned = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+        oauth_app_registration_id=second.id,
+    )
+    config = await svc.create_session(
+        vendor_key=_VENDOR_KEY,
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_USER_ID,
+        requested_scopes=["scope-a"],
+    )
+
+    page = await svc.list_all(identity=_USER_IDENTITY)
+
+    names = {s.session_id: s.vendor_display_name for s in page.data}
+    assert names == {
+        pinned.session_id: "Shared Dev B",
+        config.session_id: "Shared Auth Vendor",
+    }

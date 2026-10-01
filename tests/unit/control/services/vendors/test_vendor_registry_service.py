@@ -31,6 +31,7 @@ from jentic_one.control.services.vendors.errors import (
     AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
+    VendorNotConfiguredError,
 )
 from jentic_one.control.services.vendors.schemas import VendorEntry
 from jentic_one.control.services.vendors.service import (
@@ -599,8 +600,9 @@ async def test_pinned_registration_projects_without_config_merge() -> None:
     assert entry.display_name == "MyOrg GitHub"
     assert entry.flows[0].client_id == "db-cid"
     assert entry.vendor == "github.com/api.github.com"
-    # No config merge → no identity probe, no config scope catalog.
-    assert entry.identity_probe is None
+    # The config entry lends only reference data: its identity probe (it
+    # works with any app's token) — never its client or scope catalog.
+    assert entry.identity_probe == _github_config_entry().identity_probe
     assert [s.name for s in entry.scopes] == ["repo"]
 
 
@@ -630,8 +632,8 @@ async def test_db_only_vendor_projects_with_catalog_api_id() -> None:
     # time, so the operations preview resolves against a real registered API.
     assert entry.vendor == "notion.com/api.notion.com"
     assert entry.flows[0].client_id == "notion-cid"
-    # Admin registrations never carry an identity probe — that's a
-    # platform-config concern. Credentials land with connected_as=None.
+    # No config entry for the slug → no identity probe; credentials land
+    # with connected_as=None.
     assert entry.identity_probe is None
 
 
@@ -707,7 +709,7 @@ async def test_resolve_by_pin_raises_on_missing_registration() -> None:
     svc = _service(config_entries={"github": _github_config_entry()})
     with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
         await svc.resolve_by_pin("github", registration_id="oar_nope")
-    assert "not found" in str(excinfo.value)
+    assert excinfo.value.reason == "not found"
 
 
 @pytest.mark.asyncio()
@@ -728,7 +730,9 @@ async def test_resolve_by_pin_raises_on_vendor_mismatch() -> None:
     with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
         # Ask for GitHub but hand over the Gmail pin.
         await svc.resolve_by_pin("github", registration_id="oar_gmail")
-    assert "api_vendor mismatch" in str(excinfo.value)
+    assert "api_vendor mismatch" in excinfo.value.reason
+    # The caller-facing message never names the other vendor.
+    assert "googleapis-com" not in str(excinfo.value)
 
 
 @pytest.mark.asyncio()
@@ -745,7 +749,7 @@ async def test_resolve_by_pin_raises_on_inactive_registration() -> None:
     svc = _service(registrations=[inactive])
     with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
         await svc.resolve_by_pin("googleapis-com", registration_id="oar_inactive")
-    assert "inactive" in str(excinfo.value)
+    assert excinfo.value.reason == "inactive"
 
 
 @pytest.mark.asyncio()
@@ -895,3 +899,68 @@ async def test_list_entries_reports_every_config_flow() -> None:
     assert by_source["config"].flow_kind == "device_authorization"
     assert by_source["config"].flow_kinds == ["device_authorization", "authorization_code"]
     assert by_source["db"].flow_kinds == ["device_authorization"]
+
+
+@pytest.mark.asyncio()
+async def test_pinned_refusals_share_one_message() -> None:
+    """Missing, inactive and wrong-vendor pins read the same to the caller,
+    so the error can't be used to probe registration ids or their vendors.
+    """
+    inactive = _gmail("oar_inactive")
+    inactive.is_active = False
+    svc = _service(registrations=[_gmail("oar_gmail"), inactive])
+    messages = set()
+    for vendor, reg_id in (
+        ("googleapis-com", "oar_missing"),
+        ("googleapis-com", "oar_inactive"),
+        ("github", "oar_gmail"),
+    ):
+        with pytest.raises(InvalidOAuthAppRegistrationError) as excinfo:
+            await svc.resolve_by_pin(vendor, registration_id=reg_id)
+        messages.add(str(excinfo.value).replace(reg_id, "<id>"))
+    assert len(messages) == 1
+
+
+def _unusable_github_config_entry() -> VendorAuthConfig:
+    entry = _github_config_entry()
+    entry.flows[0].client_id = ""
+    return entry
+
+
+def _github_registration(reg_id: str) -> _FakeRegistration:
+    return _FakeRegistration(
+        api_vendor="github",
+        id=reg_id,
+        name=f"GitHub app {reg_id}",
+        display_name="MyOrg GitHub",
+        catalog_api_id="github.com/api.github.com",
+        flow_kind="device_authorization",
+        client_id=f"{reg_id}-cid",
+        device_authorization_details=_FakeDetails(default_scopes=["repo"]),
+    )
+
+
+@pytest.mark.asyncio()
+async def test_unusable_config_entry_falls_back_to_sole_registration() -> None:
+    """A half-configured config entry (device flow, empty ``client_id``)
+    doesn't block an unpinned connect that exactly one registration can serve.
+    """
+    svc = _service(
+        config_entries={"github": _unusable_github_config_entry()},
+        registrations=[_github_registration("oar_one")],
+    )
+    source = await svc.resolve_connect_source("github")
+    assert source.registration is not None
+    assert source.registration.id == "oar_one"
+    assert source.flow.client_id == "oar_one-cid"
+
+
+@pytest.mark.asyncio()
+async def test_unusable_config_entry_still_raises_without_a_sole_registration() -> None:
+    for registrations in ([], [_github_registration("oar_a"), _github_registration("oar_b")]):
+        svc = _service(
+            config_entries={"github": _unusable_github_config_entry()},
+            registrations=registrations,
+        )
+        with pytest.raises(VendorNotConfiguredError):
+            await svc.resolve_connect_source("github")

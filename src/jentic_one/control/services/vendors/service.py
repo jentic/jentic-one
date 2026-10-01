@@ -176,16 +176,24 @@ class VendorRegistryService:
         """Fetch a pinned registration, refusing missing / inactive / wrong-vendor rows."""
         registration = await self._registrations.get_by_id(registration_id)
         if registration is None:
-            raise InvalidOAuthAppRegistrationError(registration_id, "not found")
-        if not registration.is_active:
-            raise InvalidOAuthAppRegistrationError(registration_id, "inactive")
-        if registration.api_vendor != vendor_key:
-            raise InvalidOAuthAppRegistrationError(
-                registration_id,
+            reason = "not found"
+        elif not registration.is_active:
+            reason = "inactive"
+        elif registration.api_vendor != vendor_key:
+            reason = (
                 f"api_vendor mismatch (expected {vendor_key!r}, "
-                f"registration is {registration.api_vendor!r})",
+                f"registration is {registration.api_vendor!r})"
             )
-        return registration
+        else:
+            return registration
+        # The caller only ever sees a generic refusal; the cause stays here.
+        _logger.info(
+            "vendor_registry.pinned_registration_refused",
+            registration_id=registration_id,
+            vendor=vendor_key,
+            reason=reason,
+        )
+        raise InvalidOAuthAppRegistrationError(registration_id, reason)
 
     def _config_entry(self, vendor_key: str) -> VendorAuthConfig:
         cfg = self._config.entries.get(vendor_key)
@@ -208,6 +216,9 @@ class VendorRegistryService:
         * No pin, and the platform config has ``vendor_key`` offering
           ``preferred_flow`` → the config entry. Config picker cards send no
           pin, so a registration sharing the slug never takes them over.
+        * The config entry offers the flow but is unusable
+          (:class:`VendorNotConfiguredError`) → the sole active registration
+          offering it, if exactly one exists; otherwise the config error.
         * Otherwise the active registrations for the slug offering
           ``preferred_flow``: exactly one → it; more than one →
           :class:`AmbiguousVendorError` (the caller must pin); none →
@@ -222,16 +233,26 @@ class VendorRegistryService:
             return self._from_registration(vendor_key, registration, preferred_flow)
 
         cfg = self._config.entries.get(vendor_key)
+        config_error: VendorNotConfiguredError | None = None
         if cfg is not None and (
             preferred_flow is None or any(f.kind == preferred_flow for f in cfg.flows)
         ):
-            return ResolvedVendorSource(
-                entry=cfg, flow=self._pick_flow(vendor_key, cfg, preferred_flow), registration=None
-            )
+            try:
+                return ResolvedVendorSource(
+                    entry=cfg,
+                    flow=self._pick_flow(vendor_key, cfg, preferred_flow),
+                    registration=None,
+                )
+            except VendorNotConfiguredError as exc:
+                # A half-configured entry (e.g. device flow with no client_id)
+                # shouldn't block a registration that could serve the connect.
+                config_error = exc
 
         candidates = await self._registrations.list_active_for_vendor(
             api_vendor=vendor_key, flow_kind=preferred_flow
         )
+        if config_error is not None and len(candidates) != 1:
+            raise config_error
         if len(candidates) > 1:
             raise AmbiguousVendorError(vendor_key, preferred_flow, [r.id for r in candidates])
         if candidates:
@@ -432,9 +453,10 @@ def _project_registration_to_auth_config(
     pre-selected — the admin chose it — but is classified ``write`` so the
     review page flags it instead of passing it off as read-only.
 
-    ``identity_probe`` is always ``None`` on admin registrations — identity
-    echo is a platform-config concern; DB-only vendors skip that step at
-    connect finalise and land the credential with ``connected_as=None``.
+    ``identity_probe`` also comes off ``catalog``: the probe calls the
+    vendor's API with the user's token, so it holds whichever OAuth app
+    minted it. Without a config entry there's no probe — finalise skips the
+    identity echo and lands the credential with ``connected_as=None``.
     """
     flow = _synthesize_flow(registration)
 
@@ -461,7 +483,7 @@ def _project_registration_to_auth_config(
         display_name=registration.display_name,
         flows=[flow],
         scopes=scopes,
-        identity_probe=None,
+        identity_probe=catalog.identity_probe if catalog is not None else None,
     )
 
 

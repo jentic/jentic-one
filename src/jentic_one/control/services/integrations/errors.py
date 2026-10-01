@@ -67,10 +67,16 @@ class InvalidOAuthAppRegistrationError(ConnectSessionServiceError):
     exist, is inactive, or references a different ``api_vendor`` than
     ``body.vendor`` — a mismatch that would otherwise silently mint
     credentials against the wrong vendor's OAuth app.
+
+    The message is deliberately the same for every cause, so the response
+    can't be used to probe which registration ids exist or which vendor they
+    belong to; ``reason`` carries the specific cause for logs.
     """
 
     def __init__(self, registration_id: str, reason: str) -> None:
-        super().__init__(f"oauth_app_registration {registration_id!r} is not usable: {reason}")
+        super().__init__(
+            f"oauth_app_registration {registration_id!r} is not usable for this vendor"
+        )
         self.registration_id = registration_id
         self.reason = reason
 
