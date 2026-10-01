@@ -17,7 +17,7 @@ transits the browser — across the redirect gap. Nullable: device flow
 never sets it.
 
 Revision ID: aa1b2c3d4e5f
-Revises: e1a2b3c4d5f6
+Revises: f3c4d5e6a7b8
 """
 
 from collections.abc import Sequence
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "aa1b2c3d4e5f"  # pragma: allowlist secret
-down_revision: str | None = "e1a2b3c4d5f6"  # pragma: allowlist secret
+down_revision: str | None = "f3c4d5e6a7b8"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
