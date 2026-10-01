@@ -26,10 +26,12 @@ from typing import Any
 import structlog
 
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
+from jentic_one.registry.repos.catalog_logo_repo import CatalogLogoRepository
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
+from jentic_one.registry.services.catalog import logos
 from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import (
     CatalogFetchError,
@@ -43,6 +45,7 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
 )
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
+    CatalogLogoNotFoundError,
     CatalogUnavailableError,
     NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
@@ -102,10 +105,23 @@ class CatalogEntryView:
     registered: bool
     title: str | None = None
     description: str | None = None
+    #: True when the manifest lists a logo for this entry and logos are enabled, i.e.
+    #: ``GET /catalog/{api_id}/logo`` is worth requesting.
+    has_logo: bool = False
     #: True when this entry is registered locally AND its upstream spec has a notified
     #: update the local revision hasn't adopted yet (Flow-3). Always False for
     #: unregistered entries (nothing to update).
     update_available: bool = False
+
+
+@dataclass(frozen=True)
+class CatalogLogoView:
+    """A cached vendor logo, ready to serve."""
+
+    content: bytes
+    content_type: str
+    #: ``sha256`` of ``content`` — a strong validator for the response ``ETag``.
+    digest: str
 
 
 @dataclass(frozen=True)
@@ -679,7 +695,10 @@ class CatalogService:
         page = mb.paginate_entries(
             scored, after_api_id=after_api_id, after_score=after_score, limit=limit
         )
-        views = [self._to_view(e, registered_urls, outdated_urls) for e in page.items]
+        views = [
+            self._to_view(e, registered_urls, outdated_urls, logos_enabled=self.logos_enabled)
+            for e in page.items
+        ]
         next_cursor = (
             encode_catalog_cursor(page.next_api_id, page.next_score)
             if page.has_more and page.next_api_id is not None
@@ -707,13 +726,20 @@ class CatalogService:
         match = next((d for d in raw if d.get("api_id") == api_id), None)
         if match is None:
             raise CatalogEntryNotFoundError(api_id)
-        return self._to_view(mb.ManifestEntry.from_dict(match), registered_urls, outdated_urls)
+        return self._to_view(
+            mb.ManifestEntry.from_dict(match),
+            registered_urls,
+            outdated_urls,
+            logos_enabled=self.logos_enabled,
+        )
 
     @staticmethod
     def _to_view(
         entry: mb.ManifestEntry,
         registered_spec_urls: set[str],
         outdated_spec_urls: set[str] | None = None,
+        *,
+        logos_enabled: bool = False,
     ) -> CatalogEntryView:
         registered = mb.is_registered(entry, registered_spec_urls)
         return CatalogEntryView(
@@ -725,11 +751,137 @@ class CatalogService:
             registered=registered,
             title=entry.title,
             description=entry.description,
+            has_logo=logos_enabled and entry.logo_source_url is not None,
             update_available=(
                 registered
                 and outdated_spec_urls is not None
                 and entry.spec_url in outdated_spec_urls
             ),
+        )
+
+    # ── logos ────────────────────────────────────────────────────────────────
+
+    @property
+    def logos_enabled(self) -> bool:
+        """Whether vendor logos are served (``catalog.logo_max_age_seconds`` > 0)."""
+        return self._cfg.logo_max_age_seconds > 0
+
+    async def logo(self, api_id: str) -> CatalogLogoView:
+        """Return an entry's vendor logo from the registry cache, fetching it on a miss.
+
+        The logo URL comes from the manifest snapshot, never from the caller. A cache
+        row still inside its max-age is served as-is (including a cached "no usable
+        logo" outcome); an older one is revalidated upstream with ``If-None-Match``.
+        If a refetch fails, the previously cached image keeps being served. Reading
+        the snapshot here does not trigger a manifest refresh: a page of catalog cards
+        requests many logos at once, and listing the catalog already keeps it fresh.
+
+        Raises ``CatalogEntryNotFoundError`` for an unknown ``api_id`` and
+        ``CatalogLogoNotFoundError`` when there is no logo to serve (logos disabled,
+        none listed, or the upstream image is unavailable or not a supported raster).
+        """
+        async with self._ctx.registry_db.session() as session:
+            raw = await CatalogRepository.entries(session)
+        match = next((d for d in raw if d.get("api_id") == api_id), None)
+        if match is None:
+            raise CatalogEntryNotFoundError(api_id)
+        source_url = mb.ManifestEntry.from_dict(match).logo_source_url
+        if not self.logos_enabled or source_url is None:
+            raise CatalogLogoNotFoundError(api_id)
+
+        async with self._ctx.registry_db.session() as session:
+            row = await CatalogLogoRepository.get(session, source_url)
+            cached = (
+                CatalogLogoView(
+                    content=row.content, content_type=row.content_type, digest=row.digest
+                )
+                if row is not None
+                and row.content is not None
+                and row.content_type is not None
+                and row.digest is not None
+                else None
+            )
+            fresh = row is not None and logos.is_fresh(
+                row.status,
+                row.fetched_at,
+                now=utcnow(),
+                max_age_seconds=self._cfg.logo_max_age_seconds,
+            )
+            upstream_etag = row.upstream_etag if row is not None else None
+
+        view = cached if fresh else await self._fetch_logo(source_url, cached, upstream_etag)
+        if view is None:
+            raise CatalogLogoNotFoundError(api_id)
+        return view
+
+    async def _fetch_logo(
+        self, source_url: str, cached: CatalogLogoView | None, upstream_etag: str | None
+    ) -> CatalogLogoView | None:
+        """Fetch (or revalidate) one logo upstream and record the outcome in the cache."""
+        fetch_cfg = self._ingest_cfg.model_copy(
+            update={
+                "max_spec_bytes": self._cfg.logo_max_bytes,
+                "fetch_timeout_s": min(
+                    self._ingest_cfg.fetch_timeout_s, logos.FETCH_TIMEOUT_SECONDS
+                ),
+            }
+        )
+        now = utcnow()
+        try:
+            result = await fetch_bytes_conditional(
+                source_url, config=fetch_cfg, etag=upstream_etag if cached is not None else None
+            )
+        except CatalogFetchError as exc:
+            logger.info("catalog_logo_fetch_failed", source_url=source_url, error=str(exc))
+            result = None
+
+        async with self._ctx.registry_db.transaction() as session:
+            if result is not None and result.not_modified and cached is not None:
+                await CatalogLogoRepository.mark(
+                    session,
+                    source_url=source_url,
+                    status=logos.LOGO_STATUS_OK,
+                    fetched_at=now,
+                    upstream_etag=result.etag,
+                )
+                return cached
+            if result is None or result.content is None or result.digest is None:
+                if cached is not None:
+                    await CatalogLogoRepository.mark(
+                        session,
+                        source_url=source_url,
+                        status=logos.LOGO_STATUS_ERROR,
+                        fetched_at=now,
+                    )
+                else:
+                    await CatalogLogoRepository.upsert(
+                        session,
+                        source_url=source_url,
+                        status=logos.LOGO_STATUS_ERROR,
+                        fetched_at=now,
+                    )
+                return cached
+            content_type = logos.sniff_image_type(result.content)
+            if content_type is None:
+                await CatalogLogoRepository.upsert(
+                    session,
+                    source_url=source_url,
+                    status=logos.LOGO_STATUS_UNSUPPORTED,
+                    fetched_at=now,
+                )
+                return None
+            await CatalogLogoRepository.upsert(
+                session,
+                source_url=source_url,
+                status=logos.LOGO_STATUS_OK,
+                fetched_at=now,
+                content=result.content,
+                content_type=content_type,
+                digest=result.digest,
+                upstream_etag=result.etag,
+            )
+        return CatalogLogoView(
+            content=result.content, content_type=content_type, digest=result.digest
         )
 
     # ── preview ──────────────────────────────────────────────────────────────

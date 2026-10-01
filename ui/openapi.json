@@ -1870,6 +1870,7 @@
           {
             "github": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
             "import": "/catalog/stripe.com:import",
+            "logo": "/catalog/stripe.com/logo",
             "operations": "/catalog/stripe.com/operations",
             "self": "/catalog/stripe.com"
           }
@@ -1891,6 +1892,18 @@
             "description": "URL of the catalog import action (`POST /catalog/{api_id}:import`).",
             "title": "Import",
             "type": "string"
+          },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL of the entry's vendor logo (`GET /catalog/{api_id}/logo`), served from the registry's cache. Present only when the manifest lists a logo; the request can still 404 if the upstream image turns out to be unavailable.",
+            "title": "Logo"
           },
           "operations": {
             "description": "URL of the entry's operation preview.",
@@ -20626,6 +20639,225 @@
           }
         ],
         "summary": "Get Catalog Entry",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/catalog/{api_id}/logo": {
+      "get": {
+        "description": "Serve a catalog entry's vendor logo from the registry's cache.\n\nThe image URL comes from the manifest, never from the caller. The registry\nfetches it on first request (SSRF-guarded, size-capped), caches the bytes\nand revalidates them periodically, so the browser only ever talks to this\norigin. Only PNG, JPEG, GIF and WebP images are served (identified from\ntheir bytes; SVG is refused). Follow ``_links.logo`` on a catalog entry\nrather than building this URL: the link is omitted when there is no logo.",
+        "operationId": "getCatalogLogo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "api_id",
+            "required": true,
+            "schema": {
+              "title": "Api Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The `ETag` of a previously fetched logo; answers `304` if unchanged.",
+            "in": "header",
+            "name": "if-none-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `ETag` of a previously fetched logo; answers `304` if unchanged.",
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The vendor logo image.",
+            "headers": {
+              "ETag": {
+                "description": "Strong entity tag: the quoted sha256 of the image (`\"<hex>\"`).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The logo still matches the presented `If-None-Match`; empty body.",
+            "headers": {
+              "ETag": {
+                "description": "Strong entity tag: the quoted sha256 of the image (`\"<hex>\"`).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unknown catalog entry, or the entry has no logo to serve"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get Catalog Logo",
         "tags": [
           "Catalog"
         ]

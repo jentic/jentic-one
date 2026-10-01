@@ -90,6 +90,50 @@ export class CatalogService {
         });
     }
     /**
+     * Get Catalog Logo
+     * Serve a catalog entry's vendor logo from the registry's cache.
+     *
+     * The image URL comes from the manifest, never from the caller. The registry
+     * fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+     * and revalidates them periodically, so the browser only ever talks to this
+     * origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+     * their bytes; SVG is refused). Follow ``_links.logo`` on a catalog entry
+     * rather than building this URL: the link is omitted when there is no logo.
+     * @returns binary The vendor logo image.
+     * @throws ApiError
+     */
+    public static getCatalogLogo({
+        apiId,
+        ifNoneMatch,
+    }: {
+        apiId: string,
+        /**
+         * The `ETag` of a previously fetched logo; answers `304` if unchanged.
+         */
+        ifNoneMatch?: (string | null),
+    }): CancelablePromise<Blob> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/catalog/{api_id}/logo',
+            path: {
+                'api_id': apiId,
+            },
+            headers: {
+                'if-none-match': ifNoneMatch,
+            },
+            errors: {
+                304: `The logo still matches the presented \`If-None-Match\`; empty body.`,
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Unknown catalog entry, or the entry has no logo to serve`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Preview Catalog Operations
      * Preview the operations of a catalog entry's spec (capped, offset-paginated).
      *

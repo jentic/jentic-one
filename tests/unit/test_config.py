@@ -328,6 +328,32 @@ def test_catalog_jitter_ratio_bounds_accepted():
     assert CatalogConfig(update_sweep_jitter_ratio=1.0).update_sweep_jitter_ratio == 1.0
 
 
+def test_catalog_logo_defaults():
+    """Logos revalidate weekly and are capped at 256 KiB by default."""
+    cfg = CatalogConfig()
+    assert cfg.logo_max_age_seconds == 7 * 86400
+    assert cfg.logo_max_bytes == 256 * 1024
+
+
+def test_catalog_logo_env_override(config_file: Path):
+    """Both logo settings are overridable from the environment (0 disables logos)."""
+    env = {
+        "JENTIC__CATALOG__LOGO_MAX_AGE_SECONDS": "0",
+        "JENTIC__CATALOG__LOGO_MAX_BYTES": "65536",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        cfg = load_config(config_file)
+    assert cfg.catalog.logo_max_age_seconds == 0
+    assert cfg.catalog.logo_max_bytes == 65536
+
+
+@pytest.mark.parametrize(("field", "bad"), [("logo_max_age_seconds", -1), ("logo_max_bytes", 0)])
+def test_catalog_logo_bounds_rejected(field: str, bad: int):
+    """A negative max-age or a non-positive size cap fails fast at load."""
+    with pytest.raises(ValidationError, match=field):
+        CatalogConfig.model_validate({field: bad})
+
+
 def test_default_invite_pepper_rejected_in_production():
     with (
         patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),

@@ -1602,6 +1602,28 @@
         "capabilities:read": []
       },
       "method": "GET",
+      "operation_id": "getCatalogLogo",
+      "path": "/catalog/{api_id}/logo",
+      "public": false,
+      "required_scopes": [
+        "capabilities:read"
+      ],
+      "summary": "Get Catalog Logo",
+      "surface": "catalog",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_scopes": {
+        "capabilities:read": []
+      },
+      "method": "GET",
       "operation_id": "previewCatalogOperations",
       "path": "/catalog/{api_id}/operations",
       "public": false,
@@ -4608,5 +4630,5 @@
     ],
     "total": 27
   },
-  "total": 174
+  "total": 175
 }

@@ -38,6 +38,7 @@ class CatalogEntryLinksResponse(BaseModel):
                     "operations": "/catalog/stripe.com/operations",
                     "import": "/catalog/stripe.com:import",
                     "github": "https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com",
+                    "logo": "/catalog/stripe.com/logo",
                 }
             ]
         },
@@ -53,6 +54,14 @@ class CatalogEntryLinksResponse(BaseModel):
     )
     github: str | None = Field(
         default=None, description="Human-facing GitHub tree URL for the entry, when known."
+    )
+    logo: str | None = Field(
+        default=None,
+        description=(
+            "URL of the entry's vendor logo (`GET /catalog/{api_id}/logo`), served from the "
+            "registry's cache. Present only when the manifest lists a logo; the request "
+            "can still 404 if the upstream image turns out to be unavailable."
+        ),
     )
 
 

@@ -3,8 +3,8 @@
 Handlers only: project CatalogService views into web schemas and build links.
 No DB access, no try/except (service errors map to Problem Details via the
 registry error handler). Action verbs use the colon pattern (``:refresh``,
-``:import``). Route ordering matters: ``/operations`` is declared before the bare
-``/{api_id:path}`` because the ``:path`` converter greedily eats slashes.
+``:import``). Route ordering matters: ``/operations`` and ``/logo`` are declared before
+the bare ``/{api_id:path}`` because the ``:path`` converter greedily eats slashes.
 
 ``api_id`` can contain slashes (umbrella vendors like ``googleapis.com/admin``),
 so the path parameter uses Starlette's ``{api_id:path}`` converter, which matches
@@ -19,7 +19,9 @@ query-param/opaque-key scheme if a generated client can't honour raw slashes.)
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
@@ -40,10 +42,27 @@ from jentic_one.registry.web.schemas.catalog import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.conditional import etag_matches
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import conflict
+from jentic_one.shared.web.openapi_responses import conflict, not_found
 
 router = APIRouter()
+
+# Logo bytes come from a third-party host, so the response is locked down: the
+# browser must not sniff it into another type, and should it ever be opened as a
+# document, it can run nothing. Only identified raster types are ever served.
+# ``private``: the route is authenticated, so shared caches must not store it.
+_LOGO_HEADERS = {
+    "Cache-Control": "private, max-age=86400",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+_LOGO_MEDIA_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+_LOGO_ETAG_HEADER_SPEC = {
+    "description": 'Strong entity tag: the quoted sha256 of the image (`"<hex>"`).',
+    "schema": {"type": "string"},
+}
 
 
 def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryResponse:
@@ -62,6 +81,7 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
             operations=f"{self_link}/operations",
             import_link=f"{self_link}:import",
             github=view.github_url,
+            logo=f"{self_link}/logo" if view.has_logo else None,
         ),
     )
 
@@ -182,6 +202,50 @@ async def preview_catalog_operations(
         security_schemes=preview.security_schemes,
     )
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
+
+
+@router.get(
+    "/catalog/{api_id:path}/logo",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "The vendor logo image.",
+            "content": {
+                mt: {"schema": {"type": "string", "format": "binary"}} for mt in _LOGO_MEDIA_TYPES
+            },
+            "headers": {"ETag": _LOGO_ETAG_HEADER_SPEC},
+        },
+        304: {
+            "description": "The logo still matches the presented `If-None-Match`; empty body.",
+            "headers": {"ETag": _LOGO_ETAG_HEADER_SPEC},
+        },
+        **not_found("Unknown catalog entry, or the entry has no logo to serve"),
+    },
+)
+async def get_catalog_logo(
+    api_id: str,
+    if_none_match: Annotated[
+        str | None,
+        Header(description="The `ETag` of a previously fetched logo; answers `304` if unchanged."),
+    ] = None,
+    identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
+    svc: CatalogService = Depends(get_catalog_service),
+) -> Response:
+    """Serve a catalog entry's vendor logo from the registry's cache.
+
+    The image URL comes from the manifest, never from the caller. The registry
+    fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+    and revalidates them periodically, so the browser only ever talks to this
+    origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+    their bytes; SVG is refused). Follow ``_links.logo`` on a catalog entry
+    rather than building this URL: the link is omitted when there is no logo.
+    """
+    logo = await svc.logo(api_id)
+    etag = f'"{logo.digest}"'
+    headers = {"ETag": etag, **_LOGO_HEADERS}
+    if if_none_match is not None and etag_matches(if_none_match, etag):
+        return Response(status_code=304, headers=headers)
+    return Response(content=logo.content, media_type=logo.content_type, headers=headers)
 
 
 @router.get(

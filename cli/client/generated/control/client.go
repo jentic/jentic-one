@@ -1266,13 +1266,16 @@ type BodyLoginSubmit struct {
 
 // CatalogEntryLinksResponse Hypermedia links for a catalog entry.
 //
-// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
+// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","logo":"/catalog/stripe.com/logo","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
 type CatalogEntryLinksResponse struct {
 	// Github Human-facing GitHub tree URL for the entry, when known.
 	Github *string `json:"github,omitempty"`
 
 	// Import URL of the catalog import action (`POST /catalog/{api_id}:import`).
 	Import string `json:"import"`
+
+	// Logo URL of the entry's vendor logo (`GET /catalog/{api_id}/logo`), served from the registry's cache. Present only when the manifest lists a logo; the request can still 404 if the upstream image turns out to be unavailable.
+	Logo *string `json:"logo,omitempty"`
 
 	// Operations URL of the entry's operation preview.
 	Operations string `json:"operations"`
@@ -1287,7 +1290,7 @@ type CatalogEntryLinksResponse struct {
 type CatalogEntryResponse struct {
 	// UnderscoreLinks Hypermedia links for a catalog entry.
 	//
-	// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
+	// Examples: {"github":"https://github.com/jentic/jentic-public-apis/tree/main/apis/openapi/stripe.com","import":"/catalog/stripe.com:import","logo":"/catalog/stripe.com/logo","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"}
 	UnderscoreLinks CatalogEntryLinksResponse `json:"_links"`
 
 	// ApiId Catalog identity of the API (manifest domain, e.g. `stripe.com`).
@@ -3278,6 +3281,12 @@ type ListCatalogParams struct {
 	IncludeSnoozed   *bool   `form:"include_snoozed,omitempty" json:"include_snoozed,omitempty"`
 	Cursor           *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit            *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetCatalogLogoParams defines parameters for GetCatalogLogo.
+type GetCatalogLogoParams struct {
+	// IfNoneMatch The `ETag` of a previously fetched logo; answers `304` if unchanged.
+	IfNoneMatch *string `json:"if-none-match,omitempty"`
 }
 
 // PreviewCatalogOperationsParams defines parameters for PreviewCatalogOperations.
@@ -5367,6 +5376,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
 	GetCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCatalogLogo Get Catalog Logo
+	//
+	// Serve a catalog entry's vendor logo from the registry's cache.
+	//
+	// The image URL comes from the manifest, never from the caller. The registry
+	// fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+	// and revalidates them periodically, so the browser only ever talks to this
+	// origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+	// their bytes; SVG is refused). Follow ``_links.logo`` on a catalog entry
+	// rather than building this URL: the link is omitted when there is no logo.
+	//
+	// Corresponds with GET /catalog/{api_id}/logo (the `GetCatalogLogo` operationId).
+	GetCatalogLogo(ctx context.Context, apiId string, params *GetCatalogLogoParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PreviewCatalogOperations Preview Catalog Operations
 	//
@@ -8808,6 +8831,30 @@ func (c *Client) ListCatalog(ctx context.Context, params *ListCatalogParams, req
 // Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
 func (c *Client) GetCatalogEntry(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCatalogEntryRequest(c.Server, apiId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCatalogLogo Get Catalog Logo
+//
+// Serve a catalog entry's vendor logo from the registry's cache.
+//
+// The image URL comes from the manifest, never from the caller. The registry
+// fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+// and revalidates them periodically, so the browser only ever talks to this
+// origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+// their bytes; SVG is refused). Follow “_links.logo“ on a catalog entry
+// rather than building this URL: the link is omitted when there is no logo.
+//
+// Corresponds with GET /catalog/{api_id}/logo (the `GetCatalogLogo` operationId).
+func (c *Client) GetCatalogLogo(ctx context.Context, apiId string, params *GetCatalogLogoParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCatalogLogoRequest(c.Server, apiId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -15589,6 +15636,55 @@ func NewGetCatalogEntryRequest(server string, apiId string) (*http.Request, erro
 	return req, nil
 }
 
+// NewGetCatalogLogoRequest constructs an http.Request for the GetCatalogLogo method
+func NewGetCatalogLogoRequest(server string, apiId string, params *GetCatalogLogoParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "api_id", apiId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/catalog/%s/logo", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfNoneMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "if-none-match", *params.IfNoneMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("if-none-match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewPreviewCatalogOperationsRequest constructs an http.Request for the PreviewCatalogOperations method
 func NewPreviewCatalogOperationsRequest(server string, apiId string, params *PreviewCatalogOperationsParams) (*http.Request, error) {
 	var err error
@@ -21483,6 +21579,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /catalog/{api_id} (the `GetCatalogEntry` operationId).
 	GetCatalogEntryWithResponse(ctx context.Context, apiId string, reqEditors ...RequestEditorFn) (*GetCatalogEntryHTTPResp, error)
+
+	// GetCatalogLogoWithResponse Get Catalog Logo
+	//
+	// Serve a catalog entry's vendor logo from the registry's cache.
+	//
+	// The image URL comes from the manifest, never from the caller. The registry
+	// fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+	// and revalidates them periodically, so the browser only ever talks to this
+	// origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+	// their bytes; SVG is refused). Follow ``_links.logo`` on a catalog entry
+	// rather than building this URL: the link is omitted when there is no logo.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /catalog/{api_id}/logo (the `GetCatalogLogo` operationId).
+	GetCatalogLogoWithResponse(ctx context.Context, apiId string, params *GetCatalogLogoParams, reqEditors ...RequestEditorFn) (*GetCatalogLogoHTTPResp, error)
 
 	// PreviewCatalogOperationsWithResponse Preview Catalog Operations
 	//
@@ -29152,6 +29264,103 @@ func (r GetCatalogEntryHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetCatalogEntryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetCatalogLogoHTTPResp200Headers the declared response headers of an HTTP 200 response for GetCatalogLogo
+type GetCatalogLogoHTTPResp200Headers struct {
+	ETag *string
+}
+
+// GetCatalogLogoHTTPResp304Headers the declared response headers of an HTTP 304 response for GetCatalogLogo
+type GetCatalogLogoHTTPResp304Headers struct {
+	ETag *string
+}
+
+type GetCatalogLogoHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetCatalogLogoHTTPResp200Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *GetCatalogLogoHTTPResp304Headers
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetCatalogLogoHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCatalogLogoHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCatalogLogoHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCatalogLogoHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCatalogLogoHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -38213,6 +38422,28 @@ func (c *ClientWithResponses) GetCatalogEntryWithResponse(ctx context.Context, a
 	return ParseGetCatalogEntryHTTPResp(rsp)
 }
 
+// GetCatalogLogoWithResponse Get Catalog Logo
+//
+// Serve a catalog entry's vendor logo from the registry's cache.
+//
+// The image URL comes from the manifest, never from the caller. The registry
+// fetches it on first request (SSRF-guarded, size-capped), caches the bytes
+// and revalidates them periodically, so the browser only ever talks to this
+// origin. Only PNG, JPEG, GIF and WebP images are served (identified from
+// their bytes; SVG is refused). Follow “_links.logo“ on a catalog entry
+// rather than building this URL: the link is omitted when there is no logo.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /catalog/{api_id}/logo (the `GetCatalogLogo` operationId).
+func (c *ClientWithResponses) GetCatalogLogoWithResponse(ctx context.Context, apiId string, params *GetCatalogLogoParams, reqEditors ...RequestEditorFn) (*GetCatalogLogoHTTPResp, error) {
+	rsp, err := c.GetCatalogLogo(ctx, apiId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCatalogLogoHTTPResp(rsp)
+}
+
 // PreviewCatalogOperationsWithResponse Preview Catalog Operations
 //
 // Preview the operations of a catalog entry's spec (capped, offset-paginated).
@@ -45620,6 +45851,100 @@ func ParseGetCatalogEntryHTTPResp(rsp *http.Response) (*GetCatalogEntryHTTPResp,
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetCatalogLogoHTTPResp parses an HTTP response from a GetCatalogLogoWithResponse call
+func ParseGetCatalogLogoHTTPResp(rsp *http.Response) (*GetCatalogLogoHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCatalogLogoHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 304:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetCatalogLogoHTTPResp200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 304:
+		var headers GetCatalogLogoHTTPResp304Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers304 = &headers
 	}
 
 	return response, nil

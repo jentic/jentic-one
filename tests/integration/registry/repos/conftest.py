@@ -10,6 +10,7 @@ from sqlalchemy import delete, update
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_logos import CatalogLogo
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
@@ -31,6 +32,7 @@ async def clean_registry(registry_db: DatabaseSession) -> AsyncGenerator[None, N
         async with registry_db.session() as session:
             await session.execute(delete(Note))
             await session.execute(delete(CatalogUpdateCheck))
+            await session.execute(delete(CatalogLogo))
             await session.execute(delete(OperationURLIndex))
             await session.execute(delete(SecuritySchemeFlow))
             await session.execute(delete(SecurityScheme))

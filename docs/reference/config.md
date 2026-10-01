@@ -292,6 +292,8 @@ Public API catalog settings (manifest source + staleness).
 | `catalog.update_sweep_deadline_seconds` | integer | `300` | `JENTIC__CATALOG__UPDATE_SWEEP_DEADLINE_SECONDS` |  |
 | `catalog.update_sweep_max_concurrency` | integer | `4` | `JENTIC__CATALOG__UPDATE_SWEEP_MAX_CONCURRENCY` |  |
 | `catalog.update_sweep_jitter_ratio` | number (>= 0.0, <= 1.0) | `0.15` | `JENTIC__CATALOG__UPDATE_SWEEP_JITTER_RATIO` |  |
+| `catalog.logo_max_age_seconds` | integer (>= 0) | `604800` | `JENTIC__CATALOG__LOGO_MAX_AGE_SECONDS` |  |
+| `catalog.logo_max_bytes` | integer (> 0) | `262144` | `JENTIC__CATALOG__LOGO_MAX_BYTES` |  |
 
 ## `credentials`
 

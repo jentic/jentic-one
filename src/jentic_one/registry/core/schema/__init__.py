@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.catalog_logos import CatalogLogo
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 from jentic_one.registry.core.schema.notes import Note
@@ -18,6 +19,7 @@ from jentic_one.shared.db.base import RegistryBase
 __all__ = [
     "Api",
     "ApiRevision",
+    "CatalogLogo",
     "CatalogSnapshot",
     "CatalogUpdateCheck",
     "Note",
