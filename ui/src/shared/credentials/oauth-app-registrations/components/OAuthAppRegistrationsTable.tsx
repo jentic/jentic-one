@@ -1,9 +1,8 @@
 /**
  * Compact registrations list — one row per registration: name + client id,
  * a meta line (vendor · flow · dependent credentials · secret rotation), the
- * status badge, and per-row actions. Rows rather than a wide table because
- * the list lives inside the credential inventory drawer, where a seven-column
- * table overflowed the pane.
+ * status badge, and per-row actions. Rows rather than a wide table so the
+ * list fits a narrow host pane, where a seven-column table overflowed.
  *
  * Status is a plain badge; activating / deactivating is an explicit row
  * action so it can't be flipped by a stray click on something that reads as
@@ -23,7 +22,7 @@ interface OAuthAppRegistrationsTableProps {
 	registrations: OAuthAppRegistration[] | undefined;
 	isLoading: boolean;
 	error: unknown;
-	/** Opens the create flow with "Register as a shared OAuth app" preset. */
+	/** Opens the create flow in register-shared-app mode. */
 	onRegister: () => void;
 	onAction: (registration: OAuthAppRegistration, action: RegistrationRowAction) => void;
 	pendingId?: string | null;

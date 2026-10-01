@@ -6,7 +6,7 @@ import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrat
 import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
- * Edit / Rotate secret / Delete dialogs, driven from the shared-apps section
+ * Edit / Rotate secret / Delete dialogs, driven from the shared-apps panel
  * rows against the MSW store. Pins: (a) edit PATCHes the draft and the draft
  * survives an Esc-then-reopen of the same row, (b) rotate posts the new
  * secret and is unavailable for device-flow apps, (c) delete removes an
@@ -19,7 +19,6 @@ type User = ReturnType<typeof userEvent.setup>;
 async function openSection(): Promise<User> {
 	renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 	const user = userEvent.setup();
-	await user.click(screen.getByRole('button', { name: /^shared oauth apps/i }));
 	await screen.findByText('GitHub production app');
 	return user;
 }

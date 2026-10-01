@@ -5,8 +5,8 @@
  * row's action (with its own confirm): a kept draft would otherwise carry a
  * stale active flag and silently re-enable an app deactivated since.
  *
- * Registration *creation* runs through the credential create flow ("Register
- * as a shared OAuth app") — this dialog is only for lifecycle changes on
+ * Registration *creation* runs through the credential create flow in
+ * ``registerSharedApp`` mode — this dialog is only for lifecycle changes on
  * registrations that already exist.
  *
  * Draft lifecycle follows dialog-state-lifecycle: the draft seeds when the

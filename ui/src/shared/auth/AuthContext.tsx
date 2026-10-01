@@ -58,7 +58,7 @@ export interface AuthContextValue {
 	logout: () => void;
 }
 
-export const AuthContext = createContext<AuthContextValue | null>(null);
+const AuthContext = createContext<AuthContextValue | null>(null);
 
 const ME_QUERY_KEY = ['auth', 'me'] as const;
 

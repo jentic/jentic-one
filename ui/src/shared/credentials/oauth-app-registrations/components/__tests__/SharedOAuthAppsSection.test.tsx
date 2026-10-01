@@ -6,19 +6,14 @@ import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrat
 import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
- * The admin's shared-OAuth-apps management section in the credential
- * inventory sheet. Registration itself runs through the credential create
- * flow; the section's "Register shared app" actions hand off to the host via
- * ``onRegister``. These tests pin: (a) the section starts collapsed and
- * the disclosure reveals the seeded registrations, (b) both the header
+ * The admin's shared-OAuth-apps management panel. Registration itself runs
+ * through the credential create flow; the panel's "Register shared app"
+ * actions hand off to the host via ``onRegister``. These tests pin: (a) the
+ * panel lists the seeded registrations, (b) both the header
  * action and the empty-state CTA fire ``onRegister``, (c) deactivating asks
  * for confirmation while re-activating goes straight through, (d) a settled
  * toggle unlocks its row, and a failed deactivate keeps the confirm open.
  */
-
-async function expandSection(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-	await user.click(screen.getByRole('button', { name: /^shared oauth apps/i }));
-}
 
 describe('SharedOAuthAppsSection', () => {
 	beforeEach(() => {
@@ -29,17 +24,10 @@ describe('SharedOAuthAppsSection', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('starts collapsed and reveals seeded registrations when expanded', async () => {
+	it('lists the seeded registrations', async () => {
 		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		// Heading is rendered synchronously (no query gates it).
 		expect(screen.getByRole('heading', { name: /shared oauth apps/i })).toBeInTheDocument();
-		const disclosure = screen.getByRole('button', { name: /^shared oauth apps/i });
-		expect(disclosure).toHaveAttribute('aria-expanded', 'false');
-		expect(screen.queryByText('GitHub production app')).not.toBeInTheDocument();
-
-		const user = userEvent.setup();
-		await expandSection(user);
-		expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 		// The three seeded rows land in the list once the query resolves.
 		expect(await screen.findByText('GitHub production app')).toBeInTheDocument();
 		expect(await screen.findByText('GitHub CLI (device flow)')).toBeInTheDocument();
@@ -66,7 +54,6 @@ describe('SharedOAuthAppsSection', () => {
 		const onRegister = vi.fn();
 		renderWithProviders(<SharedOAuthAppsSection onRegister={onRegister} />);
 		const user = userEvent.setup();
-		await expandSection(user);
 
 		expect(await screen.findByText(/no shared oauth apps/i)).toBeInTheDocument();
 		const buttons = screen.getAllByRole('button', { name: /register shared app/i });
@@ -80,7 +67,6 @@ describe('SharedOAuthAppsSection', () => {
 	it('deactivating asks for confirmation before cutting the app off', async () => {
 		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		const user = userEvent.setup();
-		await expandSection(user);
 
 		await user.click(
 			await screen.findByRole('button', { name: 'Deactivate GitHub production app' }),
@@ -100,7 +86,6 @@ describe('SharedOAuthAppsSection', () => {
 	it('re-activating goes straight through without a confirm', async () => {
 		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		const user = userEvent.setup();
-		await expandSection(user);
 
 		await user.click(await screen.findByRole('button', { name: 'Activate Slack (paused)' }));
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -112,7 +97,6 @@ describe('SharedOAuthAppsSection', () => {
 	it('unlocks the row once a toggle settles', async () => {
 		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		const user = userEvent.setup();
-		await expandSection(user);
 
 		await user.click(await screen.findByRole('button', { name: 'Activate Slack (paused)' }));
 		await screen.findByRole('button', { name: 'Deactivate Slack (paused)' });
@@ -132,7 +116,6 @@ describe('SharedOAuthAppsSection', () => {
 		);
 		renderWithProviders(<SharedOAuthAppsSection onRegister={vi.fn()} />);
 		const user = userEvent.setup();
-		await expandSection(user);
 
 		await user.click(
 			await screen.findByRole('button', { name: 'Deactivate GitHub production app' }),

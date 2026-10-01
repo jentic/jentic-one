@@ -20,8 +20,6 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
-import { ORG_ADMIN, useOptionalPermission } from '@/shared/auth/usePermission';
-import { SharedOAuthAppsSection } from '@/shared/credentials/oauth-app-registrations/components/SharedOAuthAppsSection';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -80,14 +78,10 @@ export function CredentialInventorySheet({
 }) {
 	const headingId = 'credential-inventory-sheet-title';
 
-	const isAdmin = useOptionalPermission(ORG_ADMIN);
-
 	const [search, setSearch] = useState('');
 	const [typeFilter, setTypeFilter] = useState<CredentialTypeFilter>('all');
 	const [bindingFilter, setBindingFilter] = useState<BindingFilter>('any');
 	const [createOpen, setCreateOpen] = useState(false);
-	/** The open create flow came from "Register shared app" — preset sharing on. */
-	const [createShared, setCreateShared] = useState(false);
 	const [editId, setEditId] = useState<string | null>(null);
 	const [stickyEditId, setStickyEditId] = useState<string | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<Credential | null>(null);
@@ -407,28 +401,7 @@ export function CredentialInventorySheet({
 						</div>
 					</header>
 
-					{/* Above the credential filters, which don't apply to it. */}
-					{isAdmin && (
-						<div className="border-border border-b px-5 py-3">
-							<SharedOAuthAppsSection
-								onRegister={(): void => {
-									setCreateShared(true);
-									setCreateOpen(true);
-								}}
-							/>
-						</div>
-					)}
-
 					<div className="border-border flex flex-wrap items-center gap-2 border-b px-5 py-3">
-						{isAdmin && (
-							// With the shared-apps section above, the list needs its own name.
-							<h2
-								id="credential-inventory-list-heading"
-								className="font-heading text-foreground w-full text-base font-semibold"
-							>
-								All credentials
-							</h2>
-						)}
 						{/* A credential bound to zero agents is reachable from no agent's screen —
 						    the sheet's one unique power, so it leads the toolbar. */}
 						<div className="flex shrink-0 items-center gap-2">
@@ -530,11 +503,8 @@ export function CredentialInventorySheet({
 			{createOpen && (
 				<CreateCredentialFlow
 					open
-					initialShareWithOrg={createShared}
-					initialType={createShared ? CredentialType.OAUTH2 : undefined}
 					onClose={(): void => {
 						setCreateOpen(false);
-						setCreateShared(false);
 						if (approvalSession) onApprovalClose?.();
 					}}
 					approvalSession={approvalSession}
@@ -546,7 +516,6 @@ export function CredentialInventorySheet({
 					)}
 					onCreated={(info: CreatedCredentialInfo): void => {
 						setCreateOpen(false);
-						setCreateShared(false);
 						if (
 							info.type === CredentialType.OAUTH2 &&
 							info.provider !== 'static' &&

@@ -9,17 +9,16 @@ import { resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { resetOAuthAppRegistrationsStore } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
- * The "Register as a shared OAuth app" toggle is admin-only — it flips the
- * create flow from the personal-credential path onto the shared OAuth app
- * registration path. These tests pin (a) the visibility gate: non-admins
- * never see the toggle, and admins don't either on manual entry (a shared
- * app is keyed to a catalog API); (b) the admin submit path maps the form
- * onto the registration API for both sign-in flows; (c) "Register shared
- * app" never quietly creates a personal credential — an API that can't be
- * shared says why and blocks submit, and the picker drops the one-click
- * (personal) sign-in tiles.
+ * ``registerSharedApp`` flips the create flow from the personal-credential
+ * path onto the shared OAuth app registration path. These tests pin (a) the
+ * default: without the prop the flow is the plain credential create, with no
+ * sharing affordance, whoever is signed in; (b) the register submit path maps
+ * the form onto the registration API for both sign-in flows; (c) register mode
+ * never quietly creates a personal credential — an API that can't be shared
+ * says why and blocks submit, and the picker drops the one-click (personal)
+ * sign-in tiles.
  *
- * The admin path pins a catalog API with no ``specUrl``, so no spec loads
+ * The register path pins a catalog API with no ``specUrl``, so no spec loads
  * and the "Sign-in flow" selector owns the grant type.
  */
 
@@ -43,7 +42,7 @@ function captureRegistrationCreate(): { body: () => Record<string, unknown> | nu
 	return { body: () => captured };
 }
 
-function renderAdminSharedFlow(onClose = vi.fn()): void {
+function renderRegisterFlow(onClose = vi.fn()): void {
 	renderWithProviders(
 		<CreateCredentialFlow
 			open={true}
@@ -51,96 +50,47 @@ function renderAdminSharedFlow(onClose = vi.fn()): void {
 			onCreated={vi.fn()}
 			pinnedApi={PINNED_API}
 			initialType={CredentialType.OAUTH2}
-			initialShareWithOrg={true}
+			registerSharedApp
 		/>,
 	);
 }
 
-// Stub the permission hook per-test rather than wiring the full ``AuthContext``
-// (the value type carries a large auth-mutation surface irrelevant here).
-// The dialog reads permission via ``useOptionalPermission(ORG_ADMIN)`` — this
-// is the single seam that flips ``canShareWithOrg``.
-const usePermissionMock = vi.fn<() => boolean>(() => false);
-vi.mock('@/shared/auth/usePermission', async () => {
-	const actual = await vi.importActual<typeof import('@/shared/auth/usePermission')>(
-		'@/shared/auth/usePermission',
-	);
-	return {
-		...actual,
-		useOptionalPermission: () => usePermissionMock(),
-	};
-});
-
-describe('CreateCredentialFlow — admin-only registration toggle', () => {
+describe('CreateCredentialFlow — register shared app mode', () => {
 	beforeEach(() => {
 		resetCredentialsStore();
 		resetOAuthAppRegistrationsStore();
-		usePermissionMock.mockReturnValue(false);
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
 
-	it('hides the "Register as a shared OAuth app" toggle for non-admins', async () => {
-		usePermissionMock.mockReturnValue(false);
-		renderWithProviders(
-			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
-		);
-		// Drive from the picker into the form step so the toggle *would* have
-		// a chance to render if the gate let it through.
-		const user = userEvent.setup();
-		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
-
-		// Even in the form step, the toggle is absent for a non-admin.
-		expect(screen.queryByText(/register as a shared oauth app/i)).not.toBeInTheDocument();
-	});
-
-	it('keeps the toggle absent even when the form is in a shape that would show it for an admin', async () => {
-		// A non-admin walking into the manual-entry form and reaching the
-		// OAuth2 + direct_oauth2 + auth-code shape still sees no toggle —
-		// the ``isAdmin`` guard short-circuits ``canShareWithOrg`` before any
-		// other form-state predicate is consulted.
-		usePermissionMock.mockReturnValue(false);
-		renderWithProviders(
-			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
-		);
-		const user = userEvent.setup();
-		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
-
-		// The toggle text is a stable string ("Register as a shared OAuth app"); a regression that leaked it to a non-admin would
-		// fail this assertion whether the underlying render was gated or not.
-		expect(screen.queryByText(/register as a shared oauth app/i)).not.toBeInTheDocument();
-	});
-
-	it('hides the toggle from admins on manual entry (no catalog API to key it to)', async () => {
-		usePermissionMock.mockReturnValue(true);
+	it('offers no sharing without the prop, even on a shareable OAuth 2.0 API', async () => {
 		renderWithProviders(
 			<CreateCredentialFlow
 				open={true}
 				onClose={vi.fn()}
 				onCreated={vi.fn()}
+				pinnedApi={PINNED_API}
 				initialType={CredentialType.OAUTH2}
 			/>,
 		);
-		const user = userEvent.setup();
-		await user.click(await screen.findByRole('button', { name: /enter manually/i }));
 
-		expect(screen.getByLabelText(/client id/i)).toBeInTheDocument();
-		expect(screen.queryByText(/register as a shared oauth app/i)).not.toBeInTheDocument();
+		expect(await screen.findByLabelText(/client id/i)).toBeInTheDocument();
+		expect(screen.queryByText(/shared oauth app/i)).not.toBeInTheDocument();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		expect(screen.getByLabelText(/^name/i)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /create credential/i })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /register shared app/i })).toBeNull();
 	});
 
 	it('registers an authorization-code shared app from the admin form', async () => {
-		usePermissionMock.mockReturnValue(true);
 		const capture = captureRegistrationCreate();
 		const onClose = vi.fn();
-		renderAdminSharedFlow(onClose);
+		renderRegisterFlow(onClose);
 
-		const toggle = await screen.findByRole('checkbox', {
-			name: /register as a shared oauth app/i,
-		});
-		expect(toggle).toBeChecked();
-		expect(screen.getByLabelText(/registration name/i)).toHaveValue('GitHub REST');
+		expect(await screen.findByLabelText(/registration name/i)).toHaveValue('GitHub REST');
+		expect(screen.queryByRole('checkbox')).toBeNull();
 
 		const user = userEvent.setup();
 		await user.type(screen.getByLabelText(/client id/i), 'cid_123');
@@ -171,9 +121,8 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 	});
 
 	it('registers a device-flow shared app with endpoints and no secret', async () => {
-		usePermissionMock.mockReturnValue(true);
 		const capture = captureRegistrationCreate();
-		renderAdminSharedFlow();
+		renderRegisterFlow();
 
 		const user = userEvent.setup();
 		await user.selectOptions(await screen.findByLabelText(/sign-in flow/i), 'device_code');
@@ -205,7 +154,6 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 	});
 
 	it('register mode explains an API that cannot be shared and blocks submit', async () => {
-		usePermissionMock.mockReturnValue(true);
 		// No ``<domain>/<api>`` catalog id — the server would reject the registration.
 		renderWithProviders(
 			<CreateCredentialFlow
@@ -214,16 +162,13 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 				onCreated={vi.fn()}
 				pinnedApi={{ ...PINNED_API, apiId: 'github' }}
 				initialType={CredentialType.OAUTH2}
-				initialShareWithOrg={true}
+				registerSharedApp
 			/>,
 		);
 
 		const note = await screen.findByRole('note');
 		expect(note).toHaveTextContent(/catalog api id of the form <domain>\/<api>/i);
 		// Still register mode: no personal-credential fallback.
-		expect(
-			screen.queryByRole('checkbox', { name: /register as a shared oauth app/i }),
-		).toBeNull();
 		const submit = screen.getByRole('button', { name: /register shared app/i });
 		expect(submit).toBeDisabled();
 		expect(screen.queryByRole('button', { name: /create credential/i })).toBeNull();
@@ -232,14 +177,13 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 	});
 
 	it('register mode on manual entry explains why and blocks submit', async () => {
-		usePermissionMock.mockReturnValue(true);
 		renderWithProviders(
 			<CreateCredentialFlow
 				open={true}
 				onClose={vi.fn()}
 				onCreated={vi.fn()}
 				initialType={CredentialType.OAUTH2}
-				initialShareWithOrg={true}
+				registerSharedApp
 			/>,
 		);
 		const user = userEvent.setup();
@@ -252,7 +196,6 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 	});
 
 	it('register mode hides the one-click sign-in tiles', async () => {
-		usePermissionMock.mockReturnValue(true);
 		const { unmount } = renderWithProviders(
 			<CreateCredentialFlow open={true} onClose={vi.fn()} onCreated={vi.fn()} />,
 		);
@@ -266,7 +209,7 @@ describe('CreateCredentialFlow — admin-only registration toggle', () => {
 				onClose={vi.fn()}
 				onCreated={vi.fn()}
 				initialType={CredentialType.OAUTH2}
-				initialShareWithOrg={true}
+				registerSharedApp
 			/>,
 		);
 		await screen.findByRole('button', { name: /enter manually/i });
