@@ -684,6 +684,23 @@ describe('Monitor inter-linking', () => {
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
 
+	it('a multi-call trace labels every call by method + path, never the opaque id', async () => {
+		renderMonitor('/app/monitor?show=calls&trace_id=trace_aaaaaaaa');
+
+		const dialog = await screen.findByRole('dialog');
+		expect(
+			await within(dialog).findByRole('heading', { name: '2 calls in one trace' }),
+		).toBeInTheDocument();
+		expect(within(dialog).getAllByText('POST /v1/charges').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).getAllByText('POST /v1/refunds').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).queryByText('op_charges01')).not.toBeInTheDocument();
+		expect(within(dialog).queryByText('op_refunds01')).not.toBeInTheDocument();
+		// Each call keeps its id reachable through the copy affordance.
+		expect(within(dialog).getAllByRole('button', { name: 'Copy operation ID' })).toHaveLength(
+			2,
+		);
+	});
+
 	it('Execution deep-link with a real trace opens the trace, not "no trace recorded"', async () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_1');
 		expect(await screen.findByText('Trace')).toBeInTheDocument();

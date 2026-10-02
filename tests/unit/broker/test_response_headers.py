@@ -56,6 +56,25 @@ def test_metadata_headers_omit_credential_attribution_when_absent():
     assert JenticHeader.CREDENTIAL_NAME.value not in headers
 
 
+def test_metadata_headers_stamp_the_opaque_operation_id_only():
+    """``Jentic-Operation`` carries the machine key (``operation.id``) — never
+    the human-readable path/method, which ride the execution record instead."""
+    op = OperationInfo(id="op_charge", path="/v1/charges", method="POST")
+    for headers in (
+        _metadata_headers(_ctx(operation=op), "exec_1"),
+        _stream_metadata_headers(_ctx(operation=op), "exec_1", 200),
+    ):
+        assert headers[JenticHeader.OPERATION.value] == "op_charge"
+
+
+def test_metadata_headers_omit_operation_when_discovery_resolved_none():
+    """No resolved operation → no ``Jentic-Operation`` header on either path."""
+    assert JenticHeader.OPERATION.value not in _metadata_headers(_ctx(operation=None), "exec_1")
+    assert JenticHeader.OPERATION.value not in _stream_metadata_headers(
+        _ctx(operation=None), "exec_1", 200
+    )
+
+
 def test_stream_metadata_headers_stamp_credential_attribution():
     """Streaming path stays symmetric with the sync router (#740)."""
     headers = _stream_metadata_headers(
