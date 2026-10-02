@@ -28,6 +28,7 @@ from jentic_one.shared.jobs.protocols import (
 )
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _FakeSession:
@@ -352,6 +353,64 @@ async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> No
     mock_repeated.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_handler_denied_job_keys_repeated_failure_on_the_folded_operation() -> None:
+    """A run-time denial still counts toward repeated-failure detection with the
+    full operation identity folded from the payload — not a dropped id."""
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem={"type": "action_denied"})
+        ),
+    )
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
+
+    with (
+        patch("jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock),
+        patch(
+            "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure",
+            new_callable=AsyncMock,
+        ) as mock_repeated,
+    ):
+        await handler.execute(
+            "job_denied_op",
+            _FakeSession(),
+            payload=_payload(operation=operation, operation_id="op_x", credential_id="cred_a"),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    assert mock_repeated.call_args.kwargs["operation"] == OperationInfo(**operation)
+
+
+@pytest.mark.asyncio
+async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
+    """The run-time re-check reads the id off the folded ``operation`` dict, so a
+    payload carrying only the dict (no flat key) is still authorized on its id."""
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=authorizer,
+    )
+
+    await handler.execute(
+        "job_dict_only",
+        _FakeSession(),
+        payload=_payload(operation={"id": "op_dict", "path": "/v1/things", "method": "GET"}),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.operation_id == "op_dict"
+
+
 def test_handler_refuses_an_injector_without_an_authorizer() -> None:
     """Wiring a credential injector without the run-time re-check fails closed."""
     executor = _RecordingExecutor(
@@ -552,6 +611,58 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
         )
 
     assert mock_emit.call_args.kwargs["tags"] is None
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_operation_dict_in_metadata() -> None:
+    """The payload's ``operation`` dict (id + path template + method) reaches
+    the executor metadata — validated once here (the handler folds it for the
+    repeated-failure detector) — alongside the dual-written flat
+    ``operation_id``."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
+
+    await handler.execute(
+        "job_op",
+        _FakeSession(),
+        payload=_payload(operation=operation, operation_id="op_x"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == operation
+    assert executor.last_request.metadata["operation_id"] == "op_x"
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_legacy_flat_operation_id() -> None:
+    """A job enqueued before the ``operation`` dict existed carries only the
+    flat ``operation_id`` — the handler folds it into an id-only operation, so
+    the executor metadata keeps the id on the record either way."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    await handler.execute(
+        "job_legacy_op",
+        _FakeSession(),
+        payload=_payload(operation_id="op_legacy"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == {
+        "id": "op_legacy",
+        "path": None,
+        "method": None,
+    }
+    assert executor.last_request.metadata["operation_id"] == "op_legacy"
 
 
 @pytest.mark.asyncio

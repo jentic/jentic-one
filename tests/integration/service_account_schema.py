@@ -19,7 +19,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, pool
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from jentic_one.shared.config import AppConfig, DatabaseConfig
 from jentic_one.shared.db.session import get_database_url
@@ -28,6 +28,9 @@ from tests.integration.conftest import _alembic_config_for
 #: The revision just below the drop, and the drop itself.
 ADMIN_PRE_SA_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 _SA_DROP = "e2f3a4b5c6d7"  # pragma: allowlist secret
+#: The reversible admin revision stacked on the drop (execution-record
+#: operation path/method); walked back with a real downgrade before the restore.
+_ADMIN_HEAD_ABOVE_SA_DROP = "0679072d60eb"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -137,15 +140,30 @@ def _create_tables(op: Operations, *, pg: bool) -> None:
         )
 
 
-async def _restore_tables(db_config: DatabaseConfig) -> bool:
-    """Create the tables unless present; returns whether it created them."""
+def _engine(db_config: DatabaseConfig) -> AsyncEngine:
     pg = db_config.backend == "postgres"
     connect_args = (
         {"server_settings": {"search_path": f"{db_config.schema_name},public"}} if pg else {}
     )
-    engine = create_async_engine(
+    return create_async_engine(
         get_database_url(db_config), poolclass=pool.NullPool, connect_args=connect_args
     )
+
+
+async def _has_service_account_tables(db_config: DatabaseConfig) -> bool:
+    """Whether admin is already below the drop (the tables still exist)."""
+    engine = _engine(db_config)
+    try:
+        async with engine.connect() as conn:
+            return bool(await conn.run_sync(lambda c: inspect(c).has_table("service_accounts")))
+    finally:
+        await engine.dispose()
+
+
+async def _restore_tables(db_config: DatabaseConfig) -> bool:
+    """Create the tables unless present; returns whether it created them."""
+    pg = db_config.backend == "postgres"
+    engine = _engine(db_config)
 
     def _run(sync_conn: sa.Connection) -> bool:
         if inspect(sync_conn).has_table("service_accounts"):
@@ -170,7 +188,13 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
     db_config = integration_config.databases.admin
     cfg = _alembic_config_for("admin", db_config)
     heads = ScriptDirectory.from_config(cfg).get_heads()
-    # Stamping skips downgrades; only safe while the drop is admin's head.
-    assert heads == [_SA_DROP], f"extend restore_pre_sa_drop_admin for new heads {heads}"
+    # Stamping skips downgrades, so every revision above the drop must be
+    # reversible: walk those back with a real downgrade first, then snapshot-
+    # restore the drop itself. Extend this list when a new head lands.
+    assert heads in ([_SA_DROP], [_ADMIN_HEAD_ABOVE_SA_DROP]), (
+        f"extend restore_pre_sa_drop_admin for new heads {heads}"
+    )
+    if not asyncio.run(_has_service_account_tables(db_config)):
+        command.downgrade(cfg, _SA_DROP)
     if asyncio.run(_restore_tables(db_config)):
         command.stamp(cfg, ADMIN_PRE_SA_DROP)

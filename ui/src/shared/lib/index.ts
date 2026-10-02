@@ -85,4 +85,5 @@ export {
 	apiRefDisplayName,
 	apiIdentityTuple,
 	formatApiVersion,
+	formatOperation,
 } from '@/shared/lib/api-display';

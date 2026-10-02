@@ -19,6 +19,11 @@ logger = structlog.get_logger(__name__)
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _ZERO_TRACE_ID = "0" * 32
 
+#: Width bound for any variable value an emitter interpolates into an event
+#: ``summary`` (``Event.summary`` is ``String(512)``). Error text and registry
+#: path templates are unbounded, and an oversized INSERT fails the emit.
+MAX_EVENT_SUMMARY_FIELD_LEN = 128
+
 
 def valid_trace_id_or_none(trace_id: str | None) -> str | None:
     """Coerce ``trace_id`` to ``None`` unless it is a valid 32-hex trace id.

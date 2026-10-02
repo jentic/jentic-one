@@ -326,7 +326,7 @@ jentic whoami                 # a fresh agent starts bound to no APIs
 jentic connect <vendor>       # start connecting a registry vendor's credential (a human
                               # approves the approval_url); for anything else, ask your
                               # operator to connect a credential and bind this agent (dashboard)
-jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
+jentic execute GET:https://api.example.com/v1/pets  # routed through http://127.0.0.1:8100 automatically
 ```
 
 If an environment already exists without a broker URL (e.g. created before this

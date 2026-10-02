@@ -28,6 +28,7 @@ from jentic_one.broker.web.streaming import (
     open_streaming_response,
 )
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.schemas import OperationInfo
 
 
 def _ctx_req() -> ExecuteRequestContext:
@@ -36,7 +37,7 @@ def _ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="trace-1",
         toolkit_id="tk-1",
-        operation_id="op-1",
+        operation=OperationInfo(id="op-1"),
         api_vendor="vendor",
         api_name="name",
         api_version="v1",

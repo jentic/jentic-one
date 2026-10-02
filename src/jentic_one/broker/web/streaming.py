@@ -126,8 +126,8 @@ def _metadata_headers(
         JenticHeader.EXECUTION_ID.value: execution_id,
         JenticHeader.UPSTREAM_STATUS.value: str(status_code),
     }
-    if ctx_req.operation_id:
-        metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        metadata[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Absent when no credential was used, so
