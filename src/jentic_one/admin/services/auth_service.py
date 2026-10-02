@@ -232,8 +232,8 @@ class AuthService:
         Takes the *raw* bearer token (not the resolved Identity) because the
         session-window claims (``auth_time``) are not part of the shared
         ``Identity`` contract. Fail-closed: only tokens that explicitly carry
-        ``actor_type: "user"`` and an ``auth_time`` are refreshable — agent /
-        service-account JWTs, opaque ``at_`` tokens, and pre-upgrade tokens
+        ``actor_type: "user"`` and an ``auth_time`` are refreshable — agent
+        JWTs, opaque ``at_`` tokens, and pre-upgrade tokens
         minted before these claims existed are refused (the latter simply
         expire at their natural TTL and the user signs in once more). The
         re-mint is denied once the original authentication is older than

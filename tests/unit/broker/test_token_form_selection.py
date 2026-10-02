@@ -153,13 +153,14 @@ async def test_missing_actor_type_fails_closed() -> None:
         await validator.validate(token)
 
 
-@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit"])
+@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit", "service_account"])
 @pytest.mark.asyncio
 async def test_unknown_actor_type_is_typed_rejection(actor_type: str) -> None:
     """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError.
 
-    ``toolkit`` is retired from the enum (theme-5 Phase 4), so a signed
-    ``toolkit`` claim is refused as unknown like any other stray string.
+    ``toolkit`` (theme-5 Phase 4) and ``service_account`` (theme-8 Phase 4)
+    are retired from the enum, so a signed claim carrying either is refused
+    as unknown like any other stray string.
     """
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
@@ -180,19 +181,16 @@ async def test_disallowed_actor_type_rejected() -> None:
         await validator.validate(token)
 
 
-@pytest.mark.parametrize(
-    ("actor_type", "expected"),
-    [("agent", ActorType.AGENT), ("service_account", ActorType.SERVICE_ACCOUNT)],
-)
 @pytest.mark.asyncio
-async def test_allowed_actor_types_validate(actor_type: str, expected: ActorType) -> None:
+async def test_allowed_actor_type_validates() -> None:
+    """AGENT is the only actor type a trusted issuer may assert (theme-8 F3)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "x", "exp": exp, "actor_type": actor_type})
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "agent"})
 
     resolved = await validator.validate(token)
 
-    assert resolved.actor_type is expected
+    assert resolved.actor_type is ActorType.AGENT
 
 
 @pytest.mark.asyncio

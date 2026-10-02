@@ -21,10 +21,11 @@ __all__ = [
 class GroupBy(StrEnum):
     """Grouping dimension for usage statistics.
 
-    ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
-    release later, with the toolkit tables (Phase 6b): execution records
-    carry a ``credential_id`` since Phase 2 and the direct-binding path
-    writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
+    ``TOOLKIT`` is a legacy axis: it groups over the surviving
+    ``execution_records.toolkit_id`` attribution column, which nothing writes
+    since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+    historical dashboards keep working; ``CREDENTIAL`` is the live
+    consumer axis (execution records carry ``credential_id`` since Phase 2).
     """
 
     API = "api"

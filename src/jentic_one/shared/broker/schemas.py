@@ -23,9 +23,10 @@ from jentic_one.shared.schemas import OperationInfo
 class ExecuteRequestContext(BaseModel):
     """Contextual metadata for a broker proxy request — discovery-driven.
 
-    ``toolkit_id`` is optional: derived from the discovered API identity or
-    supplied as an inbound disambiguator. ``operation`` / ``api_*`` come from
-    in-process discovery, not inbound ``Jentic-Api-*`` headers.
+    ``toolkit_id`` is nullable-legacy: nothing sets it since theme-5 Phase 6b
+    deleted toolkit derivation; it stays so queued/in-process callers built
+    against the older shape keep validating. ``operation`` / ``api_*`` come
+    from in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """
 
     # Forbid unknown fields: this is part of the public Broker contract and
@@ -51,6 +52,16 @@ class ExecuteRequestContext(BaseModel):
     # broker attaches to an upstream 401/403 (#638) so a valid key hitting the
     # wrong host is not a dead-end "Invalid Key".
     has_server_variable: bool = False
+    # OpenAPI server-variable values resolved from the request URL by discovery
+    # (credential selection is scoped on them), and the declared defaults of
+    # variables the URL left as a ``{name}`` placeholder (substituted when the
+    # credential supplies no value).
+    server_variables: dict[str, str] | None = None
+    server_variable_defaults: dict[str, str] | None = None
+    # Discovery could not determine the URL's server-variable values (an index
+    # row that predates server-variable capture): credentials scoped by
+    # ``server_variables`` are then not injected.
+    server_variables_unresolved: bool = False
     # Attribution for the stored credential the resolver picked, once injection
     # has run (#740). ``None`` before injection, when no credential path exists,
     # or when the request used inline auth. Carried on the context so both the

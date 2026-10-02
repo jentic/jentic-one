@@ -45,7 +45,7 @@ flowchart TB
         Credential
         RuleSet["PermissionRuleSet"] --> RuleSetRule["PermissionRuleSetRule"]
         AgentPermissionRule
-        AccessRequest --> AccessRequestItem
+        ConnectSession
     end
 
     subgraph adb [admin]
@@ -90,19 +90,25 @@ API-key/basic/OAuth/SigV4 material, encrypted at rest via the
 default-deny allowlist the broker evaluates — lives either inline per
 binding (`AgentPermissionRule`, keyed by the `(agent, credential)` pair) or
 in a shared, ordered `PermissionRuleSet` that several bindings can point at.
-`AccessRequest`/`AccessRequestItem` implement the approval flow;
+`ConnectSession` rows track agent-driven OAuth connect flows
+(device-authorization / auth-code) from creation to a terminal state;
 `CustomerAPIKey` is the bearer-key row for API-key access. The retired
 toolkit tables (`toolkits`, `toolkit_permission_rules`,
-`toolkit_credential_bindings`, `toolkit_keys`) remain until the phase-6b
-drops, gated on the `toolkit_flattening_acks` sentinel — see the
+`toolkit_credential_bindings`, `toolkit_keys`, and admin's
+`agent_toolkit_bindings`) were dropped in theme-5 Phase 6b, gated on the
+`toolkit_flattening_acks` sentinel — see the
 [release runbook](../development/releasing.md).
 
 ### Admin — identity and operations
 
-`User`, `Agent`, and `ServiceAccount` are the actor tables (an agent is
-owned by a user); `OAuthClient` rows back dynamic client registration, and
-`agent_credentials`/`service_account_credentials` hold the long-lived API-key
-alternatives to the OAuth flow. Token state lives in
+`User` and `Agent` are the actor tables (an agent is owned by a user);
+`OAuthClient` rows back dynamic client registration, and `agent_credentials`
+holds the long-lived API-key alternative to the OAuth flow. The retired
+`service_accounts`, `service_account_credentials` and
+`service_account_migration_acks` tables are dropped in 0.41 (theme-8 Phase 4),
+after the migration runner has moved every remaining service account to a
+successor agent (see the [release runbook](../development/releasing.md)).
+Token state lives in
 `access_tokens`/`refresh_tokens`/`authorization_codes`; scope grants in
 `actor_scope_grants` and `user_permission_grants`. Operationally:
 `jobs`/`job_results` (the queue the `WorkerLoop` claims from),

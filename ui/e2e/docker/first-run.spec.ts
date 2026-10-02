@@ -2,48 +2,44 @@ import { test, expect } from '@playwright/test';
 import { captureConsoleErrors } from './helpers';
 
 /**
- * First-run dashboard (real backend). These specs assert the landing page's
- * FIRST-RUN swap — no agents and no executions yet → the setup checklist
- * replaces the health/context layers.
+ * First run (real backend). `/app` lands on Agents, the app's home; with no
+ * agents yet it shows the setup checklist instead of the fleet.
  *
  * They live in their own Playwright project (`first-run`, see
  * playwright.docker.config.ts) that runs right after auth and BEFORE the main
  * `e2e` project: the suite shares one real DB, so the specs that register
- * agents (access-requests, agents, broker-authz, …) would otherwise flip the
- * workspace out of first-run before alphabetical file order ever reached
- * dashboard.spec.ts.
+ * agents (agents, broker-authz, …) would otherwise flip the workspace out of
+ * first-run before these ran.
  */
-test('dashboard renders the first-run checklist against an empty backend, console clean', async ({
+test('Agents renders the first-run checklist against an empty backend, console clean', async ({
 	page,
 }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
 
-	// Landing header + primary nav are present.
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	// The index redirects to Agents, inside the primary nav.
+	await expect(page).toHaveURL(/\/app\/agents\b/);
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
-	// No agents + no executions → the setup checklist replaces the queues and
-	// the Gateway-health section.
+	// No agents → the setup checklist, then the self-registration route.
 	await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
 	await expect(page.getByRole('link', { name: /Discover an API/ })).toBeVisible();
-	await expect(page.getByRole('link', { name: /Register an agent/ })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Needs your action (all clear)' })).toBeVisible();
-
-	// The detail layer still mounts (its own empty state).
-	await expect(page.getByRole('heading', { name: 'Recent activity' })).toBeVisible();
+	await expect(page.getByRole('link', { name: /Add a credential/ })).toBeVisible();
+	await expect(page.getByRole('button', { name: /Create an agent/ })).toBeVisible();
+	await expect(page.getByText('Register an agent from the command line')).toBeVisible();
 
 	// One failing/empty source must not spam the console with app errors.
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('first-run checklist steps navigate to their surfaces', async ({ page }) => {
+test('first-run checklist links navigate to their surfaces', async ({ page }) => {
 	await page.goto('/app');
 	await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
 
 	// Checklist links route into the module surfaces (real router, real guard).
-	await page.getByRole('link', { name: /Register an agent/ }).click();
-	await expect(page).toHaveURL(/\/app\/agents\b/);
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+	await page.getByRole('link', { name: /Discover an API/ }).click();
+	await expect(page).toHaveURL(/\/app\/discover\b/);
+	await expect(page.getByRole('heading', { name: 'Discover APIs', exact: true })).toBeVisible();
 });

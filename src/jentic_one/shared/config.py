@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
 import hashlib
 import ipaddress
 import os
@@ -56,6 +57,45 @@ _EPHEMERAL_DEV_SECRETS: dict[str, SecretStr] = {}
 _PLACEHOLDER_SECRET_RE = re.compile(r"change.?me", re.IGNORECASE)
 
 
+# Which surfaces read each scalar secret the production guard below enforces.
+# Verified against the code that consumes them: ``admin.auth.jwt_secret`` signs
+# admin/session JWTs (admin, auth) and verifies them on every surface that
+# installs the superset verifier (control, registry — see ``SURFACES_NEEDING_AUTH``
+# in ``__main__``; the broker verifies with its own ``broker.jwt_secret`` /
+# trusted issuers instead); ``admin.invite.pepper`` hashes invite tokens (admin
+# only); ``credentials.connect.state_secret`` signs the OAuth connect ``state``
+# (control only). Keep in sync with the Helm chart's per-surface secret mounts
+# (``deploy/helm/jentic-one/charts/common/templates/_app-secrets.tpl``).
+GUARDED_FIELD_SURFACES: dict[str, frozenset[str]] = {
+    "admin.auth.jwt_secret": frozenset({"admin", "auth", "control", "registry"}),
+    "admin.invite.pepper": frozenset({"admin"}),
+    "credentials.connect.state_secret": frozenset({"control"}),
+}
+
+# Surfaces GUARDED_FIELD_SURFACES has an opinion about. An enabled surface outside
+# this set (e.g. one registered by an extension) is assumed to read every
+# secret, so the guard never relaxes for code it has not been audited against.
+_KNOWN_SURFACES: frozenset[str] = frozenset({"admin", "auth", "broker", "control", "registry"})
+
+# The surfaces the config being validated will run, set by load_config() for
+# the duration of validation. None (direct model construction, tests, tools)
+# means "unknown", which keeps the guard strict for every secret.
+_ENABLED_APPS: contextvars.ContextVar[frozenset[str] | None] = contextvars.ContextVar(
+    "jentic_one_config_enabled_apps", default=None
+)
+
+
+def _secret_required_by_enabled_apps(field_path: str) -> bool:
+    """True unless the surfaces being loaded provably never read ``field_path``."""
+    apps = _ENABLED_APPS.get()
+    if apps is None:
+        return True
+    consumers = GUARDED_FIELD_SURFACES.get(field_path)
+    if consumers is None or not apps <= _KNOWN_SURFACES:
+        return True
+    return bool(apps & consumers)
+
+
 def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretStr:
     """Return the configured secret, or mint a per-process one for dev.
 
@@ -74,11 +114,26 @@ def _require_or_generate_secret(value: SecretStr, *, field_path: str) -> SecretS
       Per-process means multi-process dev setups (standalone surfaces,
       ``--workers > 1``) each mint their own value; each secret is consumed
       only by its own surface, so a shared value is never assumed.
+
+    Production requires a value only when a surface this process runs reads
+    the secret (``GUARDED_FIELD_SURFACES``, keyed off the ``apps`` being loaded): a
+    standalone broker or registry is not handed secrets it never reads (the
+    Helm chart mounts each surface only its own). Such a process gets a
+    per-process random value instead of the empty one, so nothing can ever sign
+    or verify with a known key.
     """
     secret = value.get_secret_value()
     if secret.strip() and not _PLACEHOLDER_SECRET_RE.search(secret):
         return value
     if os.environ.get("JENTIC_ENV", "development") == "production":
+        if not _secret_required_by_enabled_apps(field_path):
+            if field_path not in _EPHEMERAL_DEV_SECRETS:
+                _EPHEMERAL_DEV_SECRETS[field_path] = SecretStr(secrets.token_urlsafe(32))
+                _logger.info(
+                    "secret not read by enabled surfaces; using per-process value",
+                    field_path=field_path,
+                )
+            return _EPHEMERAL_DEV_SECRETS[field_path]
         raise ConfigError(
             f"{field_path} must be explicitly configured in production — "
             "empty and placeholder values are rejected "
@@ -188,6 +243,50 @@ class ServicesConfig(BaseModel):
     retry_max: int = 3
     retry_backoff_s: float = 1.0
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_sa_sweep_age(cls, data: Any) -> Any:
+        """Ignore ``services.service_account_sweep_min_stamp_age_hours``.
+
+        The 0.40 age gate of the automatic service-account sweep. Theme-8
+        Phase 4 removed the sweep's boot job: the upgrade now migrates, verifies
+        and sweeps every service account before dropping the tables, so the
+        setting has nothing left to gate. Harmless when left behind — dropped
+        with a one-time warning, never a boot failure.
+        """
+        if isinstance(data, dict) and _RETIRED_SA_SWEEP_AGE_KEY in data:
+            _warn_retired_sa_sweep_age_once()
+            data = {k: v for k, v in data.items() if k != _RETIRED_SA_SWEEP_AGE_KEY}
+        return data
+
+
+_RETIRED_SA_SWEEP_AGE_KEY = "service_account_sweep_min_stamp_age_hours"
+_retired_sa_sweep_age_warned = threading.Event()
+
+
+def _warn_retired_sa_sweep_age_once() -> None:
+    """One WARNING per process for the leftover setting (it is ignored).
+
+    Latched like :func:`_warn_retired_direct_bindings_flag_once`: config is
+    validated more than once per process.
+    """
+    if _retired_sa_sweep_age_warned.is_set():
+        return
+    _retired_sa_sweep_age_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting=f"services.{_RETIRED_SA_SWEEP_AGE_KEY}",
+        detail=(
+            "removed in theme-8 Phase 4 with the automatic service-account sweep; "
+            "the upgrade migrates and sweeps every service account itself, and the "
+            "value is ignored"
+        ),
+        actionable_step=(
+            f"Remove services.{_RETIRED_SA_SWEEP_AGE_KEY} from the config file or "
+            "JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS from the environment."
+        ),
+    )
+
 
 class WorkerConfig(BaseModel):
     """Background job-worker durability knobs.
@@ -236,6 +335,16 @@ class LoggingConfig(BaseModel):
     file_name: str = "app.log"
     file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     file_backup_count: int = 5
+    http_wire_trace: bool = Field(
+        default=False,
+        description=(
+            "Let the outbound wire-trace DEBUG loggers (httpcore, hpack) through when "
+            "the log level is DEBUG. Off by default: those lines can quote outbound "
+            "header values and request paths with their query strings, including "
+            "injected credentials, unredacted. Not safe for production; enable only "
+            "for short-lived local debugging."
+        ),
+    )
 
 
 class DatabasesConfig(BaseModel):
@@ -906,21 +1015,131 @@ class CredentialsConfig(BaseModel):
     connect: ConnectConfig = Field(default_factory=ConnectConfig)
 
 
-class AccessRequestsConfig(BaseModel):
-    """Access requests subsystem configuration."""
+# ---------------------------------------------------------------------------
+# Vendor auth registry — verified vendors with known SSO integrations.
+#
+# This is the config-seeded catalog of vendors that support the agent-driven
+# integration flow. Each entry describes the OAuth flow(s) available,
+# the OAuth app credentials shipped by the platform, the scope catalog with
+# read/write classification, and a generic identity-echo probe.
+# ---------------------------------------------------------------------------
 
-    ttl_days: int = 7
-    canonical_base_url: str = ""
 
-    _normalize_canonical_base_url = field_validator("canonical_base_url")(
-        _normalize_optional_base_url
-    )
+class VendorDeviceAuthorizationFlowConfig(BaseModel):
+    """RFC 8628 device flow settings for a vendor.
+
+    `client_id` is the platform-shipped OAuth application id (device flow is a
+    public-client flow — no secret). Endpoints are the vendor's device
+    authorization + token endpoints.
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
+    client_id: str
+    authorization_endpoint: str
+    token_endpoint: str
+
+
+class VendorAuthorizationCodeFlowConfig(BaseModel):
+    """OAuth 2.0 authorization-code flow settings for a vendor.
+
+    Included so the vendor registry is flow-generic from day 1 even though
+    phase 1 only wires up device flow. Requires a client secret (confidential
+    client) since the redirect-based flow exchanges the code at the token
+    endpoint.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
+    client_id: str
+    client_secret: SecretStr
+    authorize_url: str
+    token_url: str
+
+
+VendorFlowConfig = Annotated[
+    VendorDeviceAuthorizationFlowConfig | VendorAuthorizationCodeFlowConfig,
+    Field(discriminator="kind"),
+]
+
+
+class VendorScopeConfig(BaseModel):
+    """A single OAuth scope exposed by the vendor.
+
+    `classification` drives the review-page UX: read scopes are pre-selected by
+    default; write/admin scopes get a warning flag. `description` is
+    human-facing copy displayed on the review page.
+    """
+
+    name: str
+    classification: Literal["read", "write", "admin"] = "read"
+    default: bool = False
+    description: str = ""
+
+
+class VendorIdentityProbeConfig(BaseModel):
+    """Generic identity-echo protocol config for a vendor.
+
+    After the connect flow completes, the platform calls
+    `{method} {endpoint}` with the freshly minted access token, extracts
+    `identity_field` (dotted JSON path) from the response body, and formats it
+    into `display_template` (Python str.format). The result is stored as
+    `connected_as` and returned to the caller.
+    """
+
+    endpoint: str
+    method: Literal["GET", "POST"] = "GET"
+    identity_field: str
+    display_template: str
+
+
+class VendorAuthConfig(BaseModel):
+    """Config entry for one verified vendor.
+
+    Keyed in `VendorRegistryConfig.entries` by a short slug (e.g. "github").
+    """
+
+    # Catalog api_id for this vendor's API (e.g. ``github.com/api.github.com``).
+    # Decomposed at credential-create time via ``canonical_credential_scope``
+    # exactly like a normal catalog import — same api_vendor / api_name /
+    # catalog_api_id fields land on the credential row.
+    vendor: str
+    display_name: str
+    flows: list[VendorFlowConfig]
+    scopes: list[VendorScopeConfig] = Field(default_factory=list)
+    identity_probe: VendorIdentityProbeConfig
+
+    @field_validator("vendor")
+    @classmethod
+    def _vendor_is_domain_slash_name(cls, v: str) -> str:
+        """Require a ``{domain}/{name}`` shape (e.g. ``github.com/api.github.com``).
+
+        Without this check a bare ``vendor`` string (missing the ``/``) silently
+        collapses through ``entry.vendor.split("/", 1)[0]`` and produces a
+        credential ``api_vendor`` that mismatches the broker's per-operation
+        identity check — the mismatch only surfaces on the first connect and is
+        hard to diagnose from the field. Failing loud at config-load is cheaper.
+        """
+        if "/" not in v or v.startswith("/") or v.endswith("/"):
+            raise ValueError(
+                f"vendor {v!r} must be of the form '<domain>/<sub>' "
+                "(e.g. 'github.com/api.github.com')"
+            )
+        return v
+
+
+class VendorRegistryConfig(BaseModel):
+    """Top-level vendor auth registry."""
+
+    entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
 
 
 class ControlSurfaceConfig(BaseModel):
-    """Control surface configuration."""
+    """Control surface configuration.
 
-    access_requests: AccessRequestsConfig = Field(default_factory=AccessRequestsConfig)
+    Empty since theme 7 removed the access-request subsystem (its
+    ``access_requests.ttl_days``/``canonical_base_url`` knobs). The section
+    stays so a ``control:`` key in existing YAML keeps validating and future
+    control-surface knobs have a home; unknown subkeys are ignored.
+    """
 
 
 class UpstreamClientConfig(BaseModel):
@@ -1071,9 +1290,10 @@ class EgressConfig(BaseModel):
         default_factory=list,
         description=(
             "CIDRs exempted from the private-IP egress block (e.g. "
-            '``["10.50.0.0/16"]``). The cloud-metadata IPs (169.254.169.254 / '
-            "fd00:ec2::254) are never exempted, even when a listed range covers "
-            "them. Accepts a YAML list or a comma-separated string."
+            '``["10.50.0.0/16"]``). The cloud-metadata and platform-credential '
+            "IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, "
+            "100.100.100.200) are never exempted, even when a listed range "
+            "covers them. Accepts a YAML list or a comma-separated string."
         ),
     )
     allowed_internal_domains: Annotated[list[str], BeforeValidator(_csv_to_list)] = Field(
@@ -1275,34 +1495,26 @@ class BrokerConfig(BaseModel):
         ),
     )
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
-    # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
-    # double hit is served from cache for header-less requests. Agent/credential
-    # bindings change infrequently, so a short TTL bounds revocation staleness
-    # (the cache is per instance, so a grant/revoke is consistent cluster-wide
-    # only after the TTL lapses on each node) while removing the hot-path lookup.
+    # Short TTL (seconds) for the per-instance credential-binding derivation
+    # cache. Wraps the cross-DB `derive_credentials` lookup so the per-request
+    # Admin+Control double hit is served from cache. Agent/credential bindings
+    # change infrequently, so a short TTL bounds revocation staleness (the
+    # cache is per instance, so a grant/revoke is consistent cluster-wide only
+    # after the TTL lapses on each node) while removing the hot-path lookup.
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
+    # Key name is legacy (it originally bounded the toolkit-derivation cache,
+    # deleted in theme-5 Phase 6b); kept for operator config compatibility.
     toolkit_cache_ttl_s: float = 3.0
     # Short TTL (seconds) for the per-instance permission-rule cache.
-    # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
+    # Caches the ordered rules per (agent, credential) binding. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
-    # Upper bound on entries in each per-worker permission-rule LRU (toolkit and
-    # direct-binding evaluators alike). Size against agents x credentials for the
-    # direct path — each active (agent, credential) binding is one entry — and
-    # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
-    # count (the TTL only bounds staleness, never memory).
+    # Upper bound on entries in the per-worker permission-rule LRU. Size
+    # against agents x credentials — each active (agent, credential) binding
+    # is one entry. Eviction is LRU by entry count (the TTL only bounds
+    # staleness, never memory).
     rule_cache_max_entries: int = 5_000
-    # Theme-5 Phase 2 cutover flag, default-on since Phase 5b: callers are
-    # authorized through **direct agent→credential bindings**
-    # (agent_credential_bindings + agent_permission_rules /
-    # permission_rule_sets). Setting False is an emergency fallback onto the
-    # legacy toolkit-derivation path, which survives until Phase 6b removes it
-    # (and this flag with it). Service accounts migrated from jntc_live_
-    # toolkit keys (Phase 4) hold both binding forms, so they work under
-    # either setting.
-    direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
@@ -1328,6 +1540,59 @@ class BrokerConfig(BaseModel):
 
     _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
         _normalize_optional_base_url
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_direct_bindings_flag(cls, data: Any) -> Any:
+        """Fail loudly on ``broker.direct_bindings_enabled: false``.
+
+        The flag was deleted in theme-5 Phase 6b along with the toolkit
+        path it selected — direct bindings are the only path. Unknown keys
+        are otherwise ignored here, so without this check an operator who
+        pinned ``false`` to stay on toolkits would boot on direct bindings
+        without noticing. ``true`` (the old default) is harmless: ignored,
+        with a one-time deprecation warning.
+        """
+        if isinstance(data, dict) and "direct_bindings_enabled" in data:
+            value = data["direct_bindings_enabled"]
+            if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
+                raise ValueError(
+                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "the toolkit path it selected no longer exists and direct "
+                    "agent-credential bindings are the only access path. Remove "
+                    "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
+                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
+                    "(docs/development/releasing.md)."
+                )
+            _warn_retired_direct_bindings_flag_once()
+            data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
+        return data
+
+
+_retired_direct_bindings_flag_warned = threading.Event()
+
+
+def _warn_retired_direct_bindings_flag_once() -> None:
+    """One deprecation WARNING per process for a leftover ``true`` (it is ignored).
+
+    Config is validated more than once per process (reloads, per-surface
+    copies), so the line is latched to avoid repeating on every validation.
+    """
+    if _retired_direct_bindings_flag_warned.is_set():
+        return
+    _retired_direct_bindings_flag_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting="broker.direct_bindings_enabled",
+        detail=(
+            "removed in theme-5 Phase 6b; direct agent-credential bindings are the "
+            "only access path and the value is ignored"
+        ),
+        actionable_step=(
+            "Remove broker.direct_bindings_enabled from the config file or "
+            "JENTIC__BROKER__DIRECT_BINDINGS_ENABLED from the environment."
+        ),
     )
 
 
@@ -1646,6 +1911,7 @@ class AppConfig(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     catalog: CatalogConfig = Field(default_factory=CatalogConfig)
     credentials: CredentialsConfig = Field(default_factory=CredentialsConfig)
+    vendors: VendorRegistryConfig = Field(default_factory=VendorRegistryConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
@@ -1750,11 +2016,6 @@ def resolved_auth_base_url(config: AppConfig) -> str:
     return effective_auth_base_url(config) or bind_origin(config)
 
 
-def effective_access_requests_base_url(config: AppConfig) -> str:
-    """Access-request approval-link base: its own canonical, else the shared one."""
-    return config.control.access_requests.canonical_base_url or config.server.public_base_url or ""
-
-
 @dataclass(frozen=True, slots=True)
 class PublicUrlMismatch:
     """One explicitly-configured public URL whose origin doesn't match serving."""
@@ -1772,8 +2033,7 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
     is reported, matching the "warn, don't crash" contract. Unset fields are
     skipped — they self-derive and cannot be wrong.
 
-    1. Every per-surface override (``auth.canonical_base_url``,
-       ``control.access_requests.canonical_base_url``) is compared
+    1. The per-surface override (``auth.canonical_base_url``) is compared
        (loopback/bind-host aware) against ``server.public_base_url`` when set.
        When it is unset, the bind is the only known origin only on a loopback
        bind; on an all-interfaces bind the public origin is unknowable (proxy,
@@ -1792,10 +2052,6 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
     expected = config.server.public_base_url or (bind_origin(config) if loopback_bind else "")
     candidates: list[tuple[str, str | None]] = [
         ("auth.canonical_base_url", config.auth.canonical_base_url),
-        (
-            "control.access_requests.canonical_base_url",
-            config.control.access_requests.canonical_base_url,
-        ),
     ]
 
     mismatches: list[PublicUrlMismatch] = []
@@ -2040,7 +2296,27 @@ def load_config(path: Path | None = None) -> AppConfig:
     if extensions:
         merged["extensions"] = extensions
 
+    # Let the production secret guard see which surfaces this config runs, so a
+    # standalone surface is only required to carry the secrets it reads. Nested
+    # sections built by default_factory validate inside this call too, so a
+    # contextvar (not pydantic's validation context) reaches all of them.
+    token = _ENABLED_APPS.set(_apps_for_secret_guard(merged.get("apps")))
     try:
         return AppConfig.model_validate(merged)
     except Exception as e:
         raise ConfigError(f"Configuration validation failed: {e}") from e
+    finally:
+        _ENABLED_APPS.reset(token)
+
+
+def _apps_for_secret_guard(raw: Any) -> frozenset[str] | None:
+    """The surface set the secret guard should assume for a raw ``apps`` value.
+
+    Absent means the ``AppConfig.apps`` default; an empty list or anything that
+    is not a list of strings returns None (strict guard).
+    """
+    if raw is None:
+        raw = AppConfig.model_fields["apps"].get_default(call_default_factory=True)
+    if not isinstance(raw, list) or not raw or not all(isinstance(item, str) for item in raw):
+        return None
+    return frozenset(raw)

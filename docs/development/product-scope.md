@@ -41,7 +41,7 @@ conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.
 
 The five runtime surfaces — **broker** (credential-injecting data plane),
 **registry** (API catalog), **control** (credentials, agent-credential
-bindings, access requests), **admin** (operators, jobs, audit, UI), and
+bindings, vendor connect flows), **admin** (operators, jobs, audit, UI), and
 **auth** (agent registration and tokens). What each one owns, and how they fit
 together, is documented in [docs/architecture/](../architecture/README.md).
 

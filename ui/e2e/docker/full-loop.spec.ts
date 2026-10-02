@@ -7,7 +7,7 @@ import {
 	replaceAgentScopes,
 	uniqueSuffix,
 } from './helpers';
-import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow';
+import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
  * Full platform loop (real backend).
@@ -15,10 +15,10 @@ import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow
  * The end-to-end "agent gets to actually call an upstream" journey is:
  *
  *   import API → create credential → bind credential to agent
- *     → grant capabilities:execute → file access request (as agent)
- *     → admin approves → mint agent token → broker GET → read execution back
+ *     → grant capabilities:execute
+ *     → mint agent token → broker GET → read execution back
  *
- * The PREFIX of that journey (everything up to and including admin approval)
+ * The PREFIX of that journey (everything up to and including the scope grant)
  * runs against the combined `make start-app` boot and is asserted here for
  * real. The BROKER TAIL (token → /execute → executions) cannot run in this
  * suite and is captured as `test.fixme` with the issues that block it:
@@ -37,10 +37,7 @@ import { provisionAdminOwnedAgent, fileAccessRequestAsAgent } from './agent-flow
  * When #526/#527/#539 land, the fixme tail can be un-fixme'd and asserted live.
  */
 
-test('full loop prefix: import → credential → bind → grant → file → approve', async ({
-	page,
-	request,
-}) => {
+test('full loop prefix: import → credential → bind → grant', async ({ request }) => {
 	// A cold worker on a fresh DB can take ~25s for the first import (F-6, a
 	// known test-infra warmup cost, not a product bug) — widen the timeout.
 	test.slow();
@@ -69,38 +66,6 @@ test('full loop prefix: import → credential → bind → grant → file → ap
 	await bindCredentialToAgent(request, agent.clientId, credentialId);
 	const scopes = await replaceAgentScopes(request, agent.clientId, ['capabilities:execute']);
 	expect(scopes).toContain('capabilities:execute');
-
-	// 5. File an access request AS the agent and approve it from the UI — the
-	//    real human-in-the-loop gate. Because the agent is admin-owned, the
-	//    admin satisfies owns_filer and the decision is authorised. We file a
-	//    credential:bind for the REAL credential created above (by its id) so
-	//    the approved decision applies a genuine, resolvable effect (filing
-	//    stamps a read-only default rule set — theme-5 phase 3). The row is
-	//    matched in the queue by filer name (the queue resolves the agent id to
-	//    its directory name via <ActorLabel>).
-	await fileAccessRequestAsAgent(request, agent, {
-		reason: `e2e full-loop ${sfx}`,
-		resourceType: 'credential',
-		action: 'bind',
-		resourceId: credentialId,
-	});
-
-	await page.goto('/app/access-requests');
-	await expect(page.getByRole('heading', { name: 'Access requests' })).toBeVisible();
-	await page.getByRole('button', { name: new RegExp(`by ${agent.name}`) }).click();
-	const dialog = page.getByRole('dialog', { name: 'Access request' });
-	await expect(dialog).toBeVisible();
-	await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
-	await dialog.getByRole('button', { name: /Review & submit/i }).click();
-	await dialog.getByRole('button', { name: /Confirm decision/i }).click();
-	await dialog.getByRole('button', { name: 'Done' }).click();
-	await expect(dialog).toBeHidden();
-
-	// Settled into Approved — the request left the default Pending filter.
-	await page.getByRole('button', { name: 'Approved', exact: true }).click();
-	await expect(page.getByRole('button', { name: new RegExp(`by ${agent.name}`) })).toBeVisible({
-		timeout: 15_000,
-	});
 
 	// Sanity: the agent now carries the execute scope on a freshly minted token.
 	// (We re-read via the API rather than asserting on the broker, which is the

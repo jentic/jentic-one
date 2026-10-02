@@ -5,15 +5,28 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
+from jentic_one.registry.core.server_hosts import hosts_from_servers, needs_review
+from jentic_one.registry.ingest.host_change_guard import (
+    api_has_bound_credentials,
+    may_approve_host_change,
+)
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.repos.server_repo import ServerRepository
+from jentic_one.registry.repos.url_index_repo import (
+    UrlIndexRepository,
+    describe_live_host_owners,
+)
 from jentic_one.registry.services.api_service import ApiService, ApiView
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
+    HostChangeRequiresOperatorError,
+    HostOwnedByOtherVendorError,
     RevisionNotFoundError,
     RevisionStateConflictError,
 )
@@ -223,6 +236,28 @@ class RevisionService:
                     "promote",
                 )
 
+            if not may_approve_host_change(identity.permissions):
+                await self._require_no_host_change(
+                    session, api.id, revision_uuid, vendor, name, version
+                )
+
+            # One vendor per host: the revision's URL-index rows exist from import
+            # (every revision is indexed), but they only start serving once it is
+            # live — refuse to go live on a host another vendor's live API serves.
+            owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+                session, revision_id=revision_uuid, vendor=api.vendor
+            )
+            if owners:
+                raise HostOwnedByOtherVendorError(revision_id, describe_live_host_owners(owners))
+
+            # A draft that came from an origin-tracked source (a catalog revision held
+            # for review) goes live as IMPORTED, like any catalog revision, so the next
+            # catalog re-import archives it instead of colliding with it.
+            promoted_state = (
+                ApiRevisionState.IMPORTED
+                if revision.origin is not None
+                else ApiRevisionState.PUBLISHED
+            )
             now = datetime.now(UTC)
             if api.current_revision_id is not None:
                 await ApiRevisionRepository.set_state(
@@ -231,7 +266,7 @@ class RevisionService:
             await ApiRevisionRepository.archive_all_active_imported(session, api.id)
 
             await ApiRevisionRepository.set_state(
-                session, revision_uuid, ApiRevisionState.PUBLISHED, promoted_at=now
+                session, revision_uuid, promoted_state, promoted_at=now
             )
             await ApiRepository.set_current_revision(session, api.id, revision_uuid)
 
@@ -255,10 +290,48 @@ class RevisionService:
             actor_type=identity.actor_type,
             actor_id=identity.sub,
             target_parent_id=str(api.id),
-            after={"state": ApiRevisionState.PUBLISHED},
+            after={"state": promoted_state},
             origin=identity.origin.value,
         )
         return view
+
+    async def _require_no_host_change(
+        self,
+        session: Any,
+        api_id: uuid.UUID,
+        revision_id: uuid.UUID,
+        vendor: str,
+        name: str,
+        version: str,
+    ) -> None:
+        """Refuse a promote that changes the server hosts of a credential-bound API.
+
+        Only called for callers without ``credentials:write``. Same rules as the
+        catalog re-import guard (``registry/ingest/host_change_guard.py``): the
+        baseline is the current revision, else the most recently live one, so
+        archiving the current revision first does not skip the check. When the
+        API has never had a live revision there is no baseline and every origin
+        of the draft is new: a draft that declares any server is refused if
+        credentials are bound.
+        """
+        baseline = await ApiRevisionRepository.host_baseline_revision_id(
+            session, api_id, exclude=revision_id
+        )
+        current = (
+            hosts_from_servers(await ServerRepository.list_url_specs(session, baseline))
+            if baseline is not None
+            else frozenset()
+        )
+        new = hosts_from_servers(await ServerRepository.list_url_specs(session, revision_id))
+        if not needs_review(current, new):
+            return
+        if not await api_has_bound_credentials(
+            self._ctx, vendor=vendor, name=name, version=version
+        ):
+            return
+        raise HostChangeRequiresOperatorError(
+            str(revision_id), current_hosts=sorted(current), new_hosts=sorted(new)
+        )
 
     async def archive(
         self, vendor: str, name: str, version: str, revision_id: str, *, identity: Identity

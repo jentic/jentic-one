@@ -36,6 +36,13 @@ function parseScopes(raw: string): string[] | undefined {
 	return scopes.length ? scopes : undefined;
 }
 
+/** Order-insensitive scope comparison — reordering the field is not an edit. */
+function sameScopeSet(a: string[], b: string[]): boolean {
+	const left = new Set(a);
+	const right = new Set(b);
+	return left.size === right.size && [...left].every((s) => right.has(s));
+}
+
 /**
  * Whether `raw` parses as an absolute http(s) URL with a hostname. The OAuth2
  * Token/Authorize fields render as `<input type="url">`, but that native
@@ -140,12 +147,14 @@ export function buildCreateBody(
 /**
  * Assemble the update body. Only sends fields the user actually changed; blank
  * secret fields are omitted so the existing secret is preserved (rotation is
- * opt-in by typing a new value).
+ * opt-in by typing a new value). `originalScopes` is the scope string the edit
+ * form was seeded with — OAuth2 scopes are sent only when they differ from it.
  */
 export function buildUpdateBody(
 	type: CredentialType,
 	state: CredentialFormState,
 	originalName: string,
+	originalScopes = '',
 ): CredentialUpdateRequest {
 	const name = state.name.trim();
 	const namePatch = name && name !== originalName ? { name } : {};
@@ -174,15 +183,23 @@ export function buildUpdateBody(
 				username: state.username.trim() || undefined,
 				password: secret(state.password),
 			};
-		case CredentialType.OAUTH2:
+		case CredentialType.OAUTH2: {
+			// Scopes ride only when the selection differs from the loaded one, so an
+			// untouched edit never writes `[]` over a credential stored without
+			// scopes. A deliberate "remove all" still sends `[]` — omitting the key
+			// would keep the stored scopes.
+			const nextScopes = parseScopes(state.scopes) ?? [];
+			const loadedScopes = parseScopes(originalScopes) ?? [];
+			const scopesChanged = !sameScopeSet(nextScopes, loadedScopes);
 			return {
 				type,
 				...namePatch,
 				...svPatch,
 				client_secret: secret(state.clientSecret),
 				token_url: state.tokenUrl.trim() || undefined,
-				scopes: parseScopes(state.scopes),
+				...(scopesChanged ? { scopes: nextScopes } : {}),
 			};
+		}
 		case CredentialType.NO_AUTH:
 			// Nothing to rotate — only name/server-variable edits apply.
 			return { type, ...namePatch, ...svPatch };
@@ -236,9 +253,12 @@ export function validateCreate(
 			break;
 		case CredentialType.OAUTH2:
 			if (!state.clientId.trim()) errors.clientId = 'Client ID is required.';
-			if (!state.clientSecret) errors.clientSecret = 'Client secret is required.';
 			{
 				const grant = state.grantType.trim();
+				// Device flow (RFC 8628) is a public-client flow — no secret.
+				if (grant !== 'device_code' && !state.clientSecret) {
+					errors.clientSecret = 'Client secret is required.';
+				}
 				// The implicit grant has no token endpoint, so a Token URL is N/A.
 				// Every other grant exchanges a token and requires it.
 				if (grant !== 'implicit') {
@@ -248,14 +268,19 @@ export function validateCreate(
 						errors.tokenUrl = 'Token URL must be a valid http(s) URL.';
 					}
 				}
-				// The authorization_code grant is a browser redirect flow, so an
-				// Authorize URL is mandatory — without it the credential is
-				// created but can never connect (the backend's begin_connect
-				// raises NotConnectableError). Validate the format for any grant
-				// when a value is present.
-				if (grant === 'authorization_code' && !state.authorizeUrl.trim()) {
+				// Redirect-based grants (auth-code) and RFC 8628 device flow both
+				// need the "where the flow starts" URL — auth-code redirects the
+				// browser there, device flow POSTs to it for user_code +
+				// verification_uri. Without it the credential is created but can
+				// never connect.
+				if (
+					(grant === 'authorization_code' || grant === 'device_code') &&
+					!state.authorizeUrl.trim()
+				) {
 					errors.authorizeUrl =
-						'Authorize URL is required for the authorization code grant.';
+						grant === 'device_code'
+							? 'Device authorization URL is required for the device code grant.'
+							: 'Authorize URL is required for the authorization code grant.';
 				} else if (state.authorizeUrl.trim() && !isValidHttpUrl(state.authorizeUrl)) {
 					errors.authorizeUrl = 'Authorize URL must be a valid http(s) URL.';
 				}
@@ -298,8 +323,20 @@ export function validateUpdate(
 
 /**
  * Seed the form state from a picked API. Replaces the manually-typed
- * vendor/name/version triple with the picker's values and uses the API's
- * display name as a sensible default credential name.
+ * vendor/name pair with the picker's values and uses the API's display name as
+ * a sensible default credential name.
+ *
+ * Version is deliberately NOT seeded: it stays empty, which the backend stores
+ * as the wildcard (`APIReferenceRequest.version` defaults to `""`, and
+ * `canonical_credential_scope` coerces empty to NULL = covers any version). The
+ * broker treats a pinned version as pinned, so stamping the pick's version here
+ * would scope the credential to one spec revision and the next call after a
+ * re-ingest resolves no covering credential — `CredentialNotProvisionedError`
+ * on a credential the operator believes they set up. A catalog pick makes that
+ * immediate rather than latent: its version comes from the catalog, and the
+ * registry's ingested spec need not report the same string. Pinning stays
+ * available — the Version field is still editable — it is just opt-in, the way
+ * the API models it.
  *
  * `nameDirty` guards the credential name: when the user hasn't manually edited
  * it we always refresh it to the newly-picked API's label (so switching APIs
@@ -314,7 +351,7 @@ export function seedFormFromSelectedApi(
 		...state,
 		apiVendor: api.vendor,
 		apiName: api.name,
-		apiVersion: api.version,
+		apiVersion: '',
 		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
 	};

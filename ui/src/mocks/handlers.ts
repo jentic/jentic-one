@@ -1,7 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
-import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
@@ -46,11 +45,27 @@ const mockUser = {
 
 /**
  * Seed for the actor directory (`GET /actors`). Ids mirror the actor_id values
- * other module fixtures emit (the dashboard access-request fixtures + the
- * agents store) so `<ActorLabel>` resolves to a name on those surfaces in
+ * other module fixtures emit (the agents store, rail and monitor
+ * fixtures) so `<ActorLabel>` resolves to a name on those surfaces in
  * mocked dev/e2e. Covers all three actor types.
  */
 const actorDirectorySeed = [
+	// The agents store's pending agents — the Activity rail's agent scope
+	// labels its options from this directory.
+	{
+		id: 'agnt_pending_1',
+		actor_type: 'agent',
+		name: 'inbox-triage-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
+		id: 'agnt_pending_2',
+		actor_type: 'agent',
+		name: 'release-notes-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
 	{
 		id: 'invoice-bot',
 		actor_type: 'agent',
@@ -99,13 +114,6 @@ const actorDirectorySeed = [
 		active: true,
 		created_at: '2026-01-01T00:00:00Z',
 	},
-	{
-		id: 'sva_active_1',
-		actor_type: 'service_account',
-		name: 'metrics-exporter',
-		active: true,
-		created_at: '2026-01-01T00:00:00Z',
-	},
 ];
 
 export const handlers = [
@@ -136,8 +144,8 @@ export const handlers = [
 	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
-	// other module stores emit (agents store + the access-request fixtures) so
-	// names resolve across the dashboard, access-request, and agent surfaces.
+	// other module stores emit (agents store, rail + monitor fixtures) so
+	// names resolve across the rail, monitor, and agent surfaces.
 	http.get('/actors', () =>
 		HttpResponse.json({
 			data: actorDirectorySeed,
@@ -168,20 +176,19 @@ export const handlers = [
 	...agentsHandlers,
 	// Credentials registers before Discover so its guided-picker `/catalog`
 	// handler (which falls through when its store is empty) gets a chance to
-	// respond before Discover's static `/catalog` fixtures. Only `/catalog`
-	// ordering is load-bearing — Discover defines no `/apis` handler, so the
-	// `/apis` fallback comes from `dashboardHandlers` further down regardless.
+	// respond before Discover's static `/catalog` fixtures. Its `/apis` handler falls
+	// through the same way, so `GET /apis` is answered by the workspace registry
+	// below — the one fixture whose list agrees with the endpoints behind it.
 	...credentialsHandlers,
 	...discoverHandlers,
-	...dashboardHandlers,
 	...workspaceHandlers,
 	...railEventsHandlers,
 	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
 	// including the DCR approval queue.
 	...settingsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
-	// + SSE, /audit). Several of these paths are ALSO mocked by the dashboard
-	// and the ambient Agent Rail for their own shell widgets; those modules
+	// + SSE, /audit). Several of these paths are ALSO mocked by the agents
+	// module and the ambient Activity rail for their own widgets; those
 	// register earlier, so in the running app their lighter fixtures answer
 	// first. Monitor's own tests can't rely on global ordering, so they install
 	// `monitorHandlers` at runtime via `worker.use(...)` (which takes

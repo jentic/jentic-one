@@ -23,7 +23,6 @@ from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepos
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
@@ -32,7 +31,7 @@ async def revoke_grant_and_sweep_tokens(
     session: AsyncSession,
     grant: OAuthClientGrant,
     *,
-    actor_type: ActorType,
+    actor_type: str,
     actor_id: str,
     origin: str | None,
     audit_reason: str,
@@ -51,6 +50,10 @@ async def revoke_grant_and_sweep_tokens(
     Flush-only: it joins whatever transaction the caller owns.
     Returns False (writing no audit/event) when the grant was already revoked;
     the token sweep re-runs regardless (idempotent belt).
+
+    ``actor_type`` is the opaque persisted string (an ``ActorType`` value
+    or a retired label such as ``service_account`` on a residual token row):
+    revocation must never fail on a historical actor type.
     """
     newly_revoked = grant.status == OAuthGrantStatus.ACTIVE.value and (
         await OAuthClientGrantRepository.revoke(session, grant.id)

@@ -1,334 +1,120 @@
 /**
- * AgentRail — persistent right-side surface, present on every authenticated
- * page at `xl+`. Backed by the REAL platform event feed (`/events` +
- * `/events/stream` SSE) via the `agentStream` provider.
+ * AgentRail — the docked "Activity" rail: a persistent right-side surface on
+ * every authenticated page at `xl+`, backed by the REAL platform event feed
+ * (`/events` + `/events/stream` SSE) via the `agentStream` provider. Below
+ * `xl` the same body opens in a drawer from the top bar (`ActivityDrawer`).
  *
- * Composes:
- *   • RailHeader — live-status, filter input, filter chips, pause, stale warning
- *   • RailFeed   — grouped, density-aware list of events
- *   • RailFooter — toast scope + audio toggle
+ * Collapsed by default: the rail is an opt-in live tail, not page chrome
+ * that competes with the content. The strip stays visible so it's one click
+ * away, and remembers the user's choice.
  *
- * Owns:
- *   • collapsed state (persisted to localStorage, broadcast to ToastHost)
- *   • paused state (manual toggle; hovering quietly holds new events)
- *   • feed filters (search, severities, kinds)
- *   • toast scope (mirrored to localStorage; ToastHost reads from there)
- *   • audio-on-critical preference + audio cue dispatch
+ * Owns only what is specific to the docked surface: the collapsed state
+ * (persisted to localStorage), the collapsed strip, and the open/close
+ * motion. The route → lens default and the failure chime run shell-wide
+ * (`ShellActivityEffects`).
  *
- * This is an org-wide platform feed; there is no per-agent lens because
- * `/events` carries no actor filter (tracked: jentic/jentic-one#387).
+ * Everything inside the rail is `ActivityRailBody`, shared with the drawer.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { ChevronLeft, TriangleAlert } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { toast, Tooltip } from '@/shared/ui';
-import { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ChevronLeft } from 'lucide-react';
+import { ActivityRailBody, useScopedActivity } from '@/shared/app/rail/ActivityRailBody';
+import { LiveDot } from '@/shared/app/rail/LiveDot';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import { RailFeed } from '@/shared/app/rail/RailFeed';
-import type { RailFeedFilters } from '@/shared/app/rail/RailFeed';
-import { RailFooter } from '@/shared/app/rail/RailFooter';
-import { RailHeader } from '@/shared/app/rail/RailHeader';
-import { playCriticalCue } from '@/shared/lib/audioCue';
-import {
-	RAIL_AUDIO_STORAGE_KEY,
-	RAIL_COLLAPSE_CHANGE_EVENT,
-	RAIL_COLLAPSED_STORAGE_KEY,
-	buildTraceBundle,
-	formatFailurePillCount,
-	readToastScope,
-	unacknowledgedFailureCount,
-	useAgentStream,
-	writeToastScope,
-} from '@/shared/lib/agentStream';
-import type { InlineActionSpec, StreamEvent, ToastScope } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+import { readBool, writeBool } from '@/shared/app/rail/railPreferences';
+import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
+import { RAIL_COLLAPSED_STORAGE_KEY } from '@/shared/lib/agentStream';
 
-function readBool(key: string, fallback: boolean): boolean {
-	if (typeof window === 'undefined') return fallback;
-	try {
-		const v = window.localStorage.getItem(key);
-		return v === null ? fallback : v === '1';
-	} catch {
-		return fallback;
-	}
-}
-function writeBool(key: string, value: boolean) {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(key, value ? '1' : '0');
-	} catch {
-		/* ignore */
-	}
-}
+const STRIP_PX = 40;
+const OPEN_PX = 288;
+/** A drawer ease: quick off the mark, long soft landing. */
+const EASE = [0.32, 0.72, 0, 1] as const;
 
-function notifyCollapseChange(collapsed: boolean) {
-	if (typeof window === 'undefined') return;
-	window.dispatchEvent(new CustomEvent(RAIL_COLLAPSE_CHANGE_EVENT, { detail: collapsed }));
+/**
+ * The collapsed strip: a live dot and the word "Activity". Deliberately no
+ * counts — "needs you" is the Notifications bell's job; the strip only says
+ * the stream is alive (and flags a failure you haven't seen).
+ */
+function CollapsedStrip({ onExpand }: { onExpand: () => void }) {
+	const { failureCount, status, paused } = useScopedActivity();
+	const parts = [
+		failureCount > 0
+			? `${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`
+			: null,
+		status === 'error' ? 'reconnecting' : null,
+		paused ? 'paused' : null,
+	].filter(Boolean);
+	const label = `Show live activity${parts.length ? ` (${parts.join(', ')})` : ''}`;
+	return (
+		<button
+			type="button"
+			onClick={onExpand}
+			aria-label={label}
+			title={label}
+			className="group hover:bg-background/40 flex h-full w-full flex-col items-center gap-2.5 py-2.5 transition-colors"
+		>
+			<ChevronLeft className="text-muted-foreground group-hover:text-foreground h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+			<LiveDot
+				tone={
+					failureCount > 0
+						? 'failure'
+						: status === 'live' && !paused
+							? 'live'
+							: status === 'error'
+								? 'warning'
+								: 'idle'
+				}
+			/>
+			<span className="text-muted-foreground group-hover:text-foreground text-[11px] font-medium transition-colors [writing-mode:vertical-rl]">
+				Activity
+			</span>
+		</button>
+	);
 }
 
 export function AgentRail() {
-	const {
-		events,
-		latest,
-		status,
-		acknowledge,
-		decide,
-		resolveEvent,
-		loadOlderEvents,
-		canLoadOlder,
-		loadingOlder,
-	} = useAgentStream();
-	const navigate = useNavigate();
-	const queryClient = useQueryClient();
-
+	const reduce = useReducedMotion();
 	const [collapsed, setCollapsed] = useState<boolean>(() =>
-		readBool(RAIL_COLLAPSED_STORAGE_KEY, false),
+		readBool(RAIL_COLLAPSED_STORAGE_KEY, true),
 	);
-	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
-	const [audioOnCritical, setAudioOnCritical] = useState<boolean>(() =>
-		readBool(RAIL_AUDIO_STORAGE_KEY, true),
-	);
-
-	// Access-request detail dialog (per-item approve/deny), opened from a filed
-	// event's "View" action.
-	const [requestDialog, setRequestDialog] = useState<{
-		requestId: string;
-		eventId: string;
-	} | null>(null);
-
-	// Pause state. Two INDEPENDENT mechanisms, intentionally kept separate so the
-	// control isn't confusing:
-	//   • manualPaused — the explicit Pause/Play button. This is the ONLY thing
-	//     that drives the visible "paused" chrome (amber dot, Play icon, PAUSED
-	//     pill). It persists until the user toggles it back.
-	//   • hoverFrozen — a QUIET convenience: while the cursor is inside the rail
-	//     we stop admitting new events so the list doesn't shift out from under
-	//     a click. It does NOT flip the button to "Resume" or recolor the status
-	//     dot — earlier that made the button look already-paused on hover, so you
-	//     couldn't tell what clicking it would do.
-	const [hoverFrozen, setHoverFrozen] = useState(false);
-	const [manualPaused, setManualPaused] = useState(false);
-	// Feed freeze = either mechanism; visible "paused" state = manual only.
-	const feedFrozen = hoverFrozen || manualPaused;
-
-	// Filters
-	const [search, setSearch] = useState('');
-	const [severities, setSeverities] = useState<Set<StreamEvent['severity']>>(() => new Set());
-	const [kinds, setKinds] = useState<Set<StreamEvent['kind']>>(() => new Set());
-
-	// Pause snapshot — when paused, we freeze *which* events are visible (by id)
-	// at pause time, but keep reading their live objects from the provider so an
-	// acknowledge's optimistic flip still reflects while paused. The feed just
-	// stops admitting *new* events.
-	const [frozenIds, setFrozenIds] = useState<Set<string> | null>(null);
-
+	useEffect(() => writeBool(RAIL_COLLAPSED_STORAGE_KEY, collapsed), [collapsed]);
+	// Expand and Collapse each take away the button that was pressed; hand
+	// focus to the control that replaces it rather than dropping it to <body>.
+	// An effect, not a mount ref: AnimatePresence re-uses a side that is still
+	// exiting when you toggle back quickly, so it may never re-mount.
+	const asideRef = useRef<HTMLElement | null>(null);
+	const moveFocus = useRef(false);
+	function toggle(next: boolean) {
+		moveFocus.current = true;
+		setCollapsed(next);
+	}
 	useEffect(() => {
-		// Never freeze an EMPTY feed: if the cursor happens to rest over the rail
-		// while it mounts (page load, or the shared pointer in browser-mode CI),
-		// `mouseenter` fires before the backlog fetch resolves — snapshotting
-		// zero ids would hold every event back indefinitely and the feed would
-		// sit at "Holding · N" with nothing rendered. Wait for the first events
-		// to land, then snapshot.
-		if (feedFrozen && frozenIds === null && events.length > 0) {
-			setFrozenIds(new Set(events.map((e) => e.id)));
-		}
-		if (!feedFrozen && frozenIds !== null) setFrozenIds(null);
-	}, [feedFrozen, frozenIds, events]);
-
-	// Persist collapse + audio preference, broadcast to ToastHost.
-	useEffect(() => {
-		writeBool(RAIL_COLLAPSED_STORAGE_KEY, collapsed);
-		notifyCollapseChange(collapsed);
+		if (!moveFocus.current) return;
+		moveFocus.current = false;
+		asideRef.current
+			?.querySelector<HTMLElement>(
+				collapsed
+					? 'button[aria-label^="Show live activity"]'
+					: 'button[aria-label="Collapse activity"]',
+			)
+			?.focus({ preventScroll: true });
 	}, [collapsed]);
-	useEffect(() => writeBool(RAIL_AUDIO_STORAGE_KEY, audioOnCritical), [audioOnCritical]);
-	useEffect(() => writeToastScope(scope), [scope]);
 
-	// Audio cue on critical (opt-in).
-	const lastBeepedRef = useRef<string | null>(null);
-	useEffect(() => {
-		if (!audioOnCritical) return;
-		if (!latest) return;
-		if (latest.severity !== 'critical' && latest.severity !== 'error') return;
-		if (lastBeepedRef.current === latest.id) return;
-		lastBeepedRef.current = latest.id;
-		playCriticalCue();
-	}, [latest, audioOnCritical]);
-
-	const filters: RailFeedFilters = useMemo(
-		() => ({ search, severities, kinds }),
-		[search, severities, kinds],
-	);
-
-	const renderEvents = useMemo(
-		() => (frozenIds ? events.filter((e) => frozenIds.has(e.id)) : events),
-		[frozenIds, events],
-	);
-	// "Reconnecting" is an honest connection signal, not a quiet-feed guess: the
-	// backend emits events sparsely (a 30s gap is normal, not a fault). Show it
-	// only when the SSE is actually struggling — errored, or re-connecting after
-	// we'd already gone live (a drop). A first-load `connecting` shows the
-	// dedicated "Connecting" pill instead, so don't double-signal there.
-	const stale = status === 'error' || (status === 'connecting' && events.length > 0);
-
-	function toggleSeverity(s: StreamEvent['severity']) {
-		setSeverities((prev) => {
-			const next = new Set(prev);
-			if (next.has(s)) next.delete(s);
-			else next.add(s);
-			return next;
-		});
-	}
-	function toggleKind(k: StreamEvent['kind']) {
-		setKinds((prev) => {
-			const next = new Set(prev);
-			if (next.has(k)) next.delete(k);
-			else next.add(k);
-			return next;
-		});
-	}
-	function clearFilters() {
-		setSearch('');
-		setSeverities(new Set());
-		setKinds(new Set());
-	}
-
-	// The rail's persistent failure badge counts unacknowledged error/critical
-	// events; clicking it focuses the feed on exactly those (#671).
-	const failureCount = useMemo(() => unacknowledgedFailureCount(events), [events]);
-	function focusFailures() {
-		setCollapsed(false);
-		// Unfreeze so a failure that arrived while paused/hovering actually enters
-		// the feed the operator is being pointed at — otherwise the pill can count
-		// N+1 while the frozen feed still shows N, and the new failure never
-		// surfaces. Clear both freeze mechanisms and the frozen snapshot.
-		setManualPaused(false);
-		setHoverFrozen(false);
-		setFrozenIds(null);
-		// ADD the failure severities to the operator's current view rather than
-		// replacing it — union with the previous set so a `warning`/`info` chip
-		// they had selected survives, and deliberately leave `search` and `kinds`
-		// untouched so we don't wipe a filter they set on purpose.
-		setSeverities((prev) => new Set<StreamEvent['severity']>([...prev, 'error', 'critical']));
-	}
-
-	function handleLoadOlder() {
-		void loadOlderEvents();
-	}
-
-	function handleExportTraceBundle() {
-		const bundle = buildTraceBundle(events, 5 * 60 * 1000);
-		if (bundle.eventCount === 0) {
-			toast({
-				variant: 'default',
-				title: 'Nothing to export',
-				description: 'The rail has no events loaded yet.',
-			});
-			return;
-		}
-		const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = `rail-trace-bundle-${Date.now()}.json`;
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		setTimeout(() => URL.revokeObjectURL(url), 0);
-	}
-
-	function handleAction(eventId: string, action: InlineActionSpec, reason?: string) {
-		// Pure navigation actions: navigate, skip the RPC.
-		if (action.href && !action.acknowledges && !action.decides) {
-			const ev = renderEvents.find((e) => e.id === eventId);
-			const target = ev ? action.href(ev) : null;
-			if (target) navigate(target);
-			return;
-		}
-		// Access-request decision (approve/deny via :decide).
-		if (action.decides) {
-			void decide(eventId, action.decides, reason);
-			return;
-		}
-		if (action.acknowledges) {
-			void acknowledge(eventId);
-		}
-	}
-
-	if (collapsed) {
-		return (
-			<aside className="bg-muted border-border relative hidden w-10 shrink-0 flex-col items-center border-l xl:flex">
-				<Button
-					variant="ghost"
-					size="icon"
-					onClick={() => setCollapsed(false)}
-					aria-label="Expand agent rail"
-					title="Expand agent rail"
-					className="mt-2"
-				>
-					<ChevronLeft className="text-muted-foreground h-4 w-4" />
-				</Button>
-				<div className="mt-3 flex flex-col items-center gap-1.5">
-					<span
-						role="img"
-						aria-label={
-							manualPaused
-								? 'Feed paused'
-								: status === 'live'
-									? 'Stream live'
-									: status === 'error'
-										? 'Stream offline'
-										: 'Connecting'
-						}
-						title={
-							manualPaused
-								? 'Feed paused'
-								: status === 'live'
-									? 'Stream live'
-									: status === 'error'
-										? 'Stream offline'
-										: 'Connecting'
-						}
-						className={cn(
-							'h-1.5 w-1.5 rounded-full',
-							manualPaused
-								? 'bg-warning'
-								: status === 'live'
-									? 'bg-success animate-pulse'
-									: status === 'error'
-										? 'bg-danger'
-										: 'bg-muted-foreground',
-						)}
-					/>
-					{failureCount > 0 && (
-						<Tooltip
-							interactiveChild
-							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
-						>
-							<button
-								type="button"
-								onClick={() => focusFailures()}
-								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
-								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 flex flex-col items-center gap-0.5 rounded-full border px-1 py-1 text-[9px] font-bold tabular-nums transition-colors"
-							>
-								<TriangleAlert className="h-3 w-3" />
-								{formatFailurePillCount(failureCount)}
-							</button>
-						</Tooltip>
-					)}
-					<span className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase [writing-mode:vertical-rl]">
-						Events · {events.length}
-					</span>
-				</div>
-			</aside>
-		);
-	}
-
+	// One aside for both states: its width glides between the strip and the
+	// open rail, so the page beside it reflows with it instead of cutting (or
+	// cross-fading two layouts). The contents are laid out at their FINAL
+	// width and clipped by the moving edge — the body slides in with the edge
+	// rather than squashing — and cross-fade as they swap. The aside also
+	// carries the stream's view-transition name, so leaving for Monitor
+	// morphs whichever is showing into the Live activity panel there.
 	return (
-		<aside
-			aria-label="Agent rail"
+		<motion.aside
+			ref={asideRef}
+			aria-label="Activity"
+			style={activityStreamVtStyle}
+			initial={false}
+			animate={{ width: collapsed ? STRIP_PX : OPEN_PX }}
+			transition={reduce ? { duration: 0 } : { duration: 0.42, ease: EASE }}
 			// `relative` is load-bearing: feed rows carry `sr-only` (absolutely
 			// positioned) spans, and absolute boxes are only clipped by ancestors
 			// in their CONTAINING-BLOCK chain — the static `overflow-hidden` here
@@ -338,82 +124,47 @@ export function AgentRail() {
 			// whole rail up with the scroll (the sticky wrapper is clamped to its
 			// row, and the row only grows with real `main` content). See #1318
 			// review follow-up: rail scrolled away on Settings/Toolkits.
-			className="bg-muted border-border relative hidden w-72 shrink-0 flex-col overflow-hidden border-l xl:flex"
-			onMouseEnter={() => setHoverFrozen(true)}
-			onMouseLeave={() => setHoverFrozen(false)}
+			className="bg-muted border-border relative hidden shrink-0 overflow-hidden border-l xl:block"
 		>
-			<RailHeader
-				eventCount={renderEvents.length}
-				status={status}
-				paused={manualPaused}
-				hoverFrozen={hoverFrozen && !manualPaused}
-				heldBack={feedFrozen ? Math.max(0, events.length - renderEvents.length) : 0}
-				stale={stale}
-				audioOnCritical={audioOnCritical}
-				failureCount={failureCount}
-				onFocusFailures={focusFailures}
-				onTogglePause={() => setManualPaused((p) => !p)}
-				onCollapse={() => setCollapsed(true)}
-				onLoadOlder={handleLoadOlder}
-				onExportTraceBundle={handleExportTraceBundle}
-				loadingOlder={loadingOlder}
-				canLoadOlder={canLoadOlder}
-				search={search}
-				onSearchChange={setSearch}
-				severities={severities}
-				onToggleSeverity={toggleSeverity}
-				kinds={kinds}
-				onToggleKind={toggleKind}
-				onClearFilters={clearFilters}
-			/>
-
-			<div
-				className="flex-1 overflow-y-auto px-2 py-2"
-				role="log"
-				aria-live="polite"
-				aria-relevant="additions"
-				aria-label="Agent event feed"
-			>
-				<RailFeed
-					events={renderEvents}
-					filters={filters}
-					onAction={handleAction}
-					onOpenRequest={(requestId, eventId) => setRequestDialog({ requestId, eventId })}
-					onNavigate={(href) => navigate(href)}
-				/>
-			</div>
-
-			<RailFooter
-				scope={scope}
-				onScopeChange={setScope}
-				audioOnCritical={audioOnCritical}
-				onAudioToggle={() => setAudioOnCritical((v) => !v)}
-			/>
-
-			{/* Routed through the shared decision wrapper (fetches the request by
-			    id) so a provisioning plan opens the setup wizard from the rail —
-			    exactly like the dashboard queue — instead of the plain dialog's
-			    "open it from Access Requests" dead end. */}
-			{requestDialog !== null && (
-				<AccessRequestDecisionDialog
-					requestId={requestDialog.requestId}
-					eventId={requestDialog.eventId}
-					onClose={() => setRequestDialog(null)}
-					onResolved={(eventId) => resolveEvent(eventId)}
-					onDecided={() => {
-						// A decision changes the durable queue + dashboard counts +
-						// the nav badge. Invalidate the shared roots (shared-layer
-						// code, no cross-module key imports) so every approval
-						// surface refreshes — not just the nav badge, which was
-						// the original stale-dashboard bug.
-						queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
-						queryClient.invalidateQueries({
-							queryKey: sharedQueryKeys.accessRequestsRoot,
-						});
-					}}
-				/>
-			)}
-		</aside>
+			<AnimatePresence initial={false}>
+				{collapsed ? (
+					<motion.div
+						key="strip"
+						className="absolute inset-y-0 left-0"
+						style={{ width: STRIP_PX }}
+						initial={{ opacity: 0 }}
+						animate={{
+							opacity: 1,
+							transition: reduce ? { duration: 0 } : { duration: 0.2, delay: 0.18 },
+						}}
+						exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.1 } }}
+					>
+						<CollapsedStrip onExpand={() => toggle(false)} />
+					</motion.div>
+				) : (
+					<motion.div
+						key="body"
+						className="absolute inset-y-0 left-0 flex flex-col"
+						style={{ width: OPEN_PX }}
+						initial={{ opacity: 0, x: 12 }}
+						animate={{
+							opacity: 1,
+							x: 0,
+							transition: reduce
+								? { duration: 0 }
+								: { duration: 0.34, delay: 0.08, ease: EASE },
+						}}
+						exit={{
+							opacity: 0,
+							x: 12,
+							transition: { duration: reduce ? 0 : 0.16, ease: 'easeIn' },
+						}}
+					>
+						<ActivityRailBody variant="rail" onCollapse={() => toggle(true)} />
+					</motion.div>
+				)}
+			</AnimatePresence>
+		</motion.aside>
 	);
 }
 

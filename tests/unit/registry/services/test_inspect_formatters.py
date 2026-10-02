@@ -23,6 +23,7 @@ def _make_result(
     auth: list[AuthInstruction] | None = None,
     inputs: OperationInputs | None = None,
     response_schema: dict[str, object] | None = None,
+    display_name: str | None = None,
 ) -> OperationInspectResult:
     return OperationInspectResult(
         operation_id="op_abc",
@@ -32,8 +33,9 @@ def _make_result(
         description="Returns all pets",
         api=ApiContext(
             vendor="acme",
-            name="Pets API",
+            name="pets",
             version="v1",
+            display_name=display_name,
             description="A pet management API",
         ),
         inputs=inputs,
@@ -66,7 +68,13 @@ def test_render_markdown_includes_server() -> None:
 def test_render_markdown_includes_api_context() -> None:
     result = _make_result()
     md = render_markdown(result)
-    assert "acme/Pets API v1" in md
+    assert "**API:** acme/pets v1" in md
+
+
+def test_render_markdown_labels_api_with_display_name() -> None:
+    result = _make_result(display_name="Acme Pets")
+    md = render_markdown(result)
+    assert "**API:** Acme Pets (acme/pets v1)" in md
 
 
 def test_render_markdown_includes_description() -> None:
@@ -157,6 +165,17 @@ def test_render_openapi_yaml_produces_valid_yaml() -> None:
     output = render_openapi_yaml(result)
     parsed = yaml.safe_load(output)
     assert parsed["openapi"] == "3.1.0"
+
+
+def test_render_openapi_yaml_title_is_canonical_reference_without_label() -> None:
+    parsed = yaml.safe_load(render_openapi_yaml(_make_result()))
+    assert parsed["info"]["title"] == "acme/pets"
+    assert parsed["info"]["version"] == "v1"
+
+
+def test_render_openapi_yaml_title_keeps_label_and_canonical_reference() -> None:
+    parsed = yaml.safe_load(render_openapi_yaml(_make_result(display_name="Acme Pets")))
+    assert parsed["info"]["title"] == "Acme Pets (acme/pets)"
 
 
 def test_render_openapi_yaml_includes_path_and_method() -> None:

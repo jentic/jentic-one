@@ -1,14 +1,13 @@
 /**
  * ActorsDiagram — companion to FlowDiagram, focused on how the actor types
  * *relate* (not the request path). The shape mirrors the platform's identity
- * model: a human user registers autonomous agents; agents (and non-human
- * service accounts) carry directly bound credentials the Broker injects at
- * execution time. Service accounts have no human in the loop.
+ * model: a human user registers autonomous agents; agents carry directly
+ * bound credentials the Broker injects at execution time.
  *
  * Same layout-primitive + lucide-arrow approach as FlowDiagram so it inherits
  * the theme tokens and reflows on mobile without a binary asset.
  */
-import { UserRound, Bot, Server, KeyRound, CornerDownRight } from 'lucide-react';
+import { UserRound, Bot, KeyRound, CornerDownRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 function ActorNode({
@@ -61,9 +60,8 @@ export function ActorsDiagram() {
 
 				<Edge label="registers / owns" />
 
-				{/* Branch: agent (human-backed) and service account (standalone). */}
-				<div className="flex flex-col gap-3 pl-3 sm:flex-row sm:items-start">
-					<div className="border-border/50 flex flex-1 flex-col gap-2 rounded-lg border border-dashed p-3">
+				<div className="pl-3">
+					<div className="border-border/50 flex flex-col gap-2 rounded-lg border border-dashed p-3">
 						<div className="text-foreground/65 flex items-center gap-1.5 text-[11px]">
 							<CornerDownRight className="h-3.5 w-3.5" aria-hidden="true" />
 							acts on the user’s behalf
@@ -71,34 +69,21 @@ export function ActorsDiagram() {
 						<ActorNode
 							icon={Bot}
 							title="agent"
-							subtitle="Autonomous identity (Ed25519 key). Brokers calls for its user."
+							subtitle="Autonomous identity (Ed25519 key or API key). Brokers calls for its user."
 							accent="text-accent-green"
-						/>
-					</div>
-
-					<div className="border-border/50 flex flex-1 flex-col gap-2 rounded-lg border border-dashed p-3">
-						<div className="text-foreground/65 flex items-center gap-1.5 text-[11px]">
-							<CornerDownRight className="h-3.5 w-3.5" aria-hidden="true" />
-							no human in the loop
-						</div>
-						<ActorNode
-							icon={Server}
-							title="service_account"
-							subtitle="Non-human integration identity. Mints its own task tokens."
-							accent="text-accent-orange"
 						/>
 					</div>
 				</div>
 
-				<Edge label="both carry" />
+				<Edge label="carries" />
 
-				{/* Credentials hang off agents and service accounts via direct
-				    bindings (not an actor type — no token is issued for them). */}
+				{/* Credentials hang off agents via direct bindings (not an actor
+				    type — no token is issued for them). */}
 				<div className="pl-3">
 					<ActorNode
 						icon={KeyRound}
 						title="credential"
-						subtitle="Bound directly to an agent or service account, with per-binding permission rules. The Broker injects its secrets at execution time."
+						subtitle="Bound directly to an agent, with per-binding permission rules. The Broker injects its secrets at execution time."
 						accent="text-accent-pink"
 					/>
 				</div>

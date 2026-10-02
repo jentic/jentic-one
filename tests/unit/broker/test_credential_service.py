@@ -34,6 +34,12 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import (
+    VendorAuthConfig,
+    VendorDeviceAuthorizationFlowConfig,
+    VendorIdentityProbeConfig,
+    VendorRegistryConfig,
+)
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -48,10 +54,18 @@ _IDENTITY = Identity(
 )
 
 
-def _ctx(*, account_linking_base_url: str | None = None, public_base_url: str = "") -> MagicMock:
+def _ctx(
+    *,
+    account_linking_base_url: str | None = None,
+    vendors: VendorRegistryConfig | None = None,
+    public_base_url: str = "",
+) -> MagicMock:
     ctx = MagicMock()
     ctx.config.broker.account_linking_base_url = account_linking_base_url
     ctx.config.server.public_base_url = public_base_url
+    # A real (default-empty) registry: the 424 arm reverse-maps the API onto
+    # a connect key, and a bare MagicMock would explode the .entries scan.
+    ctx.config.vendors = vendors or VendorRegistryConfig()
 
     @asynccontextmanager
     async def _noop_transaction() -> Any:
@@ -161,6 +175,78 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
     assert params["intent_id"].startswith("intent_")
 
 
+def _github_registry() -> VendorRegistryConfig:
+    return VendorRegistryConfig(
+        entries={
+            "github": VendorAuthConfig(
+                vendor="github.com/api.github.com",
+                display_name="GitHub",
+                flows=[
+                    VendorDeviceAuthorizationFlowConfig(
+                        client_id="cid",
+                        authorization_endpoint="https://github.com/login/device/code",
+                        token_endpoint="https://github.com/login/oauth/access_token",
+                    )
+                ],
+                identity_probe=VendorIdentityProbeConfig(
+                    endpoint="https://api.github.com/user",
+                    identity_field="login",
+                    display_template="@{login}",
+                ),
+            )
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_registry_vendor_suggests_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 1b (review M2): when the denied API reverse-maps onto a
+    vendor-registry key, the 424 directive carries a runnable
+    ``suggested_command`` (``jentic connect <key>`` — the registry key,
+    never the API identity) and the prose teaches the relay loop."""
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("github.com", "github.com/api.github.com", "")
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx(vendors=_github_registry())).inject(
+            api_vendor="github.com",
+            api_name="github.com/api.github.com",
+            api_version="",
+            identity=_IDENTITY,
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert directive.parameters["suggested_command"] == "jentic connect github"
+    instruction = directive.human_readable_instruction
+    assert "jentic connect github" in instruction
+    assert "request_connection" in instruction
+    assert "approval_url" in instruction
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_off_registry_keeps_operator_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off the registry no command is fabricated — the ask stays with the
+    operator (a suggested connect for an unknown vendor would only earn the
+    agent a guaranteed unknown-vendor error)."""
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx(vendors=_github_registry())).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert "suggested_command" not in directive.parameters
+    assert "jentic connect" not in directive.human_readable_instruction
+
+
 @pytest.mark.asyncio
 async def test_not_provisioned_ignores_public_base_url(
     monkeypatch: pytest.MonkeyPatch,
@@ -216,6 +302,8 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
         )
     assert exc.value.type == "refresh_transient_error"
     assert exc.value.origin == ErrorOrigin.UPSTREAM
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
 
 
 @pytest.mark.asyncio

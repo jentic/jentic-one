@@ -16,14 +16,16 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 )
 
 // TestSudoShimPrivilegedStepsOrder pins the load-bearing ordering of the
 // privileged plan (the CRITICAL from the 2-E3 self-review): the service home
 // is created FIRST (root-side, 0700, no operator grant), the context material
 // lands via `sudo install` NEXT (the operator never writes into the home
-// itself), and the NOPASSWD sudoers rule comes LAST — it must not exist
-// before the material it grants access to is in place.
+// itself), the root-owned binary copy the rule pins is installed after that,
+// and the NOPASSWD sudoers rule comes LAST — it must not exist before the
+// material and the binary it grants access to are in place.
 func TestSudoShimPrivilegedStepsOrder(t *testing.T) {
 	user := localagent.ServiceUserName("cursor")
 	home := localagent.ServiceHomeDir(user)
@@ -31,13 +33,21 @@ func TestSudoShimPrivilegedStepsOrder(t *testing.T) {
 		configYAML: []byte("a: 1\n"),
 		relDirs:    []string{".config/jentic", ".config/jentic/keys"},
 	}
-	rule := localagent.McpSudoersRule("alice", user, "/abs/jentic", "cursor")
+	rule := localagent.McpSudoersRule("alice", user, localagent.ServiceBinaryPath(), "cursor")
+	src := "/opt/homebrew/Cellar/jentic/1.0.0/bin/jentic"
 
-	steps := sudoShimPrivilegedSteps(true, user, home, "/tmp/staging", mat, rule)
+	steps := sudoShimPrivilegedSteps(true, user, home, "/tmp/staging", src, mat, rule)
 	var kinds []string
 	for _, s := range steps {
 		joined := strings.Join(s.Cmd.Args, " ")
 		switch {
+		case strings.Contains(joined, "/etc/sudoers.d/"):
+			kinds = append(kinds, "sudoers")
+		case strings.Contains(joined, localagent.ServiceBinaryDir()):
+			if s.Cmd.Stdin == nil || strings.Contains(joined, src) {
+				t.Errorf("binary step must stream the running binary %q on stdin, never name it root-side: %s", src, joined)
+			}
+			kinds = append(kinds, "binary")
 		case strings.Contains(joined, "sysadminctl") || strings.Contains(joined, "useradd") ||
 			strings.Contains(joined, "mkdir") || strings.Contains(joined, "chmod") || strings.Contains(joined, "chown"):
 			kinds = append(kinds, "create")
@@ -49,8 +59,9 @@ func TestSudoShimPrivilegedStepsOrder(t *testing.T) {
 			t.Fatalf("unclassified step %q: %s", s.What, joined)
 		}
 	}
-	// Strictly monotone create → export → sudoers, with sudoers dead last.
-	order := map[string]int{"create": 0, "export": 1, "sudoers": 2}
+	// Strictly monotone create → export → binary → sudoers, with sudoers dead
+	// last.
+	order := map[string]int{"create": 0, "export": 1, "binary": 2, "sudoers": 3}
 	for i := 1; i < len(kinds); i++ {
 		if order[kinds[i]] < order[kinds[i-1]] {
 			t.Fatalf("privileged plan out of order at step %d: %v", i, kinds)
@@ -62,14 +73,46 @@ func TestSudoShimPrivilegedStepsOrder(t *testing.T) {
 	if !strings.Contains(strings.Join(kinds, " "), "export") {
 		t.Fatalf("plan must contain export installs: %v", kinds)
 	}
+	if kinds[len(kinds)-2] != "binary" {
+		t.Fatalf("the root-owned binary copy must be installed right before the sudoers rule: %v", kinds)
+	}
 
-	// Reused account: no create steps, export still before sudoers.
-	reuse := sudoShimPrivilegedSteps(false, user, home, "/tmp/staging", mat, rule)
+	// Reused account (the re-run / upgrade path): no create steps, and the
+	// binary copy is still (re)installed before the sudoers rule.
+	reuse := sudoShimPrivilegedSteps(false, user, home, "/tmp/staging", src, mat, rule)
 	if strings.Contains(strings.Join(reuse[0].Cmd.Args, " "), "sysadminctl") {
 		t.Fatal("reuse plan must not re-create the account")
 	}
 	if last := reuse[len(reuse)-1]; !strings.Contains(strings.Join(last.Cmd.Args, " "), "sudoers") {
 		t.Fatalf("reuse plan must still end with the sudoers rule: %q", last.What)
+	}
+	if prev := reuse[len(reuse)-2]; !strings.Contains(strings.Join(prev.Cmd.Args, " "), localagent.ServiceBinaryDir()) {
+		t.Fatalf("reuse plan must refresh the root-owned binary copy before the sudoers rule: %q", prev.What)
+	}
+}
+
+// TestSudoShimPinsRootOwnedCopy: the sudoers rule and the rewritten entry both
+// name the root-owned copy — never the operator's own install — and agree on
+// the exact argv, so sudo's command match succeeds.
+func TestSudoShimPinsRootOwnedCopy(t *testing.T) {
+	user := localagent.ServiceUserName("cursor")
+	bin := localagent.ServiceBinaryPath()
+	if err := localagent.ValidateMcpSudoersInputs(bin, "cursor"); err != nil {
+		t.Fatalf("the pinned copy must pass the sudoers-input guard: %v", err)
+	}
+	for _, operatorInstall := range []string{"/opt/homebrew/bin/jentic", "/Users/alice/.local/bin/jentic"} {
+		if err := localagent.ValidateMcpSudoersInputs(operatorInstall, "cursor"); err == nil {
+			t.Errorf("sudoers rule must refuse the operator-owned path %q", operatorInstall)
+		}
+	}
+	rule := localagent.McpSudoersRule("alice", user, bin, "cursor")
+	entry := mcpcfg.SudoShimEntry(user, bin, "cursor")
+	argv := strings.Join(entry.Args[len(entry.Args)-4:], " ")
+	if !strings.HasSuffix(rule, "NOPASSWD: "+argv) {
+		t.Fatalf("entry argv %q must match the sudoers command in %q", argv, rule)
+	}
+	if !strings.HasPrefix(argv, bin+" ") {
+		t.Fatalf("entry must run the root-owned copy %s: %q", bin, argv)
 	}
 }
 

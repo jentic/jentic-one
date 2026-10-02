@@ -1,6 +1,6 @@
 /**
  * RecentExecutionsCard — the console-standard "Recent executions" feed used
- * by the agent and service-account detail pages. One visual grammar: a status-dot row with the mono operation
+ * by the agent detail page. One visual grammar: a status-dot row with the mono operation
  * label, inline HTTP status, optional error line, optional attribution slot,
  * duration, and relative time — ending in a pre-filtered "Open Monitor"
  * deep-link. Monitor owns the full history (paging, filters, trace sheets);

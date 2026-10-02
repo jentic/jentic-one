@@ -9,6 +9,7 @@ package localagentcmd
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -85,6 +86,80 @@ func TestWriteFile0600(t *testing.T) {
 		t.Fatalf("writeFile0600(existing 0644) = %v", err)
 	}
 	assertMode(t, wide, 0o600)
+}
+
+// TestWriteFile0600RefusesPlantedEntries: the export writes into an
+// agent-writable home, so a symlink, a hard link to another file, or a FIFO
+// at the destination must be refused with the other file left untouched —
+// and a shorter payload must still fully replace a longer one.
+func TestWriteFile0600RefusesPlantedEntries(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	soft := filepath.Join(dir, "soft.yaml")
+	if err := os.Symlink(other, soft); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(soft, []byte("x")); err == nil {
+		t.Error("writeFile0600(symlink) = nil, want error")
+	}
+
+	hard := filepath.Join(dir, "hard.yaml")
+	if err := os.Link(other, hard); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(hard, []byte("x")); err == nil {
+		t.Error("writeFile0600(hard link) = nil, want error")
+	}
+	if data, _ := os.ReadFile(other); string(data) != "original" {
+		t.Errorf("linked file was modified: %q", data)
+	}
+
+	fifo := filepath.Join(dir, "fifo.yaml")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(fifo, []byte("x")); err == nil {
+		t.Error("writeFile0600(fifo) = nil, want error")
+	}
+
+	shrink := filepath.Join(dir, "shrink.yaml")
+	if err := os.WriteFile(shrink, []byte("a much longer payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile0600(shrink, []byte("short")); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(shrink); string(data) != "short" {
+		t.Errorf("payload after shorter overwrite = %q", data)
+	}
+}
+
+// TestRenderIntoRefusesSymlinkedParents: a symlinked XDG dir inside the target
+// home must stop the export before anything is written through it.
+func TestRenderIntoRefusesSymlinkedParents(t *testing.T) {
+	home := t.TempDir()
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	mat := &exportMaterial{configYAML: []byte("a: 1\n")}
+	if err := mat.renderInto(home); err == nil {
+		t.Fatal("renderInto through a symlinked .config = nil, want error")
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Errorf("export wrote through the link: %v", entries)
+	}
+
+	if err := refuseSymlinkedPath(home, filepath.Join(home, "..", "x")); err == nil {
+		t.Error("refuseSymlinkedPath outside root = nil, want error")
+	}
+	if err := refuseSymlinkedPath(home, filepath.Join(home, "fresh", "deeper")); err != nil {
+		t.Errorf("not-yet-existing components must pass: %v", err)
+	}
 }
 
 func assertMode(t *testing.T, path string, want os.FileMode) {

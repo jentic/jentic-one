@@ -13,7 +13,6 @@ from jentic_one.admin.services.schemas.executions import (
     ExecutionView,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.lookups import resolve_toolkit_names
 
 
 class ExecutionService:
@@ -55,13 +54,7 @@ class ExecutionService:
         if has_more:
             records = records[:limit]
 
-        toolkit_ids = list({r.toolkit_id for r in records if r.toolkit_id})
-        names_map: dict[str, str] = {}
-        if toolkit_ids:
-            async with self._ctx.control_db.session() as session:
-                names_map = await resolve_toolkit_names(session, toolkit_ids)
-
-        views = [self._to_view(r, names_map=names_map) for r in records]
+        views = [self._to_view(r) for r in records]
         next_cursor = None
         if has_more and records:
             next_cursor = encode_cursor(records[-1].started_at, records[-1].id)
@@ -74,15 +67,10 @@ class ExecutionService:
         if record is None:
             raise ExecutionNotFoundError(execution_id)
 
-        names_map: dict[str, str] = {}
-        if record.toolkit_id:
-            async with self._ctx.control_db.session() as session:
-                names_map = await resolve_toolkit_names(session, [record.toolkit_id])
-
-        return self._to_view(record, names_map=names_map)
+        return self._to_view(record)
 
     @staticmethod
-    def _to_view(record: Any, *, names_map: dict[str, str] | None = None) -> ExecutionView:
+    def _to_view(record: Any) -> ExecutionView:
         api = None
         if record.api_vendor and record.api_name and record.api_version:
             api = ApiInfo(
@@ -92,12 +80,14 @@ class ExecutionService:
                 host=getattr(record, "api_host", None),
             )
 
-        toolkit_name = (names_map or {}).get(record.toolkit_id)
-
         return ExecutionView(
             id=record.id,
             toolkit_id=record.toolkit_id,
-            toolkit_name=toolkit_name,
+            # Denormalized at flattening time (theme-5 Phase 6b) — the
+            # control ``toolkits`` table this used to be resolved from is
+            # gone. NULL for rows whose toolkit was already deleted, exactly
+            # as the old read-time resolver reported them.
+            toolkit_name=record.toolkit_name,
             trace_id=record.trace_id,
             started_at=record.started_at,
             duration_ms=record.duration_ms,

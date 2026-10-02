@@ -50,6 +50,22 @@ class UserPermissionGrantRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def get_permission_sets(
+        session: AsyncSession, user_ids: Sequence[str]
+    ) -> dict[str, set[str]]:
+        """Return each user's directly-granted permission names (empty set if none)."""
+        result_map: dict[str, set[str]] = {uid: set() for uid in user_ids}
+        if not user_ids:
+            return result_map
+        stmt = select(UserPermissionGrant.user_id, UserPermissionGrant.permission).where(
+            UserPermissionGrant.user_id.in_(user_ids)
+        )
+        result = await session.execute(stmt)
+        for user_id, permission in result.all():
+            result_map[user_id].add(permission)
+        return result_map
+
+    @staticmethod
     async def list_for_users(
         session: AsyncSession, user_ids: Sequence[str]
     ) -> list[UserPermissionGrant]:

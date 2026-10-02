@@ -18,6 +18,7 @@ import (
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 )
@@ -97,11 +98,17 @@ func (d *doctor) checkMCPEntries(cfg *sdkconfig.Config, entries []mcpWrittenEntr
 
 // checkMCPEntryBinary verifies the binary the entry pins: absolute (GUI
 // runtimes spawn with a minimal PATH) and still present on disk (an uninstall
-// or a moved binary strands the entry).
+// or a moved binary strands the entry). A sudo-shim (isolated) entry must
+// additionally run the root-owned copy (localagent.ServiceBinaryPath): an
+// entry isolated by an older jentic pins the operator's own install, which
+// re-running the isolation step moves onto the copy. When the copy differs
+// from the jentic installed next to this jenticctl, the row says so — the
+// isolated server keeps running the old build until setup refreshes it.
 func (d *doctor) checkMCPEntryBinary(we mcpWrittenEntry) {
 	const section = mcpSection
 	row := "binary (" + string(we.runtime) + ")"
 	pinned := we.entry.PinnedBinary()
+	isolated := we.entry.Command == "sudo"
 	switch {
 	case pinned == "":
 		d.add(section, row, statusWarn, "entry does not name a jentic binary",
@@ -109,14 +116,49 @@ func (d *doctor) checkMCPEntryBinary(we mcpWrittenEntry) {
 	case !filepath.IsAbs(pinned):
 		d.add(section, row, statusWarn, pinned+" (not absolute)",
 			"GUI runtimes need an absolute path; re-run `jentic setup`")
+	case isolated && pinned != localagent.ServiceBinaryPath():
+		d.add(section, row, statusWarn, pinned+" (isolated entry does not run the root-owned copy)",
+			"re-run `jentic setup` and accept isolation to move the entry onto "+localagent.ServiceBinaryPath())
 	default:
 		if _, err := os.Stat(pinned); err != nil {
-			d.add(section, row, statusWarn, fmt.Sprintf("%s: %v", pinned, err),
-				"the entry points at a missing binary; reinstall jentic or re-run `jentic setup`")
+			hint := "the entry points at a missing binary; reinstall jentic or re-run `jentic setup`"
+			if isolated {
+				hint = "the root-owned copy is missing; re-run `jentic setup` and accept isolation to reinstall it"
+			}
+			d.add(section, row, statusWarn, fmt.Sprintf("%s: %v", pinned, err), hint)
 			return
+		}
+		if isolated {
+			if src := siblingJentic(); src != "" {
+				if installed, current := localagent.ServiceBinaryState(src); installed && !current {
+					d.add(section, row, statusWarn, pinned+" differs from "+src,
+						"re-run `jentic setup` and accept isolation to refresh the root-owned copy")
+					return
+				}
+			}
 		}
 		d.add(section, row, statusPass, pinned, "")
 	}
+}
+
+// siblingJentic is the resolved `jentic` installed next to the running
+// jenticctl (installers co-locate the two), or "" when there is none. It is
+// the reference build the root-owned copy is compared against.
+func siblingJentic() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	p := filepath.Join(filepath.Dir(exe), "jentic")
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		if info, err := os.Stat(r); err == nil && info.Mode().IsRegular() {
+			return r
+		}
+	}
+	return ""
 }
 
 // checkMCPEntryContext verifies the context name the entry PINS (not the

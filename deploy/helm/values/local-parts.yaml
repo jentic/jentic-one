@@ -38,7 +38,8 @@ registry:
     # config._require_or_generate_secret), so cross-pod verification needs an
     # explicit shared value. LOCAL/SMOKE-ONLY throwaway, like the passwords
     # under global.databases. Production parts installs use
-    # global.appSecrets (one generated Secret mounted on every surface).
+    # global.appSecrets (one generated Secret; each surface mounts only the
+    # keys it reads).
     JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
 
 admin:

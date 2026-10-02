@@ -146,7 +146,7 @@ async def claim_agent(
 
     Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
     only a human can own an agent. The ``require_actor_type`` gate rejects a
-    non-user actor (agent/service-account) at the boundary with a 403;
+    non-user actor (an agent) at the boundary with a 403;
     ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
     ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -241,6 +241,7 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
         name=view.name,
         bound_at=view.bound_at,
         suspended=view.suspended,
+        suspended_reason=view.suspended_reason,
         rule_set_id=view.rule_set_id,
         serves=view.serves,
     )
@@ -291,7 +292,7 @@ async def unbind_credential(
         description=(
             "Default false: the binding is suspended (reversible; its permission"
             " rules survive and :resume restores access). true deletes the"
-            " binding row outright."
+            " binding row outright, together with its inline permission rules."
         ),
     ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),

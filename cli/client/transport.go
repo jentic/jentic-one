@@ -92,8 +92,12 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		switch {
 		// 401: one re-exchange + retry, only for re-exchangeable creds and a
 		// rewindable body. Discard the body before retrying to free the conn.
+		// The request must still be on the credential's origin: a 401 from
+		// anywhere else says nothing about our token and must never be
+		// answered with a freshly minted one.
 		case resp.StatusCode == http.StatusUnauthorized &&
-			t.reExchange && !triedReauth && canRewind && auth.CanReExchange(t.creds):
+			t.reExchange && !triedReauth && canRewind &&
+			auth.MatchesBaseOrigin(t.creds, req.URL) && auth.CanReExchange(t.creds):
 			triedReauth = true
 			drain(resp)
 			// Force a fresh token: the on-disk one looked valid to us but the

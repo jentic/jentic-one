@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from jentic_one.broker.services.credentials.errors import (
@@ -233,6 +234,39 @@ async def test_provider_error_raises_refresh_transient() -> None:
         refresher = TokenRefresher(ctx)
         with pytest.raises(RefreshTransientError):
             await refresher.ensure_fresh(resolved=resolved, caller="test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raised",
+    [
+        httpx.ConnectError("connect failed near SECRET_REFRESH_VALUE"),
+        ProviderError("idp said: refresh_token=SECRET_REFRESH_VALUE"),
+    ],
+)
+async def test_refresh_transient_detail_omits_exception_message(raised: Exception) -> None:
+    """The exception text can quote request material, so the caller-facing
+    message carries only its class — and the raw error is not chained."""
+    resolved = _make_resolved(encrypted_access_token=None, token_expires_at=None)
+    ctx = _make_ctx()
+    _setup_transaction(ctx)
+
+    provider_mock = AsyncMock()
+    provider_mock._expiry_skew_seconds = 60
+    provider_mock.refresh = AsyncMock(side_effect=raised)
+    ctx.providers.get.return_value = provider_mock
+
+    with patch("jentic_one.broker.services.credentials.refresh.OAuthTokenRepository") as mock_repo:
+        mock_repo.get_by_credential = AsyncMock(return_value=None)
+
+        refresher = TokenRefresher(ctx)
+        with pytest.raises(RefreshTransientError) as excinfo:
+            await refresher.ensure_fresh(resolved=resolved, caller="test")
+
+    assert "SECRET_REFRESH_VALUE" not in str(excinfo.value)
+    assert f"({type(raised).__name__})" in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
 
 
 @pytest.mark.asyncio

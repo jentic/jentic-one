@@ -16,10 +16,14 @@ existing ``CachedTokenValidator`` (DB-backed, short-TTL cached).
 **Trust contract (self-contained JWT path).** A trusted issuer vouches for the
 claims it signs: the broker requires ``sub``, ``exp`` and ``actor_type`` and
 refuses (uniform 401) any token missing them — it never *infers* a missing
-claim (jentic-one#864). ``actor_type`` must be one of ``agent`` /
-``service_account`` (``_ALLOWED_ACTOR_TYPES``); ``user`` identities have a
+claim (jentic-one#864). ``actor_type`` must be ``agent``
+(``_ALLOWED_ACTOR_TYPES``); ``user`` identities have a
 DB-backed credential form (opaque tokens) and cannot be asserted by a bare
-signed claim (jentic-one#868). Every **JWT-path** refusal is logged
+signed claim (jentic-one#868), and ``service_account`` is refused since
+theme-8 Phase 1 — the JWT path builds Identity from claim-supplied scopes
+with no DB read, so it would sail past the SA→agent grant migration and
+token revocation; assert the successor agent instead. Every **JWT-path**
+refusal is logged
 server-side at WARNING under one event name (``jwt_refused``) with a ``reason``
 field, while the wire response stays uniform (jentic-one#874). The opaque
 path's ``unknown_token`` / ``token_inactive`` / ``token_expired`` refusals are
@@ -48,11 +52,12 @@ logger = structlog.get_logger(__name__)
 # minimal dev verifier; the hardened path widens/locks this down (asymmetric/JWKS).
 _ALLOWED_ALGS: frozenset[str] = frozenset({"HS256"})
 
-# The self-contained-JWT path may only assert these actor types (jentic-one#868).
-# USER identities have a DB-backed credential form (opaque tokens) and must
-# never enter the broker via a bare signed claim: a trusted issuer vouches
-# for AGENT/SERVICE_ACCOUNT, nothing else.
-_ALLOWED_ACTOR_TYPES: frozenset[ActorType] = frozenset({ActorType.AGENT, ActorType.SERVICE_ACCOUNT})
+# The self-contained-JWT path may only assert this actor type (jentic-one#868;
+# theme-8 Phase 1, F3). USER identities have a DB-backed credential form
+# (opaque tokens) and must never enter the broker via a bare signed claim.
+# A trusted issuer vouches for AGENT, nothing else (the retired
+# ``service_account`` claim is refused as an unknown actor type).
+_ALLOWED_ACTOR_TYPES: frozenset[ActorType] = frozenset({ActorType.AGENT})
 
 # Cap on attacker-influenced string fields written to the log stream, so a
 # secret-holder can't stuff arbitrarily large iss/sub/actor_type values into a
@@ -225,10 +230,12 @@ class DualTokenValidator:
 def _is_api_key(value: str) -> bool:
     """Check whether a credential string is a prefixed API key.
 
-    ``jntc_live_`` is the retired toolkit-key form (theme-5 Phase 4): the
-    retirement job migrates each key's digest to a service account, and
-    ``ApiKeyResolver`` resolves the unchanged plaintext as that account
-    (logging a deprecation warning). Unmigrated keys resolve to nothing → 401.
+    ``jntc_live_`` (toolkit, theme 5) is a retired key form whose digest was
+    migrated onto a successor agent: ``ApiKeyResolver`` resolves the unchanged
+    plaintext as that agent (logging a deprecation warning). ``sak_`` (service
+    account, theme 8) was retired in 0.41 and never resolves; it is still
+    routed to the resolver so the refusal is logged with the successor agent,
+    and the broker answers 401 with the retirement detail.
     """
     return value.startswith("jak_") or value.startswith("sak_") or value.startswith("jntc_live_")
 
@@ -238,7 +245,7 @@ class CompositeTokenValidator:
     """Routes API keys, JWTs, and opaque tokens to the right validator.
 
     Dispatch order (most-specific prefix first):
-    1. ``jak_`` / ``sak_`` / retired ``jntc_live_`` prefix → ApiKeyResolver
+    1. ``jak_`` / retired ``jntc_live_`` / refused ``sak_`` prefix → ApiKeyResolver
        (via CachedTokenValidator)
     2. Three-segment dot-separated → JWT verifier
     3. Everything else → opaque token CachedTokenValidator

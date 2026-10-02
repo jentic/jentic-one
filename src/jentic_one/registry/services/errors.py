@@ -114,6 +114,20 @@ class RevisionStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class HostOwnedByOtherVendorError(RegistryServiceError):
+    """Raised when a revision would go live on a host another vendor's live API serves.
+
+    A host is served by one vendor at a time: the first vendor whose revision
+    goes live on it keeps it until that API stops serving it. Drafts never own a
+    host, so this is checked when a revision goes live (promote, overlay
+    rollback), not on import.
+    """
+
+    def __init__(self, revision_id: str, detail: str) -> None:
+        super().__init__(f"Revision '{revision_id}' cannot go live: {detail}")
+        self.revision_id = revision_id
+
+
 class OverlayNotFoundError(RegistryServiceError):
     """Raised when an overlay does not exist for a given API."""
 
@@ -274,6 +288,28 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
         )
         self.api_id = api_id
         self.overlay_id = overlay_id
+
+
+class HostChangeRequiresOperatorError(RegistryServiceError):
+    """Raised when a promote would change the server hosts of a credential-bound API.
+
+    Making a revision current that declares different server hosts (or moves a host
+    to plaintext ``http``) changes where, or how, the API's bound credentials are
+    sent. That needs an operator holding ``credentials:write``; the caller sees a
+    403 naming the origins involved.
+    """
+
+    def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:
+        current = ", ".join(current_hosts) or "(none)"
+        new = ", ".join(new_hosts) or "(none)"
+        super().__init__(
+            f"Revision '{revision_id}' changes the server origins of an API with bound "
+            f"credentials from [{current}] to [{new}], which requires the "
+            "'credentials:write' permission"
+        )
+        self.revision_id = revision_id
+        self.current_hosts = current_hosts
+        self.new_hosts = new_hosts
 
 
 class OverlayRematerializeForbiddenError(RegistryServiceError):

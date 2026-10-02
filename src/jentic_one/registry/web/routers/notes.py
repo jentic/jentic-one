@@ -27,7 +27,7 @@ from jentic_one.shared.web.links import build_link
 router = APIRouter(prefix="/notes")
 
 # Notes routes stay on bare ``get_current_identity()`` (any authenticated caller)
-# by design, like ``/access-requests``: there is no ``notes:*`` scope in the
+# by design: there is no ``notes:*`` scope in the
 # catalogue, and access is governed by ownership rather than a scope. Notes carry
 # ``created_by`` and the service layer scopes rows via ``build_access_filters``
 # (``registry/services/note_service.py``), so a caller only ever sees its own

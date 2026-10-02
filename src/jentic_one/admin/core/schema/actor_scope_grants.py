@@ -15,7 +15,7 @@ from jentic_one.shared.db.utils import utcnow
 
 
 class ActorScopeGrant(AuditableMixin, AdminBase):
-    """Maps a scope grant to any actor type (user, agent, service_account)."""
+    """Maps a scope grant to an actor (user or agent)."""
 
     __tablename__ = "actor_scope_grants"
     __table_args__ = (

@@ -42,7 +42,6 @@ from jentic_one.auth.services.oauth_grant_service import revoke_grant_and_sweep_
 from jentic_one.auth.services.token_service import _hash_token
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
 
@@ -112,12 +111,15 @@ class OAuthRevocationService:
         if at.revoked_at is not None:
             return True
         await AccessTokenRepository.revoke(session, at.id)
+        # ``actor_type`` stays the opaque persisted string (never ``ActorType(...)``):
+        # a residual row of a retired actor type (``service_account``) must still
+        # revoke cleanly instead of 500-ing (theme-8 Phase 4).
         await record_audit(
             session,
             action=AuditAction.REVOKE,
             target_type=AuditTargetType.TOKEN,
             target_id=at.token_family_id,
-            actor_type=ActorType(at.actor_type),
+            actor_type=at.actor_type,
             actor_id=at.actor_id,
             after={"token_type": "access", "oauth_client_id": at.oauth_client_id},
             reason=f"token revoked by OAuth client ({RFC7009_CLIENT_REVOCATION_REASON})",
@@ -164,7 +166,7 @@ class OAuthRevocationService:
             await revoke_grant_and_sweep_tokens(
                 session,
                 grant,
-                actor_type=ActorType(rt.actor_type),
+                actor_type=rt.actor_type,
                 actor_id=rt.actor_id,
                 origin=None,
                 audit_reason="oauth grant revoked: client revoked its refresh token (RFC 7009)",
@@ -180,7 +182,7 @@ class OAuthRevocationService:
                 action=AuditAction.REVOKE,
                 target_type=AuditTargetType.TOKEN,
                 target_id=rt.token_family_id,
-                actor_type=ActorType(rt.actor_type),
+                actor_type=rt.actor_type,
                 actor_id=rt.actor_id,
                 after={"token_type": "refresh", "oauth_client_id": rt.oauth_client_id},
                 reason=f"token family revoked by OAuth client ({RFC7009_CLIENT_REVOCATION_REASON})",

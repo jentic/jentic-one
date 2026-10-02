@@ -10,8 +10,7 @@ import (
 
 // IsBrokerDenial reports whether a result is one the broker itself emitted to
 // deny a call the agent can recover from: missing credential binding → 403
-// (wire type no_credential_binding; the legacy flag-off path still emits
-// no_toolkit_binding), ambiguous credential binding → 409, credential needs
+// (wire type no_credential_binding), ambiguous credential binding → 409, credential needs
 // reconnect → 401, no credential provisioned → 424. Each carries an
 // agent_directive (see broker/web/errors.STATUS_BY_ERROR).
 //
@@ -75,6 +74,20 @@ func parseAgentDirectiveRaw(r *ExecuteResult) (ux.Directive, json.RawMessage, bo
 	return directive, envelope.Directive, true
 }
 
+// parseProblemType extracts the problem+json "type" member from a denial
+// body ("no_credential_binding", "action_denied", …). Empty when the body is
+// not parseable — callers must treat that as unknown and pick the safe
+// recovery, never assume a shape.
+func parseProblemType(r *ExecuteResult) string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(r.Body, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Type
+}
+
 // Classify is the unfused classification step (response → denial-or-not) the
 // old executeOutput performed inline with printing: nil for every non-denial
 // result (2xx, upstream pass-through 4xx/5xx), else the Denial carrying the
@@ -87,7 +100,7 @@ func Classify(r *ExecuteResult) *Denial {
 	if !IsBrokerDenial(r) {
 		return nil
 	}
-	d := &Denial{Status: r.Status}
+	d := &Denial{Status: r.Status, ProblemType: parseProblemType(r)}
 	if directive, raw, ok := parseAgentDirectiveRaw(r); ok {
 		d.Directive = &directive
 		d.DirectiveRaw = raw

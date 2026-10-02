@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -170,6 +171,7 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value="ovr_1"
         ),
+        patch.object(svc, "_registered_vendor", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
             "_to_import_source",
@@ -194,6 +196,7 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
+        patch.object(svc, "_registered_vendor", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
             "_to_import_source",
@@ -268,3 +271,44 @@ async def test_snooze_entry_nothing_to_snooze_when_never_notified() -> None:
     ):
         await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["events:write"]))
     snooze.assert_not_awaited()
+
+
+# ── server-host change guard: operator approval stamp ─────────────────────────
+
+
+async def _import_payload(perms: list[str]) -> dict[str, Any]:
+    svc = CatalogService(_make_ctx())
+    with (
+        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(
+            svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
+        ),
+        patch.object(
+            svc,
+            "_to_import_source",
+            return_value={"type": "url", "url": "https://u", "origin": "catalog"},
+        ),
+        patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_3") as enqueue,
+    ):
+        await svc.import_entry("acme.com/widgets/1.0.0", _identity(perms))
+    assert enqueue.await_args is not None
+    payload: dict[str, Any] = enqueue.await_args.kwargs["payload"]
+    return payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("perms", [["catalog:import", "credentials:write"], ["org:admin"]])
+async def test_import_entry_stamps_host_change_approval_for_operator(perms: list[str]) -> None:
+    """``credentials:write`` (directly or via org:admin) approves a server-host change."""
+    payload = await _import_payload(perms)
+    assert payload["sources"][0]["host_change_approved"] == "true"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("perms", [["catalog:import"], ["catalog:import", "apis:write"]])
+async def test_import_entry_no_host_change_approval_without_operator_scope(
+    perms: list[str],
+) -> None:
+    """Default agent scopes and ``apis:write`` alone do not approve a host change."""
+    payload = await _import_payload(perms)
+    assert "host_change_approved" not in payload["sources"][0]

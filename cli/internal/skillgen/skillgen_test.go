@@ -37,7 +37,7 @@ func TestRenderBodyIncludesBaseURLAndSections(t *testing.T) {
 		"## When to Use",
 		"## Procedure",
 		"### 1. Confirm you have a valid identity",
-		"jentic access request",
+		"report access gaps to your operator",
 		"## Verification",
 	} {
 		if !strings.Contains(body, want) {

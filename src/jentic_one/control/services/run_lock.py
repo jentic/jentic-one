@@ -1,7 +1,7 @@
 """Cross-process run lock for control-side batch jobs.
 
-The upgrade steps and the toolkit-key retirement run from several places at
-once — every control replica's boot task, the migration runner, the CLI — and
+The upgrade steps and the service-account retirement can run from several
+places at once — concurrent migration runners, extra replicas' hooks — and
 their find-then-create writes are only safe when runs never interleave. They
 serialise on a control-DB advisory lock
 (:meth:`DatabaseSession.advisory_lock`: session-level, on a dedicated
@@ -17,10 +17,13 @@ from jentic_one.shared.context import Context
 
 #: Advisory-lock keys (``pg_advisory_lock(bigint)``). Fixed constants rather
 #: than ``hashtext(...)`` so an operator can find the holder in ``pg_locks``
-#: (``classid``/``objid`` are the high/low 32 bits). Acquisition order is
-#: always upgrade-steps → key-retirement, so the two never deadlock.
+#: (``classid``/``objid`` are the high/low 32 bits). ``0x6A6F_4B52_5452``
+#: ("joKRTR") was the theme-5 key-retirement lock, retired with that job in
+#: Phase 6b — do not reuse it.
 UPGRADE_STEPS_LOCK_KEY = 0x6A6F_5550_4752  # "joUPGR"
-KEY_RETIREMENT_LOCK_KEY = 0x6A6F_4B52_5452  # "joKRTR"
+#: The theme-8 Phase-4 service-account retirement (migrate, verify, sweep)
+#: the migration runner performs before the admin drop revision.
+SA_RETIREMENT_LOCK_KEY = 0x6A6F_5341_5254  # "joSART"
 
 
 @asynccontextmanager

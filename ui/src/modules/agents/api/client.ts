@@ -22,7 +22,6 @@ import {
 	MonitoringService,
 	OAuthService,
 	PermissionsService,
-	ServiceAccountsService,
 	SystemService,
 	type AgentResponse,
 	type AuditResponse,
@@ -33,11 +32,9 @@ import {
 	type PermissionRuleSchema,
 	type PermissionTestRequest,
 	type PermissionTestResponse,
-	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
 	agentToEntity,
-	serviceAccountToEntity,
 	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
@@ -49,9 +46,7 @@ import {
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
-	type ServiceAccountEntity,
 } from '@/modules/agents/api/types';
-import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
 /**
  * Sentinel error for Agents repository calls. Hooks/components branch on
@@ -188,6 +183,7 @@ function bindingToEntity(r: CredentialBindingResponse): CredentialBindingEntity 
 		credentialId: r.credential_id,
 		name: r.name ?? null,
 		suspended: r.suspended,
+		suspendedReason: r.suspended_reason ?? null,
 		ruleSetId: r.rule_set_id ?? null,
 		boundAt: r.bound_at,
 		serves: (r.serves ?? []).map((s) => ({
@@ -469,141 +465,11 @@ export async function getAgentApiKeyHistory(agentId: string): Promise<ApiKeyHist
 	}
 }
 
-export async function generateServiceAccountApiKey(
-	serviceAccountId: string,
-): Promise<ApiKeyResult> {
-	try {
-		const res = await ServiceAccountsService.generateServiceAccountApiKey({
-			serviceAccountId,
-		});
-		return { key: res.key };
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to generate API key.');
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Service accounts
-// ---------------------------------------------------------------------------
-
-export async function listServiceAccounts(params: {
-	status?: string | null;
-	cursor?: string | null;
-	limit?: number;
-}): Promise<ListResult<ServiceAccountEntity>> {
-	try {
-		const res = await ServiceAccountsService.listServiceAccounts({
-			status: params.status ?? null,
-			cursor: params.cursor ?? null,
-			limit: params.limit ?? 50,
-		});
-		return {
-			entities: res.data.map(serviceAccountToEntity),
-			hasMore: res.has_more,
-			nextCursor: res.next_cursor ?? null,
-		};
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load service accounts.');
-	}
-}
-
-export async function createServiceAccount(params: {
-	name: string;
-	description?: string | null;
-	scopes?: string[] | null;
-}): Promise<ServiceAccountEntity> {
-	try {
-		const res: ServiceAccountResponse = await ServiceAccountsService.createServiceAccount({
-			requestBody: {
-				name: params.name,
-				description: params.description ?? null,
-				// Optional initial grants (mirrors createAgent).
-				scopes: params.scopes?.length ? params.scopes : null,
-			},
-		});
-		return serviceAccountToEntity(res);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to create the service account.');
-	}
-}
-
-export async function getServiceAccount(serviceAccountId: string): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.getServiceAccount({
-				serviceAccountId,
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load the service account.');
-	}
-}
-
-export async function approveServiceAccount(
-	serviceAccountId: string,
-): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.approveServiceAccount({
-				serviceAccountId,
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to approve the service account.');
-	}
-}
-
-export async function denyServiceAccount(
-	serviceAccountId: string,
-	reason: string,
-): Promise<ServiceAccountEntity> {
-	try {
-		return serviceAccountToEntity(
-			await ServiceAccountsService.denyServiceAccount({
-				serviceAccountId,
-				requestBody: { reason },
-			}),
-		);
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to deny the service account.');
-	}
-}
-
-export async function disableServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.disableServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to disable the service account.');
-	}
-}
-
-export async function enableServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.enableServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to enable the service account.');
-	}
-}
-
-export async function archiveServiceAccount(serviceAccountId: string): Promise<void> {
-	try {
-		await ServiceAccountsService.archiveServiceAccount({
-			serviceAccountId,
-		});
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to archive the service account.');
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Scopes (#615) — platform permission catalogue + per-actor scope grants.
 //
 // Two scope vocabularies exist in this codebase; these are the PLATFORM
-// permission scopes (`org:admin`, `service-accounts:write`, …) drawn from
+// permission scopes (`org:admin`, `agents:write`, …) drawn from
 // `GET /permissions` — NOT the OAuth2 provider scopes the credentials picker
 // uses. `PUT .../scopes` replaces the entire set (no partial grant/revoke), so
 // callers read the full list, edit it, and write it back.
@@ -644,95 +510,12 @@ export async function replaceAgentScopes(agentId: string, scopes: string[]): Pro
 	}
 }
 
-export async function getServiceAccountScopes(serviceAccountId: string): Promise<string[]> {
-	try {
-		const res = await ServiceAccountsService.getServiceAccountScopes({
-			serviceAccountId,
-		});
-		return res.scopes;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to load the service account's scopes.");
-	}
-}
-
-export async function replaceServiceAccountScopes(
-	serviceAccountId: string,
-	scopes: string[],
-): Promise<string[]> {
-	try {
-		const res = await ServiceAccountsService.replaceServiceAccountScopes({
-			serviceAccountId,
-			requestBody: { scopes },
-		});
-		return res.scopes;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to update the service account's scopes.");
-	}
-}
-
 // ---------------------------------------------------------------------------
-// Fleet usage (GET /monitoring/usage?group_by=agent)
+// Actor usage (GET /monitoring/usage)
 //
-// The same aggregate the Monitor page and the enterprise console read, sliced
-// per actor for the fleet table's activity columns. The endpoint is gated on
-// `org:admin`; a 403 is an expected outcome for non-admin operators, not an
-// error — the caller hides the columns entirely.
+// Gated on `org:admin`; a 403 is an expected outcome for non-admin operators,
+// not an error — the caller renders no stats.
 // ---------------------------------------------------------------------------
-
-/** One actor's execution stats over the query window. */
-export interface ActorUsage {
-	total: number;
-	success: number;
-	failed: number;
-	/** Executions per aggregate bucket, oldest → newest (sparkline-ready). */
-	trend: number[];
-}
-
-/**
- * Per-actor usage over the trailing `sinceDays` window, keyed by actor id.
- * Backend `top` keys are mechanical `actor_type/actor_id` strings; rows for
- * other actor types (users, unattributed NULLs) are dropped here. Returns
- * `null` on 403 — the caller renders no activity columns for non-admins.
- *
- * The aggregate is a top-N leaderboard capped at 50 by the backend
- * (`GET /monitoring/usage` validates `top_limit <= 50`), so actors absent
- * from the map are "not in the top 50", NOT "zero executions" — callers must
- * render the distinction (em-dash, not 0).
- */
-export async function fetchActorsUsage(
-	actorType: 'agent' | 'service_account',
-	sinceDays = 7,
-): Promise<Map<string, ActorUsage> | null> {
-	try {
-		// Window bounds ceiled to the next minute: the backend's aggregate uses
-		// a strict `started_at < until`, so a floored/now bound hides the
-		// current partial minute (#913); a fixed until also keeps the window an
-		// exact multiple of the bucket tier and the server cache key stable for
-		// a whole minute (a per-second `since` defeated it entirely).
-		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
-		const res = await MonitoringService.getUsageStats({
-			since: until - sinceDays * 86400,
-			until,
-			groupBy: GroupBy.AGENT,
-			topLimit: 50,
-		});
-		const prefix = `${actorType}/`;
-		const usage = new Map<string, ActorUsage>();
-		for (const row of res.top) {
-			if (!row.key?.startsWith(prefix)) continue;
-			usage.set(row.key.slice(prefix.length), {
-				total: row.total,
-				success: row.success,
-				failed: row.failed,
-				trend: row.trend,
-			});
-		}
-		return usage;
-	} catch (error) {
-		if (error instanceof ApiError && error.status === 403) return null;
-		throw toAgentsError(error, 'Failed to load usage statistics.');
-	}
-}
 
 /** One time bucket of an actor's execution volume. */
 export interface UsageBucketEntity {
@@ -757,8 +540,7 @@ export interface ActorUsageDetail {
 /**
  * One actor's usage over the trailing `sinceDays` window — the detail page's
  * KPI strip and Activity chart. `agent_id` is the endpoint's (misnamed) actor
- * filter: the backend maps it onto `actor_id`, so it works for service
- * accounts too. Same 403 contract as `fetchActorsUsage`: `null` means the
+ * filter: the backend maps it onto `actor_id`. `null` on 403 means the
  * viewer isn't an admin and the caller renders no stats — never an error.
  */
 export async function fetchActorUsageDetail(
@@ -766,9 +548,9 @@ export async function fetchActorUsageDetail(
 	sinceDays = 7,
 ): Promise<ActorUsageDetail | null> {
 	try {
-		// Next-minute-ceiled bounds — see fetchActorsUsage: includes the current
-		// partial minute (#913, the volume chart must never trail the
-		// executions feed) with a cache-stable, tier-exact window.
+		// Window bounds ceiled to the next minute: the aggregate uses a strict
+		// `started_at < until`, so a now-bound hides the current partial minute, and a
+		// fixed `until` keeps the server's cache key stable for a whole minute.
 		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 		const res = await MonitoringService.getUsageStats({
 			since: until - sinceDays * 86400,
@@ -792,6 +574,46 @@ export async function fetchActorUsageDetail(
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 403) return null;
 		throw toAgentsError(error, 'Failed to load usage statistics.');
+	}
+}
+
+/** The aggregate's hard ceiling on `top` rows (`top_limit` is `ge=1, le=50`) —
+ * the widest leaderboard the endpoint answers, and why a result can truncate. */
+const CREDENTIAL_USAGE_TOP_LIMIT = 50;
+
+/** Per-credential call volume over one window, plus whether it is exhaustive. */
+export interface CredentialUsageTotals {
+	/** Credential id → calls brokered in the window. */
+	totals: ReadonlyMap<string, number>;
+	/** True when the leaderboard was NOT truncated, the only case in which a
+	 * missing credential proves "no traffic" rather than "unknown". */
+	complete: boolean;
+}
+
+/**
+ * Call volume per credential over the trailing `sinceDays` window, grouped
+ * server-side — ONE request for the whole inventory. Returns `null` on 403: the
+ * cards then carry no volume at all, which is the honest answer.
+ */
+export async function fetchCredentialUsageTotals(
+	sinceDays = 7,
+): Promise<CredentialUsageTotals | null> {
+	try {
+		// Same minute-ceiled bounds as `fetchActorUsageDetail`, for the same reasons:
+		// the strict `started_at < until`, and a cache key that lives for a minute.
+		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
+		const res = await MonitoringService.getUsageStats({
+			since: until - sinceDays * 86400,
+			until,
+			groupBy: GroupBy.CREDENTIAL,
+			topLimit: CREDENTIAL_USAGE_TOP_LIMIT,
+		});
+		const totals = new Map<string, number>();
+		for (const row of res.top) totals.set(row.key, row.total);
+		return { totals, complete: res.top.length < CREDENTIAL_USAGE_TOP_LIMIT };
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return null;
+		throw toAgentsError(error, 'Failed to load credential usage statistics.');
 	}
 }
 
@@ -857,30 +679,6 @@ export async function fetchActorExecutions(
 }
 
 // ---------------------------------------------------------------------------
-// Access requests filed BY an actor (#619).
-//
-// An access request carries `actor_id` set to the filer's identity; for an
-// agent/service account that's the actor's own id. `GET /access-requests`
-// already filters by it, so the per-actor view is a thin read over the shared
-// access-request repository (`@/shared/lib`) — the same cross-cutting tier the
-// dashboard card and Agent Rail use. No new backend surface. The decide flow is
-// the shared `AccessRequestDialog`; this just lists what's still pending.
-// ---------------------------------------------------------------------------
-
-/** The access requests an actor has filed that are still in `status` (default pending). */
-export async function fetchActorAccessRequests(
-	actorId: string,
-	status: string | null = 'pending',
-): Promise<AccessRequest[]> {
-	try {
-		const page = await listAccessRequests({ actorId, status, limit: 50 });
-		return page.data;
-	} catch (error) {
-		throw toAgentsError(error, "Failed to load the actor's access requests.");
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Audit (read-only actor-scoped lens on the shared /audit endpoint).
 // ---------------------------------------------------------------------------
 
@@ -889,20 +687,15 @@ export async function fetchActorAccessRequests(
 export type ActorAuditEntry = AuditResponse;
 
 /**
- * Actor-scoped audit entries — the lifecycle trail recorded against this
- * agent / service account as the TARGET (register, approve/deny, disable/
+ * Agent-scoped audit entries — the lifecycle trail recorded against this
+ * agent as the TARGET (register, approve/deny, disable/
  * enable, key rotation, binding grant/revoke). Requires `org:admin`; 401/403 map to an empty list so
  * the "Recent changes" panel degrades gracefully for non-admins.
  */
-export async function listActorAudit(
-	actorKind: 'agent' | 'service-account',
-	actorId: string,
-	limit = 25,
-): Promise<AuditResponse[]> {
+export async function listActorAudit(actorId: string, limit = 25): Promise<AuditResponse[]> {
 	try {
 		const res = await AuditService.listAuditEntries({
-			targetType:
-				actorKind === 'agent' ? AuditTargetType.AGENT : AuditTargetType.SERVICE_ACCOUNT,
+			targetType: AuditTargetType.AGENT,
 			targetId: actorId,
 			limit,
 		});
@@ -923,7 +716,7 @@ export async function listActorAudit(
 // `events:read`), last-active is the latest MCP-origin execution
 // (`GET /executions?origin=mcp&actor_id=…`), and instance identity is the
 // unauthenticated `GET /instance`. Event reads follow the enrichment degrade
-// contract (`fetchActorsUsage`): 401/403 resolve to `null` and the caller
+// contract (`fetchActorUsageDetail`): 401/403 resolve to `null` and the caller
 // hides the surface — a permission gate is not an error.
 // ---------------------------------------------------------------------------
 

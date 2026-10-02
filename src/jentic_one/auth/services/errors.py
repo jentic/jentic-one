@@ -132,6 +132,34 @@ class InvalidOwnerError(AuthServiceError):
         self.owner_id = owner_id
 
 
+class UnknownScopeError(AuthServiceError):
+    """Raised when a scope to grant to an agent is not in the permission catalogue."""
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(f"Scope '{scope}' is not a known permission")
+        self.scope = scope
+
+
+class ScopeNotGrantableError(AuthServiceError):
+    """Raised when the caller may not grant a scope to an agent.
+
+    A caller without ``org:admin`` may only grant scopes it holds itself (plus
+    the default agent baseline), and never ``org:admin`` or ``agents:write``.
+    """
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(f"Scope '{scope}' cannot be granted by the caller")
+        self.scope = scope
+
+
+class OwnerTransferForbiddenError(AuthServiceError):
+    """Raised when a caller without ``org:admin`` tries to change an agent's owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Changing the owner of agent '{agent_id}' requires org:admin")
+        self.agent_id = agent_id
+
+
 class ClaimTokenInvalidError(AuthServiceError):
     """Raised when an agent-ownership claim token is missing, wrong, or expired."""
 
@@ -152,7 +180,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account presenting the claim
+    agent. An authenticated agent presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """

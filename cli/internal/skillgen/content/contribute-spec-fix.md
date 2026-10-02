@@ -346,7 +346,7 @@ plane (default `http://127.0.0.1:8000`).
 # It targets whatever install your active context points at; use
 # `--context <name>` to pick another. Submit needs apis:write; confirm needs
 # overlays:confirm (an org:admin identity satisfies both) — if your agent
-# identity lacks a scope, request it (`jentic access request`) or have an
+# identity lacks a scope, ask your operator to grant it (dashboard) or have an
 # operator run the confirm step.
 
 # Resolve the registry identity for the catalog entry you imported. The registry slugifies

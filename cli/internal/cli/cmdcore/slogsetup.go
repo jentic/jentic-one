@@ -53,8 +53,8 @@ func slogLevel(verbose bool) slog.Level {
 // mode-dependent and MUST be the only place that calls slog.SetDefault:
 //   - destination is ALWAYS stderr (stdout belongs exclusively to Render
 //     payloads — 13 §1);
-//   - human mode → text handler (readable next to prose); agent/service-account
-//     → JSON handler (agents capture 2>&1 and parse it next to the error
+//   - human mode → text handler (readable next to prose); agent → JSON
+//     handler (agents capture 2>&1 and parse it next to the error
 //     envelope, where prose would be noise);
 //   - every line is redacted (M6 applies to slog too).
 //
@@ -70,7 +70,7 @@ func setupSlog(app *App, mode string, verbose bool) {
 
 	var handler slog.Handler
 	switch mode {
-	case clictx.ModeAgent, clictx.ModeServiceAccount:
+	case clictx.ModeAgent:
 		handler = slog.NewJSONHandler(out, opts)
 	default: // human (and any fail-closed default)
 		handler = slog.NewTextHandler(out, opts)

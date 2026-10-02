@@ -1,0 +1,287 @@
+/**
+ * Integrations repository tier — the ONLY place in the module that talks
+ * HTTP. Views and hooks import this module, not `fetch` directly.
+ *
+ * The endpoints backing this module were added after the last OpenAPI
+ * regeneration, so we hand-call them via `fetch` + `getToken` from
+ * `@/shared/api`. Swap to generated services when `make openapi` runs.
+ */
+
+import { AgentsService, getToken, type AgentListResponse } from '@/shared/api';
+import type {
+	ConfirmRequest,
+	ConfirmResponse,
+	ConnectRequest,
+	ConnectResponse,
+	ReviewSession,
+	StatusResponse,
+	VendorAuthCapabilities,
+	VendorListResponse,
+} from '@/shared/credentials/api/vendors-types';
+
+export class IntegrationsApiError extends Error {
+	readonly status: number | null;
+	readonly cause?: unknown;
+
+	constructor(message: string, status: number | null, cause?: unknown) {
+		super(message);
+		this.name = 'IntegrationsApiError';
+		this.status = status;
+		this.cause = cause;
+	}
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+	const token = await getToken();
+	const headers = new Headers(init.headers);
+	if (token) headers.set('Authorization', `Bearer ${token}`);
+	if (init.body && !headers.has('Content-Type')) {
+		headers.set('Content-Type', 'application/json');
+	}
+	headers.set('Accept', 'application/json');
+	let response: Response;
+	try {
+		response = await fetch(path, { ...init, headers });
+	} catch (err) {
+		throw new IntegrationsApiError('network error', null, err);
+	}
+	if (!response.ok) {
+		// Errors are RFC 9457 problem+json ({type, title, detail, instance, …});
+		// prefer the human-readable ``detail``, fall back to ``title``.
+		let detail: string | undefined;
+		try {
+			const body = await response.json();
+			detail =
+				typeof body?.detail === 'string'
+					? body.detail
+					: typeof body?.title === 'string'
+						? body.title
+						: undefined;
+		} catch {
+			// ignore parse failure — fall back to statusText
+		}
+		throw new IntegrationsApiError(
+			detail ?? response.statusText ?? `HTTP ${response.status}`,
+			response.status,
+		);
+	}
+	if (response.status === 204) return undefined as T;
+	return (await response.json()) as T;
+}
+
+export function startIntegrationConnect(body: ConnectRequest): Promise<ConnectResponse> {
+	return request('/integrations:connect', {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
+}
+
+/**
+ * Bind an existing credential to an agent in "start blocked" mode (no
+ * rules). Lives here rather than in ``modules/agents/api`` so the
+ * post-connect "Bind to more agents" CTA — which is a credentials-
+ * domain feature but touches an agent-owned endpoint — can compose it
+ * without crossing the module-vs-module boundary. Uses the generated
+ * ``AgentsService`` (allowed at this repository tier) so a schema
+ * change lands automatically.
+ */
+export async function bindCredentialToAgentBlocked(
+	agentId: string,
+	credentialId: string,
+): Promise<void> {
+	try {
+		await AgentsService.bindAgentCredential({
+			agentId,
+			requestBody: { credential_id: credentialId },
+		});
+	} catch (err) {
+		const status =
+			typeof (err as { status?: number })?.status === 'number'
+				? (err as { status: number }).status
+				: null;
+		throw new IntegrationsApiError(
+			(err as Error)?.message ?? 'Failed to bind the credential.',
+			status,
+			err,
+		);
+	}
+}
+
+/**
+ * Fetch the review data for a connect session. Gated by the session's
+ * ``poll_token`` capability (it rides the ``:connect`` response for the
+ * self flow and the ``?approve=…&poll_token=…`` approval URL for the
+ * agent-initiated flow). Missing session and token mismatch both surface
+ * as 403 — the backend deliberately doesn't distinguish them (no
+ * session-id enumeration oracle), so callers treat a 403 the way a 404
+ * used to be treated: session gone / terminal.
+ */
+export function getConnectSession(sessionId: string, pollToken: string): Promise<ReviewSession> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url);
+}
+
+/**
+ * Confirm scopes + rules and kick off the vendor flow. Requires the same
+ * ``poll_token`` capability as the review read (403 on mismatch or missing
+ * session) and shares the ``:connect`` rate bucket (429 possible).
+ */
+export function confirmConnectSession(
+	sessionId: string,
+	pollToken: string,
+	body: ConfirmRequest,
+): Promise<ConfirmResponse> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:confirm?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url, {
+		method: 'POST',
+		body: JSON.stringify(body),
+	});
+}
+
+export function pollConnectSessionStatus(
+	sessionId: string,
+	pollToken: string,
+): Promise<StatusResponse> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}/status?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url);
+}
+
+/**
+ * Cancel an in-flight connect session. Idempotent — the backend
+ * ``:cancel`` route returns 204 even if the session is already gone,
+ * so we can fire this from unmount cleanup without needing to check
+ * whether the flow already finished.
+ */
+export function cancelConnectSession(sessionId: string, pollToken: string): Promise<void> {
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
+	return request(url, { method: 'POST' });
+}
+
+/**
+ * Fire-and-forget cancel via ``navigator.sendBeacon``. Used on tab-close
+ * (``beforeunload``) where an in-flight ``fetch`` would be aborted by the
+ * browser but ``sendBeacon`` is guaranteed to deliver. Returns whether the
+ * browser accepted the beacon; callers should keep firing the regular
+ * ``cancelConnectSession`` on in-page dismiss (dialog close, unmount) since
+ * ``sendBeacon`` can't set custom headers or observe the response.
+ */
+export function cancelConnectSessionBeacon(sessionId: string, pollToken: string): boolean {
+	if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
+		return false;
+	}
+	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
+	// The body isn't used (poll_token rides on the query string); an empty
+	// Blob keeps the browser's beacon path happy without conjuring a
+	// Content-Type the backend has to ignore.
+	return navigator.sendBeacon(url, new Blob([], { type: 'application/octet-stream' }));
+}
+
+export function listVendors(): Promise<VendorListResponse> {
+	return request('/vendors');
+}
+
+/**
+ * One operation as returned by ``GET /apis/{vendor}/{name}/{version}/operations``.
+ * Slim projection — the rules-page preview only needs
+ * ``(method, path, operation_id)`` to feed the client-side matcher, plus
+ * ``name`` for the display label. The full ``OperationSummaryResponse``
+ * carries links + tags + description that the preview doesn't render.
+ */
+export interface VendorOperation {
+	operation_id: string;
+	method: string;
+	path: string;
+	name?: string | null;
+	description?: string | null;
+}
+
+export interface VendorOperationsPage {
+	data: VendorOperation[];
+	has_more: boolean;
+	next_cursor: string | null;
+}
+
+/**
+ * Fetch a single page of operations for a vendor's imported OpenAPI.
+ * Returns ``null`` when the API isn't imported yet (404) — the rules-page
+ * preview surfaces that as "operations still importing…" rather than
+ * throwing. Callers that need the full list should use
+ * ``listAllVendorOperations`` which follows ``next_cursor`` until
+ * exhaustion; this single-page variant stays exported for tests + narrow
+ * consumers that only need the first page.
+ */
+export async function listVendorOperations(
+	vendor: string,
+	name: string,
+	version: string,
+	opts: { cursor?: string | null; limit?: number } = {},
+): Promise<VendorOperationsPage | null> {
+	const params = new URLSearchParams();
+	if (opts.cursor) params.set('cursor', opts.cursor);
+	if (opts.limit != null) params.set('limit', String(opts.limit));
+	const qs = params.toString();
+	const url = `/apis/${encodeURIComponent(vendor)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/operations${qs ? `?${qs}` : ''}`;
+	try {
+		return await request<VendorOperationsPage>(url);
+	} catch (err) {
+		if (err instanceof IntegrationsApiError && err.status === 404) return null;
+		throw err;
+	}
+}
+
+/**
+ * Fetch every page of a vendor's operations by following ``next_cursor``
+ * until the server returns ``has_more: false``. The rules-page preview
+ * needs the complete op list — grouping / autocomplete / matcher all
+ * assume they're seeing every op — and vendors like GitHub can carry
+ * ~1000 ops which don't fit in a single 200-op page.
+ *
+ * Returns ``null`` (like the single-page variant) when the API hasn't
+ * imported yet; the SPA continues polling.
+ */
+export async function listAllVendorOperations(
+	vendor: string,
+	name: string,
+	version: string,
+): Promise<VendorOperationsPage | null> {
+	// Server caps ``limit`` at 200 (see ``list_api_operations``).
+	const PAGE_SIZE = 200;
+	// Belt-and-braces cap on total pages to keep a runaway cursor loop
+	// from hanging the SPA. 200 * 100 = 20000 ops, comfortably past any
+	// real vendor.
+	const MAX_PAGES = 100;
+	const collected: VendorOperation[] = [];
+	let cursor: string | null | undefined = null;
+	for (let i = 0; i < MAX_PAGES; i++) {
+		const page: VendorOperationsPage | null = await listVendorOperations(
+			vendor,
+			name,
+			version,
+			{
+				cursor,
+				limit: PAGE_SIZE,
+			},
+		);
+		if (page == null) return null;
+		collected.push(...page.data);
+		if (!page.has_more || !page.next_cursor) {
+			return { data: collected, has_more: false, next_cursor: null };
+		}
+		cursor = page.next_cursor;
+	}
+	// Fell off the safety cap — return what we have with ``has_more`` so
+	// callers know it's truncated (unlikely to matter in practice).
+	return { data: collected, has_more: true, next_cursor: cursor ?? null };
+}
+
+export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
+	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities`);
+}
+
+/**
+ * Thin adapter around the generated AgentsService so views/hooks in this
+ * module never touch `@/shared/api` directly.
+ */
+export async function listAgentsForPicker(): Promise<AgentListResponse> {
+	return AgentsService.listAgents({ limit: 100 });
+}

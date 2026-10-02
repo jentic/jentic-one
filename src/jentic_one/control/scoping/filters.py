@@ -8,22 +8,26 @@ from typing import Any
 from sqlalchemy import or_
 from sqlalchemy.sql.elements import ColumnElement
 
-from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.scopes import (
     ORG_ADMIN,
-    OWNER_ACCESS_REQUESTS_READ,
     OWNER_CREDENTIALS_READ,
 )
 
 _OWNER_MODELS: dict[type[Any], Any] = {
     Credential: Credential.created_by,
+    # Connect sessions ride the credential visibility axis: the initiator is
+    # the owner, and delegated agents reuse the credential-read owner scope
+    # (no dedicated owner:connect-sessions:read scope exists — see the
+    # query-scoping rule's resource→scope table).
+    ConnectSession: ConnectSession.initiator_actor_id,
 }
 
 _DELEGATION_SCOPES: dict[type[Any], str] = {
     Credential: OWNER_CREDENTIALS_READ,
-    AccessRequest: OWNER_ACCESS_REQUESTS_READ,
+    ConnectSession: OWNER_CREDENTIALS_READ,
 }
 
 # ---------------------------------------------------------------------------
@@ -144,44 +148,4 @@ def build_access_filters(
             clauses.extend(_provider_clauses(identity, model))
         return [or_(*clauses)] if len(clauses) > 1 else clauses
 
-    if model is AccessRequest:
-        sub = identity.sub
-        delegation_scope = _DELEGATION_SCOPES[AccessRequest]
-        if delegation_scope in identity.permissions and identity.parent_actor_id is not None:
-            return [
-                or_(
-                    AccessRequest.created_by == sub,
-                    AccessRequest.filer_owner_id == sub,
-                    AccessRequest.created_by == identity.parent_actor_id,
-                    AccessRequest.filer_owner_id == identity.parent_actor_id,
-                )
-            ]
-        return [
-            or_(
-                AccessRequest.created_by == sub,
-                AccessRequest.filer_owner_id == sub,
-            )
-        ]
-
     raise ValueError(f"Unknown model for access scoping: {model.__name__}")
-
-
-def credential_owner_scope(identity: Identity) -> list[str] | None:
-    """Return the credential owner ids visible to ``identity``, or ``None`` for all.
-
-    ``None`` means an ``org:admin`` decider who may act across every owner. For
-    everyone else the scope is their own ``sub`` plus, when they hold the
-    credential-read delegation scope and have a parent, the parent owner id —
-    mirroring :func:`build_access_filters` for the ``Credential`` model. Used to
-    confine reference-based ``credential:bind`` effect resolution to credentials
-    the decider can actually see (theme-5 Phase 3, hard problem 8 — the
-    binding-widened half of that axis is pushed down separately as an id list).
-    """
-    if ORG_ADMIN in identity.permissions:
-        return None
-    if not identity.sub:
-        raise ValueError("empty sub reached credential owner scope")
-    owners = [identity.sub]
-    if OWNER_CREDENTIALS_READ in identity.permissions and identity.parent_actor_id is not None:
-        owners.append(identity.parent_actor_id)
-    return owners

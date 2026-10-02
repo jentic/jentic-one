@@ -42,9 +42,6 @@ async def resolve_permissions_for_actor(
             parent_permissions = view.effective
         else:
             logger.warning("Agent token missing parent_actor_id")
-    elif actor_type == ActorType.SERVICE_ACCOUNT:
-        view = await svc.get_effective_for_service_account(actor_id)
-        permissions = view.effective
 
     return permissions, parent_permissions
 

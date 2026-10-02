@@ -83,16 +83,16 @@ try {
   if ($d.Output -notmatch '"checks"') { Fail "jentic doctor JSON had no checks array`n$($d.Output)" }
   Pass "jentic doctor --json parses and exits 0"
 
-  # 3. jentic access whoami --json on a FRESH scratch home has no active context,
+  # 3. jentic search --json on a FRESH scratch home has no active context,
   #    so the contract is a RESOLVE_FAILED error envelope AND a non-zero exit
   #    (QA-1: assert BOTH, not merely "some well-formed envelope"). `context list`
   #    is a management command fenced in agent mode, so it is NOT used here.
-  $p = Invoke-Native $jentic @('access', 'whoami', '--json')
-  if ($p.Code -eq 0) { Fail "jentic access whoami --json exit=0 on a no-context home, want non-zero`n$($p.Output)" }
+  $p = Invoke-Native $jentic @('search', 'smoke', '--json')
+  if ($p.Code -eq 0) { Fail "jentic search --json exit=0 on a no-context home, want non-zero`n$($p.Output)" }
   if ($p.Output -notmatch '"error_code"\s*:\s*"RESOLVE_FAILED"') {
-    Fail "jentic access whoami --json (no context) must emit error_code RESOLVE_FAILED`n$($p.Output)"
+    Fail "jentic search --json (no context) must emit error_code RESOLVE_FAILED`n$($p.Output)"
   }
-  Pass "jentic access whoami --json (no context) -> RESOLVE_FAILED, exit $($p.Code)"
+  Pass "jentic search --json (no context) -> RESOLVE_FAILED, exit $($p.Code)"
 
   # 4. jenticctl doctor --json parses (non-zero only on a fail row; a scratch
   #    home with no install may warn but must produce a well-formed envelope).

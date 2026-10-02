@@ -276,38 +276,6 @@ def test_jwt_bearer_exchange_includes_effective_scope(
     assert b"null" not in resp.content
 
 
-@patch("jentic_one.auth.web.routers.oauth.ServiceAccountAuthService")
-@patch("jentic_one.auth.web.routers.oauth.TokenService")
-def test_client_credentials_exchange_includes_effective_scope(
-    mock_token_cls: MagicMock,
-    mock_sa_auth_cls: MagicMock,
-    client: TestClient,
-) -> None:
-    """The client_credentials leg reports the SA's live-grant scope set (§5.1)."""
-    mock_sa_auth = MagicMock(access_ttl_seconds=3600)
-    mock_sa_auth.authenticate_client_credentials = AsyncMock(
-        return_value=("at_sa", "rt_sa", ["capabilities:execute"])
-    )
-    mock_sa_auth_cls.return_value = mock_sa_auth
-    mock_token_cls.return_value = MagicMock(access_ttl_seconds=3600)
-
-    resp = client.post(
-        "/oauth/token",
-        json={
-            "grant_type": "client_credentials",
-            "client_id": "sva_test123",
-            "client_secret": "jcs_secret_value",
-        },
-    )
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["access_token"] == "at_sa"
-    assert data["scope"] == "capabilities:execute"
-    assert b'"scope":"capabilities:execute"' in resp.content
-    assert b"null" not in resp.content
-
-
 @patch("jentic_one.auth.web.routers.oauth.AssertionService")
 @patch("jentic_one.auth.web.routers.oauth.TokenService")
 def test_empty_effective_scope_set_omits_the_scope_member(

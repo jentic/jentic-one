@@ -53,8 +53,8 @@ func TestDataPlane_ContextFirst_UsesEnvURLAndStoredCredential(t *testing.T) {
 
 	setupContext(t, srv.URL)
 
-	if err := runJentic(t, "access", "whoami"); err != nil {
-		t.Fatalf("access whoami via context: %v", err)
+	if err := runJentic(t, "api", "GET", "/me"); err != nil {
+		t.Fatalf("api GET /me via context: %v", err)
 	}
 	if gotPath != "/me" {
 		t.Errorf("request path = %q, want /me on the CONTEXT env URL", gotPath)
@@ -89,12 +89,12 @@ func TestDataPlane_ContextUnregistered_FailsActionable(t *testing.T) {
 		t.Fatalf("context use: %v", err)
 	}
 
-	err := runJentic(t, "access", "whoami")
+	err := runJentic(t, "api", "GET", "/me")
 	if err == nil {
-		t.Fatal("expected whoami to fail for an unregistered context identity")
+		t.Fatal("expected api GET /me to fail for an unregistered context identity")
 	}
-	if !strings.Contains(err.Error(), "jentic register") {
-		t.Errorf("error = %v, want the onboarding remediation (`jentic register`)", err)
+	if !strings.Contains(err.Error(), "jentic identity register") {
+		t.Errorf("error = %v, want the onboarding remediation (`jentic identity register`)", err)
 	}
 }
 

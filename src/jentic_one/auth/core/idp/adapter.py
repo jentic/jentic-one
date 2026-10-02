@@ -6,6 +6,22 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+def parse_email_verified(value: object) -> bool:
+    """Interpret an IdP ``email_verified`` claim strictly.
+
+    Only the JSON boolean ``true`` or the string ``"true"`` (case-insensitive,
+    surrounding whitespace ignored) count as verified. Some providers serialise
+    the claim as a string, so a plain ``bool(value)`` would treat ``"false"``
+    as verified; anything else (missing, ``None``, ``"false"``, ``1``, …) is
+    unverified.
+    """
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class IdpClaims:
     """Normalized claims returned from an external IdP."""

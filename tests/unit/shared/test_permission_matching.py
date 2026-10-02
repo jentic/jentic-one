@@ -67,6 +67,50 @@ def test_literal_modes_accept_any_string_shape() -> None:
     assert validate_path("[not-a-regex]", "exact") is None
 
 
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # The classic catastrophic-backtracking shapes we want to refuse
+        # before they can freeze a broker worker at enforce time.
+        "^(a+)+$",
+        "(a*)*",
+        "(a+)*",
+        "/repos/([^/]+)+",
+        "/repos/(.+)+",
+        "(x+)?",
+    ],
+)
+def test_catastrophic_regex_rejected_before_reaching_broker(pattern: str) -> None:
+    err = validate_path(pattern, "regex")
+    assert isinstance(err, PathValidationError)
+    assert err.code == "unsafe_regex"
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # Real patterns we've seen authored — must keep passing.
+        "/repos/[^/]+/[^/]+",
+        "/repos/.*",
+        "/repos/[^/]+/issues/\\d+",
+        "(?:GET|POST)+",
+        "/v1/users/.*",
+    ],
+)
+def test_non_catastrophic_regex_still_accepted(pattern: str) -> None:
+    assert validate_path(pattern, "regex") is None
+
+
+def test_catastrophic_regex_compiles_to_never_matcher() -> None:
+    # Enforce-time symmetry with ``validate_path``: a stored ReDoS pattern
+    # (either legacy or one that slipped past a bypassed API) is
+    # fail-closed rather than silently dangerous.
+    matcher = compile_matcher("^(a+)+$", "regex")
+    assert matcher is not None
+    assert matcher.never is True
+    assert matcher.matches("aaaaX") is False
+
+
 # ---------------------------------------------------------------------------
 # compile_matcher — regex
 # ---------------------------------------------------------------------------

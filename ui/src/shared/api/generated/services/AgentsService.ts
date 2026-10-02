@@ -15,7 +15,7 @@ import type { ClaimRequest } from '../models/ClaimRequest';
 import type { CredentialBindingListResponse } from '../models/CredentialBindingListResponse';
 import type { CredentialBindingResponse } from '../models/CredentialBindingResponse';
 import type { CredentialBindRequest } from '../models/CredentialBindRequest';
-import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
+import type { DenyRequest } from '../models/DenyRequest';
 import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
 import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -300,7 +300,7 @@ export class AgentsService {
         agentId: string,
         credentialId: string,
         /**
-         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.
+         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
          */
         purge?: boolean,
     }): CancelablePromise<void> {
@@ -533,7 +533,7 @@ export class AgentsService {
      *
      * Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
      * only a human can own an agent. The ``require_actor_type`` gate rejects a
-     * non-user actor (agent/service-account) at the boundary with a 403;
+     * non-user actor (an agent) at the boundary with a 403;
      * ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
      *
      * ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
@@ -580,7 +580,7 @@ export class AgentsService {
         requestBody,
     }: {
         agentId: string,
-        requestBody: jentic_one__auth__web__schemas__agents__DenyRequest,
+        requestBody: DenyRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
             method: 'POST',

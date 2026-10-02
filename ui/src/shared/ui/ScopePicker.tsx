@@ -11,7 +11,7 @@ import { filterScopeGroups, groupScopesByResource, type EnhancedScope } from '@/
  * a live `selected/total` count, and per-group select-all.
  *
  * Source-agnostic. The credentials module feeds it OAuth2 provider scopes (with
- * "Recommended" badges + auto-selection); the agents/service-account surface
+ * "Recommended" badges + auto-selection); the agents surface
  * feeds it platform permission scopes (`showRecommended={false}`, with
  * `disabledScopes` for permissions the caller can't grant). Selection state
  * lives in the parent; this component operates purely on scope names + the

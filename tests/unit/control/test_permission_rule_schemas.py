@@ -1,9 +1,9 @@
 """Unit tests for the shared permission-rule base schema.
 
-Both authoring surfaces (the credentials API via `permission_rules.py` and
-`access_requests.py`) inherit from :class:`BasePermissionRuleSchema`, so
-validation is exercised through the concrete subclasses here — the goal is
-to prove save-time behaviour is identical on both surfaces.
+The credentials API (`permission_rules.py`) inherits from
+:class:`BasePermissionRuleSchema`; validation is exercised through the
+concrete subclass here to prove save-time behaviour. (The access-request
+API was a second consumer until theme 7 removed it.)
 """
 
 from __future__ import annotations
@@ -11,9 +11,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from jentic_one.control.web.schemas.access_requests import (
-    PermissionRuleSchema as ARPermissionRuleSchema,
-)
 from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleSchema as CredPermissionRuleSchema,
 )
@@ -69,7 +66,7 @@ def test_credential_rule_rejects_empty_path(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Condition-less-`allow` guard (shared across surfaces)
+# Condition-less-`allow` guard
 # ---------------------------------------------------------------------------
 
 
@@ -84,31 +81,14 @@ def test_credential_condition_less_deny_stays_valid() -> None:
     assert rule.effect == "deny"
 
 
-def test_access_request_condition_less_allow_still_rejected() -> None:
-    with pytest.raises(ValidationError):
-        ARPermissionRuleSchema(effect="allow")
-
-
-def test_access_request_require_approval_condition_less_stays_valid() -> None:
-    # ``require-approval`` (access-request-only) is a legitimate catch-all
-    # like ``deny``, so the guard must not fire on it.
-    rule = ARPermissionRuleSchema(effect="require-approval")
-    assert rule.effect == "require-approval"
-
-
 # ---------------------------------------------------------------------------
-# extra="forbid" — misspelled fields fail loud, both surfaces
+# extra="forbid" — misspelled fields fail loud
 # ---------------------------------------------------------------------------
 
 
 def test_credential_rule_rejects_unknown_field() -> None:
     with pytest.raises(ValidationError):
         CredPermissionRuleSchema.model_validate({"effect": "allow", "mach_mode": "regex"})
-
-
-def test_access_request_rule_rejects_unknown_field() -> None:
-    with pytest.raises(ValidationError):
-        ARPermissionRuleSchema.model_validate({"effect": "allow", "mach_mode": "regex"})
 
 
 # ---------------------------------------------------------------------------

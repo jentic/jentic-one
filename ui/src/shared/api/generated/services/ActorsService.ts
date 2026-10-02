@@ -9,7 +9,7 @@ import { request as __request } from '../core/request';
 export class ActorsService {
     /**
      * List Actors
-     * List all actors (users, agents, service accounts) for UI cache hydration.
+     * List all actors (users and agents) for UI cache hydration.
      * @returns ActorListResponse Successful Response
      * @throws ApiError
      */

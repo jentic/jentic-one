@@ -1,10 +1,12 @@
 /**
  * Docs repository — the only place the docs module fetches its raw data.
  *
- * Two same-origin sources, both served by the instance behind the SPA:
+ * Three same-origin sources, all served by the instance behind the SPA:
  *   - `GET /openapi.json`            — the standards-pure OpenAPI document
  *   - `GET /reference/endpoints.json` — the canonical scope/typical-caller join
  *     (also carries the conceptual scope catalogue in its `scopes` section)
+ *   - `GET /instance`                 — the advertised broker URL, swapped into
+ *     the Broker spec's placeholder `servers`
  *
  * Plus two build-time static assets, served from the SPA's own origin:
  *   - `cli-reference.json` — the CLI command tree, generated from cobra by
@@ -24,6 +26,7 @@
  * verbatim, and the scope/actor reference enriches each operation. They are
  * never merged.
  */
+import { SystemService } from '@/shared/api';
 import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
 
 const SPEC_URL = '/openapi.json';
@@ -67,4 +70,14 @@ export function fetchCliReference(): Promise<CliReference> {
  */
 export function fetchBrokerSpec(): Promise<OpenApiDocument> {
 	return getJson<OpenApiDocument>(new URL(BROKER_SPEC_URL, document.baseURI).toString());
+}
+
+/**
+ * The broker URL this backend advertises on `GET /instance` (unauthenticated,
+ * like the docs page), or `null` when it withholds one — absent on older
+ * backends, or a loopback default on a remote install.
+ */
+export async function fetchAdvertisedBrokerUrl(): Promise<string | null> {
+	const res = await SystemService.getInstance();
+	return res.broker_url ?? null;
 }

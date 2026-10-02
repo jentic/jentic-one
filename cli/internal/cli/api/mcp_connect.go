@@ -102,12 +102,15 @@ func newMCPRelay(opts *mcpRelayOptions, out io.Writer, logger *slog.Logger) (*mc
 			return nil, errors.New("a bearer does not apply to a unix socket target — the daemon authenticates this process by OS identity; unset " + mcpBearerEnv + " / drop --bearer-file")
 		}
 		r.endpoint = "http://jentic-mcp" + mcpHTTPPath
-		r.client = &http.Client{Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", socketPath)
+		r.client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, "unix", socketPath)
+				},
 			},
-		}}
+			CheckRedirect: refuseRedirects,
+		}
 	case "http", "https":
 		if target.Scheme == "http" && !hostIsLoopback(target.Hostname()) {
 			return nil, fmt.Errorf("refusing the plaintext non-loopback target %q — use https", opts.url)
@@ -116,11 +119,19 @@ func newMCPRelay(opts *mcpRelayOptions, out io.Writer, logger *slog.Logger) (*mc
 			target.Path = mcpHTTPPath
 		}
 		r.endpoint = target.String()
-		r.client = &http.Client{}
+		r.client = &http.Client{CheckRedirect: refuseRedirects}
 	default:
 		return nil, fmt.Errorf("--connect %q: unsupported scheme %q (unix://, http://<loopback>, or https://)", opts.url, target.Scheme)
 	}
 	return r, nil
+}
+
+// refuseRedirects keeps the relay on the endpoint it was pointed at: the
+// Streamable HTTP endpoint has no reason to redirect, and following one would
+// carry the frame (and the caller's bearer) to wherever the Location points.
+// The 3xx surfaces to the client as a JSON-RPC error instead.
+func refuseRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // resolveRelayBearer picks the caller-supplied bearer: --bearer-file wins

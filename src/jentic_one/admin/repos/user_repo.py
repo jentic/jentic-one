@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.services.errors import UserNotFoundError
 from jentic_one.shared.models import AuthProvider, InviteState
@@ -55,6 +56,27 @@ class UserRepository:
         """Return the total number of users — used to detect first-run setup."""
         result = await session.execute(select(sa_func.count()).select_from(User))
         return int(result.scalar_one())
+
+    @staticmethod
+    async def lock_active_holders_of(session: AsyncSession, permission: str) -> set[str]:
+        """Return the ids of active users directly granted ``permission``, row-locked.
+
+        Takes ``FOR UPDATE`` on the matching user and grant rows (ordered by user
+        id so concurrent callers lock in the same order), so two transactions
+        each removing a different holder serialise: the second waits for the
+        first to commit and then no longer sees the holder it disabled or
+        stripped. SQLite has no row locks and ignores the clause; its
+        single-writer model already serialises the writes.
+        """
+        stmt = (
+            select(User.id)
+            .join(UserPermissionGrant, UserPermissionGrant.user_id == User.id)
+            .where(UserPermissionGrant.permission == permission, User.active.is_(True))
+            .order_by(User.id)
+            .with_for_update()
+        )
+        result = await session.execute(stmt)
+        return set(result.scalars().all())
 
     @staticmethod
     async def get_by_id(session: AsyncSession, user_id: str) -> User | None:

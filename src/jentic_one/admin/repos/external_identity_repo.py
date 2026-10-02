@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
@@ -42,3 +42,11 @@ class ExternalIdentityRepository:
         session.add(ext_id)
         await session.flush()
         return ext_id
+
+    @staticmethod
+    async def delete_for_user(session: AsyncSession, user_id: str) -> int:
+        """Remove every external identity link for a user; returns the count removed."""
+        stmt = delete(ExternalIdentity).where(ExternalIdentity.user_id == user_id)
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]

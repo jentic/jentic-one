@@ -1,15 +1,13 @@
-"""Permission-rule web schemas shared across authoring surfaces.
+"""Permission-rule web schemas for the credentials authoring surface.
 
-Two authoring surfaces write agent↔credential permission rules: the
-credentials API (allow / deny) and the access-request API (which
-additionally accepts ``require-approval`` on filed items). They share every
-field except ``effect``, so the common shape — including save-time path
-validation and the condition-less-``allow`` guard — lives here to prevent
-the two surfaces from drifting.
+The base shape — including save-time path validation and the
+condition-less-``allow`` guard — is split from the concrete allow/deny
+subclass so every authoring surface that writes agent↔credential permission
+rules shares one set of field semantics. (The access-request API, removed in
+theme 7, was the second consumer; the split survives it.)
 
 The concrete allow/deny subclass and the read/patch/test models live here
-too (consumed by ``routers/credentials.py`` and ``schemas/credentials.py``);
-``access_requests.py`` adds its own ``effect`` ``Literal``.
+too (consumed by ``routers/credentials.py`` and ``schemas/credentials.py``).
 """
 
 from __future__ import annotations

@@ -5,10 +5,39 @@
 // Query keys are namespaced under `['credentials', 'apis', …]` and
 // `['credentials', 'catalog', …]` so they live in the credentials cache slice
 // and don't collide with any future apis/catalog modules.
-import { useMemo } from 'react';
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import type { ApiImportResponse, ApiListResponse, CatalogListResponse } from '@/shared/api';
-import { fetchPublicSpec, getApiSpec, importCatalogEntry, listApis, listCatalog } from './apis';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+	type UseQueryResult,
+} from '@tanstack/react-query';
+import { sharedQueryKeys } from '@/shared/api';
+import type {
+	ApiImportResponse,
+	ApiListResponse,
+	ApiResponse,
+	CatalogListResponse,
+} from '@/shared/api';
+import { toast } from '@/shared/ui';
+import { apiRefDisplayName } from '@/shared/lib';
+import { slugifyApiField } from '@/shared/lib/apiSlug';
+import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
+import {
+	fetchPublicSpec,
+	getApi,
+	getApiSpec,
+	getImportedApiRefs,
+	getJob,
+	importCatalogEntry,
+	importSources,
+	listApis,
+	listCatalog,
+	type ImportedApiRef,
+	type ImportSource,
+	type JobStatus,
+} from './apis';
 import {
 	parseSchemeOptions,
 	type RawSchemes,
@@ -21,6 +50,10 @@ export const apiPickerKeys = {
 	apisList: () => ['credentials', 'apis', 'list'] as const,
 	catalogList: () => ['credentials', 'catalog', 'list'] as const,
 	apis: (vendor: string | null) => [...apiPickerKeys.apisList(), { vendor }] as const,
+	/** Every page of {@link useAllApis} — its own key (an infinite query cannot
+	 * share one with {@link useApis}) but under the `apisList()` prefix so import
+	 * invalidation sweeps it. */
+	apisAll: () => [...apiPickerKeys.apisList(), 'all-pages'] as const,
 	apiSpec: (vendor: string, name: string, version: string) =>
 		['credentials', 'apis', 'spec', vendor, name, version] as const,
 	catalog: (q: string) => [...apiPickerKeys.catalogList(), { q }] as const,
@@ -51,6 +84,72 @@ export interface SelectedApi {
 	label: string;
 }
 
+/** A workspace `/apis` row as a pick. */
+export function apiRowToSelected(row: ApiResponse): SelectedApi {
+	const ref = row.api;
+	// Friendly primary line: explicit display_name, else the persisted catalog
+	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
+	// vendor/name humanisation.
+	const label = apiRefDisplayName({
+		displayName: row.display_name,
+		catalogApiId: row.catalog_api_id,
+		vendor: ref.vendor,
+		name: ref.name,
+	});
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		apiId: row.catalog_api_id ?? undefined,
+		securitySchemeTypes: row.security_schemes ?? [],
+		label,
+	};
+}
+
+/**
+ * The workspace API a filed reference names, as a pick — so a flow that already
+ * knows the API opens the credential form for it rather than asking again.
+ * Filed references often omit the version; the workspace row supplies it (the
+ * named version when the reference carries one, else the first row listed).
+ * A reference that names an exact version pins even without a workspace row.
+ * Null when neither the workspace nor the reference pins one API.
+ */
+export function workspaceApiFor(
+	rows: readonly ApiResponse[],
+	ref: { vendor: string; name?: string | null; version?: string | null },
+	label?: string,
+): SelectedApi | null {
+	if (!ref.name) return null;
+	const vendor = slugifyApiField(ref.vendor);
+	const name = slugifyApiField(ref.name);
+	const matches = rows.filter(
+		(row) =>
+			slugifyApiField(row.api.vendor) === vendor && slugifyApiField(row.api.name) === name,
+	);
+	const row = matches.find((r) => r.api.version === ref.version) ?? matches[0];
+	if (row) return apiRowToSelected(row);
+	if (!ref.version) return null;
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		label: label ?? `${ref.vendor}/${ref.name}`,
+	};
+}
+
+/** A pick built from the bare identity, for when the full row can't be read. */
+function importedRefToSelected(ref: ImportedApiRef): SelectedApi {
+	return {
+		source: 'local',
+		vendor: ref.vendor,
+		name: ref.name,
+		version: ref.version,
+		label: apiRefDisplayName({ vendor: ref.vendor, name: ref.name }),
+	};
+}
+
 /** List workspace APIs (cursor pagination policy owned here). */
 export function useApis(params: { vendor?: string | null } = {}): UseQueryResult<ApiListResponse> {
 	const vendor = params.vendor ?? null;
@@ -58,6 +157,40 @@ export function useApis(params: { vendor?: string | null } = {}): UseQueryResult
 		queryKey: apiPickerKeys.apis(vendor),
 		queryFn: () => listApis({ vendor }),
 	});
+}
+
+/**
+ * EVERY workspace API — the cursor pages drained eagerly, for consumers that
+ * join against the registry rather than list it. `complete` is true only when
+ * every page loaded; until then a join may not assert registry-derived states,
+ * or an imported API past page 1 lands in the "not imported" fallback tile.
+ */
+export function useAllApis(): DrainedList<ApiResponse> {
+	const query = useInfiniteQuery({
+		queryKey: apiPickerKeys.apisAll(),
+		queryFn: ({ pageParam }): Promise<ApiListResponse> => listApis({ cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
+	});
+	useEagerCursorDrain(query);
+
+	const { data, isError, refetch, fetchNextPage } = query;
+	const items = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
+	const retry = useCallback(() => {
+		if (isError && !data) void refetch();
+		else void fetchNextPage();
+	}, [isError, data, refetch, fetchNextPage]);
+	const refresh = useCallback(() => void refetch(), [refetch]);
+
+	return {
+		items,
+		isPending: query.isPending,
+		error: query.error,
+		complete: query.isSuccess && !query.hasNextPage,
+		retry,
+		refresh,
+		isFetching: query.isFetching,
+	};
 }
 
 /** Search the public catalog (search-driven; empty `q` returns the first page). */
@@ -181,4 +314,153 @@ export function useImportCatalogEntry() {
 			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
 		},
 	});
+}
+
+const JOB_POLL_INTERVAL_MS = 1500;
+const JOB_POLL_TIMEOUT_MS = 60_000;
+
+/** Job states the backend never advances past, spelled as its `JobStatus` enum
+ * serialises them — any other spelling polls a finished job until the timeout. */
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'dead_letter']);
+
+/** The one terminal state that means the job did the work it was queued for. */
+export function jobSucceeded(status: JobStatus): boolean {
+	return status.status === 'completed';
+}
+
+/**
+ * Poll `/jobs/{id}` to a terminal state or the deadline, returning the last status
+ * read. A failed *read* is not a failed job — a transient 5xx, or `apis:write`
+ * without `jobs:read` — so a rejected poll runs on to the deadline.
+ */
+export async function pollJobToTerminal(initial: JobStatus): Promise<JobStatus> {
+	const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+	let status = initial;
+	let readError: string | null = null;
+
+	while (!TERMINAL_JOB_STATUSES.has(status.status) && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+		try {
+			status = await getJob(status.jobId);
+			readError = null;
+		} catch (error: unknown) {
+			readError = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	// Timed out short of a terminal state: annotate it so the caller can't render
+	// the stale `queued`/`running` as a verdict on the import. Covers both a poll
+	// that never read the job (a lingering `readError`) and one that read fine but
+	// ran out the deadline before the backend finished.
+	if (!TERMINAL_JOB_STATUSES.has(status.status)) {
+		const detail = readError
+			? `Couldn't check the import job (${readError}).`
+			: `The import job didn't finish in time.`;
+		return { ...status, error: `${detail} The import may still be running.` };
+	}
+	return status;
+}
+
+/** The terminal job state, plus the APIs a successful import registered. */
+export interface ImportSpecResult extends JobStatus {
+	/** Empty unless the job succeeded AND its result could be read. */
+	imported: SelectedApi[];
+}
+
+export interface UseImportSpec {
+	importSpec: (sources: ImportSource[]) => Promise<ImportSpecResult>;
+	isImporting: boolean;
+}
+
+/**
+ * Resolve what a completed import registered, as picks. Best-effort: the import
+ * already succeeded, so an unreadable result (`jobs:read` missing, the result
+ * expired) yields no picks rather than a failure, and an unreadable row falls
+ * back to the bare identity.
+ */
+async function resolveImported(jobId: string): Promise<SelectedApi[]> {
+	let refs: ImportedApiRef[];
+	try {
+		refs = await getImportedApiRefs(jobId);
+	} catch {
+		return [];
+	}
+	const unique = refs.filter(
+		(ref, i) =>
+			refs.findIndex(
+				(other) =>
+					other.vendor === ref.vendor &&
+					other.name === ref.name &&
+					other.version === ref.version,
+			) === i,
+	);
+	// `.catch` after `.then`, not an onRejected: a row too malformed to map falls
+	// back to the bare ref like a failed read, rather than failing the import.
+	return Promise.all(
+		unique.map((ref) =>
+			getApi(ref.vendor, ref.name, ref.version)
+				.then(apiRowToSelected)
+				.catch(() => importedRefToSelected(ref)),
+		),
+	);
+}
+
+/**
+ * Enqueue a spec import and poll the job to a terminal state. Returns the terminal
+ * `JobStatus` rather than throwing, so the dialog can show the job's own `error`
+ * instead of losing a pasted spec to a toast. On success it also returns the APIs
+ * the import registered, so the surface that uploaded can select them. Invalidates
+ * both the Workspace list and the picker's slice, so the new API is findable where
+ * it was uploaded.
+ */
+export function useImportSpec(): UseImportSpec {
+	const queryClient = useQueryClient();
+	const [isImporting, setIsImporting] = useState(false);
+	const activeRef = useRef(true);
+
+	// Flip the guard on unmount so only the `isImporting` write below is skipped —
+	// the poll and the invalidations must still finish, or the API lists go stale.
+	useEffect(() => {
+		activeRef.current = true;
+		return () => {
+			activeRef.current = false;
+		};
+	}, []);
+
+	const importSpec = useCallback(
+		async (sources: ImportSource[]): Promise<ImportSpecResult> => {
+			setIsImporting(true);
+			try {
+				const job = await importSources(sources);
+				const status = await pollJobToTerminal({
+					jobId: job.jobId,
+					status: job.status,
+					error: null,
+				});
+				if (!jobSucceeded(status)) return { ...status, imported: [] };
+
+				void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
+				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
+
+				const imported = await resolveImported(status.jobId);
+				toast({
+					variant: 'success',
+					title: 'API imported',
+					description:
+						imported.length === 1
+							? `${imported[0].label} is in your Workspace.`
+							: imported.length > 1
+								? `${imported.length} APIs are in your Workspace.`
+								: 'The API is in your Workspace.',
+				});
+				return { ...status, imported };
+			} finally {
+				if (activeRef.current) setIsImporting(false);
+			}
+		},
+		[queryClient],
+	);
+
+	return { importSpec, isImporting };
 }

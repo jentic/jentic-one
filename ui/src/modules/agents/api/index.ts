@@ -7,11 +7,18 @@
 export {
 	useAgents,
 	useAgent,
+	usePendingAgents,
 	useAgentCredentialBindings,
+	useAgentsCredentialBindings,
+	useRefreshFleetCredentialBindings,
+	useAgentBindingRuleCounts,
+	useAgentBindingRuleSummaries,
 	useBindableCredentialsForAgent,
 	useBindAgentCredential,
 	useUnbindAgentCredential,
+	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
+	useInvalidateCredentialBindingSurfaces,
 	useAgentBindingPermissions,
 	useReplaceAgentBindingPermissions,
 	useTestAgentBindingPermissions,
@@ -21,29 +28,19 @@ export {
 	useDenyAgent,
 	useDisableAgent,
 	useEnableAgent,
+	useSetAgentServing,
 	useArchiveAgent,
 	useCreateAgent,
 	useGenerateAgentApiKey,
+	useIsGeneratingAgentApiKey,
 	useRevokeAgentApiKey,
-	useGenerateServiceAccountApiKey,
-	useServiceAccounts,
-	useServiceAccount,
-	useCreateServiceAccount,
-	useApproveServiceAccount,
-	useDenyServiceAccount,
-	useDisableServiceAccount,
-	useEnableServiceAccount,
-	useArchiveServiceAccount,
 	usePermissionCatalogue,
 	useAgentScopes,
 	useReplaceAgentScopes,
-	useServiceAccountScopes,
-	useReplaceServiceAccountScopes,
-	useActorAccessRequests,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
-	useActorsUsage,
 	useActorUsageDetail,
+	useCredentialUsageTotals,
 	useActorExecutions,
 	useActorAudit,
 	useUpdateAgent,
@@ -51,16 +48,19 @@ export {
 	useMcpLastSeen,
 	useLatestMcpActivity,
 	useInstanceIdentity,
-	actorAccessRequestsKey,
-	actorAccessRequestsRootKey,
 	agentOauthGrantsKey,
 	agentOauthGrantsRootKey,
+	ServingRefreshError,
+} from '@/modules/agents/api/hooks';
+export type {
+	SetServingVariables,
+	PendingAgentsResult,
+	BindingRuleSummary,
 } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
 export type {
 	ActorAuditEntry,
-	ActorUsage,
 	ActorUsageDetail,
 	ActorExecutionEntity,
 	UsageBucketEntity,
@@ -97,10 +97,7 @@ export type {
 	PermissionCatalogEntry,
 	PermissionRuleInput,
 	ServedApiEntity,
-	ServiceAccountEntity,
 	Attribution,
 } from '@/modules/agents/api/types';
 
-export { mcpClientLabel } from '@/modules/agents/api/types';
-
-export type { AccessRequest } from '@/shared/lib';
+export { mcpClientLabel, isServiceAccountSuccessor } from '@/modules/agents/api/types';

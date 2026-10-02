@@ -53,7 +53,7 @@ async def test_request_shape_is_exactly_id_version_event_ts() -> None:
 
 @pytest.mark.asyncio
 async def test_actor_type_included_and_normalised() -> None:
-    """actor_type is included when set; service_account is normalised to service-account."""
+    """actor_type is included when set, serialised as the enum value."""
     captured: list[dict[str, object]] = []
 
     def handle(req: httpx.Request) -> httpx.Response:
@@ -63,7 +63,7 @@ async def test_actor_type_included_and_normalised() -> None:
     client = _client(httpx.MockTransport(handle))
     for actor_type, _expected in [
         (ActorType.AGENT, "agent"),
-        (ActorType.SERVICE_ACCOUNT, "service-account"),
+        (ActorType.USER, "user"),
     ]:
         event = TelemetryEvent(
             name=TelemetryEventName.BROKER_EXECUTION,
@@ -76,7 +76,7 @@ async def test_actor_type_included_and_normalised() -> None:
     await client.aclose()
 
     assert captured[0]["actor_type"] == "agent"
-    assert captured[1]["actor_type"] == "service-account"
+    assert captured[1]["actor_type"] == "user"
 
 
 @pytest.mark.asyncio

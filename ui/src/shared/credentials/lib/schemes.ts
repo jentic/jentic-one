@@ -137,6 +137,7 @@ export interface OAuth2FlowDef {
 const FLOW_TYPE_LABELS: Record<string, string> = {
 	authorizationCode: 'Authorization Code',
 	clientCredentials: 'Client Credentials',
+	deviceAuthorization: 'Device Code',
 	implicit: 'Implicit',
 	password: 'Resource Owner Password',
 };
@@ -144,6 +145,9 @@ const FLOW_TYPE_LABELS: Record<string, string> = {
 const FLOW_TYPE_TO_GRANT_TYPE: Record<string, string> = {
 	authorizationCode: 'authorization_code',
 	clientCredentials: 'client_credentials',
+	// OpenAPI 3.2 `deviceAuthorization` flow (RFC 8628). Wire grant_type
+	// matches how the backend's mapping.to_stored discriminates it.
+	deviceAuthorization: 'device_code',
 	implicit: 'implicit',
 	password: 'password',
 };
@@ -156,6 +160,7 @@ const FLOW_TYPE_TO_GRANT_TYPE: Record<string, string> = {
 // non-redirect grants. Unknown flow types sort last, alphabetically.
 const FLOW_TYPE_ORDER: string[] = [
 	'authorizationCode',
+	'deviceAuthorization',
 	'clientCredentials',
 	'password',
 	'implicit',
@@ -198,7 +203,19 @@ export function oauth2FlowsFromSchemes(
 		const flows = (
 			scheme as {
 				type?: string;
-				flows?: Record<string, { tokenUrl?: string; authorizationUrl?: string }>;
+				flows?: Record<
+					string,
+					{
+						tokenUrl?: string;
+						authorizationUrl?: string;
+						// OpenAPI 3.2's ``deviceAuthorization`` flow object
+						// carries the vendor's RFC 8628 device-authorization
+						// endpoint here — semantically the "where the flow
+						// starts" URL, so we map it onto the shared
+						// ``authorizationUrl`` slot for uniform consumption.
+						deviceAuthorizationUrl?: string;
+					}
+				>;
 			}
 		).flows;
 		if (!flows) continue;
@@ -211,7 +228,7 @@ export function oauth2FlowsFromSchemes(
 				label: baseLabel,
 				grantType: FLOW_TYPE_TO_GRANT_TYPE[flowType] ?? flowType,
 				tokenUrl: flow?.tokenUrl,
-				authorizationUrl: flow?.authorizationUrl,
+				authorizationUrl: flow?.authorizationUrl ?? flow?.deviceAuthorizationUrl,
 			});
 		}
 	}

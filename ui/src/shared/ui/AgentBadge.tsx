@@ -9,7 +9,7 @@ import { cn } from '@/shared/lib/utils';
  * icon when there's no name.
  *
  * A shared primitive so the agents table, detail page, and any future
- * dashboard/monitor surface can reuse one identity treatment.
+ * agents/monitor surface can reuse one identity treatment.
  */
 
 export type AgentBadgeSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -62,7 +62,7 @@ interface AgentBadgeProps {
 	id?: string;
 	/** Display name used for the initials + the accessible label. */
 	name?: string;
-	/** Actor noun for the accessible label (e.g. "Agent", "Service account"). */
+	/** Actor noun for the accessible label (e.g. "Agent"). */
 	kind?: string;
 	size?: AgentBadgeSize;
 	/** When provided, the badge renders as a button (e.g. navigate to detail). */

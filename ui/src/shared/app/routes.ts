@@ -2,15 +2,15 @@ import type { RouteObject } from 'react-router';
 
 /**
  * Canonical client route paths, ALL root-relative to the router `basename`
- * (`/app`, set in `main.tsx` from Vite's `base`). A path like `/credentials`
- * here resolves to `/app/credentials` in the browser; the basename is the
+ * (`/app`, set in `main.tsx` from Vite's `base`). A path like `/agents`
+ * here resolves to `/app/agents` in the browser; the basename is the
  * single source of the `/app` prefix, so it appears in exactly one place
  * (vite.config.ts `base`) and never in route literals.
  *
  * The SPA is served under `/app` same-origin behind the admin API (see
  * src/jentic_one/shared/web/static.py), so the admin API's top-level prefixes
  * (/users, /auth, /jobs, /events, /audit, /executions, /permissions, /agents,
- * /service-accounts, /credentials, …) live in a different namespace and can
+ * /credentials, …) live in a different namespace and can
  * never shadow a UI route on hard refresh.
  *
  * `login` / `changePassword` live outside the authenticated Layout — they must
@@ -29,21 +29,20 @@ export const ROUTES = {
 	// once the first admin is created (see SetupPage / setup_required health gate).
 	setup: '/setup',
 	changePassword: '/change-password',
-	// Authenticated app shell home (Dashboard) — the basename index (`/app`).
+	// Authenticated app shell home — the basename index (`/app`), which
+	// redirects to Agents (see App.tsx).
 	app: '/',
 
 	// ── Feature pages ────────────────────────────────────────────────────
 	// Root-relative client paths for the primary feature surfaces, so call-sites
-	// (nav, dashboard quick-actions, cross-module links, back buttons) link by
+	// (nav, first-run checklist, cross-module links, back buttons) link by
 	// a single shared constant instead of a scattered literal. These MUST stay
 	// in lockstep with `nav.ts` and each module's `routes.tsx`. New surfaces
 	// append here.
 	discover: '/discover',
 	workspace: '/workspace',
-	credentials: '/credentials',
 	agents: '/agents',
 	monitor: '/monitor',
-	accessRequests: '/access-requests',
 	docs: '/docs',
 } as const;
 
@@ -56,21 +55,33 @@ export const ROUTES = {
 export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
-	serviceAccount: (serviceAccountId: string) =>
-		`${ROUTES.agents}/service-accounts/${encodeURIComponent(serviceAccountId)}`,
 	/**
-	 * Monitor's Executions lens, optionally pre-filtered. The `tab` /
+	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
 	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
 	 * cross-module deep-links (agents console → Monitor) must agree on it, and
 	 * modules can't import from each other. Monitor's own richer builder is
 	 * `modules/monitor/lib/links`.
 	 */
-	monitorExecutions: (filter?: {
-		actorId?: string;
-		actorType?: 'agent' | 'service_account' | 'user';
-	}) => {
-		const q = new URLSearchParams({ tab: 'executions' });
+	/**
+	 * The org-wide credential inventory, which lives in a sheet on the Agents
+	 * page rather than at a route of its own. `credentials` is the Agents
+	 * page's URL vocabulary (read by `modules/agents/pages/AgentsPage`);
+	 * `credentials=new` also opens the create wizard, so a call-site whose
+	 * label promises a new credential still lands on the form. The builder
+	 * lives here because cross-module links (OAuth popup return, the shell)
+	 * need it and modules can't import each other.
+	 */
+	credentialInventory: (opts?: { create?: boolean }) =>
+		`${ROUTES.agents}?credentials=${opts?.create === true ? 'new' : '1'}`,
+	/**
+	 * One agent AS SELECTED on the flat Agents surface — the address of an agent for
+	 * any caller that wants to show one. `ROUTE_PATHS.agent` still addresses the
+	 * per-agent console for a direct URL.
+	 */
+	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
+	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
+		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);
 		return `${ROUTES.monitor}?${q.toString()}`;
@@ -90,21 +101,17 @@ export const ROUTE_PATHS = {
  * The matching nav entry in `nav.ts` uses the absolute `/app/discover`.
  */
 // <-- feature route imports go here (one import line per module) -->
-import { dashboardRoutes } from '@/modules/dashboard/routes';
 import { agentsRoutes } from '@/modules/agents/routes';
 import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
-import { credentialsRoutes } from '@/modules/credentials/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
 import { settingsRoutes } from '@/modules/settings/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
-	...dashboardRoutes,
 	...agentsRoutes,
 	...discoverRoutes,
 	...workspaceRoutes,
-	...credentialsRoutes,
 	...monitorRoutes,
 	...settingsRoutes,
 ];

@@ -40,7 +40,7 @@ func newEndpointsCmd(app *app) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
 	cmd.Flags().StringVar(&o.scope, "scope", "", "only endpoints requiring this scope")
-	cmd.Flags().StringVar(&o.actor, "actor", "", "only endpoints callable by this actor type (user, agent, service_account)")
+	cmd.Flags().StringVar(&o.actor, "actor", "", "only endpoints callable by this actor type (user, agent)")
 	return cmd
 }
 
@@ -155,7 +155,7 @@ func (ep endpoint) group() string {
 }
 
 const (
-	groupAgent    = "Agent-facing (typically agent / service-account)"
+	groupAgent    = "Agent-facing (typically an agent)"
 	groupOperator = "Operator-facing (typically a human operator / admin)"
 	groupAny      = "Any authenticated actor"
 	groupPublic   = "Public (unauthenticated)"

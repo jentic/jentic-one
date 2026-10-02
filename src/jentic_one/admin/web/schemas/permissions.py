@@ -11,7 +11,13 @@ class PermissionResponse(BaseModel):
     name: str
     description: str
     implies: list[str]
-    grantable_by_caller: bool
+    grantable_by_caller: bool = Field(
+        description=(
+            "Whether the caller may grant this scope to an agent. `org:admin` callers may "
+            "grant any scope; anyone else only scopes they hold or the default agent scopes, "
+            "and never `org:admin` or `agents:write`."
+        )
+    )
 
 
 class PermissionListResponse(BaseModel):

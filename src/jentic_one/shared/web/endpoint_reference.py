@@ -49,7 +49,7 @@ REFERENCE_SCHEMA = "jentic.endpoint-scope-tree/v1"
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 #: Actor types that ride the agent token flow (mirrored in the Go CLI grouping).
-_AGENT_ACTORS: tuple[str, ...] = ("agent", "service_account")
+_AGENT_ACTORS: tuple[str, ...] = ("agent",)
 
 #: The broker's only unauthenticated routes (liveness / readiness probes); every
 #: other broker route is the execute proxy and requires BROKER_EXECUTE_SCOPE.
@@ -68,7 +68,7 @@ _BROKER_PROXY_METHODS: tuple[str, ...] = ("DELETE", "GET", "PATCH", "POST", "PUT
 # real gate). Endpoints are scope-gated, not actor-gated, so we group by who
 # usually calls a route rather than by an enforced actor restriction.
 GROUP_PUBLIC = "Public (unauthenticated)"
-GROUP_AGENT = "Agent-facing (typically agent / service-account)"
+GROUP_AGENT = "Agent-facing (typically an agent)"
 GROUP_OPERATOR = "Operator-facing (typically a human operator / admin)"
 GROUP_ANY = "Any authenticated actor"
 
@@ -223,7 +223,7 @@ def _annotate_broker(broker: list[Endpoint]) -> None:
     """Stamp the broker execute-proxy route's enforced scope (its spec lacks the auth map).
 
     The broker proxy (:data:`_BROKER_PROXY_PATH`) enforces BROKER_EXECUTE_SCOPE via
-    RequireToolkitAccess (broker/web/deps.require_execute_scope); its hand-curated
+    RequireExecuteAccess (broker/web/deps.require_execute_scope); its hand-curated
     spec does not carry scope metadata, so annotate that specific data-plane route
     to keep the reference code-true. The liveness/readiness probes are the broker's
     only public routes.

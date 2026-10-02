@@ -27,7 +27,8 @@ that owns everything the platform — not the SDK — must decide:
   passes.
 - **Bearer auth** reusing the identity-resolution LOGIC — the app-state
   ``verify_token`` the auth surface installs (``make_superset_verifier``),
-  which resolves ``jak_``/``sak_`` API keys, ``at_`` access tokens (including
+  which resolves ``jak_`` API keys (retired ``sak_`` ones are refused), ``at_``
+  access tokens (including
   grant-channel bearers: actor=agent with ``oauth_grant_id``, resolved
   through the same gates as every REST call) — NOT the ``get_current_identity``
   FastAPI dependency: a Starlette mount is a separate ASGI app, so parent
@@ -613,7 +614,8 @@ class McpMount:
         """The REST resolvers' verification logic, mount-side.
 
         Delegates to the app-state ``verify_token`` (the superset verifier the
-        auth surface installs) so every platform token shape — jak_/sak_ keys,
+        auth surface installs) so every platform token shape — jak_ keys
+        (retired sak_ ones refused),
         ``at_`` access tokens including grant-channel bearers — resolves
         through exactly the gates the REST routes apply. Any failure is an
         invalid credential (401 challenge), mirroring ``resolve_identity``.

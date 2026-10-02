@@ -273,8 +273,9 @@ export class OverlaysService {
      * promotes the prior revision back to current), so it is the same operator action as
      * confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
      * carry a recorded superseded revision that is still restorable; otherwise a 409 is
-     * returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-     * changes.
+     * returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+     * ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+     * restored revision's hosts) and nothing changes.
      * @returns void
      * @throws ApiError
      */

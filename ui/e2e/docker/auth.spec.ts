@@ -16,7 +16,7 @@ test.describe('authenticated (reuses storageState)', () => {
 
 		await page.goto('/app');
 
-		await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 		await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
 		expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);

@@ -12,7 +12,7 @@ const PILLARS = [
 	{
 		icon: UserCheck,
 		question: 'Who is acting?',
-		body: 'Every call is tied to a verified identity — a human user, an autonomous agent, or a service account.',
+		body: 'Every call is tied to a verified identity — a human user or an autonomous agent.',
 	},
 	{
 		icon: ShieldCheck,

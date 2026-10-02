@@ -21,6 +21,28 @@ serves traffic. ``--skip-upgrade-steps`` defers all of them (and
 ``--skip-upgrade-step NAME`` one of them) to the next full upgrade. A step
 that leaves blocking work undone exits ``4`` (``EXIT_UPGRADE_STEP_FAILED``);
 non-blocking follow-ups are printed as ``==> WARNING`` lines.
+
+**Service-account retirement (theme-8 Phase 4).** On a full upgrade whose
+admin database has not yet applied the service-account drop
+(``e2f3a4b5c6d7``), the runner first brings admin to the revision before it,
+then migrates every remaining service account to a successor agent, verifies
+the copy, and sweeps the service-account leftovers
+(``ServiceAccountMigrationService.retire``) — and only then lets admin reach
+head. The step lives here rather than inside the Alembic revision because it
+writes the control database too (the ``sva_``-keyed inline permission rules),
+which an admin migration cannot reliably reach in a split deployment, and
+because migrations must not import application code. It is not an upgrade
+step: those run after head, i.e. after the drop. A refused verification exits
+``4`` with admin still before the drop, and nothing swept; a re-run is safe.
+A partial or targeted upgrade skips it — the drop revision then refuses on
+any service account the retirement has not finished. A retirement that
+retired any service account prints ``==> WARNING`` lines on stdout listing
+each service account → successor agent id: ``sak_`` keys stop working in 0.41
+and their callers must switch to a ``jak_`` key of the successor agent. It
+also prints one ``==> WARNING (service-account retirement, not copied)`` line
+per grant, binding, or inline rule list it deliberately did not copy to a
+successor (copying could have resurrected access removed from it), so the
+operator can re-grant what is still needed.
 """
 
 from __future__ import annotations
@@ -37,7 +59,17 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-from jentic_one.control.services.upgrade_steps import STEP_NAMES, UpgradeStepService
+from jentic_one.control.services.service_account_migration import (
+    SAK_KEYS_RETIRED_WARNING,
+    RetirementOutcome,
+    ServiceAccountMigrationService,
+    ServiceAccountRetirementError,
+)
+from jentic_one.control.services.upgrade_steps import (
+    RETIRED_STEP_NAMES,
+    UpgradeStepService,
+    step_names,
+)
 from jentic_one.migrations.targets import DB_TARGETS
 from jentic_one.shared.config import load_config
 from jentic_one.shared.context import Context
@@ -52,6 +84,11 @@ _UPGRADE_STEP_DBS = frozenset({"admin", "control"})
 #: operator must resolve. Non-zero so a Helm pre-upgrade hook (or any wrapper)
 #: stops before the new version serves traffic.
 EXIT_UPGRADE_STEP_FAILED = 4
+
+#: The admin revision that drops the service-account tables, and the one
+#: before it. The retirement runs between the two (see the module docstring).
+SA_DROP_REVISION = "e2f3a4b5c6d7"  # pragma: allowlist secret
+SA_DROP_PARENT_REVISION = "d1e2f3a4b5c6"  # pragma: allowlist secret
 
 
 def _valid_dbs() -> tuple[str, ...]:
@@ -127,6 +164,80 @@ def status(db_name: str) -> tuple[str, list[str], list[str]]:
     return STATE_PENDING, current, heads
 
 
+def sa_retirement_pending() -> bool:
+    """Whether the admin DB still has to pass the service-account drop.
+
+    False for an uninitialized database (a fresh install has no service
+    accounts; the drop revision's own gate passes on empty tables) and for one
+    that already applied :data:`SA_DROP_REVISION`.
+    """
+    cfg = _build_config("admin")
+    probe: dict[str, list[str]] = {}
+    cfg.attributes["status_probe"] = probe
+    command.current(cfg)
+    current = probe.get("current", [])
+    if not current:
+        return False
+    script = ScriptDirectory.from_config(cfg)
+    applied = {
+        rev.revision for rev in script.iterate_revisions(tuple(current), "base") if rev is not None
+    }
+    return SA_DROP_REVISION not in applied
+
+
+async def _retire_service_accounts_async() -> int:
+    config = load_config()
+    async with Context(
+        config, allowed_dbs=set(_UPGRADE_STEP_DBS), refresh_providers_on_boot=False
+    ) as ctx:
+        try:
+            outcome = await ServiceAccountMigrationService(ctx).retire()
+        except ServiceAccountRetirementError as exc:
+            print(f"==> {exc}", file=sys.stderr, flush=True)
+            return EXIT_UPGRADE_STEP_FAILED
+    print(f"==> service-account retirement: {outcome.action}", flush=True)
+    print(json.dumps(asdict(outcome)), flush=True)
+    _print_sak_warning(outcome)
+    _print_not_copied_warnings(outcome)
+    return 0
+
+
+def _print_sak_warning(outcome: RetirementOutcome) -> None:
+    """Tell the operator which agents replaced which service accounts (ids only)."""
+    if not outcome.successors:
+        return
+    print(f"==> WARNING (service-account retirement): {SAK_KEYS_RETIRED_WARNING}", flush=True)
+    for sa_id, agent_id in outcome.successors.items():
+        target = agent_id or "no successor agent (the account was not active or disabled)"
+        print(f"==> WARNING   {sa_id} -> {target}", flush=True)
+
+
+def _print_not_copied_warnings(outcome: RetirementOutcome) -> None:
+    """One line per grant/binding/rule list withheld so removed access stays removed."""
+    for line in outcome.warnings:
+        print(f"==> WARNING (service-account retirement, not copied): {line}", flush=True)
+
+
+def retire_service_accounts() -> int:
+    """Migrate, verify and sweep the remaining service accounts (pre-drop).
+
+    Returns ``0`` on success, :data:`EXIT_UPGRADE_STEP_FAILED` when the
+    verification refused or the step could not run — the admin schema then
+    stays before the drop revision and nothing was swept.
+    """
+    try:
+        return asyncio.run(_retire_service_accounts_async())
+    except Exception as exc:
+        print(
+            f"==> the service-account retirement could not run ({type(exc).__name__}: "
+            f"{exc}); nothing was dropped (admin stays at {SA_DROP_PARENT_REVISION}). "
+            "Fix the cause and re-run the migration.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return EXIT_UPGRADE_STEP_FAILED
+
+
 def _run_check(order: list[str]) -> int:
     """Print each database's schema state and return the process exit code.
 
@@ -160,7 +271,12 @@ def _run_check(order: list[str]) -> int:
 
 async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
     config = load_config()
-    async with Context(config, allowed_dbs=set(_UPGRADE_STEP_DBS)) as ctx:
+    # The upgrade steps never resolve a credential provider, and the migrate
+    # Job is not handed the credential keyset, so skip the boot-time provider
+    # refresh rather than have it fail to decrypt stored client secrets.
+    async with Context(
+        config, allowed_dbs=set(_UPGRADE_STEP_DBS), refresh_providers_on_boot=False
+    ) as ctx:
         outcomes = await UpgradeStepService(ctx).run(skip=skip)
     failed = False
     for outcome in outcomes:
@@ -185,8 +301,11 @@ def run_upgrade_steps(skip: Collection[str] = ()) -> int:
 
     Any unexpected error (config, connectivity, a bug) is reported as an
     upgrade-step failure — the schema is already at head, so the exit code must
-    say "steps undone", not "migration failed".
+    say "steps undone", not "migration failed". With no step registered this
+    is a no-op that never touches config or the databases.
     """
+    if not step_names():
+        return 0
     try:
         return asyncio.run(_run_upgrade_steps_async(skip))
     except Exception as exc:
@@ -237,10 +356,12 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-upgrade-step",
         action="append",
         default=[],
-        choices=STEP_NAMES,
+        choices=(*step_names(), *RETIRED_STEP_NAMES),
         metavar="NAME",
         help="Skip one post-migration data step (repeatable; "
-        f"one of: {', '.join(STEP_NAMES)}). It then runs on the next full upgrade.",
+        f"one of: {', '.join(step_names()) or 'none registered'}). "
+        "It then runs on the next full upgrade. Names of deleted steps are "
+        "accepted and ignored.",
     )
     args = parser.parse_args(argv)
 
@@ -258,13 +379,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"==> {db_name} rolled back", flush=True)
     else:
         target = args.target or "head"
-        for db_name in order:
-            print(f"==> Migrating {db_name} to {target}", flush=True)
-            upgrade(db_name, target)
-            print(f"==> {db_name} complete", flush=True)
         # The steps need every database they touch at head; a partial or
         # explicitly targeted upgrade leaves them for the next full one.
         full_upgrade = args.target is None and _UPGRADE_STEP_DBS.issubset(order)
+        # The retirement writes control too, so control must be at head first
+        # (the default order runs it before admin; a hand-written --db order
+        # may not — the drop revision's gate then refuses unfinished rows).
+        retire_before_admin = full_upgrade and order.index("control") < order.index("admin")
+        for db_name in order:
+            if db_name == "admin" and retire_before_admin and sa_retirement_pending():
+                print(f"==> Migrating admin to {SA_DROP_PARENT_REVISION}", flush=True)
+                upgrade("admin", SA_DROP_PARENT_REVISION)
+                print("==> Retiring service accounts (migrate, verify, sweep)", flush=True)
+                code = retire_service_accounts()
+                if code:
+                    return code
+            print(f"==> Migrating {db_name} to {target}", flush=True)
+            upgrade(db_name, target)
+            print(f"==> {db_name} complete", flush=True)
         if full_upgrade and not args.skip_upgrade_steps:
             return run_upgrade_steps(skip=args.skip_upgrade_step)
     return 0

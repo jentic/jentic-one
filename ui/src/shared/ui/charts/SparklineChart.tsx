@@ -1,6 +1,6 @@
 /**
  * SparklineChart — tiny inline trend line. Promoted from
- * `modules/monitor/components/SparklineChart` so both Monitor and Dashboard
+ * `modules/monitor/components/SparklineChart` so any surface
  * can render the `trend`
  * arrays the usage endpoint returns per top row (one point per aggregate
  * bucket — 24/28/30 for the standard windows); the path scales to any

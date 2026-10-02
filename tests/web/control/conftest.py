@@ -7,11 +7,9 @@ from collections.abc import AsyncGenerator, Iterator
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, text
+from sqlalchemy import text
 
 from jentic_one.admin.core.permissions import compute_effective
-from jentic_one.control.core.schema.access_request_items import AccessRequestItem
-from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
@@ -36,35 +34,6 @@ def _effective(*permissions: str) -> list[str]:
 
 FILER_SUB = "agnt_webtest_filer"
 OWNER_SUB = "usr_webtest_owner"
-REVIEWER_SUB = "usr_webtest_reviewer"
-UNRELATED_SUB = "usr_webtest_unrelated"
-ADMIN_SUB = "usr_webtest_admin"
-
-FILER_IDENTITY = Identity(
-    sub=FILER_SUB,
-    email="filer@test.local",
-    permissions=[],
-    actor_type=ActorType.AGENT,
-    parent_actor_id=OWNER_SUB,
-)
-
-OWNER_IDENTITY = Identity(
-    sub=OWNER_SUB,
-    email="owner@test.local",
-    permissions=["agents:write"],
-)
-
-UNRELATED_IDENTITY = Identity(
-    sub=UNRELATED_SUB,
-    email="unrelated@test.local",
-    permissions=["agents:write"],
-)
-
-ADMIN_IDENTITY = Identity(
-    sub=ADMIN_SUB,
-    email="admin@test.local",
-    permissions=["org:admin"],
-)
 
 
 def _build_app(ctx: Context, identity: Identity) -> FastAPI:
@@ -80,12 +49,11 @@ def _build_app(ctx: Context, identity: Identity) -> FastAPI:
 
 @pytest.fixture()
 async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
-    """Seed an agent + binding so prerequisite checks pass.
+    """Seed an agent + a direct credential binding plus the control-side credentials.
 
-    Also seeds the control-side toolkit + credential referenced by the
-    ``credential:bind`` items the tests file, so that approving such an item
-    records a real binding (the FKs on ``toolkit_credential_bindings`` require
-    both rows to exist).
+    The direct binding targets an *unrelated* credential: it makes the agent
+    "bound to something" without granting visibility of the seeded
+    ``cred_001`` (which the bound-orphan tests rely on).
     """
     async with web_context.admin_db.session() as session:
         await session.execute(
@@ -98,21 +66,18 @@ async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
         )
         await session.execute(
             text(
-                "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id) "
-                "VALUES (:id, :agent_id, :toolkit_id) "
+                "INSERT INTO agent_credential_bindings (id, agent_id, credential_id) "
+                "VALUES (:id, :agent_id, :credential_id) "
                 "ON CONFLICT DO NOTHING"
             ),
-            {"id": "atb_webtest_binding", "agent_id": FILER_SUB, "toolkit_id": "tk_target"},
+            {
+                "id": "acb_webtest_binding",
+                "agent_id": FILER_SUB,
+                "credential_id": "cred_webtest_other",
+            },
         )
         await session.commit()
     async with web_context.control_db.session() as session:
-        await session.execute(
-            text(
-                "INSERT INTO toolkits (id, name, created_by) "
-                "VALUES (:id, :name, :created_by) ON CONFLICT DO NOTHING"
-            ),
-            {"id": "tk_target", "name": "tk-target-webtest", "created_by": OWNER_SUB},
-        )
         await session.execute(
             text(
                 "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
@@ -125,12 +90,24 @@ async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
                 "created_by": OWNER_SUB,
             },
         )
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
+                "VALUES (:id, 'token_value', :name, :vendor, :created_by) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "id": "cred_webtest_other",
+                "name": "cred-webtest-other",
+                "vendor": "webtest.local",
+                "created_by": OWNER_SUB,
+            },
+        )
         await session.commit()
     yield
     async with web_context.admin_db.session() as session:
         await session.execute(
-            text("DELETE FROM agent_toolkit_bindings WHERE id = :id"),
-            {"id": "atb_webtest_binding"},
+            text("DELETE FROM agent_credential_bindings WHERE id = :id"),
+            {"id": "acb_webtest_binding"},
         )
         await session.execute(
             text("DELETE FROM agents WHERE id = :id"),
@@ -139,24 +116,8 @@ async def seed_binding(web_context: Context) -> AsyncGenerator[None, None]:
         await session.commit()
     async with web_context.control_db.session() as session:
         await session.execute(
-            text("DELETE FROM toolkit_credential_bindings WHERE toolkit_id = :id"),
-            {"id": "tk_target"},
+            text("DELETE FROM credentials WHERE id IN ('cred_001', 'cred_webtest_other')")
         )
-        await session.execute(text("DELETE FROM credentials WHERE id = :id"), {"id": "cred_001"})
-        await session.execute(text("DELETE FROM toolkits WHERE id = :id"), {"id": "tk_target"})
-        await session.commit()
-
-
-@pytest.fixture()
-async def clean_access_requests(web_context: Context) -> AsyncGenerator[None, None]:
-    async with web_context.control_db.session() as session:
-        await session.execute(delete(AccessRequestItem))
-        await session.execute(delete(AccessRequest))
-        await session.commit()
-    yield
-    async with web_context.control_db.session() as session:
-        await session.execute(delete(AccessRequestItem))
-        await session.execute(delete(AccessRequest))
         await session.commit()
 
 
@@ -174,56 +135,9 @@ BOUND_ORPHAN_IDENTITY = Identity(
 
 
 @pytest.fixture()
-def bound_orphan_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    """TestClient as a bound-but-orphaned agent (owns nothing, bound to tk_target)."""
+def bound_orphan_client(web_context: Context, seed_binding: None) -> Iterator[TestClient]:
+    """TestClient as a bound-but-orphaned agent (owns nothing, bound to an unrelated credential)."""
     app = _build_app(web_context, BOUND_ORPHAN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def filer_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, FILER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def owner_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, OWNER_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def unrelated_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, UNRELATED_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def admin_client(
-    web_context: Context, seed_binding: None, clean_access_requests: None
-) -> Iterator[TestClient]:
-    app = _build_app(web_context, ADMIN_IDENTITY)
-    with TestClient(app) as tc:
-        yield tc
-
-
-@pytest.fixture()
-def unauthed_client(web_context: Context, clean_access_requests: None) -> Iterator[TestClient]:
-    """TestClient with no identity override — exercises real auth path (no token → 401)."""
-    app = create_app(web_context)
-    app.router.lifespan_context = noop_lifespan
     with TestClient(app) as tc:
         yield tc
 
@@ -266,7 +180,7 @@ def wrong_scope_client(web_context: Context) -> Iterator[TestClient]:
         yield tc
 
 
-# --- Credential-focused client (credential CRUD, no access-request seeding) ---
+# --- Credential-focused client (credential CRUD) ---
 
 CRED_WRITER_IDENTITY = Identity(
     sub="usr_webtest_cred_writer",

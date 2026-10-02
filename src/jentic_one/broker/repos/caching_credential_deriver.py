@@ -1,6 +1,7 @@
 """Short-TTL, single-flighted cache around direct-binding credential derivation.
 
-The direct-binding twin of ``caching_toolkit_deriver``: the cross-DB
+The direct-binding twin of the pre-6b ``caching_toolkit_deriver`` (deleted with
+the toolkit path): the cross-DB
 ``derive_credentials`` lookup (admin agent→credential bindings ∩ control
 covering credentials) runs on every direct-path request — two DB hits per
 request. Bindings change infrequently, so this wraps the authoritative resolver

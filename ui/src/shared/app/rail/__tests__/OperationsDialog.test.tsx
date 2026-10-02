@@ -58,19 +58,17 @@ describe('OperationsDialog', () => {
 		expect(await screen.findByText(/No operations match/)).toBeInTheDocument();
 	});
 
-	it('explains each effect present in the grant, including "Needs approval"', () => {
+	it('explains each effect present in the grant, strictest first', () => {
 		open([
 			{ effect: 'allow', operations: ['a', 'b'] },
-			{ effect: 'require-approval', methods: ['POST'], operations: ['transfer'] },
+			{ effect: 'deny', methods: ['DELETE'] },
 		]);
 		const dialog = screen.getByRole('dialog');
-		// The legend spells out what require-approval does at call time so the
-		// reviewer doesn't have to guess — each held call files a new request.
-		expect(
-			within(dialog).getByText(/held and files a new access request/i),
-		).toBeInTheDocument();
-		// Allow is explained too.
+		// The legend spells out what each effect does at call time.
+		expect(within(dialog).getByText(/Block overrides everything else/i)).toBeInTheDocument();
 		expect(within(dialog).getByText(/no human in the loop/i)).toBeInTheDocument();
+		// Nothing advertises a human-approval tier — the broker has none.
+		expect(within(dialog).queryByText(/Needs approval/i)).not.toBeInTheDocument();
 	});
 
 	it('hides the filter for small grants', () => {

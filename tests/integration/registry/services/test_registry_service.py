@@ -63,6 +63,8 @@ async def _seed_operation(
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 
@@ -117,17 +119,23 @@ async def test_resolve_operation_returns_operation_and_api_context(
     assert result.path_params == {"petId": "123"}
 
 
-async def test_resolve_operation_uses_display_name_when_set(
+async def test_resolve_operation_ignores_display_name(
     registry_db: DatabaseSession, clean_url_index: None
 ) -> None:
-    """``APIReference.name`` falls back to the API's display_name when present."""
-    api = Api(vendor="acme.com", name="pets-api", version="v1", display_name="Acme Pets")
+    """``APIReference.name`` is the canonical name even when a display_name is set.
+
+    The broker matches credentials on this identity, so an editable display
+    label (including a case-only variant of the name) must not change it.
+    """
+    api = Api(vendor="acme.com", name="pets-api", version="v1", display_name="Pets-API")
     async with registry_db.session() as session:
         session.add(api)
         await session.flush()
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 
@@ -154,7 +162,9 @@ async def test_resolve_operation_uses_display_name_when_set(
         result = await svc.resolve_operation(method="GET", url="https://api.acme.com/v1/pets")
 
     assert result is not None
-    assert result.api.name == "Acme Pets"
+    assert result.api.vendor == "acme.com"
+    assert result.api.name == "pets-api"
+    assert result.api.version == "v1"
 
 
 async def test_resolve_operation_unknown_url_returns_none(
@@ -188,6 +198,8 @@ async def test_resolve_operation_ambiguous_match_raises(
         revision = ApiRevision(api_id=api.id, state="published", source_type="url")
         session.add(revision)
         await session.flush()
+        # Unpinned resolution only serves the API's live revision.
+        api.current_revision_id = revision.id
         rev_id = revision.id
         await session.commit()
 

@@ -12,12 +12,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 from opentelemetry import trace
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jentic_one.shared.config import AppConfig
-from jentic_one.shared.redaction import redact_event
+from jentic_one.shared.redaction import redact_event, redact_url_query
 
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 
@@ -35,6 +36,35 @@ def add_otel_context(
         event_dict["trace_id"] = format(ctx.trace_id, "032x")
         event_dict["span_id"] = format(ctx.span_id, "016x")
     return event_dict
+
+
+class _OutboundUrlQueryFilter(logging.Filter):
+    """Mask query-string values in httpx's ``HTTP Request: <METHOD> <url> …`` line.
+
+    httpx logs every request at INFO with the full URL, and the broker appends
+    ``location=query`` API keys to the upstream query string. The URL argument
+    is rewritten via :func:`redact_url_query` (host and path kept) before any
+    handler formats the record. Never drops a record.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and args:
+            record.args = tuple(
+                redact_url_query(str(arg)) if isinstance(arg, httpx.URL) else arg for arg in args
+            )
+        return True
+
+
+# Third-party loggers whose DEBUG output is raw outbound wire detail (see
+# ``configure_logging``). Gated together by ``logging.http_wire_trace``.
+_WIRE_TRACE_LOGGERS: tuple[str, ...] = ("httpcore", "hpack")
+
+
+def _install_httpx_url_filter() -> None:
+    httpx_logger = logging.getLogger("httpx")
+    if not any(isinstance(f, _OutboundUrlQueryFilter) for f in httpx_logger.filters):
+        httpx_logger.addFilter(_OutboundUrlQueryFilter())
 
 
 def _build_file_handler(config: AppConfig) -> RotatingFileHandler:
@@ -113,6 +143,21 @@ def configure_logging(config: AppConfig) -> None:
     # "operation ... completed"), which floods stdout when the app runs at DEBUG.
     # Clamp it to INFO so our own DEBUG logs stay readable.
     logging.getLogger("aiosqlite").setLevel(logging.INFO)
+
+    # Outbound wire-level DEBUG loggers can quote injected credentials: httpcore's
+    # trace lines ("send_request_headers.failed exception=…") repr the raw
+    # transport exception (which can include an outbound header value), and
+    # hpack (HTTP/2 header compression, on by default via ``broker.http2``) logs
+    # every encoded header name/value, including ``:path`` with its query string.
+    # Clamp them to INFO so those never reach a sink, unless an operator
+    # explicitly opts into wire tracing for local debugging.
+    wire_level = logging.NOTSET if config.logging.http_wire_trace else logging.INFO
+    for name in _WIRE_TRACE_LOGGERS:
+        logging.getLogger(name).setLevel(wire_level)
+
+    # httpx's INFO request line carries the full outbound URL — mask its query
+    # values (query-located API keys) before any handler formats it.
+    _install_httpx_url_filter()
 
 
 def _is_valid_request_id(value: str) -> bool:

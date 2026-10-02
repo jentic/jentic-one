@@ -15,12 +15,7 @@ import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
 
-function renderCard(props: {
-	actorKind: 'agent' | 'service-account';
-	actorId: string;
-	actorName: string;
-	canEdit?: boolean;
-}) {
+function renderCard(props: { actorId: string; actorName: string; canEdit?: boolean }) {
 	return renderWithProviders(
 		<>
 			<ScopesCard {...props} />
@@ -36,7 +31,7 @@ describe('ScopesCard', () => {
 	});
 
 	it('renders the granted scopes as chips for an agent', async () => {
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		const list = await screen.findByRole('list', { name: 'Granted scopes' });
 		expect(within(list).getByText('capabilities:execute')).toBeInTheDocument();
 		expect(within(list).getByText('executions:read')).toBeInTheDocument();
@@ -44,7 +39,6 @@ describe('ScopesCard', () => {
 
 	it('shows an honest empty state when no scopes are granted', async () => {
 		renderCard({
-			actorKind: 'agent',
 			actorId: 'agnt_pending_1',
 			actorName: 'inbox-triage-bot',
 		});
@@ -53,7 +47,6 @@ describe('ScopesCard', () => {
 
 	it('hides the edit affordance when canEdit is false', async () => {
 		renderCard({
-			actorKind: 'agent',
 			actorId: 'agnt_active_1',
 			actorName: 'support-agent',
 			canEdit: false,
@@ -66,7 +59,7 @@ describe('ScopesCard', () => {
 
 	it('grants a new scope and reflects it back as a chip', async () => {
 		const user = userEvent.setup();
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -94,7 +87,7 @@ describe('ScopesCard', () => {
 			}),
 		);
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		const list = await screen.findByRole('list', { name: 'Granted scopes' });
 		expect(within(list).getByText('executions:read')).toBeInTheDocument();
 
@@ -125,7 +118,7 @@ describe('ScopesCard', () => {
 
 	it('keeps Save disabled until the selection differs from the current grants', async () => {
 		const user = userEvent.setup();
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -146,27 +139,29 @@ describe('ScopesCard', () => {
 		expect(save).toBeDisabled();
 	});
 
-	it('disables scopes the caller cannot grant', async () => {
-		const user = userEvent.setup();
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
-		await screen.findByRole('list', { name: 'Granted scopes' });
+	it.each(['org:admin', 'agents:write'])(
+		'disables scopes the caller cannot grant (%s)',
+		async (scope) => {
+			const user = userEvent.setup();
+			renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+			await screen.findByRole('list', { name: 'Granted scopes' });
 
-		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
-		const dialog = await screen.findByRole('dialog');
-		// `org:admin` is the real catalogue's non-grantable entry for a non-admin
-		// operator (grantable_by_caller: false) → its row must be disabled.
-		await user.type(within(dialog).getByLabelText('Search scopes'), 'org:admin');
+			await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
+			const dialog = await screen.findByRole('dialog');
+			// `org:admin` and `agents:write` are never grantable to an agent by a
+			// non-admin operator (agent scope ceiling; grantable_by_caller: false)
+			// → their rows must be disabled.
+			await user.type(within(dialog).getByLabelText('Search scopes'), scope);
 
-		const orgAdmin = await within(dialog).findByRole('checkbox', {
-			name: 'org:admin',
-		});
-		expect(orgAdmin).toBeDisabled();
-	});
+			const row = await within(dialog).findByRole('checkbox', { name: scope });
+			expect(row).toBeDisabled();
+		},
+	);
 
 	it('surfaces a clear message if the backend rejects a grant with 403', async () => {
-		// The real actor-scope PUT does not 403 on grantability today, but the
-		// component handles a 403 defensively (e.g. future enforcement / a perms
-		// change mid-session). Inject one to cover that path.
+		// The actor-scope PUT 403s (`scope_not_grantable`) a scope above the
+		// caller's ceiling — normally pre-empted by the disabled rows, but it can
+		// still happen (e.g. a perms change mid-session). Inject one to cover it.
 		const user = userEvent.setup();
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {
@@ -175,7 +170,7 @@ describe('ScopesCard', () => {
 			}),
 		);
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -193,45 +188,20 @@ describe('ScopesCard', () => {
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 	});
 
-	it('edits scopes for a service account too', async () => {
-		const user = userEvent.setup();
-		renderCard({
-			actorKind: 'service-account',
-			actorId: 'sva_active_1',
-			actorName: 'metrics-exporter',
-		});
-		const list = await screen.findByRole('list', { name: 'Granted scopes' });
-		expect(within(list).getByText('credentials:read')).toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: 'Edit scopes for metrics-exporter' }));
-		const dialog = await screen.findByRole('dialog');
-		await user.type(within(dialog).getByLabelText('Search scopes'), 'agents:read');
-		await user.click(await within(dialog).findByRole('checkbox', { name: 'agents:read' }));
-		await user.click(within(dialog).getByRole('button', { name: 'Save scopes' }));
-
-		await waitFor(() => {
-			const updated = screen.getByRole('list', { name: 'Granted scopes' });
-			expect(within(updated).getByText('agents:read')).toBeInTheDocument();
-		});
-	});
-
 	it('renders a default-granted owner scope as an editable catalogue chip', async () => {
-		// `owner:access-requests:read` is granted to `agnt_active_1` by default and
-		// is now catalogued, so it must render as a normal editable picker row
-		// (a checkbox), not as a preserved non-catalogue scope.
+		// `owner:resources:read` is granted to `agnt_active_1` by default and is
+		// catalogued, so it must render as a normal editable picker row (a
+		// checkbox), not as a preserved non-catalogue scope.
 		const user = userEvent.setup();
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		const list = await screen.findByRole('list', { name: 'Granted scopes' });
-		expect(within(list).getByText('owner:access-requests:read')).toBeInTheDocument();
+		expect(within(list).getByText('owner:resources:read')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
 		const dialog = await screen.findByRole('dialog');
-		await user.type(
-			within(dialog).getByLabelText('Search scopes'),
-			'owner:access-requests:read',
-		);
+		await user.type(within(dialog).getByLabelText('Search scopes'), 'owner:resources:read');
 		const checkbox = await within(dialog).findByRole('checkbox', {
-			name: 'owner:access-requests:read',
+			name: 'owner:resources:read',
 		});
 		// Catalogue-backed and already granted → checked and editable (not disabled).
 		expect(checkbox).toBeChecked();
@@ -251,7 +221,7 @@ describe('ScopesCard', () => {
 			}),
 		);
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -280,7 +250,7 @@ describe('ScopesCard', () => {
 		// catalogue. It used to leak into the picker's `selectedScopes`, inflating
 		// "X of Y selected" so X > Y and "Select all" could never flip.
 		const user = userEvent.setup();
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -333,7 +303,7 @@ describe('ScopesCard', () => {
 			}),
 		);
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -363,7 +333,7 @@ describe('ScopesCard', () => {
 			}),
 		);
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -380,7 +350,7 @@ describe('ScopesCard', () => {
 		const user = userEvent.setup();
 		worker.use(createErrorHandler('put', '/agents/:id/scopes', { networkError: true }));
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -400,7 +370,7 @@ describe('ScopesCard', () => {
 	it('shows an error (and hides Edit) when the actor scopes fail to load', async () => {
 		worker.use(createErrorHandler('get', '/agents/:id/scopes', { status: 500 }));
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 
 		expect(await screen.findByRole('alert')).toBeInTheDocument();
 		expect(
@@ -412,7 +382,7 @@ describe('ScopesCard', () => {
 		const user = userEvent.setup();
 		worker.use(createErrorHandler('get', '/permissions', { status: 500 }));
 
-		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
 		await screen.findByRole('list', { name: 'Granted scopes' });
 
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
@@ -423,7 +393,6 @@ describe('ScopesCard', () => {
 
 	it('omits the grant prompt in the empty state when read-only', async () => {
 		renderCard({
-			actorKind: 'agent',
 			actorId: 'agnt_pending_1',
 			actorName: 'inbox-triage-bot',
 			canEdit: false,
@@ -437,17 +406,18 @@ describe('ScopesCard', () => {
 	it('has no critical a11y violations', async () => {
 		const user = userEvent.setup();
 		const { container } = renderCard({
-			actorKind: 'agent',
 			actorId: 'agnt_active_1',
 			actorName: 'support-agent',
 		});
 		await screen.findByRole('list', { name: 'Granted scopes' });
 		await checkA11y(container);
 
-		// Also check the editor dialog (picker + checkboxes) once it's open.
+		// Also check the editor dialog (picker + checkboxes) once it's open — the
+		// second audit is scoped to the dialog, since its backdrop makes the card
+		// behind it indeterminate to axe (the card got its own audit above).
 		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
 		await screen.findByRole('dialog');
 		await within(await screen.findByRole('dialog')).findByLabelText('Search scopes');
-		await checkA11y(container);
+		await checkA11y(document.body, { modal: true });
 	});
 });

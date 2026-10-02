@@ -108,13 +108,6 @@ def _make_user_row(*, active: bool = True) -> MagicMock:
     return row
 
 
-def _make_service_account_row(*, status: str = "active") -> MagicMock:
-    row = MagicMock()
-    row.id = "sva_x"
-    row.status = status
-    return row
-
-
 @patch("jentic_one.auth.services.token_service.RefreshTokenRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
 async def test_issue_pair_returns_prefixed_tokens(
@@ -573,24 +566,22 @@ async def test_resolve_missing_agent_row_fails_closed(
 
 
 @patch("jentic_one.auth.services.token_service.ActorScopeGrantRepository")
-@patch("jentic_one.auth.services.token_service.ServiceAccountRepository")
 @patch("jentic_one.auth.services.token_service.AccessTokenRepository")
-async def test_resolve_disabled_service_account_token_is_inactive(
+async def test_resolve_residual_service_account_token_fails_closed(
     mock_at_repo: MagicMock,
-    mock_sa_repo: MagicMock,
     mock_grant_repo: MagicMock,
 ) -> None:
+    """Theme-8 Phase 4: ``service_account`` is no longer an actor type. A
+    residual token row carrying it resolves to nothing (never raises)."""
     ctx = _make_ctx()
     at_row = _make_access_token_row(actor_id="sva_x", actor_type="service_account")
     mock_at_repo.get_by_hash = AsyncMock(return_value=at_row)
-    mock_sa_repo.get_by_id = AsyncMock(return_value=_make_service_account_row(status="disabled"))
     mock_grant_repo.list_for_actor = AsyncMock(return_value=[])
 
     svc = TokenService(ctx)
     resolved = await svc.resolve_access_token("at_satoken")
 
-    assert resolved is not None
-    assert resolved.active is False
+    assert resolved is None
 
 
 @patch("jentic_one.auth.services.token_service.UserRepository")

@@ -10,13 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import CompoundSelect
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.models import ActorStatus, ActorType
 
 
 def _build_union() -> CompoundSelect[Any]:
-    """Build a UNION ALL query across users, agents, and service accounts."""
+    """Build a UNION ALL query across users and agents.
+
+    Service accounts left the directory in theme-8 Phase 2: every SA was
+    migrated to a successor agent (which the agents arm lists).
+    """
     users_q = select(
         User.id.label("id"),
         literal(ActorType.USER, type_=String).label("actor_type"),
@@ -35,21 +38,11 @@ def _build_union() -> CompoundSelect[Any]:
         Agent.created_at.label("created_at"),
     )
 
-    service_accounts_q = select(
-        ServiceAccount.id.label("id"),
-        literal(ActorType.SERVICE_ACCOUNT, type_=String).label("actor_type"),
-        ServiceAccount.name.label("name"),
-        case((ServiceAccount.status == ActorStatus.ACTIVE, literal(True)), else_=literal(False))
-        .cast(Boolean)
-        .label("active"),
-        ServiceAccount.created_at.label("created_at"),
-    )
-
-    return union_all(users_q, service_accounts_q, agents_q)
+    return union_all(users_q, agents_q)
 
 
 class ActorDirectoryRepository:
-    """Read-only actor directory — UNION ALL across users, agents, service accounts."""
+    """Read-only actor directory — UNION ALL across users and agents."""
 
     @staticmethod
     async def list_all(

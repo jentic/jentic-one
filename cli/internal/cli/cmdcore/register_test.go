@@ -87,7 +87,7 @@ func valueFor(flag string) string {
 
 // TestIsMachineCtx pins AGT-21's mode gate: register (unfenced, run by agents)
 // consults the resolved mode via the context to decide whether its human
-// progress prose is allowed on stdout. Agent/service-account => machine (prose
+// progress prose is allowed on stdout. Agent => machine (prose
 // suppressed); human or a missing state (register outside the interceptor) =>
 // prose allowed.
 func TestIsMachineCtx(t *testing.T) {
@@ -97,7 +97,6 @@ func TestIsMachineCtx(t *testing.T) {
 		want bool
 	}{
 		{"agent", &clictx.ActiveState{Mode: clictx.ModeAgent}, true},
-		{"service-account", &clictx.ActiveState{Mode: clictx.ModeServiceAccount}, true},
 		{"human", &clictx.ActiveState{Mode: clictx.ModeHuman}, false},
 		{"no-state fails open to human", nil, false},
 	}

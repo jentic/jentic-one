@@ -11,17 +11,19 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
-from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
+from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
@@ -38,6 +40,7 @@ from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.errors import request_validation_error_handler
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -136,6 +139,7 @@ def _start_worker(
     *,
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
+    execution_authorizer: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -159,6 +163,10 @@ def _start_worker(
     response enrichment, single ``executions`` persistence) and resolves
     credentials before the call. Without it the execution handler is not
     registered (a surface with no broker has no upstream calls to run).
+    ``execution_authorizer`` is the broker's run-time re-authorizer: every
+    queued execution is re-checked with the sync route's policy before any
+    credential is resolved (the handler refuses a credential injector without
+    one).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
@@ -179,6 +187,7 @@ def _start_worker(
                 executor=upstream_executor,
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
+                execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
             ),
@@ -258,75 +267,55 @@ def _start_catalog_update_scanner(
     return scanner, task
 
 
-def _start_key_retirement(ctx: Context, enabled_apps: set[str]) -> asyncio.Task[None] | None:
-    """One-shot toolkit-key auto-migration at boot (theme-5 Phase 4).
-
-    An upgrade must not silently break headless ``jntc_live_`` callers: the
-    resolver that served them is gone, so every resolvable key needs its
-    successor service account before the first request. The migration runner
-    already performs the job as an upgrade step; this boot run is the safety
-    net for a process that starts without a fresh migration. The job is
-    idempotent (stamped keys short-circuit) and holds a cross-process run
-    lock, so every replica running it at once is safe and a cheap no-op after
-    the first. Gate on the control surface owning the toolkit tables plus both
-    DBs being reachable. Best-effort: a failure is loud in the logs but never
-    blocks boot — the ``retire-toolkit-keys`` CLI (with ``--owner`` for
-    unresolvable creators) is the recovery path.
-    """
-    if "control" not in enabled_apps:
-        return None
-    if not (ctx.has_db("control") and ctx.has_db("admin")):
-        return None
-
-    async def _run() -> None:
-        try:
-            outcomes = await KeyRetirementService(ctx).run()
-        except Exception:
-            _logger.exception("toolkit_key_retirement_startup_failed")
-            return
-        failed = sum(1 for o in outcomes if o.action == "failed")
-        if failed:
-            _logger.error(
-                "toolkit_key_retirement_keys_failed",
-                count=failed,
-                actionable_step=(
-                    "Fix the logged error, then run `jentic_one retire-toolkit-keys`."
-                ),
-            )
-        unresolved = sum(1 for o in outcomes if o.reason == "owner_unresolved")
-        if unresolved:
-            _logger.warning(
-                "toolkit_key_retirement_owner_unresolved",
-                count=unresolved,
-                actionable_step=(
-                    "Run `jentic_one retire-toolkit-keys --owner <admin-email>` "
-                    "to migrate the remaining keys."
-                ),
-            )
-
-    task = asyncio.create_task(_run())
-    _logger.info("toolkit_key_retirement_task_started")
-    return task
-
-
-async def _stop_one_shot(task: asyncio.Task[None] | None) -> None:
-    """Cancel-and-await a one-shot startup task at shutdown.
-
-    Normally the task finished long ago and this is a no-op; on a very fast
-    boot→shutdown (tests, crashed sibling) the cancel keeps teardown from
-    leaking a pending task warning.
-    """
-    if task is None:
-        return
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-
-
 async def _stop_catalog_update_scanner(
     handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
 ) -> None:
     """Signal and cancel the catalog update-notify scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
+def _start_connect_poll_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+    *,
+    catalog_auto_importer: CatalogAutoImportProtocol | None = None,
+) -> tuple[ConnectPollScanner, asyncio.Task[None]] | None:
+    """Start the connect-session polling scanner when the control surface runs it.
+
+    Drives the device-flow vendor poll loop server-side so the HTTP
+    ``/status`` surface stays read-only. Control-plane background job:
+    gate on the ``control`` surface being enabled + control-DB reachability
+    (that's where ``connect_sessions`` lives). Broker-only processes with
+    control-DB access for credential resolution do not run this scanner.
+
+    ``catalog_auto_importer`` is threaded into the ``ConnectSessionService``
+    each tick builds so a scanner-driven device-flow finalise
+    (``_finalise_connected`` → ``_maybe_import_catalog``) can enqueue the
+    vendor's OpenAPI import. Without this, the request-scoped importer on
+    ``app.state`` is invisible to the scanner and every device-flow connect
+    silently skips the auto-import.
+    """
+    if "control" not in enabled_apps:
+        return None
+    if not ctx.has_db("control"):
+        return None
+    scanner = ConnectPollScanner(ctx, catalog_auto_importer=catalog_auto_importer)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("connect_poll_scanner_task_started")
+    return scanner, task
+
+
+async def _stop_connect_poll_scanner(
+    handle: tuple[ConnectPollScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the connect-poll scanner (best-effort)."""
     if handle is None:
         return
     scanner, task = handle
@@ -510,10 +499,15 @@ def create_surface_app(
                 enabled_apps,
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
+                execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
-            key_retirement_task = _start_key_retirement(ctx, enabled_apps)
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                enabled_apps,
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
             try:
                 yield
             finally:
@@ -525,14 +519,17 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
-                await _stop_one_shot(key_retirement_task)
+                await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
                 await ctx.shutdown()
 
-    meta = fastapi_metadata_kwargs()
+    # ``server.public_base_url`` names the control/auth surfaces' origin; a
+    # standalone broker runs on its own, so it keeps the same-origin server.
+    public_base_url = "" if "broker" in enabled_apps else ctx.config.server.public_base_url
+    meta = fastapi_metadata_kwargs(public_base_url)
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
@@ -593,6 +590,7 @@ def create_surface_app(
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -626,18 +624,22 @@ def create_combined_app(
             worker_task = _start_worker(ctx, set(apps))
             scanner_task = _start_expiry_scanner(ctx, set(apps))
             catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-            key_retirement_task = _start_key_retirement(ctx, set(apps))
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                set(apps),
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
             try:
                 yield
             finally:
-                await _stop_one_shot(key_retirement_task)
+                await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
                 await ctx.shutdown()
 
-    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
+    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
@@ -660,6 +662,7 @@ def create_combined_app(
             reason="only the broker catch-all reads this hook and the combined app has no broker",
         )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",

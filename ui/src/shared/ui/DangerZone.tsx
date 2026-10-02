@@ -4,7 +4,7 @@ import { DetailSection } from '@/shared/ui/DetailSection';
 
 /**
  * DangerZone — the Settings tab's destructive-actions card, shared by the
- * detail consoles (agent, service account) so irreversible actions
+ * detail consoles (agent, …) so irreversible actions
  * read identically everywhere: the danger-tinted `DetailSection` shell with
  * one row per action.
  *
@@ -49,7 +49,10 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 					key={action.key}
 					className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
 				>
-					<div className="min-w-0">
+					{/* `flex-1 basis-56`: the text column flexes so a long description
+					    wraps WITHIN its column and the verb stays on the same row —
+					    without a basis, flex-wrap dropped the button to its own line. */}
+					<div className="min-w-0 flex-1 basis-56">
 						<p className="text-foreground text-sm font-medium">{action.title}</p>
 						<p className="text-muted-foreground max-w-prose text-xs">
 							{action.description}

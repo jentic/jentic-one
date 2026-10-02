@@ -46,6 +46,7 @@ class CredentialRepository:
         provider: str = "static",
         provider_account_ref: str | None = None,
         server_variables: dict[str, str] | None = None,
+        state: str = "connected",
     ) -> Credential:
         credential = Credential(
             type=type,
@@ -59,6 +60,7 @@ class CredentialRepository:
             provider=provider,
             provider_account_ref=provider_account_ref,
             server_variables=server_variables,
+            state=state,
         )
         session.add(credential)
         await session.flush()
@@ -139,6 +141,15 @@ class CredentialRepository:
         stmt = select(Credential.id, Credential.name).where(Credential.id.in_(ids))
         result = await session.execute(stmt)
         return {row.id: row.name for row in result}
+
+    @staticmethod
+    async def get_creators_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, str | None]:
+        """Batch-resolve credential IDs to their ``created_by`` (missing ids omitted)."""
+        if not ids:
+            return {}
+        stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
+        result = await session.execute(stmt)
+        return {row.id: row.created_by for row in result}
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

@@ -25,12 +25,12 @@ from jentic_one.auth.web.routers import (
     oauth_client_registration,
     oauth_grants,
     registration,
-    service_accounts,
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
-    SERVICE_ACCOUNT_API_KEY_PREFIX,
+    RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
     ApiKeyResolver,
+    is_retired_service_account_key,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.verify import resolve_permissions_for_actor, verify_token
@@ -65,7 +65,6 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (local_login.router, "", []),
         (identity.router, "", []),
         (agents.router, "", []),
-        (service_accounts.router, "", []),
         (oauth.router, "", []),
         (oauth_client_registration.router, "", []),
         (oauth_grants.router, "", []),
@@ -110,7 +109,9 @@ def make_superset_verifier(ctx: Context) -> Any:
     """Build the full-taxonomy token verifier for combined/standalone apps.
 
     Resolves every platform token shape a signed-in caller can present:
-    agent/service-account API keys (``jak_``/``sak_``), opaque ``at_`` access
+    agent API keys (``jak_``; a retired ``sak_`` key is refused with a 401
+    naming the replacement, and a retired ``jntc_live_`` key is accepted only
+    by the broker), opaque ``at_`` access
     tokens (DB-resolved, live permissions), and HS256 web-session JWTs. This is
     the verifier a combined-app assembler should install so admin/enterprise
     routes accept ``at_`` regardless of surface ordering — the auth surface's
@@ -124,9 +125,14 @@ def _make_auth_verifier(ctx: Context) -> Any:
     api_key_resolver = ApiKeyResolver(ctx.admin_db)
 
     async def _verify(token: str, request: Request) -> Identity:
-        if token.startswith(AGENT_API_KEY_PREFIX) or token.startswith(
-            SERVICE_ACCOUNT_API_KEY_PREFIX
-        ):
+        if is_retired_service_account_key(token):
+            await api_key_resolver.resolve(token)  # logs the refusal; never resolves
+            raise Unauthorized(
+                detail=RETIRED_SERVICE_ACCOUNT_KEY_DETAIL,
+                instance=request.url.path,
+                type="unauthorized",
+            )
+        if token.startswith(AGENT_API_KEY_PREFIX):
             resolved = await api_key_resolver.resolve(token)
             if resolved is None or not resolved.active:
                 raise Unauthorized(
@@ -156,7 +162,7 @@ def _make_auth_verifier(ctx: Context) -> Any:
                 # the AGENT branch of resolve_permissions_for_actor is an
                 # unimplemented stub that returns [], which silently drops every
                 # granted scope — an approved capabilities:read then 403s and
-                # `jentic access refresh` can never take effect. This mirrors the
+                # a token re-mint can never take effect. This mirrors the
                 # broker's InProcessTokenResolver, which already reads row.scopes.
                 # parent_permissions (owner inheritance) is still resolved above.
                 permissions = list(resolved.permissions)

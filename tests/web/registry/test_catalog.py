@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, text
 
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_snapshots import CatalogSnapshot
@@ -587,6 +588,56 @@ def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
         "api_name": "x",
         "catalog_api_id": "x",
     }
+
+
+async def _job_source(ctx: Context, job_id: str) -> dict[str, Any]:
+    async with ctx.admin_db.session() as session:
+        row = await session.get(Job, job_id)
+        assert row is not None
+        assert row.payload is not None
+        return dict(row.payload["sources"][0])
+
+
+async def test_reimport_targets_stored_vendor_of_registered_api(web_context: Context) -> None:
+    """A re-import lands on the vendor already stored on the local API.
+
+    Rows imported before the registrable-domain derivation keep their old vendor
+    (``co-uk`` for ``finage.co.uk``). Re-importing must update that API rather than
+    open a new ``(vendor, name, version)`` identity under the re-derived vendor,
+    while a first import of the same entry uses the manifest-derived vendor.
+    """
+    await _seed_snapshot(web_context, ["finage.co.uk"])
+    spec_url = f"{_MANIFEST_BASE}/openapi/finage.co.uk/openapi.json"
+    identity = Identity(sub="usr_1", email="u@test.local", permissions=["catalog:import"])
+    svc = CatalogService(web_context)
+
+    first = await svc.import_entry("finage.co.uk", identity)
+    assert (await _job_source(web_context, first))["vendor"] == "finage.co.uk"
+
+    try:
+        async with web_context.registry_db.session() as session:
+            api = Api(vendor="co-uk", name="finage-co-uk", version="1.0", revision_count=1)
+            session.add(api)
+            await session.flush()
+            session.add(
+                ApiRevision(
+                    api_id=api.id,
+                    state="draft",
+                    spec_digest="sha256:finage",
+                    source_type="url",
+                    source_url=spec_url,
+                )
+            )
+            await session.commit()
+
+        again = await svc.import_entry("finage.co.uk", identity)
+        assert (await _job_source(web_context, again))["vendor"] == "co-uk"
+    finally:
+        async with web_context.registry_db.session() as session:
+            await session.execute(text("UPDATE registry.apis SET current_revision_id = NULL"))
+            await session.execute(text("DELETE FROM registry.api_revisions"))
+            await session.execute(text("DELETE FROM registry.apis"))
+            await session.commit()
 
 
 # ── ensure_imported (Credentials-PR hand-off seam) ─────────────────────────--

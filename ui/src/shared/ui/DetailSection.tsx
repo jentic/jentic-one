@@ -5,12 +5,12 @@ import { cn } from '@/shared/lib/utils';
 
 /**
  * DetailSection — the card shell every detail-console section renders inside
- * (agent and service-account consoles): the shared `Card` family
+ * (agent console and friends): the shared `Card` family
  * with a header grammar (icon medallion + heading + right-slot) layered on
  * top, so section chrome stays one primitive across the product.
  *
- * Promoted to the shared library once both the agent and service-account
- * consoles needed the identical shell (library-first rule).
+ * Promoted to the shared library once more than one detail console needed
+ * the identical shell (library-first rule).
  */
 
 export interface SectionActionProps {
@@ -26,7 +26,7 @@ export interface DetailSectionProps {
 	title: ReactNode;
 	/**
 	 * Leading glyph for the heading (`h-4 w-4`), rendered in the same muted
-	 * icon medallion the dashboard sections use — one grammar everywhere.
+	 * icon medallion the detail sections use — one grammar everywhere.
 	 */
 	icon?: ReactNode;
 	/** Extra inline content next to the title (e.g. a "Keys blocked" pill). */

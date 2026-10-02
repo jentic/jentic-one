@@ -41,8 +41,9 @@ from jentic_one.shared.models.oauth_clients import (
 from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 #: RFC 7591 grant types this door accepts. Anything else is rejected —
-#: notably ``client_credentials`` and the jwt-bearer grant, which belong to
-#: confidential clients and agents respectively.
+#: notably ``client_credentials`` (not served by the token endpoint at all
+#: since service accounts were removed) and the jwt-bearer grant, which
+#: belongs to agents.
 _ALLOWED_GRANT_TYPES: frozenset[str] = frozenset({"authorization_code", "refresh_token"})
 
 #: The auth-code flow is the only supported response type (RFC 7591 default).
@@ -325,7 +326,7 @@ class OAuthDcrService:
                     # queue tabs filter on pending/denied). Re-attaching and
                     # announcing "approved" here would be the one door
                     # telling a different story. Instead, treat the
-                    # re-registration as a fresh access request: re-queue
+                    # re-registration as a fresh approval request: re-queue
                     # the row as pending (``active`` stays false — D7
                     # pending rows are inactive by construction), so the
                     # RFC 7592-deprovisioned client re-enters the approval

@@ -16,6 +16,7 @@ import pytest
 import structlog.testing
 from fastapi import Request
 
+from jentic_one.registry.services.errors import HostChangeRequiresOperatorError
 from jentic_one.registry.web.app import get_exception_handlers
 from jentic_one.registry.web.errors import service_error_handler
 from jentic_one.shared.db.errors import DatabaseConsistencyError
@@ -62,3 +63,20 @@ def test_consistency_error_handler_is_registered() -> None:
     """The registry app registers a handler for DatabaseConsistencyError."""
     registered = {exc_class for exc_class, _ in get_exception_handlers()}
     assert DatabaseConsistencyError in registered
+
+
+@pytest.mark.asyncio
+async def test_host_change_requires_operator_maps_to_403() -> None:
+    """A promote that changes a credential-bound API's server hosts is a 403."""
+    exc = HostChangeRequiresOperatorError(
+        "rev-1", current_hosts=["old.example.com"], new_hosts=["new.example.com"]
+    )
+
+    response = await service_error_handler(_make_request(), exc)
+
+    assert response.status_code == 403
+    body: dict[str, object] = json.loads(bytes(response.body))
+    assert body["type"] == "host_change_requires_operator"
+    detail = str(body["detail"])
+    assert "new.example.com" in detail
+    assert "credentials:write" in detail

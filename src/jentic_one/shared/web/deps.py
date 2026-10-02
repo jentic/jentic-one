@@ -93,7 +93,7 @@ def get_current_identity(
     allow_expired_password:
         If True, skip the must_change_password check.
     require_actor_type:
-        If set, the caller's actor_type must match (e.g. "service_account").
+        If set, the caller's actor_type must match (e.g. "agent").
     """
 
     async def _dependency(

@@ -60,7 +60,7 @@ Integrate apps:
 - [Register an OAuth client](guides/oauth-clients.md) — third-party apps authenticating users
 - [CLI README](../cli/README.md) — the full `jentic` / `jenticctl` command surface
 
-Agent runbook: [use](agent/use.md) — discover → request access → execute, as executable steps.
+Agent runbook: [use](agent/use.md) — discover → check access → execute, as executable steps.
 
 ## Secure
 

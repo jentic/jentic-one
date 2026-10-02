@@ -4,8 +4,9 @@ import { Button } from '@/shared/ui/Button';
 import { dismissToast, useToasts, type ToastEntry } from '@/shared/ui/toastStore';
 
 /**
- * Mounted once at the root layout. Subscribes to the toast store and
- * renders a stack of `ToastView`s in the bottom-right corner.
+ * Mounted once at the root layout, inside the shell's toast region (which
+ * places it). Subscribes to the toast store and renders a stack of `ToastView`s,
+ * newest on top.
  */
 export function Toaster() {
 	const toasts = useToasts();
@@ -14,7 +15,7 @@ export function Toaster() {
 	return (
 		<div
 			data-testid="toaster"
-			className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-full max-w-sm flex-col gap-2"
+			className="flex flex-col gap-2"
 			aria-live="polite"
 			aria-atomic="false"
 		>

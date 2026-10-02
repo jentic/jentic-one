@@ -1,6 +1,10 @@
 """Unit tests for the shared apply_server_variables() utility."""
 
-from jentic_one.shared.url import apply_server_variables, has_host_server_variable
+from jentic_one.shared.url import (
+    apply_server_variables,
+    has_host_server_variable,
+    server_variables_compatible,
+)
 
 
 def test_single_variable_substitution() -> None:
@@ -65,3 +69,53 @@ def test_has_host_server_variable_ignores_query_placeholders() -> None:
 
 def test_has_host_server_variable_ignores_empty_braces() -> None:
     assert has_host_server_variable("https://api.example.com/{}/x") is False
+
+
+def test_defaults_fill_placeholders_without_a_credential_value() -> None:
+    url = "https://api.example.com/{region}/{tier}/widgets"
+    result = apply_server_variables(url, {"tier": "gold"}, {"region": "us", "tier": "free"})
+    assert result == "https://api.example.com/us/gold/widgets"
+
+
+def test_substitutes_percent_encoded_placeholder() -> None:
+    url = "https://api.example.com/%7Bregion%7D/widgets"
+    assert apply_server_variables(url, {"region": "eu"}) == "https://api.example.com/eu/widgets"
+
+
+def test_never_rewrites_a_concrete_url() -> None:
+    url = "https://api.example.com/eu/widgets"
+    assert apply_server_variables(url, {"region": "us"}, {"region": "us"}) == url
+
+
+def test_backslash_value_is_encoded_literally() -> None:
+    url = "https://api.example.com/{region}"
+    assert apply_server_variables(url, {"region": "a\\1"}) == "https://api.example.com/a%5C1"
+
+
+def test_server_variables_compatible_matching_scope() -> None:
+    assert server_variables_compatible({"region": "us"}, {"region": "us"})
+
+
+def test_server_variables_compatible_compares_exactly() -> None:
+    # Path server variables may be case-sensitive upstream.
+    assert not server_variables_compatible({"tenant": "Acme"}, {"tenant": "acme"})
+
+
+def test_server_variables_compatible_fails_closed_when_unresolved() -> None:
+    assert not server_variables_compatible({"region": "us"}, None, unresolved=True)
+    assert not server_variables_compatible({"region": "us"}, {}, unresolved=True)
+    # An unscoped credential is unaffected.
+    assert server_variables_compatible(None, None, unresolved=True)
+
+
+def test_server_variables_compatible_mismatch_is_no_match() -> None:
+    assert not server_variables_compatible({"region": "us"}, {"region": "eu"})
+
+
+def test_server_variables_compatible_unconstrained_cases() -> None:
+    # Unscoped credential, URL without resolved values, or a variable the URL
+    # does not resolve: no constraint.
+    assert server_variables_compatible(None, {"region": "eu"})
+    assert server_variables_compatible({}, {"region": "eu"})
+    assert server_variables_compatible({"region": "us"}, None)
+    assert server_variables_compatible({"region": "us"}, {"tier": "gold"})

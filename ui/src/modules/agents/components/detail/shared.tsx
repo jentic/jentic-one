@@ -1,6 +1,6 @@
 /**
- * Shared scaffolding for the agent / service-account detail consoles — the
- * pieces both pages (and their tab panels) would otherwise copy. The card
+ * Shared scaffolding for the agent detail console — the pieces its tab
+ * panels would otherwise copy. The card
  * shells themselves (`DetailSection`, `DangerZone`, `IdentitySettingsCard`,
  * `AuditTrailCard`) are shared product-wide from `@/shared/ui`.
  */
@@ -33,10 +33,9 @@ export function successShare(success: number, total: number): string {
 
 /**
  * Project a binding's stored rules into the shared display shape consumed by
- * `OperationsSummary`/`OperationsDialog` — the SAME preview the access-request
- * review cards render, so "what can this credential do" reads identically at
- * review time and on the live binding. System safety rules are dropped: they
- * are backend-owned plumbing, not part of the operator's grant.
+ * `OperationsSummary`/`OperationsDialog` — so "what can this credential do"
+ * reads identically wherever the grant is shown. System safety rules are
+ * dropped: they are backend-owned plumbing, not part of the operator's grant.
  */
 export function toDisplayRules(rules: BindingPermissionRule[] | null | undefined): DisplayRule[] {
 	return (rules ?? [])

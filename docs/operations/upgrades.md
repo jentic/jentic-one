@@ -18,8 +18,9 @@ The contract is the same on every install shape; only the commands differ.
    `OVERALL current|uninitialized|pending` verdict and exits non-zero unless
    `OVERALL current`, so scripts can branch on it. A full run (all databases,
    no `--target`) also performs the release's one-shot **upgrade steps** —
-   data changes that span databases, such as the toolkit → direct-binding
-   cutover — and prints an `==> upgrade step <name>: <action>` line for each.
+   data changes that span databases (0.41 ships none; the 0.40 toolkit →
+   direct-binding cutover is done by the time 0.41 installs) — and prints
+   an `==> upgrade step <name>: <action>` line for each.
    A step that leaves blocking work undone exits `4`: fix the logged cause
    and re-run before starting the new version (`--skip-upgrade-step <name>`
    defers one step deliberately; on Helm, via `migrate.extraArgs`).
@@ -31,6 +32,11 @@ The contract is the same on every install shape; only the commands differ.
    them split across releases.
 5. **Keep the CLIs on the same release** as the server:
    `jenticctl update` updates the binaries and checks the stack.
+6. **Review what the upgrade carried over.** The upgrade steps keep
+   existing access intact and report, rather than remove, admin-level grants
+   copied onto successor agents and cross-owner credential bindings — see
+   [Reviewing grants and bindings carried over by the upgrade](../development/releasing.md#reviewing-grants-and-bindings-carried-over-by-the-upgrade)
+   for the read-only audit queries.
 
 Rolling *back* the app version is supported only together with restoring the
 matching pre-upgrade snapshot — old code on a newer schema is not a supported

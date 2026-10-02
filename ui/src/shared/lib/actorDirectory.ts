@@ -2,7 +2,7 @@
  * Actor directory — repository tier for the unified actor lookup endpoint
  * (`GET /actors`, PR #483, closes #478).
  *
- * Executions, audit entries, the events feed, and access requests carry an
+ * Executions, audit entries, and the events feed carry an
  * opaque `actor_id` (a KSUID like `agnt_6a3d3c62…`). This wrapper hydrates the
  * full actor directory so any surface can map those ids to friendly names
  * instead of rendering the raw token.
@@ -11,11 +11,9 @@
  * hydration (large default page size), so we page through ALL pages via
  * `next_cursor` once and let the query layer cache the result aggressively.
  *
- * Scope is the directory's own actor types — `user` / `agent` /
- * `service_account`. A legacy `tk_…` id can still
- * appear as the `actor_id` of a historical broker-path execution; rendering
- * that case is
- * `<ActorLabel>`'s job. Other non-actor ids (`cred_`, `exec_`, `areq_`, `job_`)
+ * Scope is the directory's own actor types — `user` / `agent`. A legacy
+ * `tk_…` or `sva_…` id can still appear as the `actor_id` of a historical
+ * execution or audit row; rendering that case is `<ActorLabel>`'s job. Other non-actor ids (`cred_`, `exec_`, `areq_`, `job_`)
  * are resolved separately and are out of scope here.
  */
 import { ActorsService, type ActorSummaryResponse } from '@/shared/api';
