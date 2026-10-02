@@ -1,16 +1,23 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Download, Info, Loader2, Upload, Users, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
 	ErrorAlert,
 	Input,
 	Label,
+	Select,
 	SheetPrimitive,
 	Skeleton,
 	toast,
 } from '@/shared/ui';
+import {
+	OAuthAppRegistrationFlowKind,
+	type AuthorizationCodeRegistrationCreateRequest,
+	type DeviceAuthorizationRegistrationCreateRequest,
+} from '@/shared/api';
+import { useCreateOAuthAppRegistration } from '@/shared/credentials/oauth-app-registrations/api/hooks';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -131,9 +138,28 @@ interface CreateCredentialFlowProps {
 	 * discarding a draft — the flow itself does not decide what "back" costs.
 	 */
 	back?: { label: string; onBack: (dirty: boolean) => void };
+	/**
+	 * Register an org-shared OAuth app instead of creating a credential — the
+	 * shared-apps section's "Register shared app" action. Off by default, so the
+	 * flow is the plain credential create; only a host that mounts the
+	 * shared-apps section turns it on. Pair with
+	 * `initialType={CredentialType.OAUTH2}` so manual entry lands on OAuth 2.0.
+	 */
+	registerSharedApp?: boolean;
 }
 
 type Step = 'pick' | 'form' | 'vendor';
+
+/** Grant types an org-shared OAuth app can sign people in through. */
+function isShareableGrant(grantType: string): boolean {
+	const g = grantType.trim();
+	return g === 'authorization_code' || g === 'device_code';
+}
+
+/** The server keys a shared app to a `<domain>/<api>` catalog id. */
+function isShareableCatalogId(apiId: string): boolean {
+	return /^[^/].*\/.*[^/]$/.test(apiId);
+}
 
 /**
  * The guided flow for creating a credential.
@@ -169,6 +195,7 @@ export function CreateCredentialFlow({
 	preselectedAgentId,
 	renderPostConnect,
 	back,
+	registerSharedApp = false,
 }: CreateCredentialFlowProps) {
 	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
@@ -177,10 +204,20 @@ export function CreateCredentialFlow({
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
 	const [uploadOpen, setUploadOpen] = useState(false);
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
+	// Register mode submits to POST /oauth-app-registrations instead of
+	// creating a personal credential, so anyone on the instance can sign in
+	// through the resulting shared OAuth app.
+	const registrationMutation = useCreateOAuthAppRegistration();
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
+	// The empty form's provider must fit the initial type — ``static`` is no
+	// OAuth2 provider, and a spec with no OAuth scheme never re-derives it.
+	const baseForm: CredentialFormState = {
+		...EMPTY_FORM,
+		provider: providerOptions(initialType ?? CredentialType.BEARER_TOKEN)[0].id,
+	};
 	const [state, setState] = useState<CredentialFormState>(() =>
-		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
+		pinnedApi ? seedFormFromSelectedApi(baseForm, pinnedApi, false) : baseForm,
 	);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
@@ -332,7 +369,7 @@ export function CreateCredentialFlow({
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
+		setState(pinnedApi ? seedFormFromSelectedApi(baseForm, pinnedApi, false) : baseForm);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -343,6 +380,7 @@ export function CreateCredentialFlow({
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
+		registrationMutation.reset();
 	};
 
 	// Closing the dialog must always reset internal state — otherwise reopening
@@ -374,7 +412,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(null);
 		setSelectedVendor(null);
 		setManualMode(true);
-		setState(EMPTY_FORM);
+		setState({ ...EMPTY_FORM, provider: providerOptions(type)[0].id });
 		setStep('form');
 	};
 
@@ -485,6 +523,107 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isOAuth2, availableScopes, selectedScopeList.length]);
 
+	// Whether the picked API can back a shared OAuth app. Only the
+	// direct_oauth2 path (admin brings their own client_id + endpoints) is
+	// eligible — the managed Pipedream flow and the platform-shipped-vendor
+	// path have no admin-owned OAuth app to share. A shared app is keyed to a
+	// catalog API, so manual entry (no catalog id) can't be shared. A spec that
+	// declares only non-interactive grants (e.g. client_credentials) has nothing
+	// to sign in through; a spec with no OAuth flows at all lets the admin pick
+	// the flow by hand.
+	const specHasShareableFlow = oauth2Flows.some((f) => isShareableGrant(f.grantType));
+	const canShareWithOrg =
+		!manualMode &&
+		!!selectedApi?.apiId &&
+		isShareableCatalogId(selectedApi.apiId) &&
+		type === CredentialType.OAUTH2 &&
+		state.provider === 'direct_oauth2' &&
+		(oauth2Flows.length === 0 || specHasShareableFlow);
+	const sharing = registerSharedApp && canShareWithOrg;
+	/** The spec's grant selector offers a non-shareable flow that's currently picked. */
+	const sharingNeedsShareableGrant = sharing && !isShareableGrant(state.grantType);
+	// Without spec flows there's no grant-type selector, so an empty grant type
+	// would otherwise leave the shared app with no flow — default it.
+	useEffect(() => {
+		if (sharing && oauth2Flows.length === 0 && !isShareableGrant(state.grantType)) {
+			setState((s) => ({ ...s, grantType: 'authorization_code' }));
+		}
+	}, [sharing, oauth2Flows.length, state.grantType]);
+
+	// Register-mode submit path: creates a shared OAuth app registration instead of a personal credential.
+	// Field mapping mirrors CredentialFormState onto the registration API:
+	// authorize_url / token_url on auth-code, authorization_endpoint /
+	// token_endpoint on device flow. Grant type discriminates flow_kind.
+	const submitAsRegistration = async (): Promise<void> => {
+		const grantType = state.grantType.trim();
+		if (!isShareableGrant(grantType)) return;
+		const scopes = state.scopes
+			.split(/\s+/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		const commonMissing: Partial<Record<keyof CredentialFormState, string>> = {};
+		if (!state.name.trim()) commonMissing.name = 'Required for an org-shared registration.';
+		if (!state.apiVendor.trim()) commonMissing.apiVendor = 'Required.';
+		if (!state.clientId.trim()) commonMissing.clientId = 'Required.';
+		if (!state.authorizeUrl.trim()) commonMissing.authorizeUrl = 'Required.';
+		if (!state.tokenUrl.trim()) commonMissing.tokenUrl = 'Required.';
+		if (grantType === 'authorization_code' && !state.clientSecret.trim()) {
+			commonMissing.clientSecret = 'Required for authorization-code flow.';
+		}
+		if (Object.keys(commonMissing).length > 0) {
+			setErrors(commonMissing);
+			return;
+		}
+		// The catalog API id + family label ride off the picked API;
+		// ``canShareWithOrg`` already required a shareable id, and an API that
+		// lacks one is explained up front (``shareBlockedReason``).
+		if (!selectedApi?.apiId) return;
+		const catalogApiId = selectedApi.apiId;
+		const displayName = selectedApi.label;
+
+		try {
+			if (grantType === 'authorization_code') {
+				const body: AuthorizationCodeRegistrationCreateRequest = {
+					name: state.name.trim(),
+					api_vendor: state.apiVendor.trim(),
+					catalog_api_id: catalogApiId,
+					display_name: displayName,
+					flow_kind: OAuthAppRegistrationFlowKind.AUTHORIZATION_CODE,
+					client_id: state.clientId.trim(),
+					client_secret: state.clientSecret,
+					authorize_url: state.authorizeUrl.trim(),
+					token_url: state.tokenUrl.trim(),
+					default_scopes: scopes.length ? scopes : null,
+				};
+				await registrationMutation.mutateAsync(body);
+			} else {
+				const body: DeviceAuthorizationRegistrationCreateRequest = {
+					name: state.name.trim(),
+					api_vendor: state.apiVendor.trim(),
+					catalog_api_id: catalogApiId,
+					display_name: displayName,
+					flow_kind: OAuthAppRegistrationFlowKind.DEVICE_AUTHORIZATION,
+					client_id: state.clientId.trim(),
+					// The dialog reuses `authorizeUrl` / `tokenUrl` as the device
+					// flow's authorization + token endpoints (see the
+					// device-code branch in CredentialTypeFields).
+					authorization_endpoint: state.authorizeUrl.trim(),
+					token_endpoint: state.tokenUrl.trim(),
+					default_scopes: scopes.length ? scopes : null,
+				};
+				await registrationMutation.mutateAsync(body);
+			}
+			toast({
+				title: 'Shared OAuth app registered',
+				description: `${state.name.trim()} is now available to everyone in the organization.`,
+				variant: 'success',
+			});
+			onClose();
+		} catch {
+			// registrationMutation.error surfaces below the form.
+		}
+	};
+
 	const handleSubmit = async (e: React.FormEvent): Promise<void> => {
 		e.preventDefault();
 		const validation = validateCreate(type, state);
@@ -492,6 +631,11 @@ export function CreateCredentialFlow({
 		const svErrors = validateServerVars(schemesResult.serverVars, state.serverVars);
 		setServerVarErrors(svErrors);
 		if (Object.keys(validation).length > 0 || Object.keys(svErrors).length > 0) return;
+
+		if (sharing) {
+			await submitAsRegistration();
+			return;
+		}
 
 		const body = buildCreateBody(type, state);
 
@@ -576,14 +720,41 @@ export function CreateCredentialFlow({
 	// auth UI behind `!isLoadingSchemes`). Manual mode has no spec to wait on.
 	const specPending = !manualMode && !!selectedApi && schemesResult.loading;
 
+	// In register mode the picked API either can be shared, or we say why it
+	// can't — the flow never quietly falls back to creating a personal credential.
+	const shareBlockedReason = ((): string | null => {
+		if (!registerSharedApp || step !== 'form' || specPending || canShareWithOrg) return null;
+		if (manualMode || !selectedApi?.apiId) {
+			return 'Shared OAuth apps are registered against a catalog API. Go back and pick the API to share an app for.';
+		}
+		if (!isShareableCatalogId(selectedApi.apiId)) {
+			return `Shared OAuth apps need a catalog API id of the form <domain>/<api> — "${selectedApi.apiId}" can't be shared yet.`;
+		}
+		if (type !== CredentialType.OAUTH2) {
+			return typeOptions.includes(CredentialType.OAUTH2)
+				? 'Shared apps sign people in with OAuth 2.0 — pick OAuth 2.0 below.'
+				: `${selectedApi.label} doesn't offer OAuth 2.0 sign-in, so it can't be registered as a shared app.`;
+		}
+		if (state.provider !== 'direct_oauth2') {
+			return 'Shared apps use your own OAuth client — pick the direct provider below.';
+		}
+		return `${selectedApi.label} only offers non-interactive OAuth grants (such as client credentials). Shared apps need an authorization code or device code flow.`;
+	})();
 	const titleSuffix = selectedApi?.label ? ` — ${selectedApi.label}` : '';
 	const title = approvalSession
 		? 'Approve integration'
 		: step === 'pick'
-			? 'Add credential'
+			? registerSharedApp
+				? 'Register shared OAuth app'
+				: 'Add credential'
 			: step === 'vendor' && selectedVendor
 				? `Connect ${selectedVendor.display_name}`
-				: `Add credential${titleSuffix}`;
+				: registerSharedApp
+					? `Register shared OAuth app${titleSuffix}`
+					: `Add credential${titleSuffix}`;
+	const formStepHint = registerSharedApp
+		? 'Fill in the shared app details'
+		: 'Fill in the credential details';
 	// A pinned API removes the pick step, so the step counter would be lying. The
 	// vendor path is its own two-step flow, so it drops the counter too.
 	const subtitle = approvalSession ? (
@@ -591,16 +762,20 @@ export function CreateCredentialFlow({
 	) : step === 'vendor' ? (
 		<span>Pick an agent and the access it needs.</span>
 	) : pinnedApi ? (
-		<span>Fill in the credential details for {pinnedApi.label}</span>
+		<span>
+			{formStepHint} for {pinnedApi.label}
+		</span>
 	) : step === 'pick' ? (
 		<span>
 			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
-			Choose a one-click sign-in, or pick an API to authenticate against
+			{registerSharedApp
+				? 'Pick the API the shared app signs in to'
+				: 'Choose a one-click sign-in, or pick an API to authenticate against'}
 		</span>
 	) : (
 		<span>
 			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
-			Fill in the credential details
+			{formStepHint}
 		</span>
 	);
 
@@ -672,10 +847,16 @@ export function CreateCredentialFlow({
 					type="submit"
 					form="create-credential-form"
 					variant="primary"
-					loading={createMutation.isPending || importMutation.isPending}
-					disabled={specPending}
+					loading={
+						createMutation.isPending ||
+						importMutation.isPending ||
+						registrationMutation.isPending
+					}
+					disabled={
+						specPending || sharingNeedsShareableGrant || shareBlockedReason != null
+					}
 				>
-					Create credential
+					{registerSharedApp ? 'Register shared app' : 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -694,7 +875,9 @@ export function CreateCredentialFlow({
 			{step === 'pick' && (
 				<ApiPicker
 					onSelect={handlePickApi}
-					onVendorSelect={handlePickVendor}
+					// One-click sign-in tiles connect a personal credential, which
+					// isn't what "Register shared app" is for.
+					onVendorSelect={registerSharedApp ? undefined : handlePickVendor}
 					onManualEntry={handleManualEntry}
 					emptyAction={
 						<Button variant="secondary" size="sm" onClick={openUpload} type="button">
@@ -733,6 +916,54 @@ export function CreateCredentialFlow({
 					}}
 					className="space-y-5"
 				>
+					{sharing && (
+						<div className="bg-muted/40 border-border space-y-3 rounded-lg border p-3">
+							<div className="text-sm">
+								<p className="text-foreground flex items-center gap-1.5 font-medium">
+									<Users className="h-3.5 w-3.5" />
+									Shared OAuth app
+								</p>
+								<p className="text-muted-foreground mt-0.5 text-xs leading-snug">
+									Everyone in the organization can connect through this app. Each
+									person signs in with their own account — tokens are never
+									shared.
+								</p>
+							</div>
+							{oauth2Flows.length === 0 && (
+								<div className="space-y-1.5">
+									<Label htmlFor={`${fieldId}-share-flow`}>Sign-in flow</Label>
+									<Select
+										id={`${fieldId}-share-flow`}
+										value={state.grantType}
+										onChange={(e): void => patch({ grantType: e.target.value })}
+									>
+										<option value="authorization_code">
+											Authorization code (browser redirect)
+										</option>
+										<option value="device_code">
+											Device code (enter a code)
+										</option>
+									</Select>
+								</div>
+							)}
+							{sharingNeedsShareableGrant && (
+								<p className="text-danger text-xs" role="alert">
+									Shared apps sign people in interactively — pick an authorization
+									code or device code grant type below.
+								</p>
+							)}
+						</div>
+					)}
+
+					{shareBlockedReason && (
+						<p
+							className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
+							role="note"
+						>
+							{shareBlockedReason}
+						</p>
+					)}
+
 					{apiSummary && (
 						<div
 							className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
@@ -818,10 +1049,12 @@ export function CreateCredentialFlow({
 					)}
 
 					<div className="space-y-2">
-						<FormSectionLabel>Credential details</FormSectionLabel>
+						<FormSectionLabel>
+							{sharing ? 'Registration details' : 'Credential details'}
+						</FormSectionLabel>
 						<div className="space-y-1.5">
 							<Label htmlFor={`${fieldId}-name`} required>
-								Name
+								{sharing ? 'Registration name' : 'Name'}
 							</Label>
 							<Input
 								id={`${fieldId}-name`}
@@ -830,7 +1063,7 @@ export function CreateCredentialFlow({
 									nameDirty.current = true;
 									patch({ name: e.target.value });
 								}}
-								placeholder="Production API key"
+								placeholder={sharing ? 'MyOrg Google' : 'Production API key'}
 								error={errors.name}
 								aria-describedby={nameClash ? `${fieldId}-name-clash` : undefined}
 							/>
@@ -845,7 +1078,9 @@ export function CreateCredentialFlow({
 								/>
 							) : (
 								<p className="text-muted-foreground text-xs">
-									A label to recognise this credential later.
+									{sharing
+										? "Admin-facing label for this shared OAuth app (e.g. 'MyOrg Google')."
+										: 'A label to recognise this credential later.'}
 								</p>
 							)}
 						</div>
@@ -974,6 +1209,10 @@ export function CreateCredentialFlow({
 								<ErrorAlert message={createMutation.error} />
 							);
 						})()}
+
+					{registrationMutation.isError && (
+						<ErrorAlert message={registrationMutation.error} />
+					)}
 				</form>
 			)}
 		</>

@@ -41,7 +41,10 @@ from jentic_one.control.services.integrations.errors import (
     InvalidStateTransitionError,
     ScopeValidationError,
 )
-from jentic_one.control.services.vendors.service import UnknownVendorError
+from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
+    UnknownVendorError,
+)
 from jentic_one.control.web.app import get_exception_handlers
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.routers import integrations as integrations_router
@@ -160,6 +163,29 @@ def test_connect_maps_unknown_vendor_to_404() -> None:
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "nope"})
     assert resp.status_code == 404
+
+
+def test_connect_maps_ambiguous_vendor_to_400() -> None:
+    """No pin + several matching registrations → the caller must pin one."""
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.create_session = AsyncMock(
+        side_effect=AmbiguousVendorError("googleapis-com", None, ["oar_a", "oar_b"])
+    )
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "googleapis-com"})
+    assert resp.status_code == 400
+    assert resp.json()["type"].endswith("ambiguous_vendor")
+
+
+def test_connect_rejects_unknown_fields() -> None:
+    """A typo'd pin (e.g. ``oauth_app_id``) must 422, not silently go unpinned."""
+    svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh", "oauth_app_id": "oar_1"})
+    assert resp.status_code == 422
+    svc.create_session.assert_not_called()
 
 
 def test_connect_returns_session_id_and_poll_token() -> None:

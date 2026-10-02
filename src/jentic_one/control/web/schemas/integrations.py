@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 
@@ -33,9 +33,28 @@ class VendorAuthCapabilitiesResponse(BaseModel):
 
 
 class VendorSummaryResponse(BaseModel):
+    # Stable per-row UI key. For admin-registered rows this is the
+    # ``oar_...`` registration id; for platform-shipped config entries it
+    # is the vendor slug. Lets the picker render one card per registration
+    # even when multiple registrations share an ``api_vendor``.
+    entry_id: str
+    # Present when the row came from an ``oauth_app_registrations`` row —
+    # threaded onto ``POST /integrations:connect`` as the pin.
+    registration_id: str | None = None
+    # Vendor slug shared by every registration for the same vendor.
     key: str
+    # Config-side fully-qualified vendor id (``<host>/<api-id>``) when
+    # available; falls back to ``key`` for DB-only vendors.
     vendor: str
+    # Vendor's family display name (e.g. "Gmail"). Two admin registrations
+    # for the same vendor share this.
     display_name: str
+    # Per-row human label. For DB rows this is the admin-picked
+    # registration name; for config rows this equals ``display_name``.
+    name: str
+    # Where this row came from — ``db`` = admin registration, ``config`` =
+    # platform-shipped vendor entry.
+    source: Literal["db", "config"]
     flow_kinds: list[str]
 
 
@@ -49,7 +68,22 @@ class VendorListResponse(BaseModel):
 
 
 class IntegrationsConnectRequest(BaseModel):
+    # Reject unknown fields: a misspelt ``oauth_app_registration_id`` must not
+    # silently fall through to unpinned source resolution.
+    model_config = ConfigDict(extra="forbid")
+
     vendor: str = Field(description="Vendor registry key (e.g. 'github')")
+    # Optional user-facing label for the resulting credential. Defaults to
+    # the vendor's display name when omitted. Lets a user distinguish
+    # multiple credentials minted from the same vendor / shared registration
+    # (e.g. ``"Google (personal)"`` vs ``"Google (work)"``).
+    name: str | None = Field(default=None, max_length=255)
+    # Optional pin to a specific admin-registered OAuth app. When set, the
+    # connect session mints tokens through this registration; when omitted,
+    # the config-shipped vendor entry is used if it offers the requested
+    # flow, else the vendor's single matching active registration (more
+    # than one → 400 ``ambiguous_vendor``).
+    oauth_app_registration_id: str | None = Field(default=None, max_length=30)
     # Required for USER/SA callers, ignored for AGENT callers.
     agent_id: str | None = Field(default=None)
     # Cap mirrors the sister ``/credentials`` endpoints — a scope list

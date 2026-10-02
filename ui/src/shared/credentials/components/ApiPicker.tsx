@@ -151,6 +151,7 @@ export function ApiPicker({
 		return rows.filter(
 			(v) =>
 				v.display_name.toLowerCase().includes(q) ||
+				v.name.toLowerCase().includes(q) ||
 				v.vendor.toLowerCase().includes(q) ||
 				v.key.toLowerCase().includes(q),
 		);
@@ -268,7 +269,7 @@ export function ApiPicker({
 						animate="show"
 					>
 						{filteredVendors.map((vendor) => (
-							<motion.li key={vendor.key} variants={ROW_VARIANTS}>
+							<motion.li key={vendor.entry_id} variants={ROW_VARIANTS}>
 								<VendorTile vendor={vendor} onSelect={onVendorSelect} />
 							</motion.li>
 						))}
@@ -549,11 +550,24 @@ function VendorTile({
 		>
 			<VendorIcon name={vendor.display_name} vendor={vendor.vendor} size="md" />
 			<div className="min-w-0 flex-1">
-				<p className="text-foreground truncate text-sm font-semibold">
-					Sign in with {vendor.display_name}
-				</p>
+				<div className="flex min-w-0 items-center gap-2">
+					<p className="text-foreground truncate text-sm font-semibold">
+						{vendor.source === 'db'
+							? vendor.name
+							: `Sign in with ${vendor.display_name}`}
+					</p>
+					{/* Always badged: an admin app named like its API ("Gmail") would
+					    otherwise read as the platform's own sign-in tile. */}
+					{vendor.source === 'db' && (
+						<Badge variant="default" className="shrink-0">
+							Shared app
+						</Badge>
+					)}
+				</div>
 				<p className="text-muted-foreground mt-0.5 truncate text-xs">
-					Instant OAuth · no keys to copy
+					{vendor.source === 'db'
+						? `${vendor.display_name} · set up by your organization`
+						: 'Instant OAuth · no keys to copy'}
 				</p>
 			</div>
 			<ChevronRight className="text-muted-foreground group-hover:text-primary h-4 w-4 shrink-0 transition-colors" />

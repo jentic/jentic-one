@@ -97,6 +97,31 @@ def _mock_control_db() -> MagicMock:
     return db
 
 
+def _legacy_credential() -> MagicMock:
+    """Credential mock representing the legacy embedded path (no shared registration)."""
+    credential = MagicMock()
+    credential.oauth_app_registration_id = None
+    return credential
+
+
+@pytest.fixture(autouse=True)
+def _patch_credential_lookup():
+    """Return a legacy credential for every provider credential lookup.
+
+    ``DirectOAuth2Provider`` now checks ``credentials.oauth_app_registration_id``
+    before falling back to the embedded ``oauth_client_credentials`` row.
+    Every pre-existing test in this file exercises the embedded path; pin
+    the FK to NULL so those tests stay on it.
+    """
+    with patch(
+        "jentic_one.control.services.credentials.providers.direct_oauth2."
+        "CredentialRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=_legacy_credential(),
+    ) as mock:
+        yield mock
+
+
 def test_supports_oauth2() -> None:
     provider = _make_provider()
     assert provider.supports(CredentialType.OAUTH2) is True
@@ -414,7 +439,7 @@ async def test_begin_connect_appends_default_authorize_extra_params() -> None:
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -451,7 +476,7 @@ async def test_begin_connect_respects_custom_authorize_extra_params() -> None:
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -504,7 +529,7 @@ async def test_begin_connect_extra_params_can_override_required_oauth_params() -
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -546,7 +571,7 @@ async def test_begin_connect_with_empty_extra_params_emits_only_required_params(
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -579,7 +604,7 @@ async def test_begin_connect_raises_when_authorize_url_missing() -> None:
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -629,7 +654,7 @@ async def test_begin_connect_uses_request_redirect_uri_when_unconfigured() -> No
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -662,7 +687,7 @@ async def test_begin_connect_configured_redirect_uri_wins_over_request() -> None
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
@@ -691,7 +716,7 @@ async def test_begin_connect_raises_when_no_redirect_uri_available() -> None:
         patch(
             "jentic_one.control.repos.CredentialRepository.get_by_id",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=_legacy_credential(),
         ),
         patch(
             "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",

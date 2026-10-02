@@ -19,6 +19,7 @@ from jentic_one.control.repos import (
     BasicCredentialRepository,
     CredentialRepository,
     CustomerAPIKeyRepository,
+    OAuthAppRegistrationRepository,
     OAuthClientCredentialRepository,
     PermissionRuleSetRepository,
     Sigv4CredentialRepository,
@@ -391,7 +392,10 @@ class CredentialService:
             )
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
-            return self._to_redacted(credential)
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids([credential])
+            )
+            return self._to_redacted(credential, registration_names=names)
 
     async def list_agents(
         self,
@@ -929,7 +933,10 @@ class CredentialService:
             if has_more:
                 rows = rows[:limit]
 
-            data = [self._to_redacted(r) for r in rows]
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids(rows)
+            )
+            data = [self._to_redacted(r, registration_names=names) for r in rows]
             next_cursor = None
             if has_more and rows:
                 last = rows[-1]
@@ -1095,7 +1102,10 @@ class CredentialService:
             if changed:
                 credential.updated_at = datetime.now(UTC)
             await session.flush()
-            view = self._to_redacted(credential)
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids([credential])
+            )
+            view = self._to_redacted(credential, registration_names=names)
             after_state = {"name": credential.name, "active": credential.active}
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
@@ -1141,7 +1151,9 @@ class CredentialService:
             origin=identity.origin.value,
         )
 
-    def _to_redacted(self, credential: Any) -> CredentialRedactedView:
+    def _to_redacted(
+        self, credential: Any, *, registration_names: dict[str, str]
+    ) -> CredentialRedactedView:
         """Project an ORM Credential to a redacted view."""
         stored_type = StoredCredentialType(credential.type)
         wire_type = to_wire(stored_type)
@@ -1236,6 +1248,14 @@ class CredentialService:
         else:
             details = BearerTokenRedacted(token_preview=None)
 
+        # Shared-registration provenance. ``registration_names`` is batch-
+        # loaded by the caller: ``Credential.oauth_app_registration`` is
+        # ``lazy="raise"`` so credential reads never drag in the registration
+        # and its sealed client secret. ``None`` when the credential wasn't
+        # minted through a shared registration.
+        oar_id = credential.oauth_app_registration_id
+        oar_name = registration_names.get(oar_id) if oar_id is not None else None
+
         return CredentialRedactedView(
             credential_id=credential.id,
             type=wire_type,
@@ -1254,6 +1274,8 @@ class CredentialService:
             updated_at=credential.updated_at,
             details=details,
             server_variables=credential.server_variables,
+            oauth_app_registration_id=oar_id,
+            oauth_app_registration_name=oar_name,
         )
 
     def _validate_create_fields(self, payload: CredentialCreate, *, managed: bool) -> None:
@@ -1306,3 +1328,8 @@ class CredentialService:
                     f"api.{axis} '{value}' is not an identity — it looks like a spec path"
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
+
+
+def _registration_ids(credentials: Sequence[Credential]) -> list[str]:
+    """Distinct ``oauth_app_registration_id`` values across ``credentials``."""
+    return sorted({c.oauth_app_registration_id for c in credentials if c.oauth_app_registration_id})

@@ -279,12 +279,20 @@ func (a *app) waitForConnectSession(
 
 // connectCoded maps the connect route's failure surface onto the coded
 // taxonomy — the CLI twin of requestConnectionError (mcp_request_connection.go):
-// 404 unknown vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 403 → the missing
+// 404 unknown vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 400
+// ambiguous_vendor → RESOLVE_FAILED (only the operator can pick the app), 403 → the missing
 // credentials:connect scope (operator grant), 429 → the per-actor rate limit,
 // 503 → the vendor's OAuth client is not configured (operator action).
 func connectCoded(vendor string, err error) *ux.CodedError {
 	var he *HTTPError
 	if errors.As(err, &he) {
+		if isAmbiguousVendor(he) {
+			return &ux.CodedError{
+				Code:       ux.CodeResolveFailed,
+				Msg:        fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
+				Actionable: ambiguousVendorActionable,
+			}
+		}
 		switch he.StatusCode {
 		case http.StatusBadRequest, http.StatusNotFound:
 			return &ux.CodedError{
@@ -318,4 +326,18 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 		}
 	}
 	return asCoded(err)
+}
+
+// ambiguousVendorActionable mirrors the Python MCP mount's request_connection
+// advice: the agent can't pin a shared OAuth app, so retrying won't help.
+const ambiguousVendorActionable = "Several shared OAuth apps are registered for this vendor, so " +
+	"an agent cannot pick one: ask your human operator to connect a credential for it in the " +
+	"dashboard instead."
+
+// isAmbiguousVendor reports whether a connect failure is the 400
+// ambiguous_vendor problem (errors.py _VENDOR_ERROR_MAP): more than one
+// shared OAuth app serves the vendor and the request carried no pin.
+func isAmbiguousVendor(he *HTTPError) bool {
+	t, _ := he.Fields()["type"].(string)
+	return he.StatusCode == http.StatusBadRequest && strings.HasSuffix(t, "ambiguous_vendor")
 }

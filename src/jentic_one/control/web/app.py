@@ -11,7 +11,11 @@ from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationError,
 )
 from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
+from jentic_one.control.services.oauth_app_registrations.errors import (
+    OAuthAppRegistrationServiceError,
+)
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -22,12 +26,14 @@ from jentic_one.control.web.errors import (
     cursor_error_handler,
     database_error_handler,
     device_authorization_error_handler,
+    oauth_app_registration_error_handler,
     vendor_error_handler,
 )
 from jentic_one.control.web.routers import (
     credentials,
     integrations,
     mcp,
+    oauth_app_registrations,
     vendors,
 )
 from jentic_one.shared.context import Context
@@ -52,6 +58,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (mcp.router, "", []),
         (vendors.router, "", []),
         (integrations.router, "", []),
+        (oauth_app_registrations.router, "", []),
     ]
 
 
@@ -62,8 +69,10 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         (ConnectSessionServiceError, connect_session_error_handler),
         (DeviceAuthorizationError, device_authorization_error_handler),
         (UnknownVendorError, vendor_error_handler),
+        (AmbiguousVendorError, vendor_error_handler),
         (UnsupportedFlowError, vendor_error_handler),
         (VendorNotConfiguredError, vendor_error_handler),
+        (OAuthAppRegistrationServiceError, oauth_app_registration_error_handler),
         (InvalidCursorError, cursor_error_handler),
         (DatabaseIntegrityError, database_error_handler),
         (DatabaseDataError, database_error_handler),

@@ -160,6 +160,8 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 // taxonomy (§3.7 posture):
 //   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
+//   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and
+//     the tool can't pin one: RESOLVE_FAILED routed to the operator.
 //   - 403 — the missing credentials:connect scope (agents hold it by
 //     default): a scope fact for the operator, not a revoked identity —
 //     mirrors the search_catalog/import_api special case.
@@ -171,6 +173,13 @@ func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, e
 	s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
 	var he *HTTPError
 	if errors.As(err, &he) {
+		if isAmbiguousVendor(he) {
+			return s.softError(ctx, &ux.CodedError{
+				Code:       ux.CodeResolveFailed,
+				Msg:        fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
+				Actionable: ambiguousVendorActionable,
+			})
+		}
 		switch he.StatusCode {
 		case http.StatusBadRequest, http.StatusNotFound:
 			return s.softErrorNext(ctx, &ux.CodedError{

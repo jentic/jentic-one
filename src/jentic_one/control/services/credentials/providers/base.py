@@ -70,6 +70,17 @@ class NotRefreshableError(ProviderError):
     """Raised when a provider does not support token refresh."""
 
 
+class InactiveRegistrationError(ProviderError):
+    """Raised when a credential references an inactive ``oauth_app_registrations`` row.
+
+    Refresh (and complete-connect) fail closed against an inactive
+    registration: the operator has flipped the kill switch on this shared
+    OAuth app, so no new tokens may be minted through it. Existing vaulted
+    access tokens keep injecting until their expiry — this only blocks
+    refresh + new grants, matching the ``is_active`` semantics.
+    """
+
+
 class UnknownProviderError(ProviderError):
     """Raised when a provider name cannot be resolved."""
 
