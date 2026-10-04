@@ -99,36 +99,31 @@ function NoSchemeError({ data }: { data: NoSchemeData }) {
 			<div className="flex items-start justify-between gap-2">
 				<p className="text-sm leading-snug font-medium">{data.message}</p>
 				<Button
-					variant="outline"
-					size="sm"
+					variant="tonal"
+					size="xs"
 					type="button"
 					onClick={copy}
 					title="Copy everything as markdown"
-					className={cn(
-						'flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
-						copied
-							? 'border-success/40 bg-success/10 text-success'
-							: 'border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground',
-					)}
+					className={cn('shrink-0', copied && 'text-success hover:text-success')}
 				>
 					{copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
 					{copied ? 'Copied' : 'Copy as markdown'}
 				</Button>
 			</div>
 
-			<div className="bg-background/60 border-border/50 space-y-1.5 rounded-md border p-3">
+			<div className="bg-background/60 space-y-1.5 rounded-md p-3">
 				<p className="text-muted-foreground text-[10px] font-semibold tracking-wide uppercase">
 					Instructions for your agent
 				</p>
 				<p className="leading-relaxed">{data.instructions}</p>
 				<p className="text-muted-foreground">
 					Submit to:{' '}
-					<code className="bg-muted text-foreground rounded px-1 py-0.5 font-mono">
+					<code className="bg-surface-field text-foreground rounded-sm px-1 py-0.5 font-mono">
 						{overlayEndpoint}
 					</code>
 				</p>
 				{data.note && (
-					<p className="text-muted-foreground border-border/40 mt-1.5 border-t pt-1.5 italic">
+					<p className="text-muted-foreground border-hairline mt-1.5 border-t pt-1.5 italic">
 						{data.note}
 					</p>
 				)}
@@ -145,11 +140,8 @@ function NoSchemeError({ data }: { data: NoSchemeData }) {
 						delete ex._note;
 						const label = key.replaceAll('_', ' ');
 						return (
-							<div
-								key={key}
-								className="border-border/40 bg-muted/30 overflow-hidden rounded-md border"
-							>
-								<div className="bg-muted/60 border-border/30 border-b px-3 py-1.5">
+							<div key={key} className="bg-background/60 overflow-hidden rounded-md">
+								<div className="bg-background/40 px-3 py-1.5">
 									<span className="text-foreground font-mono text-[11px] font-semibold">
 										{label}
 									</span>
@@ -186,10 +178,7 @@ export function ErrorAlert({ message, className, onRetry, retrying }: ErrorAlert
 	return (
 		<div
 			role="alert"
-			className={cn(
-				'bg-danger/10 border-danger/30 text-danger rounded-lg border px-4 py-3 text-sm',
-				className,
-			)}
+			className={cn('bg-danger/10 text-danger rounded-lg px-4 py-3 text-sm', className)}
 		>
 			<div className="flex items-start gap-3">
 				<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

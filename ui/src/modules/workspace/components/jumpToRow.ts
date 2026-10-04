@@ -16,7 +16,7 @@
  * - flashes a ring so sighted users can tell which row they landed on (the
  *   focus outline is the non-color-only signal).
  */
-export function jumpToRow(selector: string): boolean {
+function jumpToRow(selector: string): boolean {
 	const row = document.querySelector<HTMLElement>(selector);
 	if (!row) return false;
 

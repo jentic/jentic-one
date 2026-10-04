@@ -10,6 +10,7 @@
  *                (`update_available`, Flow-3); shown alongside live/draft
  */
 import { Badge, type Variant } from '@/shared/ui/Badge';
+import { cn } from '@/shared/lib/utils';
 
 export type ApiServingState = 'live' | 'draft' | 'update';
 
@@ -35,8 +36,22 @@ export const API_STATE_LABELS: Record<ApiServingState, string> = {
 
 export const API_STATE_BADGE_VARIANT: Record<ApiServingState, Variant> = {
 	live: 'success',
-	draft: 'pending',
+	// A draft is a neutral fact, not a warning (orange means "no credential").
+	draft: 'neutral',
 	update: 'warning',
+};
+
+/**
+ * How the state is drawn: `pill` (a soft borderless pill with a dot — headers
+ * like the API hub and the preview sheet) or `text` (the plain word in a meta
+ * line; "Update available" alone takes the warning colour).
+ */
+export type ApiStateBadgeVariant = 'pill' | 'text';
+
+const TEXT_TONE: Record<ApiServingState, string> = {
+	live: 'text-foreground-sub',
+	draft: 'text-foreground-sub',
+	update: 'text-foreground-lighter font-semibold',
 };
 
 export function ApiStateBadge({
@@ -44,6 +59,7 @@ export function ApiStateBadge({
 	className,
 	short,
 	testId,
+	variant = 'pill',
 }: {
 	state: ApiServingState;
 	className?: string;
@@ -51,14 +67,19 @@ export function ApiStateBadge({
 	short?: boolean;
 	/** Override the default `api-state-{state}` test id (keeps legacy hooks stable). */
 	testId?: string;
+	variant?: ApiStateBadgeVariant;
 }) {
 	const label = short && state === 'update' ? 'Update' : API_STATE_LABELS[state];
+	const id = testId ?? `api-state-${state}`;
+	if (variant === 'text') {
+		return (
+			<span data-testid={id} className={cn('text-xs', TEXT_TONE[state], className)}>
+				{label}
+			</span>
+		);
+	}
 	return (
-		<Badge
-			variant={API_STATE_BADGE_VARIANT[state]}
-			className={className}
-			data-testid={testId ?? `api-state-${state}`}
-		>
+		<Badge variant={API_STATE_BADGE_VARIANT[state]} dot className={className} data-testid={id}>
 			{label}
 		</Badge>
 	);
@@ -73,18 +94,26 @@ export function ApiStateBadges({
 	updateAvailable,
 	className,
 	short,
+	variant,
 }: {
 	currentRevisionId: string | null;
 	updateAvailable?: boolean | null;
 	/** Applied to each badge (e.g. the dense-row sizing). */
 	className?: string;
 	short?: boolean;
+	variant?: ApiStateBadgeVariant;
 }) {
 	const { states } = apiServingState({ currentRevisionId, updateAvailable });
 	return (
 		<>
 			{states.map((state) => (
-				<ApiStateBadge key={state} state={state} className={className} short={short} />
+				<ApiStateBadge
+					key={state}
+					state={state}
+					className={className}
+					short={short}
+					variant={variant}
+				/>
 			))}
 		</>
 	);

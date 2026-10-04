@@ -96,11 +96,11 @@ export function BindAgentDialog({
 	}, [initialCredentialId]);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 
-	// Transient: clear the last error on every (re)open.
+	// Transient: clear the last error on every (re)open. (`reset` is stable.)
+	const resetBind = bind.reset;
 	useEffect(() => {
-		if (open) bind.reset();
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- reset is stable enough; only `open` should retrigger
-	}, [open]);
+		if (open) resetBind();
+	}, [open, resetBind]);
 
 	// A stale / unusable pick falls back to the first usable credential.
 	const credential = usable.find((c) => c.credential_id === credentialId) ?? usable[0] ?? null;
@@ -229,7 +229,7 @@ export function BindAgentDialog({
 							</p>
 						))}
 					<ul
-						className="border-border bg-muted/20 max-h-64 space-y-0.5 overflow-y-auto rounded-lg border p-1.5"
+						className="bg-field max-h-64 space-y-0.5 overflow-y-auto rounded-lg p-1.5"
 						data-testid="bind-agent-list"
 					>
 						{candidates.map((a) => {
@@ -237,7 +237,7 @@ export function BindAgentDialog({
 							return (
 								<li
 									key={a.id}
-									className="hover:bg-muted/40 flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
+									className="hover:bg-tint-2 flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
 									data-testid="bind-agent-option"
 								>
 									<Checkbox
@@ -246,7 +246,9 @@ export function BindAgentDialog({
 										disabled={bound || !boundKnown || bind.isPending}
 										onChange={(): void => toggle(a.id)}
 									>
-										<span className="text-foreground text-sm">{a.name}</span>
+										<span className="text-foreground-name text-sm">
+											{a.name}
+										</span>
 									</Checkbox>
 									<span className="flex shrink-0 items-center gap-1.5">
 										{bound && (

@@ -11,7 +11,9 @@ import { ORG_ADMIN, useOptionalCurrentUser } from '@/shared/auth';
 import type { Credential } from '@/shared/credentials/api';
 
 /** The bind endpoint's permission (`POST /agents/{id}/credentials`). */
-export const AGENTS_WRITE = 'agents:write';
+const AGENTS_WRITE = 'agents:write';
+/** The create endpoint's permission (`POST /credentials`). */
+const CREDENTIALS_WRITE = 'credentials:write';
 
 /** The slice of the signed-in user these rules read. `null` = not known yet
  * (still loading, or rendered outside an `AuthProvider`). */
@@ -46,14 +48,8 @@ export function credentialsBindableBy(
  * offered it — a UX-only gate, the server stays the source of truth.
  */
 export function useCanBindAgents(): boolean {
-	const viewer = useOptionalCurrentUser();
-	if (!viewer) return true;
-	const perms = viewer.permissions ?? [];
-	return perms.includes(AGENTS_WRITE) || perms.includes(ORG_ADMIN);
+	return useViewerMayWrite(AGENTS_WRITE);
 }
-
-/** The create endpoint's permission (`POST /credentials`). */
-export const CREDENTIALS_WRITE = 'credentials:write';
 
 /**
  * Whether to offer creating a credential: the viewer holds `credentials:write`
@@ -61,8 +57,13 @@ export const CREDENTIALS_WRITE = 'credentials:write';
  * posture as {@link useCanBindAgents}: an unknown viewer is offered it.
  */
 export function useCanCreateCredentials(): boolean {
+	return useViewerMayWrite(CREDENTIALS_WRITE);
+}
+
+/** `permission` or `org:admin` (accepted in its place); an unknown viewer may. */
+function useViewerMayWrite(permission: string): boolean {
 	const viewer = useOptionalCurrentUser();
 	if (!viewer) return true;
 	const perms = viewer.permissions ?? [];
-	return perms.includes(CREDENTIALS_WRITE) || perms.includes(ORG_ADMIN);
+	return perms.includes(permission) || perms.includes(ORG_ADMIN);
 }

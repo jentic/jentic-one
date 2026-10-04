@@ -97,7 +97,7 @@ export function ScopePicker({
 
 			<div className="space-y-2.5">
 				{filteredGroups.length === 0 ? (
-					<div className="border-border bg-muted/30 rounded-xl border p-6 text-center">
+					<div className="bg-field rounded-lg p-6 text-center">
 						<p className="text-muted-foreground text-xs">
 							{scopes.length === 0
 								? 'No scopes available.'

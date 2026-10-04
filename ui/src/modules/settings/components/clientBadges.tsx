@@ -33,11 +33,7 @@ export function ClientStatusBadges({
 					{APPROVAL_STATUS_LABEL[status]}
 				</Badge>
 			)}
-			{isInactiveChipVisible(client) && (
-				<span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-xs">
-					Disabled
-				</span>
-			)}
+			{isInactiveChipVisible(client) && <Badge variant="neutral">Disabled</Badge>}
 		</>
 	);
 }

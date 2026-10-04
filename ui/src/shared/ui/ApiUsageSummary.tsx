@@ -1,9 +1,9 @@
 /**
  * ApiUsageSummary — one API's 7-day call volume (calls, failed calls, trend
- * sparkline), in the three densities the Library shows it:
+ * sparkline), in three densities:
  *
- *   - `compact` — a trailing column in a dense list row (the docked panel)
- *   - `row`     — a one-line strip on a tile (the workspace `ApiCard`)
+ *   - `compact` — a trailing column in a dense list row
+ *   - `row`     — a one-line strip on a tile
  *   - `large`   — the headline figure of a card (the API hub)
  *
  * Presentational only: callers resolve the figure first (a missing usage row

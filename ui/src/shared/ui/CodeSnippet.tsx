@@ -18,11 +18,11 @@ export function CodeSnippet({ code, label, className }: CodeSnippetProps) {
 	return (
 		<div className={cn(className)}>
 			{label && (
-				<p className="text-muted-foreground/70 mb-1 text-[10px] tracking-wider uppercase">
+				<p className="text-muted-foreground mb-1 text-[10px] tracking-wider uppercase">
 					{label}
 				</p>
 			)}
-			<div className="bg-muted/60 border-border/60 relative rounded-lg border p-3">
+			<div className="bg-field relative rounded-lg p-3">
 				<pre className="text-foreground/90 overflow-x-auto pr-8 font-mono text-xs leading-relaxed">
 					{code}
 				</pre>

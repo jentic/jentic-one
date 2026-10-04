@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
+import { apiRefKey, apiScopeCovers, catalogImportRef } from '@/shared/credentials/lib/apiIdentity';
 
 describe('apiRefKey', () => {
 	it('keys the raw and stored spellings of one API the same', () => {
@@ -57,5 +57,25 @@ describe('apiScopeCovers', () => {
 				{ vendor: 'slack-com', name: 'api' },
 			),
 		).toBe(false);
+	});
+});
+
+describe('catalogImportRef', () => {
+	it('mirrors the import: slugged entry vendor + slugged whole api_id', () => {
+		expect(
+			catalogImportRef({ apiId: 'nytimes.com/article_search', vendor: 'nytimes.com' }),
+		).toEqual({
+			vendor: 'nytimes-com',
+			name: 'nytimes-com-article-search',
+		});
+		expect(catalogImportRef({ apiId: 'stripe.com', vendor: 'stripe.com' })).toEqual({
+			vendor: 'stripe-com',
+			name: 'stripe-com',
+		});
+	});
+
+	it('is unknown without a catalog vendor (the importer would read the spec)', () => {
+		expect(catalogImportRef({ apiId: 'example.org' })).toBeNull();
+		expect(catalogImportRef({ apiId: 'example.org', vendor: '  ' })).toBeNull();
 	});
 });

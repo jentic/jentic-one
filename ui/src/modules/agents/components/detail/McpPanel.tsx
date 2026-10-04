@@ -83,7 +83,7 @@ function safeHost(url: string): string {
 // Config card
 // ---------------------------------------------------------------------------
 
-export function McpConfigCard({ agentName }: { agentName: string }) {
+function McpConfigCard({ agentName }: { agentName: string }) {
 	const identity = useInstanceIdentity();
 
 	// The operator is looking at a working address of this instance, so the
@@ -187,7 +187,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				machine (its name is the suggested convention).
 			</p>
 
-			<dl className="border-border/60 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">
+			<dl className="border-hairline grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">
 				<MetaItem
 					label="Instance"
 					value={<span className="font-mono">{instanceHost}</span>}

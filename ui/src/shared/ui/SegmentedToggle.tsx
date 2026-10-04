@@ -22,6 +22,41 @@ export interface SegmentedToggleOption<T extends string = string> {
 	icon?: ReactNode;
 }
 
+/**
+ * Where the control sits (all borderless; the active segment is a lighter
+ * tonal pill, no ring or shadow): `default` takes one step lighter than its
+ * container (`--field-bg`); `surface` is `surface-1` on the page background;
+ * `inset` is one step lighter than a `surface-1` panel (smaller labels).
+ */
+export type SegmentedToggleTone = 'default' | 'surface' | 'inset';
+
+const TONE_STYLES: Record<
+	SegmentedToggleTone,
+	{ root: string; pill: string; segment: string; active: string; idle: string }
+> = {
+	default: {
+		root: 'bg-field rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-3 py-1 text-xs font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+	surface: {
+		root: 'bg-surface-1 rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-3 py-[5px] text-[12.5px] font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+	inset: {
+		root: 'bg-surface-field rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-2.5 py-1 text-xs font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+};
+
 interface SegmentedToggleProps<T extends string = string> {
 	options: SegmentedToggleOption<T>[];
 	value: T;
@@ -57,6 +92,13 @@ interface SegmentedToggleProps<T extends string = string> {
 	 * segment is `disabled` and the group is `aria-disabled`.
 	 */
 	disabled?: boolean;
+	/** Surface the control sits on (default: one step lighter than its container). */
+	tone?: SegmentedToggleTone;
+	/**
+	 * The control acts as a form field (a choice inside a form, not a
+	 * toolbar/panel filter): draws the inputs' faint resting edge.
+	 */
+	field?: boolean;
 }
 
 interface PillRect {
@@ -74,7 +116,10 @@ export function SegmentedToggle<T extends string = string>({
 	getControls,
 	getTabId,
 	disabled = false,
+	tone = 'default',
+	field = false,
 }: SegmentedToggleProps<T>) {
+	const styles = TONE_STYLES[tone];
 	const containerRef = useRef<HTMLDivElement>(null);
 	const btnRefs = useRef(new Map<string, HTMLButtonElement>());
 	const [pill, setPill] = useState<PillRect | null>(null);
@@ -131,16 +176,19 @@ export function SegmentedToggle<T extends string = string>({
 				// Structural backstop for the invariant above: even if a stale
 				// rect ever slipped through, overflow past the control's border
 				// never becomes visible or scrollable. The pill is inset
-				// (top-0.5/bottom-0.5, within p-0.5), so nothing is cut at rest.
-				'border-border bg-muted/50 relative flex overflow-x-clip rounded-lg border p-0.5',
+				// (its top/bottom offsets equal the padding), so nothing is cut at rest.
+				'relative flex overflow-x-clip',
+				styles.root,
+				field && 'border-control-edge border',
 				disabled && 'opacity-50',
 				className,
 			)}
+			data-tone={tone}
 		>
 			{pill && (
 				<motion.div
 					aria-hidden="true"
-					className="bg-foreground/10 ring-border/50 pointer-events-none absolute top-0.5 bottom-0.5 rounded-md shadow-sm ring-1"
+					className={cn('pointer-events-none absolute', styles.pill)}
 					initial={false}
 					animate={{ left: pill.left, width: pill.width }}
 					// INVARIANT: the pill must never extend past the control's own
@@ -179,7 +227,8 @@ export function SegmentedToggle<T extends string = string>({
 						onClick={() => onChange(option.value)}
 						onKeyDown={handleKeyDown}
 						className={cn(
-							'relative flex items-center rounded-md px-3 py-1 text-xs font-medium transition-colors',
+							'relative flex items-center transition-colors',
+							styles.segment,
 							disabled ? 'cursor-not-allowed' : !isActive && 'cursor-pointer',
 						)}
 					>
@@ -187,10 +236,10 @@ export function SegmentedToggle<T extends string = string>({
 							className={cn(
 								'relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors',
 								isActive
-									? 'text-foreground'
+									? styles.active
 									: disabled
-										? 'text-muted-foreground'
-										: 'text-muted-foreground hover:text-foreground',
+										? styles.idle
+										: cn(styles.idle, 'hover:text-foreground'),
 							)}
 						>
 							{option.icon && (

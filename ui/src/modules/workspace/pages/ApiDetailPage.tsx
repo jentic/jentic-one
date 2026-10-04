@@ -296,8 +296,8 @@ export default function ApiDetailPage() {
 
 			{query.isLoading ? (
 				<div className="space-y-4" aria-busy="true">
-					<Skeleton className="h-28 w-full rounded-xl" />
-					<Skeleton className="h-64 w-full rounded-xl" />
+					<Skeleton className="h-28 w-full rounded-lg" />
+					<Skeleton className="h-64 w-full rounded-lg" />
 				</div>
 			) : query.isError || !api ? (
 				<div className="space-y-3">

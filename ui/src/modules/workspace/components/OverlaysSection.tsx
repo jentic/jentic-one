@@ -37,6 +37,7 @@ import {
 	CopyButton,
 	ActorLabel,
 	toast,
+	ConfirmDialog,
 } from '@/shared/ui';
 import { GitBranch, Layers } from 'lucide-react';
 import { useState } from 'react';
@@ -52,7 +53,6 @@ import {
 	summarizeOverlayActions,
 } from '@/modules/workspace/api';
 import type { ApiKey, Overlay, OverlayLifecycle } from '@/modules/workspace/api';
-import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
 import { jumpToRevision } from '@/modules/workspace/components/jumpToRow';
 
 /**
@@ -102,7 +102,7 @@ function OverlayRow({
 
 	return (
 		<li
-			className="border-border/60 flex flex-col gap-2 border-b py-3 last:border-b-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+			className="flex flex-col gap-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
 			data-testid="overlay-row"
 			data-overlay-id={overlay.id}
 			// Cross-link jump target: receives focus from the Revisions section's
@@ -186,8 +186,8 @@ function OverlayRow({
 			<div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
 				{overlay.confirmHref ? (
 					<Button
-						variant="secondary"
-						size="sm"
+						variant="tonal"
+						size="xs"
 						onClick={() => onConfirm(overlay.id)}
 						loading={pendingAction === 'confirm'}
 						aria-label={`Confirm overlay ${shortId}`}
@@ -202,7 +202,7 @@ function OverlayRow({
 				{overlay.rollbackHref && lifecycle === 'active' ? (
 					<Button
 						variant="ghost"
-						size="sm"
+						size="xs"
 						onClick={() => onRollback(overlay)}
 						loading={pendingAction === 'rollback'}
 						aria-label={`Roll back overlay ${shortId}`}
@@ -214,7 +214,7 @@ function OverlayRow({
 				{overlay.deprecateHref ? (
 					<Button
 						variant="ghost"
-						size="sm"
+						size="xs"
 						onClick={() => onDeprecate(overlay.id)}
 						loading={pendingAction === 'deprecate'}
 						aria-label={`Deprecate overlay ${shortId}`}
@@ -249,12 +249,12 @@ export function OverlaysSection({
 		<Card data-testid="overlays-section">
 			<CardHeader>
 				<CardTitle>Overlays</CardTitle>
-				<p className="text-muted-foreground mt-0.5 text-xs">
+				<p className="text-foreground-sub mt-0.5 text-xs">
 					Proposed fixes layered on top of a spec — the spec itself is never edited in
 					place. Confirming an overlay applies it and produces a new revision above.
 				</p>
 			</CardHeader>
-			<CardBody>
+			<CardBody className="pt-1">
 				{query.isLoading ? (
 					<SkeletonRows rows={3} />
 				) : query.isError ? (
@@ -265,12 +265,15 @@ export function OverlaysSection({
 					/>
 				) : overlays.length === 0 ? (
 					<EmptyState
+						// Already inside the section's card: no second box of the
+						// same tone (it read as an invisible frame).
+						className="bg-transparent py-6 sm:py-8"
 						icon={<Layers size={28} aria-hidden="true" />}
 						title="No overlays"
 						description="Overlays are reviewed spec fixes submitted by agents or operators; they'll appear here once submitted."
 					/>
 				) : (
-					<ul className="divide-border/60">
+					<ul className="divide-hairline-row divide-y">
 						{overlays.map((overlay) => (
 							<OverlayRow
 								key={overlay.id}

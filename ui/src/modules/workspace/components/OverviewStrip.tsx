@@ -1,7 +1,7 @@
 /**
  * OverviewStrip — the top "overview" ribbon on the API detail surface.
  *
- * A bordered, muted strip with an
+ * A tonal strip with an
  * optional server-URL header followed by a single flex-wrap row of labelled
  * stats (icon + UPPERCASE label + value) and a right-aligned "Imported X ago".
  * Scoped to jentic-one's revision model — credentials / agents
@@ -10,9 +10,8 @@
  */
 import { useState } from 'react';
 import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
-import { Badge, Button } from '@/shared/ui';
+import { Badge, Button, ConfirmDialog } from '@/shared/ui';
 import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
-import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
 
 function relativeTime(iso: string): string | null {
@@ -43,7 +42,7 @@ function MetaItem({
 }) {
 	return (
 		<span className="inline-flex items-baseline gap-2">
-			<span className="text-muted-foreground/70 inline-flex items-center gap-1.5 self-center">
+			<span className="text-muted-foreground inline-flex items-center gap-1.5 self-center">
 				{icon}
 				<span className="text-[10px] tracking-wider uppercase">{label}</span>
 			</span>
@@ -81,20 +80,17 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	};
 
 	return (
-		<section
-			className="border-border/60 bg-muted/20 rounded-xl border"
-			data-testid="workspace-overview-strip"
-		>
+		<section className="bg-surface-1 rounded-lg" data-testid="workspace-overview-strip">
 			{api.updateAvailable ? (
 				<div
-					className="border-border/30 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+					className="border-hairline flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
 					data-testid="workspace-update-available"
 				>
 					<div className="flex items-center gap-2">
 						<Badge variant="warning" dot>
 							Update available
 						</Badge>
-						<span className="text-muted-foreground text-xs">
+						<span className="text-foreground-sub text-xs">
 							The upstream spec has changed since this API was imported.
 						</span>
 					</div>
@@ -123,7 +119,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				</div>
 			) : null}
 			{api.api.host ? (
-				<div className="border-border/30 border-b px-4 py-3">
+				<div className="border-hairline border-b px-4 py-3">
 					<p className="text-muted-foreground mb-1.5 text-[11px] font-medium tracking-wide uppercase">
 						Host
 					</p>
@@ -161,7 +157,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				) : null}
 			</div>
 			{api.description ? (
-				<div className="border-border/30 border-t px-4 py-3">
+				<div className="border-hairline border-t px-4 py-3">
 					<p className="text-muted-foreground text-sm">{api.description}</p>
 				</div>
 			) : null}

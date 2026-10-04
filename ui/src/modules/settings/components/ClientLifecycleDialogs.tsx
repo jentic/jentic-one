@@ -34,7 +34,7 @@ export function SecretDialog({
 				<p className="text-muted-foreground text-xs">
 					Copy this secret now — it is shown only once and cannot be retrieved again.
 				</p>
-				<div className="bg-card border-border flex items-center gap-2 rounded-md border p-2">
+				<div className="bg-field flex items-center gap-2 rounded-md p-2">
 					<code className="text-foreground min-w-0 flex-1 overflow-x-auto font-mono text-xs">
 						{secret}
 					</code>

@@ -59,10 +59,10 @@ export function InitialScopesField({ selected, onChange, idPrefix }: InitialScop
 	const bodyId = `${idPrefix}-initial-scopes`;
 
 	return (
-		<div className="border-border/60 rounded-lg border">
+		<div className="bg-surface-inset rounded-lg">
 			<button
 				type="button"
-				className="text-foreground hover:bg-accent/40 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
+				className="text-foreground hover:bg-tint-2 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
 				aria-expanded={open}
 				// Only reference the body while it's mounted — a dangling
 				// aria-controls id is an a11y smell when collapsed.
@@ -84,7 +84,7 @@ export function InitialScopesField({ selected, onChange, idPrefix }: InitialScop
 				/>
 			</button>
 			{open && (
-				<div id={bodyId} className="border-border/60 border-t p-3">
+				<div id={bodyId} className="border-hairline border-t p-3">
 					{catalogue.isPending ? (
 						<LoadingState size="sm" message="Loading permissions…" />
 					) : catalogue.error ? (

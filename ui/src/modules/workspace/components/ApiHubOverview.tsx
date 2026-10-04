@@ -41,7 +41,6 @@ import {
 } from 'lucide-react';
 import {
 	AppLink,
-	Badge,
 	Button,
 	Card,
 	CardBody,
@@ -50,6 +49,7 @@ import {
 	ErrorAlert,
 	Skeleton,
 	ApiUsageSummary,
+	StatusText,
 	StreamEventRow,
 	Tag,
 } from '@/shared/ui';
@@ -121,6 +121,16 @@ function HubCard({
 	);
 }
 
+/** The card's one "Bind to an agent" action (beside the agent chips, or in their empty state). */
+function BindAgentButton({ onClick }: { onClick: () => void }) {
+	return (
+		<Button variant="tonal" size="xs" onClick={onClick} data-testid="hub-access-bind-agent">
+			<Link2 size={12} aria-hidden="true" />
+			Bind to an agent
+		</Button>
+	);
+}
+
 function AccessCard({ api }: { api: WorkspaceApi }) {
 	const access = useApiAccessIndex();
 	const entry = access.entryFor(api.api);
@@ -185,9 +195,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 	// "Give an agent access" — for an API that needs no credential. The broker
 	// resolves every call through a bound credential regardless, so this finds
 	// a `no_auth` credential the viewer can bind (or creates one: no secret,
-	// pinned to this API's version like the hub's Add credential default) and
+	// for any version, like every Add credential default) and
 	// opens the bind dialog on it. Any covering no-auth credential is reused,
-	// including an unpinned one.
+	// pinned or not.
 	const viewer = useOptionalCurrentUser();
 	const canCreate = useCanCreateCredentials();
 	const createCredential = useCreateCredential();
@@ -227,7 +237,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 					api: {
 						vendor: api.api.vendor,
 						name: api.api.name,
-						version: api.api.version || undefined,
+						// No version: the backend's wildcard (covers every revision).
 						catalog_api_id: api.catalogApiId ?? undefined,
 					},
 				});
@@ -250,10 +260,9 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				action={
 					canAddCredential ? (
 						<Button
-							variant="ghost"
-							size="sm"
+							variant="tonal"
+							size="xs"
 							onClick={(): void => setCreateOpen(true)}
-							className="text-primary hover:text-primary h-7 gap-1 px-2 text-xs"
 							data-testid="hub-access-add-credential"
 						>
 							<Plus size={12} aria-hidden="true" />
@@ -305,7 +314,8 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 							{offerNoAuthAccess && (
 								<div className="shrink-0">
 									<Button
-										size="sm"
+										variant="tonal"
+										size="xs"
 										onClick={(): void => void giveAgentAccess()}
 										loading={createCredential.isPending}
 										disabled={createCredential.isPending}
@@ -329,16 +339,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 									Agents
 								</h3>
 								{canBind && agents.length > 0 && (
-									<Button
-										variant="ghost"
-										size="sm"
-										className="h-6 px-1.5 text-xs"
-										onClick={openBind}
-										data-testid="hub-access-bind-agent"
-									>
-										<Link2 size={12} aria-hidden="true" />
-										Bind to an agent
-									</Button>
+									<BindAgentButton onClick={openBind} />
 								)}
 							</div>
 							{agents.length === 0 ? (
@@ -351,15 +352,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 												: 'Couldn’t read the agents bound to these credentials.'}
 									</p>
 									{canBind && agentsSettled && (
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={openBind}
-											data-testid="hub-access-bind-agent"
-										>
-											<Link2 size={14} aria-hidden="true" />
-											Bind to an agent
-										</Button>
+										<BindAgentButton onClick={openBind} />
 									)}
 								</div>
 							) : (
@@ -368,14 +361,14 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 										<li key={a.agent_id}>
 											<AppLink
 												href={ROUTE_PATHS.agentTab(a.agent_id)}
-												className="bg-muted/60 hover:bg-muted text-foreground inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
+												className="bg-surface-field hover:bg-surface-chip-active text-foreground-name focus-visible:ring-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
 											>
 												<Bot className="h-3 w-3" aria-hidden="true" />
 												{a.agent_name}
 												{a.suspended && (
 													<>
 														<PauseCircle
-															className="text-warning h-3 w-3"
+															className="text-caution h-3 w-3"
 															aria-hidden="true"
 														/>
 														<span className="sr-only">(suspended)</span>
@@ -435,12 +428,14 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 												</span>
 												<span className="flex shrink-0 items-center gap-1.5">
 													{credentialIsConnected(c) && (
-														<Badge variant="success">Connected</Badge>
+														<StatusText tone="success">
+															Connected
+														</StatusText>
 													)}
 													{credentialIsPendingSignIn(c) && (
-														<Badge variant="pending">
+														<StatusText tone="warning">
 															Pending sign-in
-														</Badge>
+														</StatusText>
 													)}
 													<CredentialTypeBadge credential={c} />
 													<span

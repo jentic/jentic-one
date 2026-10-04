@@ -643,7 +643,7 @@ describe('VendorConnectFlow — approve mode', () => {
 		await user.click(groupHeader);
 		// The leaf op is present with the ``partial`` pill.
 		const opText = await screen.findByText('/repos/{owner}/{repo}/commits');
-		const opRow = opText.closest('div.bg-muted\\/20') as HTMLElement;
+		const opRow = opText.closest('[data-testid="op-impact-row"]') as HTMLElement;
 		expect(opRow).not.toBeNull();
 		expect(within(opRow).getByText(/^partial$/i)).toBeInTheDocument();
 		// Sample lines are hidden by default — the row is collapsed.

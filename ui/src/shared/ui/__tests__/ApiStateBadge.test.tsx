@@ -26,9 +26,9 @@ describe('ApiStateBadge', () => {
 		expect(screen.getByText('Update')).toBeInTheDocument();
 	});
 
-	it('keeps the draft variant aligned with the workspace Draft pill', () => {
+	it('draws Draft as a neutral fact, not a warning', () => {
 		expect(API_STATE_LABELS.draft).toBe('Draft');
-		expect(API_STATE_BADGE_VARIANT.draft).toBe('pending');
+		expect(API_STATE_BADGE_VARIANT.draft).toBe('neutral');
 		expect(API_STATE_BADGE_VARIANT.update).toBe('warning');
 	});
 

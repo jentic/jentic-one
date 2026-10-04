@@ -39,6 +39,7 @@ import {
 import {
 	AgentBadge,
 	ActorLabel,
+	ActorStatusBadge,
 	AppLink,
 	BackButton,
 	Button,
@@ -68,7 +69,6 @@ import {
 	ACTION_VARIANT,
 	type AgentAction,
 } from '@/modules/agents/api';
-import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -297,10 +297,7 @@ export default function AgentDetailPage() {
 
 			{/* Denial banner — full-width alert grammar. */}
 			{agent.status === 'rejected' && (
-				<div
-					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
-					role="alert"
-				>
+				<div className="bg-danger/10 flex items-start gap-3 rounded-lg p-4" role="alert">
 					<div className="bg-danger/15 text-danger flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
 						<ShieldX className="h-5 w-5" />
 					</div>

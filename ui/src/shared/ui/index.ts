@@ -31,7 +31,7 @@ export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
 export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
 
-export { Badge, MethodBadge, StatusBadge, StatusText, Tag } from '@/shared/ui/Badge';
+export { Badge, MethodBadge, StatusBadge, StatusChip, StatusText, Tag } from '@/shared/ui/Badge';
 export type { Variant as BadgeVariant, StatusTone } from '@/shared/ui/Badge';
 
 export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
@@ -96,11 +96,13 @@ export { Pagination } from '@/shared/ui/Pagination';
 
 export { Dialog } from '@/shared/ui/Dialog';
 
+export { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
+export type { ConfirmDialogProps } from '@/shared/ui/ConfirmDialog';
+
 export { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
 export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/CascadeDeleteDialog';
 
-export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
-export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
+export * from '@/shared/ui/SheetPrimitive';
 
 export { useCoversRightEdge, useReportRightDock, useRightEdgeInset } from '@/shared/ui/rightEdge';
 
@@ -125,11 +127,16 @@ export type { PageShellProps } from '@/shared/ui/PageShell';
 
 export { PageHeader } from '@/shared/ui/PageHeader';
 
-export { PageHelp } from '@/shared/ui/PageHelp';
-export type { PageHelpProps, PageHelpSection, PageHelpLink } from '@/shared/ui/PageHelp';
+export { AuthCard } from '@/shared/ui/AuthCard';
+export type { AuthCardProps } from '@/shared/ui/AuthCard';
 
-export { KeyboardShortcutsBar } from '@/shared/ui/KeyboardShortcutsBar';
-export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/KeyboardShortcutsBar';
+export { PageHelp } from '@/shared/ui/PageHelp';
+export type {
+	KeyboardShortcut,
+	PageHelpProps,
+	PageHelpSection,
+	PageHelpLink,
+} from '@/shared/ui/PageHelp';
 
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
@@ -167,6 +174,22 @@ export type {
 } from '@/shared/ui/OperationDetail';
 
 export { VendorIcon } from '@/shared/ui/VendorIcon';
+export {
+	AVATAR_TONES,
+	AVATAR_TONE_COUNT,
+	AVATAR_NEUTRAL,
+	avatarToneIndex,
+	avatarToneStyle,
+	avatarToneColors,
+} from '@/shared/ui/avatarPalette';
+export { GitHubMark } from '@/shared/ui/GitHubMark';
+export { SectionLabel } from '@/shared/ui/SectionLabel';
+export * from '@/shared/ui/MetaLine';
+export * from '@/shared/ui/CountLine';
+export * from '@/shared/ui/Ledger';
+export * from '@/shared/ui/AlphaRail';
+export { ResizeHandle } from '@/shared/ui/ResizeHandle';
+export type { ResizeHandleProps } from '@/shared/ui/ResizeHandle';
 export type { VendorIconProps } from '@/shared/ui/VendorIcon';
 
 export {
@@ -188,7 +211,7 @@ export {
 	API_STATE_LABELS,
 	API_STATE_BADGE_VARIANT,
 } from '@/shared/ui/ApiStateBadge';
-export type { ApiServingState } from '@/shared/ui/ApiStateBadge';
+export type { ApiServingState, ApiStateBadgeVariant } from '@/shared/ui/ApiStateBadge';
 
 export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
 export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
@@ -216,8 +239,6 @@ export {
 	cleanPermissionRule,
 	allowAllRule,
 	grantsEverything,
-	PERMISSION_EFFECTS,
-	PERMISSION_MATCH_MODES,
 } from '@/shared/ui/PermissionRuleEditor';
 export type {
 	PermissionRuleEditorProps,

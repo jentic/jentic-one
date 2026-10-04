@@ -2,8 +2,8 @@ import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
-type Size = 'sm' | 'md' | 'lg' | 'icon';
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline' | 'tonal';
+type Size = 'sm' | 'md' | 'lg' | 'icon' | 'xs' | 'icon-xs';
 
 /**
  * Shared base classes for the button *look* (layout, radius, font, focus ring,
@@ -13,26 +13,45 @@ type Size = 'sm' | 'md' | 'lg' | 'icon';
  * split from the ring below.
  */
 const buttonBase =
-	'inline-flex cursor-pointer items-center justify-center rounded-lg font-medium transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-out active:scale-[0.98] disabled:cursor-not-allowed motion-reduce:active:scale-100';
+	'inline-flex cursor-pointer items-center justify-center rounded-field font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-[140ms] ease-out active:scale-[0.98] disabled:cursor-not-allowed motion-reduce:active:scale-100';
 
 const buttonFocusRing =
 	'focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none';
 
+/**
+ * Variants. A surface is raised by lightening it, never by a border:
+ *   - `primary`   — the filled accent CTA; one per surface (sheet/dialog footer, page action)
+ *   - `tonal`     — in-context verbs on rows and cards (a lighter step of the surface)
+ *   - `secondary` — a quiet standalone action (tonal fill, full-strength text)
+ *   (No button carries an edge — not on cards, docks, ledgers or the rules
+ *   editor: the fill says "button". Edges are for things you type into or
+ *   toggle — Input/Select/Textarea, field SegmentedToggles, method chips.)
+ *   - `outline`   — an accent-tinted action without the fill weight of `primary`
+ *   - `ghost`     — icon/quiet actions (close, copy, toolbar glyphs)
+ *   - `danger`    — destructive: an 18% red fill + red text (≈1.45:1 fill, ≈6:1 text)
+ */
 const variantClasses: Record<Variant, string> = {
-	primary: 'bg-primary text-background shadow-card hover:bg-primary-hover disabled:opacity-50',
-	secondary:
-		'bg-muted border border-border text-foreground hover:bg-muted/60 hover:border-border-hover disabled:opacity-50',
-	danger: 'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 disabled:opacity-50',
-	ghost: 'text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50',
-	outline:
-		'bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 hover:border-primary/50 disabled:opacity-50',
+	// Disabled CTA: a quiet raised fill with legible `sub` text (≥5:1) rather
+	// than a 50% fade, so it still reads as the (unavailable) action.
+	primary:
+		'bg-primary text-background hover:bg-primary-hover disabled:bg-surface-quiet-cta disabled:text-foreground-sub',
+	secondary: 'bg-surface-tonal text-foreground hover:bg-surface-tonal-hover disabled:opacity-50',
+	danger: 'bg-danger/18 text-danger hover:bg-danger/26 disabled:opacity-50',
+	ghost: 'text-muted-foreground hover:text-foreground hover:bg-tint-2 disabled:opacity-50',
+	outline: 'bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-50',
+	tonal: 'bg-surface-tonal text-foreground-sub font-bold hover:bg-surface-tonal-hover hover:text-foreground disabled:opacity-50',
 };
 
 const sizeClasses: Record<Size, string> = {
-	sm: 'px-3 py-1.5 text-sm gap-1.5',
-	md: 'px-4 py-2 text-sm gap-2',
+	// 32px — header actions, toolbars, most inline buttons.
+	sm: 'px-3 py-1.5 text-[13px] leading-5 gap-1.5',
+	// 36px — the sheet/dialog CTA.
+	md: 'px-4 py-2 text-[13.5px] leading-5 gap-2',
 	lg: 'px-4 py-3 text-sm font-bold gap-2',
-	icon: 'p-2',
+	icon: 'p-2 rounded-md',
+	// 28px compact row/card actions.
+	xs: 'h-7 px-[11px] text-xs gap-1.5 rounded-md',
+	'icon-xs': 'h-7 w-7 p-0 rounded-md',
 };
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -63,6 +82,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
 			disabled={disabled || loading}
 			aria-busy={loading || undefined}
 			aria-disabled={disabled || loading || undefined}
+			data-variant={variant}
+			data-size={size}
 			className={cn(
 				buttonBase,
 				buttonFocusRing,

@@ -10,7 +10,7 @@
  * bound credentials live on the Access tab).
  */
 import { Activity, CheckCircle2, Clock, KeyRound } from 'lucide-react';
-import { Skeleton, StatCard } from '@/shared/ui';
+import { Card, Skeleton, StatCard } from '@/shared/ui';
 import { timeAgo } from '@/shared/lib/utils';
 import type { ActorUsageDetail } from '@/modules/agents/api';
 import { successShare } from '@/modules/agents/components/detail/shared';
@@ -35,13 +35,10 @@ export function KpiStrip({ usage, lastActivityAt, credentialCount }: KpiStripPro
 		return (
 			<div className={gridClass} data-testid="kpi-strip-loading" aria-hidden="true">
 				{Array.from({ length: tiles }).map((_, i) => (
-					<div
-						key={`kpi-skel-${i}`}
-						className="border-border/60 bg-card space-y-3 rounded-xl border p-4"
-					>
+					<Card key={`kpi-skel-${i}`} className="space-y-3 px-5 py-4">
 						<Skeleton className="h-3 w-20" />
 						<Skeleton className="h-7 w-14" />
-					</div>
+					</Card>
 				))}
 			</div>
 		);

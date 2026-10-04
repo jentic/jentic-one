@@ -13,14 +13,14 @@ export function EmptyState({ icon, title, description, action, className }: Empt
 	return (
 		<div
 			className={cn(
-				'border-border/70 from-muted/60 to-card animate-rise flex flex-col items-center justify-center rounded-xl border border-dashed bg-gradient-to-b p-6 text-center sm:p-10',
+				'bg-surface-1 animate-rise flex flex-col items-center justify-center rounded-lg p-6 text-center sm:p-10',
 				className,
 			)}
 		>
-			<div className="text-primary/80 ring-primary/15 bg-primary/5 mb-4 flex h-14 w-14 items-center justify-center rounded-full ring-1">
+			<div className="text-primary bg-surface-tonal mb-4 flex h-12 w-12 items-center justify-center rounded-full">
 				{icon}
 			</div>
-			<p className="font-heading text-foreground text-base font-semibold">{title}</p>
+			<p className="font-heading text-foreground-name text-base font-semibold">{title}</p>
 			{description && (
 				<p className="text-muted-foreground mt-1.5 max-w-sm text-sm leading-relaxed">
 					{description}

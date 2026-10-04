@@ -100,8 +100,8 @@ export function KillSwitch({
 				className={cn(
 					'group relative h-8 gap-2 rounded-full px-3 text-xs font-medium',
 					active
-						? 'bg-success/10 text-success border-success/30 hover:bg-success/20 border'
-						: 'bg-danger/10 text-danger border-danger/30 hover:bg-danger/20 border',
+						? 'bg-success/10 text-success hover:bg-success/20'
+						: 'bg-danger/10 text-danger hover:bg-danger/20',
 				)}
 			>
 				{!pending && (
@@ -125,8 +125,8 @@ export function KillSwitch({
 					animate={{ opacity: 1, x: 0 }}
 					transition={{ duration: 0.15 }}
 					className={cn(
-						'inline-flex items-center gap-2 rounded-full border px-3 py-1',
-						active ? 'border-danger/30 bg-danger/5' : 'border-success/30 bg-success/5',
+						'inline-flex items-center gap-2 rounded-full px-3 py-1',
+						active ? 'bg-danger/5' : 'bg-success/5',
 					)}
 				>
 					<span className="text-muted-foreground text-xs">

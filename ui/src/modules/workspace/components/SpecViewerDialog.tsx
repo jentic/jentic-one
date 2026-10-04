@@ -6,8 +6,8 @@
  * (`diffAgainst` — the previous revision, matching the row summary's "vs
  * previous" delta), the dialog opens in diff mode: a structural before/after
  * list of exactly the changed sections (`$.servers`, …), with a "Full spec"
- * toggle for the raw document. Entry points whose label promises the raw
- * document pass `defaultMode="full"` instead.
+ * toggle for the raw document. The hub's Spec tab (`SpecViewerPanel`) shares
+ * the same viewer but opens on the full document.
  * Both documents are fetched lazily behind the open flag
  * (`useApiSpec(key, open)`), so nothing large loads on the detail page
  * itself.
@@ -23,10 +23,9 @@ import {
 	SegmentedToggle,
 	Badge,
 } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 import { useApiSpec, formatApiKey, diffSpecs } from '@/modules/workspace/api';
 import type { ApiKey, SpecDiffBase, SpecDiffEntry } from '@/modules/workspace/api';
-
-export type { SpecDiffBase } from '@/modules/workspace/api';
 
 export interface SpecViewerDialogProps {
 	apiKey: ApiKey;
@@ -45,12 +44,6 @@ export interface SpecViewerDialogProps {
 	 * API's first revision) only the full spec is shown.
 	 */
 	diffAgainst?: SpecDiffBase | null;
-	/**
-	 * Which view opens first when a diff base exists. `'diff'` (default) for
-	 * Diff-labeled entry points; pass `'full'` when the trigger's label
-	 * promises the raw document.
-	 */
-	defaultMode?: 'diff' | 'full';
 }
 
 const KIND_VARIANT = { added: 'success', removed: 'danger', changed: 'warning' } as const;
@@ -65,7 +58,7 @@ function pretty(value: unknown): string {
 
 function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 	return (
-		<li className="border-border/60 rounded-lg border p-3" data-testid="spec-diff-entry">
+		<li className="bg-field rounded-lg p-3" data-testid="spec-diff-entry">
 			<div className="mb-2 flex items-center gap-2">
 				<Badge variant={KIND_VARIANT[entry.kind]}>{entry.kind}</Badge>
 				<code className="text-foreground font-mono text-xs break-all">{entry.path}</code>
@@ -79,7 +72,7 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 					<pre
 						tabIndex={0}
 						aria-label={`Before, at ${entry.path}`}
-						className="bg-danger/8 border-danger/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+						className="bg-danger/8 text-foreground overflow-auto rounded-md p-2 font-mono text-xs leading-relaxed whitespace-pre"
 					>
 						<span className="sr-only">Before: </span>
 						{`- ${pretty(entry.before).split('\n').join('\n- ')}`}
@@ -89,7 +82,7 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 					<pre
 						tabIndex={0}
 						aria-label={`After, at ${entry.path}`}
-						className="bg-success/8 border-success/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+						className="bg-success/8 text-foreground overflow-auto rounded-md p-2 font-mono text-xs leading-relaxed whitespace-pre"
 					>
 						<span className="sr-only">After: </span>
 						{`+ ${pretty(entry.after).split('\n').join('\n+ ')}`}
@@ -293,7 +286,7 @@ function SpecViewBody({
 						aria-labelledby={tabId('diff')}
 						tabIndex={0}
 						aria-label="Spec changes"
-						className={`${maxHeightClass} overflow-auto`}
+						className={cn(maxHeightClass, 'overflow-auto')}
 						data-testid={testIds.diffContent}
 					>
 						<p className="text-muted-foreground mb-2 text-xs">
@@ -317,7 +310,10 @@ function SpecViewBody({
 					aria-labelledby={hasDiff ? tabId('full') : undefined}
 					tabIndex={0}
 					aria-label="Full spec JSON"
-					className={`bg-muted/40 border-border/60 text-foreground ${maxHeightClass} overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre`}
+					className={cn(
+						'bg-field text-foreground overflow-auto rounded-lg p-3 font-mono text-xs leading-relaxed whitespace-pre',
+						maxHeightClass,
+					)}
 					data-testid={testIds.content}
 				>
 					{prettySpec}
@@ -334,9 +330,8 @@ export function SpecViewerDialog({
 	revisionId,
 	revisionLabel,
 	diffAgainst,
-	defaultMode = 'diff',
 }: SpecViewerDialogProps) {
-	const view = useSpecView({ apiKey, active: open, revisionId, diffAgainst, defaultMode });
+	const view = useSpecView({ apiKey, active: open, revisionId, diffAgainst });
 
 	return (
 		<Dialog
@@ -384,17 +379,17 @@ export function SpecViewerPanel({
 	const view = useSpecView({ apiKey, active: true, diffAgainst, defaultMode: 'full' });
 	return (
 		<section
-			className="border-border bg-card rounded-xl border"
+			className="bg-surface-1 rounded-lg [--field-bg:var(--surface-field)]"
 			aria-label={title}
 			data-testid="spec-viewer-panel"
 		>
-			<div className="border-border/60 flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
-				<h2 className="font-heading text-foreground font-semibold">{title}</h2>
+			<div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4 pb-1">
+				<h2 className="font-heading text-foreground-name font-semibold">{title}</h2>
 				<div className="flex items-center gap-2">
 					<SpecActions view={view} />
 				</div>
 			</div>
-			<div className="p-4">
+			<div className="px-5 pt-2 pb-5">
 				<SpecViewBody
 					apiKey={apiKey}
 					view={view}

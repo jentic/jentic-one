@@ -33,7 +33,7 @@ export function StreamEventRow({
 	return (
 		<li>
 			{href ? (
-				<AppLink href={href} className={cn(row, 'hover:bg-muted/60 rounded-md')}>
+				<AppLink href={href} className={cn(row, 'hover:bg-tint-2 rounded-md')}>
 					{body}
 				</AppLink>
 			) : (

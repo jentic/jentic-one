@@ -106,7 +106,7 @@ export function MenuPanel({ children, align = 'left', className }: MenuPanelProp
 		<div
 			role="menu"
 			className={cn(
-				'border-border bg-background absolute top-full z-50 mt-1.5 min-w-[180px] rounded-lg border p-1 shadow-lg',
+				'border-border/60 bg-background absolute top-full z-50 mt-1.5 min-w-[180px] rounded-lg border p-1 shadow-lg',
 				align === 'right' ? 'right-0' : 'left-0',
 				className,
 			)}
@@ -201,7 +201,7 @@ export function AnchoredMenuPanel({
 			role="menu"
 			style={pos}
 			className={cn(
-				'border-border bg-background fixed z-50 min-w-[180px] rounded-lg border p-1 shadow-lg',
+				'border-border/60 bg-background fixed z-50 min-w-[180px] rounded-lg border p-1 shadow-lg',
 				className,
 			)}
 		>
@@ -213,7 +213,7 @@ export function AnchoredMenuPanel({
 
 /** Thin inset hairline used to group menu items into sections. */
 export function MenuSeparator() {
-	return <div className="bg-border/60 mx-1 my-1 h-px" aria-hidden="true" />;
+	return <div className="bg-hairline mx-1 my-1 h-px" aria-hidden="true" />;
 }
 
 /**
@@ -226,7 +226,7 @@ export function menuItemClass(active = false): string {
 	return cn(
 		'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors duration-150',
 		active
-			? 'text-foreground bg-muted'
-			: 'text-muted-foreground hover:bg-muted hover:text-foreground',
+			? 'text-foreground bg-surface-chip'
+			: 'text-muted-foreground hover:bg-tint-2 hover:text-foreground',
 	);
 }

@@ -23,6 +23,7 @@ import {
 	ErrorAlert,
 	LoadingState,
 	ScopePicker,
+	ConfirmDialog,
 } from '@/shared/ui';
 import type { EnhancedScope } from '@/shared/lib';
 import { extractResourceFromScope } from '@/shared/lib';
@@ -33,7 +34,6 @@ import {
 	useReplaceAgentScopes,
 	type PermissionCatalogEntry,
 } from '@/modules/agents/api';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 export interface ScopesCardProps {
 	actorId: string;
@@ -113,7 +113,7 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 							.sort((a, b) => a.localeCompare(b))
 							.map((scope) => (
 								<li key={scope}>
-									<Badge variant="default" className="font-mono text-[11px]">
+									<Badge variant="default" mono>
 										{scope}
 									</Badge>
 								</li>

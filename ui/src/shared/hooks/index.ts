@@ -1,4 +1,3 @@
-export { useHealth } from '@/shared/hooks/useHealth';
 export { useEagerCursorDrain } from '@/shared/hooks/useEagerCursorDrain';
 export type { EagerCursorDrainSource, DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 export { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
@@ -19,3 +18,5 @@ export type {
 	PendingOverlayCount,
 	PendingOverlayCounts,
 } from '@/shared/hooks/usePendingOverlayCounts';
+export { useResizableWidth } from '@/shared/hooks/useResizableWidth';
+export type { ResizableWidth, UseResizableWidthOptions } from '@/shared/hooks/useResizableWidth';
