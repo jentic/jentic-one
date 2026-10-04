@@ -35,6 +35,31 @@ describe('PageHeader', () => {
 		expect(onClick).toHaveBeenCalledOnce();
 	});
 
+	it('tints the divider: an edge-to-edge accent line fading out to the band end', () => {
+		const { container } = renderWithProviders(
+			<PageHeader
+				title="Library"
+				subtitle="Everything your agents can use."
+				animated={false}
+			/>,
+		);
+		const band = container.querySelector('.page-header-band') as HTMLElement;
+		const after = getComputedStyle(band, '::after');
+		const b = band.getBoundingClientRect();
+		// On the divider, edge to edge across the band.
+		expect(after.position).toBe('absolute');
+		expect(after.bottom).toBe('0px');
+		expect(after.left).toBe('0px');
+		expect(after.right).toBe('0px');
+		expect(parseFloat(after.width)).toBeCloseTo(b.width, 0);
+		// Whole-pixel band height, so the line lands crisp.
+		expect(Number.isInteger(b.height)).toBe(true);
+		// A gradient that ends transparent (the fade), not a solid stub.
+		expect(after.backgroundImage).toContain('linear-gradient');
+		expect(after.backgroundImage).toMatch(/rgba\([^)]*,\s*0\) 100%\)/);
+		expect(after.backgroundSize).toContain('2px');
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(
 			<PageHeader title="Dashboard" subtitle="Overview" animated={false} />,

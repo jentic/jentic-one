@@ -21,10 +21,13 @@ interface PageHeaderProps {
 }
 
 /**
- * Full-bleed page header band.
- *
- * It escapes the gutter padding that `PageShell` applies by using
- * negative margins, so the gradient band stretches edge-to-edge.
+ * Page header band: the route's title zone. A tonal band (surface-1 fading
+ * into the page, a soft teal wash behind the title, a hairline foot) —
+ * `.page-header-band` in `index.css` — so the title reads as its own zone above
+ * the page's tonal surfaces. The foot is an accent divider: a 2px accent line
+ * across the band, edge to edge, fading out toward the right end.
+ * It escapes `PageShell`'s gutter and top padding with negative margins so the
+ * band runs edge-to-edge from the top of the scroller.
  *
  * Always use this component at the top of every route inside
  * `<PageShell>`. Detail pages that need a "back to <parent>" affordance
@@ -44,14 +47,16 @@ export function PageHeader({
 			<div className="flex min-w-0 basis-full items-start gap-3 sm:flex-1 sm:basis-0">
 				{icon && <div className="shrink-0">{icon}</div>}
 				<div className="min-w-0 flex-1">
-					<h1 className="text-foreground text-xl font-semibold tracking-tight md:text-2xl">
+					{/* Integer line heights (25 / 32px) keep the band's foot — and the
+					    accent on it — on whole pixels. */}
+					<h1 className="font-heading text-foreground text-xl leading-tight font-semibold tracking-[-0.015em] md:text-[1.625rem] md:leading-8">
 						{title}
 					</h1>
 					{subtitle && (
-						<div className="mt-0.5">
+						<div className="mt-1">
 							{/* A subtitle is free text: two lines, then on request
 							    the rest (`ExpandableText`). */}
-							<ExpandableText lines={2} className="text-muted-foreground text-sm">
+							<ExpandableText lines={2} className="text-foreground-sub text-sm">
 								{subtitle}
 							</ExpandableText>
 						</div>
@@ -59,23 +64,26 @@ export function PageHeader({
 				</div>
 			</div>
 			{actions && (
-				<div className="flex shrink-0 items-center gap-2 self-center">{actions}</div>
+				// `.page-header-actions` (index.css) lifts the header's buttons and
+				// fields off the band with fill and a soft shadow (no edges), a
+				// glow on the primary CTA and a filled field well. Keyed off
+				// Button's `data-variant`, so pages just pick the right variant.
+				<div className="page-header-actions flex shrink-0 items-center gap-2 self-center">
+					{actions}
+				</div>
 			)}
 		</div>
 	);
 
 	return (
-		<div
-			className={cn(
-				'border-border/50 from-card to-background -mx-page-gutter -mt-6 border-b bg-gradient-to-b',
-				className,
-			)}
-		>
-			<div className="px-4 py-4 md:py-5">
+		<div className={cn('page-header-band -mx-page-gutter -mt-6', className)}>
+			<div className="px-4 pt-5 pb-4 md:pt-6 md:pb-5">
 				{animated ? (
 					<motion.div
-						initial={{ opacity: 0, y: -8 }}
-						animate={{ opacity: 1, y: 0 }}
+						// Translate only: fading from opacity 0 renders the title
+						// below contrast mid-entrance (same reason as `.animate-rise`).
+						initial={{ y: -8 }}
+						animate={{ y: 0 }}
 						transition={{ duration: 0.25, ease: 'easeOut' }}
 					>
 						{content}

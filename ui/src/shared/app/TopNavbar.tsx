@@ -28,7 +28,7 @@ function DocsLink() {
 			// in Name") so voice-control users saying "click Docs" match it.
 			aria-label="Docs — API reference"
 			title="Docs — API reference"
-			className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150"
+			className="text-muted-foreground hover:bg-tint-2 hover:text-foreground flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150"
 		>
 			<BookText className="h-4 w-4 shrink-0" aria-hidden="true" />
 			<span className="hidden md:inline">Docs</span>
@@ -50,7 +50,7 @@ export function TopNavbar({ showActivity = true }: { showActivity?: boolean }) {
 			// Its own view-transition layer: the bar stays put while pages
 			// cross-fade underneath it.
 			style={{ viewTransitionName: 'app-header' }}
-			className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 border-b backdrop-blur"
+			className="border-hairline bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 border-b backdrop-blur"
 		>
 			<div className="flex h-12 items-center justify-between px-4">
 				{/* Left: logo + separator + nav tabs */}

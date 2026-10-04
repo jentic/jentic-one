@@ -137,7 +137,7 @@ export function TabNav<T extends string = string>({
 									'transition-colors',
 									isActive
 										? 'text-primary'
-										: 'text-muted-foreground/70 group-hover:text-foreground',
+										: 'text-muted-foreground group-hover:text-foreground',
 								)}
 							>
 								{option.icon}
@@ -149,8 +149,8 @@ export function TabNav<T extends string = string>({
 								className={cn(
 									'rounded-full px-1.5 py-0.5 font-mono text-[10px] leading-none transition-colors',
 									isActive
-										? 'bg-primary/15 text-primary'
-										: 'bg-muted text-muted-foreground',
+										? 'bg-primary/10 text-primary'
+										: 'bg-surface-chip text-foreground-sub',
 								)}
 							>
 								{option.count}
