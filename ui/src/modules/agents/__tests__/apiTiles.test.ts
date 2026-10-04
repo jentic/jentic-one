@@ -244,6 +244,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 1,
 			operations: 100,
 			operationsAtLeast: false,
+			blocked: 0,
 		});
 		expect(agentSetupGapCount(bindings, credentials)).toBe(1);
 	});
@@ -259,6 +260,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 0,
 			operationsAtLeast: false,
+			blocked: 0,
 		});
 	});
 
@@ -272,6 +274,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: null,
 			operationsAtLeast: false,
+			blocked: 0,
 		});
 	});
 
@@ -294,6 +297,38 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 100,
 			operationsAtLeast: true,
+			blocked: 0,
+		});
+	});
+
+	it('counts Blocked tiles apart and keeps their operations out of "reachable"', () => {
+		const apis = [
+			makeApi({ vendor: 'slack.com', display_name: 'Slack', operation_count: 100 }),
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 50 }),
+		];
+		const credentials = [
+			makeCredential({ credential_id: 'cred_a' }),
+			makeCredential({ credential_id: 'cred_b' }),
+		];
+		const bindings = [
+			makeBinding({ id: 'acb_a', credentialId: 'cred_a' }),
+			makeBinding({
+				id: 'acb_b',
+				credentialId: 'cred_b',
+				serves: [{ vendor: 'github.com', name: null, version: null }],
+			}),
+		];
+		const tiles = composeApiTiles(bindings, credentials, apis);
+		const rules = new Map([
+			['cred_a', { total: 1, allow: 1, deny: 0 }],
+			['cred_b', { total: 0, allow: 0, deny: 0 }],
+		]);
+		expect(tileStats(tiles, (t) => rules.get(t.credentialId))).toEqual({
+			configured: 2,
+			needsSetup: 0,
+			operations: 100,
+			operationsAtLeast: false,
+			blocked: 1,
 		});
 	});
 

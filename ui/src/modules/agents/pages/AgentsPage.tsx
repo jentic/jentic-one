@@ -123,7 +123,11 @@ export default function AgentsPage() {
 						</Button>
 						{/* The org-wide inventory trigger — page level, not the dock, whose every
 						    verb is agent-scoped. */}
-						<Button variant="outline" size="sm" onClick={() => setInventoryOpen(true)}>
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => setInventoryOpen(true)}
+						>
 							<Wallet className="h-4 w-4" />
 							Credentials
 						</Button>

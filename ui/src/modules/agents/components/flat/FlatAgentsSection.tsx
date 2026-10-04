@@ -239,9 +239,9 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					<span className="sr-only">Loading agents…</span>
 					{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
 					<Skeleton className="h-11 w-full max-w-md rounded-lg" />
-					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 						{[0, 1, 2].map((i) => (
-							<Skeleton key={i} className="h-44 rounded-xl" />
+							<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
 						))}
 					</div>
 				</div>
@@ -398,16 +398,16 @@ type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
 /** Per-state banner tint — about attention, not editability. */
 const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }> = {
 	pending: {
-		shell: 'border-warning/40 bg-warning/[0.04]',
+		shell: 'bg-warning/10',
 		chip: 'bg-warning/15 text-warning',
 	},
 	rejected: {
-		shell: 'border-danger/40 bg-danger/[0.04]',
+		shell: 'bg-danger/10',
 		chip: 'bg-danger/15 text-danger',
 	},
 	archived: {
-		shell: 'border-border/70 bg-muted/20',
-		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
+		shell: 'bg-surface-1',
+		chip: 'bg-surface-field text-muted-foreground',
 	},
 };
 
@@ -430,7 +430,7 @@ function StateBanner({
 			role="status"
 			data-testid={`agent-state-banner-${status}`}
 			className={cn(
-				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
+				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-lg p-3 sm:flex-nowrap',
 				shell,
 			)}
 		>
@@ -559,6 +559,9 @@ function SelectedAgentPanel({
 		[liveBindings],
 	);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
+	// A Blocked status opens the sheet ON its rules editor: the tile key whose
+	// next open should land on "Add rule" (spent by the sheet once focused).
+	const [rulesFocusKey, setRulesFocusKey] = useState<string | null>(null);
 	const purgeableOrphanIds = useMemo(
 		() => orphanBindings.map((b) => b.credentialId),
 		[orphanBindings],
@@ -569,7 +572,10 @@ function SelectedAgentPanel({
 		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
-	const stats = useMemo(() => tileStats(tiles), [tiles]);
+	const stats = useMemo(
+		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
+		[tiles, ruleSummaries],
+	);
 
 	// The same per-actor read the console's KPI strip makes; `null` on 403.
 	const usageQuery = useActorUsageDetail(agent.id);
@@ -738,11 +744,11 @@ function SelectedAgentPanel({
 					role="status"
 					aria-live="polite"
 					aria-busy="true"
-					className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+					className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
 				>
 					<span className="sr-only">Loading APIs…</span>
 					{[0, 1, 2].map((i) => (
-						<Skeleton key={i} className="h-44 rounded-xl" />
+						<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
 					))}
 				</div>
 			) : bindingsQuery.error ? (
@@ -756,8 +762,10 @@ function SelectedAgentPanel({
 					}}
 				/>
 			) : tiles.length === 0 ? (
-				<Card className="border-dashed p-6">
-					<h3 className="text-sm font-semibold">{agent.name} can reach nothing yet</h3>
+				<Card outlined className="border-dashed p-6">
+					<h3 className="font-heading text-foreground-name text-sm font-semibold">
+						{agent.name} can reach nothing yet
+					</h3>
 					<p className="text-muted-foreground mt-2 max-w-prose text-sm">
 						{NO_APIS_COPY[agent.status]}
 					</p>
@@ -770,13 +778,21 @@ function SelectedAgentPanel({
 						!serving && 'saturate-[.35]',
 					)}
 				>
-					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 						{tiles.map((tile) => (
 							<ApiTile
 								key={tile.key}
 								tile={tile}
 								rules={ruleSummaries.get(tile.credentialId)}
-								onOpen={() => onOpenTile(tile.key)}
+								onOpen={() => {
+									// A plain open never inherits a rules focus that didn't land.
+									setRulesFocusKey(null);
+									onOpenTile(tile.key);
+								}}
+								onOpenRules={() => {
+									setRulesFocusKey(tile.key);
+									onOpenTile(tile.key);
+								}}
 								onSuspend={() =>
 									suspendBinding.mutate({ credentialId: tile.credentialId })
 								}
@@ -840,8 +856,14 @@ function SelectedAgentPanel({
 				tile={openTile}
 				siblingApiTitles={siblingApiTitles}
 				open={openTileKey != null}
-				onClose={onCloseTile}
+				onClose={() => {
+					setRulesFocusKey(null);
+					onCloseTile();
+				}}
 				sidebarId={API_ACCESS_SIDEBAR_ID}
+				agentServing={serving}
+				focusRules={openTileKey != null && rulesFocusKey === openTileKey}
+				onRulesFocused={() => setRulesFocusKey(null)}
 			/>
 		</motion.section>
 	);

@@ -11,21 +11,12 @@
  * unaffected.
  */
 import type { AgentResponse, PermissionRuleReadSchema, PermissionTestResponse } from '@/shared/api';
-import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
-import {
-	ACTOR_STATUSES,
-	STATUS_BADGE_VARIANT,
-	STATUS_DOT,
-	STATUS_LABELS,
-	toActorStatus,
-	type ActorStatus,
-} from '@/shared/ui';
+import { STATUS_DOT, toActorStatus, type ActorStatus } from '@/shared/ui';
 
-// The actor status vocabulary (union + label/variant/dot maps + `toActorStatus`)
-// now lives in `shared/ui` so every module renders an actor status identically
-// (module-boundary rule: siblings can't import each other). Re-exported here so
-// the agents module's public API (`@/modules/agents/api`) stays stable.
-export { ACTOR_STATUSES, STATUS_BADGE_VARIANT, STATUS_DOT, STATUS_LABELS, toActorStatus };
+// The actor status vocabulary lives in `shared/ui` so every module renders an
+// actor status identically (siblings can't import each other). The pieces the
+// agents views read are re-exported through `@/modules/agents/api`.
+export { STATUS_DOT, toActorStatus };
 export type { ActorStatus };
 
 /** Mirrors `ActorVerb` (approve|deny|disable|enable). Archive is a DELETE, not a verb. */
@@ -112,16 +103,6 @@ export function agentToEntity(r: AgentResponse): AgentEntity {
 	};
 }
 
-/**
- * True when the agent was minted by the theme-8 service-account migration.
- * Keys off the immutable `registered_by` stamp
- * (`control/repos/service_account_migration_repo.py`), so it still holds
- * after an operator renames the agent.
- */
-export function isServiceAccountSuccessor(agent: Pick<AgentEntity, 'attribution'>): boolean {
-	return agent.attribution.registeredBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
-}
-
 // ---------------------------------------------------------------------------
 // Direct agent↔credential bindings (theme 5 phase 5a — the direct path).
 //
@@ -153,29 +134,6 @@ export interface CredentialBindingEntity {
 	ruleSetId: string | null;
 	boundAt: string;
 	serves: ServedApiEntity[];
-}
-
-/**
- * A candidate credential for the agent-side "Bind credential" picker. Sourced
- * from the org-wide `GET /credentials` surface via the repository tier (the
- * agents module cannot import the credentials page module; the shared
- * credential tier's generated service is reached through `api/client.ts`
- * only).
- */
-export interface AgentBindableCredential {
-	credential_id: string;
-	name: string;
-	type: string;
-	vendor: string | null;
-	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
-	apiName: string | null;
-	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
-	 * preferred friendly-title source. */
-	catalogApiId: string | null;
-	provider: string | null;
-	/** The credential's owner (creator). Only the owner — or an `org:admin` —
-	 * may bind it, so the picker hides the rest (e.g. enterprise shares). */
-	createdBy: string | null;
 }
 
 /** A stored permission rule on a direct binding (includes system fields). */
@@ -246,13 +204,6 @@ export interface McpSessionEntity {
 	eventId: string;
 	sessionId: string | null;
 	transport: string | null;
-	clientName: string | null;
-	clientVersion: string | null;
-	startedAt: string;
-}
-
-/** The latest MCP session per agent — the roster's "last seen via MCP" cell. */
-export interface McpLastSeen {
 	clientName: string | null;
 	clientVersion: string | null;
 	startedAt: string;

@@ -515,7 +515,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// The shared danger-zone grammar: a danger-tinted shell around the
 		// section (cheap class assertion — the treatment, not the palette).
 		expect(within(zone).getByText('Danger zone')).toBeInTheDocument();
-		expect(zone.querySelector('[class*="border-danger"]')).not.toBeNull();
+		expect(zone.querySelector('[class*="bg-danger"]')).not.toBeNull();
 
 		// Unbind + delete live here; suspend does NOT (it moved to the header).
 		expect(
@@ -641,6 +641,31 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		).toBeInTheDocument();
 	});
 
+	it('a Blocked tile opens the sheet on its rules editor with "Add rule" focused', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('Suspended · not serving');
+		// Resume the seeded (rule-less) GitHub binding from its tile: it then has
+		// no rules, so it must read Blocked — not Ready — and say it only once.
+		await user.click(screen.getByRole('button', { name: 'Resume GitHub access' }));
+		const blocked = await screen.findByTestId('tile-status-blocked');
+		const githubTile = tileOpener('GitHub').closest('[data-testid="api-tile"]') as HTMLElement;
+		expect(within(githubTile).queryByText('Ready')).not.toBeInTheDocument();
+		expect(
+			within(githubTile).queryByText('No rules — all calls blocked'),
+		).not.toBeInTheDocument();
+
+		await user.click(blocked);
+		const dialog = await screen.findByRole('dialog', { name: 'GitHub' });
+		expect(within(dialog).getByTestId('sidebar-status-chip')).toHaveAttribute(
+			'data-status',
+			'blocked-no-rules',
+		);
+		await waitFor(() => {
+			expect(within(dialog).getByRole('button', { name: 'Add rule' })).toHaveFocus();
+		});
+	});
+
 	it('resume from the header clears the suspended state on the tile', async () => {
 		const user = userEvent.setup();
 		renderPage();
@@ -650,22 +675,31 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const dialog = await openSidebar('GitHub');
 		const inDialog = within(dialog);
 
-		// The suspended state reads in the header: badge + Resume control.
-		expect(await inDialog.findByTestId('sidebar-suspended-badge')).toHaveTextContent(
-			'Suspended',
-		);
+		// The suspended state reads in the header: status chip + Resume control.
+		const chip = await inDialog.findByTestId('sidebar-status-chip');
+		expect(chip).toHaveTextContent('Suspended');
+		expect(chip).toHaveAttribute('data-status', 'suspended');
 		const header = dialog.querySelector('header') as HTMLElement;
 		await user.click(
 			within(header).getByRole('button', { name: 'Resume binding for GitHub PAT' }),
 		);
 
-		// The badge clears in the sidebar AND on the tile underneath.
+		// The suspension clears in the sidebar AND on the tile underneath — and,
+		// with no rules on this binding, both say Blocked, never Ready.
 		await waitFor(() => {
-			expect(inDialog.queryByTestId('sidebar-suspended-badge')).not.toBeInTheDocument();
+			expect(inDialog.getByTestId('sidebar-status-chip')).toHaveAttribute(
+				'data-status',
+				'blocked-no-rules',
+			);
 		});
 		await waitFor(() => {
 			expect(screen.queryByText('Suspended · not serving')).not.toBeInTheDocument();
 		});
+		const githubTile = tileOpener('GitHub').closest('[data-testid="api-tile"]') as HTMLElement;
+		expect(within(githubTile).getByTestId('tile-status-chip')).toHaveTextContent(
+			'Blocked · no rules',
+		);
+		expect(within(githubTile).queryByText('Ready')).not.toBeInTheDocument();
 	});
 
 	it('suspend from the header reflects on the tile and round-trips back to serving', async () => {
@@ -682,9 +716,12 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		);
 
 		// The header flips to the suspended treatment with its resume…
-		expect(await inDialog.findByTestId('sidebar-suspended-badge')).toHaveTextContent(
-			'Suspended',
-		);
+		await waitFor(() => {
+			expect(inDialog.getByTestId('sidebar-status-chip')).toHaveAttribute(
+				'data-status',
+				'suspended',
+			);
+		});
 		const resumeButton = inDialog.getByRole('button', {
 			name: 'Resume binding for Slack bot token',
 		});
@@ -697,7 +734,10 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// Round-trip: resume restores the serving state everywhere.
 		await user.click(resumeButton);
 		await waitFor(() => {
-			expect(inDialog.queryByTestId('sidebar-suspended-badge')).not.toBeInTheDocument();
+			expect(inDialog.getByTestId('sidebar-status-chip')).toHaveAttribute(
+				'data-status',
+				'ready',
+			);
 		});
 		expect(
 			inDialog.getByRole('button', { name: 'Suspend binding for Slack bot token' }),

@@ -25,7 +25,15 @@ import {
 	X,
 	type LucideIcon,
 } from 'lucide-react';
-import { Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
+import {
+	Button,
+	ErrorAlert,
+	LoadingState,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
+	SheetPrimitive,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
 import { useOptionalCurrentUser } from '@/shared/auth';
@@ -45,11 +53,12 @@ import {
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 
-/** Glyph and colour per outcome — a choice still to make reads as amber, a
- * sign-in as orange, and a new credential as plain work still to do. */
+/** Glyph and glyph tint per outcome. The words stay grey: a choice still to
+ * make tints its glyph a muted ochre, a sign-in the stronger ochre, and a new
+ * credential reads as plain work still to do. */
 const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }> = {
-	oauth: { icon: LogIn, tone: 'text-accent-orange' },
-	choose: { icon: CircleDot, tone: 'text-warning' },
+	oauth: { icon: LogIn, tone: 'text-warning' },
+	choose: { icon: CircleDot, tone: 'text-caution' },
 	form: { icon: CirclePlus, tone: 'text-muted-foreground' },
 	attached: { icon: Check, tone: 'text-muted-foreground' },
 };
@@ -59,8 +68,8 @@ const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }
 function OutcomeLabel({ item }: { item: PreflightItem }) {
 	const { icon: Icon, tone } = OUTCOME_STYLE[item.outcome];
 	return (
-		<span className={cn('inline-flex shrink-0 items-center gap-1.5 text-xs font-medium', tone)}>
-			<Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+		<span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 text-xs font-medium">
+			<Icon className={cn('h-3.5 w-3.5 shrink-0', tone)} aria-hidden="true" />
 			{item.outcome === 'attached' && item.attachedVia
 				? `Already added via ${item.attachedVia}`
 				: PREFLIGHT_LABELS[item.outcome]}
@@ -214,9 +223,12 @@ export function AddApisTray({
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">
-				<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+				<SheetHeader className="justify-between">
 					<div className="min-w-0">
-						<h2 id={headingId} className="text-foreground text-base font-semibold">
+						<h2
+							id={headingId}
+							className="font-heading text-foreground-name text-base font-semibold"
+						>
 							Add APIs
 						</h2>
 						{/* Stated up front, not discovered at the end: an API with no credential
@@ -228,16 +240,16 @@ export function AddApisTray({
 					</div>
 					<Button
 						variant="ghost"
-						size="sm"
+						size="icon-xs"
 						aria-label="Close"
 						onClick={onClose}
-						className="text-muted-foreground hover:text-foreground shrink-0"
+						className="shrink-0"
 					>
 						<X className="h-4 w-4" />
 					</Button>
-				</header>
+				</SheetHeader>
 
-				<div className="flex-1 overflow-y-auto px-5 py-4">
+				<SheetBody>
 					<ApiPicker
 						searchInputRef={searchRef}
 						onSelect={toggle}
@@ -257,14 +269,14 @@ export function AddApisTray({
 							</Button>
 						}
 					/>
-				</div>
+				</SheetBody>
 
 				{(picks.length > 0 || locked.length > 0) && (
 					<section
 						aria-label="Selected APIs"
-						className="border-border bg-muted/20 border-t px-5 py-3"
+						className="bg-surface-inset shrink-0 px-5 py-3"
 					>
-						<ul className="divide-border/50 mb-3 max-h-72 divide-y overflow-y-auto">
+						<ul className="divide-hairline-row mb-3 max-h-72 divide-y overflow-y-auto">
 							{/* Already added by this batch: a record, not a choice — no remove. */}
 							{locked.map((api) => (
 								<li
@@ -295,10 +307,10 @@ export function AddApisTray({
 										<OutcomeLabel item={item} />
 										<Button
 											variant="ghost"
-											size="sm"
+											size="icon-xs"
 											aria-label={`Remove ${item.api.label}`}
 											onClick={(): void => remove(item.key)}
-											className="text-muted-foreground hover:text-foreground shrink-0"
+											className="shrink-0"
 										>
 											<X className="h-3.5 w-3.5" />
 										</Button>
@@ -328,7 +340,7 @@ export function AddApisTray({
 					</section>
 				)}
 
-				<footer className="border-border flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3">
+				<SheetFooter className="flex-wrap justify-between gap-3">
 					<div className="flex min-w-0 items-center gap-3">
 						<p className="text-muted-foreground text-xs">
 							{picks.length === 0 && locked.length === 0
@@ -343,12 +355,7 @@ export function AddApisTray({
 						</p>
 						{/* Always reachable, not only from no-results: an operator who knows the
 						    API isn't catalogued shouldn't have to search first. */}
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={(): void => setUploadOpen(true)}
-							className="text-muted-foreground hover:text-foreground"
-						>
+						<Button variant="ghost" size="sm" onClick={(): void => setUploadOpen(true)}>
 							<Upload className="h-3.5 w-3.5" />
 							Upload an API
 						</Button>
@@ -365,7 +372,7 @@ export function AddApisTray({
 							{editingBatch && tally.actionable === 0 ? 'Done' : 'Continue'}
 						</Button>
 					</div>
-				</footer>
+				</SheetFooter>
 			</div>
 
 			{/* Inside the sheet, like the queue's credential wizard: a native
@@ -394,7 +401,7 @@ function TallyLines({ tally }: { tally: ReturnType<typeof preflightTally> }) {
 				</p>
 			))}
 			{tally.imports > 0 && (
-				<p className="text-muted-foreground/80 text-xs">
+				<p className="text-muted-foreground text-xs">
 					{tally.imports === 1
 						? '1 API will be imported into your Workspace.'
 						: `${tally.imports} APIs will be imported into your Workspace.`}

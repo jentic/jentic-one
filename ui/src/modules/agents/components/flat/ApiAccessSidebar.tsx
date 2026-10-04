@@ -7,16 +7,17 @@
  * Suspend/resume is the reversible cut-off, so it sits in the header.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
+import { ExternalLink, Info, LogIn, PauseCircle, Pencil, PlayCircle, X } from 'lucide-react';
 import {
-	Badge,
 	Button,
 	DangerZone,
 	ErrorAlert,
+	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
 	VendorIcon,
 	toast,
+	ConfirmDialog,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
@@ -29,6 +30,7 @@ import {
 import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
+	summarizeBindingRules,
 	useAgentBindingPermissions,
 	useInvalidateCredentialBindingSurfaces,
 	useResumeAgentCredentialBinding,
@@ -37,8 +39,10 @@ import {
 } from '@/modules/agents/api';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import { toEditorRule } from '@/modules/agents/components/detail/shared';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
+import { deriveTileStatus } from '@/modules/agents/lib/tileStatus';
+import { TileStatusChip } from '@/modules/agents/components/flat/TileStatusMarker';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
  * continues below it — the panel's most consequential section is its last. The
@@ -69,7 +73,7 @@ function ScrollFadeBody({ children }: { children: ReactNode }) {
 
 	return (
 		<div className="relative min-h-0 flex-1">
-			<div ref={scroller} className="h-full overflow-y-auto px-5 py-5">
+			<div ref={scroller} className="h-full overflow-y-auto px-5 pt-1 pb-5">
 				<div ref={content} className="space-y-6">
 					{children}
 				</div>
@@ -78,7 +82,7 @@ function ScrollFadeBody({ children }: { children: ReactNode }) {
 				<div
 					aria-hidden="true"
 					data-testid="sidebar-scroll-fade"
-					className="from-card pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t to-transparent"
+					className="from-surface-sheet pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t to-transparent"
 				/>
 			)}
 		</div>
@@ -97,6 +101,12 @@ export interface ApiAccessSidebarProps {
 	onClose: () => void;
 	/** DOM id for the panel content — the tile's `aria-controls` target. */
 	sidebarId: string;
+	/** Whether the agent serves traffic — one input to the header's status. */
+	agentServing?: boolean;
+	/** Open on the rules editor: scroll to it and focus "Add rule" (a Blocked
+	 * tile's fix). `onRulesFocused` spends the request once it lands. */
+	focusRules?: boolean;
+	onRulesFocused?: () => void;
 }
 
 export function ApiAccessSidebar({
@@ -106,6 +116,9 @@ export function ApiAccessSidebar({
 	open,
 	onClose,
 	sidebarId,
+	agentServing = true,
+	focusRules = false,
+	onRulesFocused,
 }: ApiAccessSidebarProps) {
 	const headingId = `${sidebarId}-title`;
 
@@ -131,6 +144,50 @@ export function ApiAccessSidebar({
 
 	const credentialId = shown?.credentialId ?? null;
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
+
+	// The header's status: the SAME derivation as the tile, off the same rules read.
+	const savedRuleSummary = useMemo(
+		() => (permissions.data ? summarizeBindingRules(permissions.data) : undefined),
+		[permissions.data],
+	);
+	// The saved operator rules in the credentials kit's shape, for the preview.
+	const savedEditorRules = useMemo(
+		() => (permissions.data ?? []).filter((r) => !r._system).map(toEditorRule),
+		[permissions.data],
+	);
+	const status = shown
+		? deriveTileStatus({
+				suspended: shown.suspended,
+				agentServing,
+				awaitingConsent: shown.awaitingConsent,
+				rules: savedRuleSummary,
+			})
+		: 'ready';
+
+	// Blocked → land on the fix: once the editor has rendered, bring the rules
+	// section into view and put focus on "Add rule" (after the sheet's own
+	// initial focus, hence the short delay).
+	const rulesSectionRef = useRef<HTMLElement | null>(null);
+	const rulesReady = open && !permissions.isPending && !permissions.isError;
+	// Held in a ref so a host re-render (a fresh inline callback) can't restart
+	// the timer below before it fires.
+	const onRulesFocusedRef = useRef(onRulesFocused);
+	useEffect(() => {
+		onRulesFocusedRef.current = onRulesFocused;
+	});
+	useEffect(() => {
+		if (!focusRules || !rulesReady) return undefined;
+		const id = window.setTimeout(() => {
+			const section = rulesSectionRef.current;
+			if (!section) return;
+			section.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+			section
+				.querySelector<HTMLButtonElement>('[data-rule-add]')
+				?.focus({ preventScroll: true });
+			onRulesFocusedRef.current?.();
+		}, 120);
+		return () => window.clearTimeout(id);
+	}, [focusRules, rulesReady]);
 
 	// The API this tile resolves to, for the rule editor's operation suggestions
 	// and the effective-access preview. Only a concrete (imported) API has a
@@ -218,26 +275,18 @@ export function ApiAccessSidebar({
 			>
 				{shown && (
 					<div id={sidebarId} className="flex h-full flex-col">
-						<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+						<SheetHeader className="justify-between">
 							<div className="flex min-w-0 items-start gap-3">
 								<VendorIcon {...vendorIconPropsFor(shown)} size="sm" />
 								<div className="min-w-0">
 									<div className="flex min-w-0 items-center gap-2">
 										<h2
 											id={headingId}
-											className="text-foreground truncate text-base font-semibold"
+											className="font-heading text-foreground-name truncate text-base font-semibold"
 										>
 											{shown.title}
 										</h2>
-										{shown.suspended && (
-											<Badge
-												variant="warning"
-												data-testid="sidebar-suspended-badge"
-												className="shrink-0"
-											>
-												Suspended
-											</Badge>
-										)}
+										<TileStatusChip status={status} className="shrink-0" />
 									</div>
 									<p className="text-muted-foreground truncate text-xs">
 										{shown.host}
@@ -277,15 +326,15 @@ export function ApiAccessSidebar({
 								)}
 								<Button
 									variant="ghost"
-									size="sm"
+									size="icon-xs"
 									aria-label="Close"
 									onClick={onClose}
-									className="text-muted-foreground hover:text-foreground shrink-0"
+									className="shrink-0"
 								>
 									<X className="h-4 w-4" />
 								</Button>
 							</div>
-						</header>
+						</SheetHeader>
 
 						<ScrollFadeBody>
 							{/* Awaiting consent: the one not-usable state the redacted
@@ -293,11 +342,11 @@ export function ApiAccessSidebar({
 							{shown.awaitingConsent && (
 								<div
 									data-testid="sidebar-connect-affordance"
-									className="border-warning/60 bg-warning/5 space-y-2 rounded-lg border border-dashed px-4 py-3"
+									className="bg-surface-inset space-y-2 rounded-lg px-4 py-3"
 								>
-									<p className="text-warning flex items-start gap-1.5 text-sm">
-										<AlertTriangle
-											className="mt-0.5 h-4 w-4 shrink-0"
+									<p className="text-foreground flex items-start gap-2 text-sm">
+										<LogIn
+											className="text-warning mt-0.5 h-4 w-4 shrink-0"
 											aria-hidden="true"
 										/>
 										<span>
@@ -322,9 +371,9 @@ export function ApiAccessSidebar({
 								<h3 className="text-foreground text-sm font-semibold">
 									Credential
 								</h3>
-								<div className="border-border bg-muted/30 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3">
+								<div className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3">
 									<div className="min-w-0 flex-1">
-										<p className="text-foreground truncate text-sm font-medium">
+										<p className="text-foreground-name truncate text-sm font-semibold">
 											{shown.credentialName}
 										</p>
 										<p className="text-muted-foreground text-xs">
@@ -343,8 +392,8 @@ export function ApiAccessSidebar({
 										</p>
 									</div>
 									<Button
-										size="sm"
-										variant="secondary"
+										size="xs"
+										variant="tonal"
 										onClick={() => setEditOpen(true)}
 									>
 										<Pencil className="h-4 w-4" /> Edit credential
@@ -357,10 +406,10 @@ export function ApiAccessSidebar({
 							{siblingApiTitles.length > 0 && (
 								<p
 									data-testid="blast-radius-note"
-									className="border-warning/40 bg-warning/5 text-foreground flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-xs leading-relaxed"
+									className="bg-surface-inset text-foreground-lighter flex items-start gap-2 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed"
 								>
-									<AlertTriangle
-										className="text-warning mt-0.5 h-4 w-4 shrink-0"
+									<Info
+										className="text-caution mt-0.5 h-4 w-4 shrink-0"
 										aria-hidden="true"
 									/>
 									<span>
@@ -376,7 +425,11 @@ export function ApiAccessSidebar({
 
 							{/* 2 — The permission rules, keyed by agent+credential so a
 							    different tile never inherits a stale draft. */}
-							<section aria-label="Permission rules" className="space-y-3">
+							<section
+								ref={rulesSectionRef}
+								aria-label="Permission rules"
+								className="scroll-mt-2 space-y-3"
+							>
 								{permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
 										<span className="sr-only">Loading rules…</span>
@@ -404,20 +457,7 @@ export function ApiAccessSidebar({
 								{apiReference && !permissions.isPending && !permissions.isError && (
 									<OperationImpactPreview
 										api={apiReference}
-										rules={(permissions.data ?? [])
-											.filter((r) => !r._system)
-											.map((r) => ({
-												effect: r.effect === 'deny' ? 'deny' : 'allow',
-												methods: r.methods ?? null,
-												path: r.path ?? null,
-												match_mode:
-													r.match_mode === 'prefix' ||
-													r.match_mode === 'exact' ||
-													r.match_mode === 'regex'
-														? r.match_mode
-														: undefined,
-												operations: r.operations ?? null,
-											}))}
+										rules={savedEditorRules}
 										label="Effective access for this binding"
 									/>
 								)}

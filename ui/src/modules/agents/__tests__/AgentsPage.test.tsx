@@ -288,6 +288,8 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText('1 access rule')).toBeInTheDocument();
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
+		// Suspended outranks Blocked in the status, so the rule-less binding keeps
+		// its rules fact on the meta line (the status doesn't say it).
 		expect(await screen.findByText('No rules — all calls blocked')).toBeInTheDocument();
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});

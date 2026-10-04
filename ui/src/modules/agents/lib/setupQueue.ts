@@ -48,7 +48,7 @@ export function isTerminal(status: QueueStatus): boolean {
 /** Statuses that SETTLE what happens to the API: attached (`added`), or the
  * operator was told it would not be (`dropped`). `failed` is absent — nobody
  * chose it, so the item is still outstanding work. */
-export function isResolved(status: QueueStatus): boolean {
+function isResolved(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped';
 }
 

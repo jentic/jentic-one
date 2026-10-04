@@ -63,7 +63,7 @@ function servedCoversPick(served: ServedApiEntity, api: SelectedApi): boolean {
 }
 
 /** The binding through which the agent already reaches this API, if any. */
-export function bindingServingApi(
+function bindingServingApi(
 	bindings: CredentialBindingEntity[],
 	api: SelectedApi,
 ): CredentialBindingEntity | undefined {

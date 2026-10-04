@@ -9,7 +9,9 @@ import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
+import type { BindingRuleSummary } from '@/modules/agents/api';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
+import { rulesBlock } from '@/modules/agents/lib/tileStatus';
 
 /** One tile on the grid: the API is the card, the credential is a line on it. */
 export interface ApiTileModel {
@@ -227,11 +229,19 @@ export interface ApiTileStats {
 	operations: number | null;
 	/** `operations` is a floor: some tiles withheld their count. Renders as `N+`. */
 	operationsAtLeast: boolean;
+	/** Tiles whose rules let no call through (`Blocked`) — 0 when rules are unknown. */
+	blocked: number;
 }
 
-export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
+export function tileStats(
+	tiles: ApiTileModel[],
+	/** Rule breakdown per tile, when loaded: a Blocked tile reaches nothing, so
+	 * its operations stay out of "reachable" (see `deriveTileStatus`). */
+	rulesFor?: (tile: ApiTileModel) => BindingRuleSummary | undefined,
+): ApiTileStats {
 	let configured = 0;
 	let operations = 0;
+	let blocked = 0;
 	// Deduped: several tiles can share one sign-in.
 	const awaiting = new Set<string>();
 	let counted = false;
@@ -244,6 +254,10 @@ export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
 		configured += 1;
 		// A pause is a deliberate exclusion, not a missing fact.
 		if (tile.suspended) continue;
+		if (rulesBlock(rulesFor?.(tile))) {
+			blocked += 1;
+			continue;
+		}
 		if (tile.operationCount == null) {
 			withheld = true;
 			continue;
@@ -256,6 +270,7 @@ export function tileStats(tiles: ApiTileModel[]): ApiTileStats {
 		needsSetup: awaiting.size,
 		operations: withheld && !counted ? null : operations,
 		operationsAtLeast: withheld && counted,
+		blocked,
 	};
 }
 

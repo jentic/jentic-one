@@ -28,13 +28,13 @@ function StepCard({ index, step }: { index: number; step: SetupStep }) {
 	const body: ReactNode = (
 		<>
 			<span className="flex items-center justify-between">
-				<span className="bg-muted text-muted-foreground ring-border group-hover:text-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 transition-colors">
+				<span className="bg-surface-field text-muted-foreground group-hover:text-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors">
 					<Icon className="h-5 w-5" aria-hidden="true" />
 				</span>
 				<span className="text-muted-foreground font-mono text-xs">Step {index + 1}</span>
 			</span>
 			<span className="flex-1">
-				<span className="text-foreground flex items-center gap-1 text-sm font-medium">
+				<span className="text-foreground-name flex items-center gap-1 text-sm font-semibold">
 					{step.title}
 					<ArrowUpRight
 						className="h-3.5 w-3.5 shrink-0 opacity-0 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100"
@@ -61,7 +61,7 @@ function StepCard({ index, step }: { index: number; step: SetupStep }) {
 		<button
 			type="button"
 			onClick={step.target.onClick}
-			className="group bg-card border-border shadow-card card-lift hover:border-primary/50 hover:shadow-card-hover hover:bg-muted/40 focus-visible:ring-ring h-full w-full rounded-xl border focus-visible:ring-2 focus-visible:outline-none"
+			className="group bg-surface-1 card-hover focus-visible:ring-ring h-full w-full cursor-pointer rounded-lg focus-visible:ring-2 focus-visible:outline-none"
 		>
 			<span className={stepCardClass}>{body}</span>
 		</button>
@@ -96,14 +96,14 @@ export function FirstRunChecklist({ onCreateAgent }: { onCreateAgent: () => void
 	return (
 		<section
 			aria-label="Set up your workspace"
-			className="border-border/70 from-muted/60 to-card animate-rise rounded-xl border border-dashed bg-gradient-to-b p-6 sm:p-8"
+			className="border-border/60 animate-rise rounded-lg border border-dashed p-6 sm:p-8"
 		>
 			<div className="mb-6 flex items-start gap-4">
-				<div className="text-primary/80 ring-primary/15 bg-primary/5 flex h-12 w-12 shrink-0 items-center justify-center rounded-full ring-1">
+				<div className="text-primary bg-primary/10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full">
 					<Rocket className="h-6 w-6" aria-hidden="true" />
 				</div>
 				<div>
-					<h2 className="font-heading text-foreground text-lg font-semibold">
+					<h2 className="font-heading text-foreground-name text-lg font-semibold">
 						Set up your workspace
 					</h2>
 					<p className="text-muted-foreground mt-1 max-w-xl text-sm leading-relaxed">

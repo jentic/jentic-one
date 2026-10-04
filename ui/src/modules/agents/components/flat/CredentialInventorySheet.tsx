@@ -16,6 +16,8 @@ import {
 	RefreshButton,
 	SearchInput,
 	SegmentedToggle,
+	SheetBody,
+	SheetHeader,
 	SheetPrimitive,
 	toast,
 } from '@/shared/ui';
@@ -249,9 +251,12 @@ export function CredentialInventorySheet({
 				className="sm:w-[640px] xl:w-[880px]"
 			>
 				<div className="flex h-full flex-col">
-					<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+					<SheetHeader className="justify-between">
 						<div className="min-w-0">
-							<h2 id={headingId} className="text-foreground text-base font-semibold">
+							<h2
+								id={headingId}
+								className="font-heading text-foreground-name text-base font-semibold"
+							>
 								Credentials
 							</h2>
 							<p className="text-muted-foreground text-xs">
@@ -287,17 +292,16 @@ export function CredentialInventorySheet({
 							/>
 							<Button
 								variant="ghost"
-								size="sm"
+								size="icon-xs"
 								aria-label="Close"
 								onClick={onClose}
-								className="text-muted-foreground hover:text-foreground"
 							>
 								<X className="h-4 w-4" />
 							</Button>
 						</div>
-					</header>
+					</SheetHeader>
 
-					<div className="border-border flex flex-wrap items-center gap-2 border-b px-5 py-3">
+					<div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pb-3">
 						{/* A credential bound to zero agents is reachable from no agent's screen —
 						    the sheet's one unique power, so it leads the toolbar. */}
 						<div className="flex shrink-0 items-center gap-2">
@@ -308,7 +312,6 @@ export function CredentialInventorySheet({
 								onChange={setBindingFilter}
 								layoutId="credential-inventory-binding-filter"
 								ariaLabel="Filter by agent usage"
-								className="border-primary/30 bg-primary/5"
 							/>
 						</div>
 						<SearchInput
@@ -333,13 +336,13 @@ export function CredentialInventorySheet({
 						/>
 					</div>
 
-					<div className="flex-1 overflow-y-auto px-5 py-4">
+					<SheetBody className="pt-3">
 						{unboundUnknown ? (
 							// Withheld, not guessed: the list would read as "used by nobody",
 							// and the next move on that reading is to delete them.
 							<div
 								role="status"
-								className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3"
+								className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3"
 							>
 								<p className="text-muted-foreground min-w-0 flex-1 text-sm">
 									Which credentials no agent uses can&rsquo;t be shown yet — that
@@ -348,8 +351,8 @@ export function CredentialInventorySheet({
 									see the full inventory meanwhile.
 								</p>
 								<Button
-									variant="secondary"
-									size="sm"
+									variant="tonal"
+									size="xs"
 									onClick={(): void => {
 										if (fleetError || hasNextPage) void fetchNextPage();
 										refreshFleetBindings();
@@ -392,7 +395,7 @@ export function CredentialInventorySheet({
 								}
 							/>
 						)}
-					</div>
+					</SheetBody>
 				</div>
 			</SheetPrimitive>
 

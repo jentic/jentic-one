@@ -94,7 +94,7 @@ export function PendingApprovalBanner({
 					transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
 					className="overflow-hidden"
 				>
-					<div className="border-warning/40 bg-warning/5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3.5 py-2.5">
+					<div className="bg-warning/10 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3.5 py-2.5">
 						<span
 							className="bg-warning h-1.5 w-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none"
 							aria-hidden="true"

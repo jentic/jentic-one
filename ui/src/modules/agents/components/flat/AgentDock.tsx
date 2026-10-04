@@ -39,7 +39,7 @@ export interface AgentDockProps {
 
 /** Divider between the dock's verb groups. */
 function DockDivider() {
-	return <span aria-hidden="true" className="bg-border mx-0.5 h-5 w-px shrink-0" />;
+	return <span aria-hidden="true" className="bg-hairline-field mx-0.5 h-5 w-px shrink-0" />;
 }
 
 export function AgentDock({
@@ -71,30 +71,30 @@ export function AgentDock({
 
 				<DockIconButton
 					label="API key"
-					icon={<KeyRound className="h-5 w-5" />}
+					icon={<KeyRound className="h-4 w-4" />}
 					onClick={() => onOpenSurface('api-key')}
 				/>
 				{/* A checked shield: this sheet is about permissions GRANTED. */}
 				<DockIconButton
 					label="Permissions"
-					icon={<ShieldCheck className="h-5 w-5" />}
+					icon={<ShieldCheck className="h-4 w-4" />}
 					onClick={() => onOpenSurface('permissions')}
 				/>
 				<DockIconButton
 					label="Activity"
-					icon={<ActivityIcon className="h-5 w-5" />}
+					icon={<ActivityIcon className="h-4 w-4" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
 				{/* MCP before Settings, mirroring the console's tab order, with the
 				    protocol's own mark rather than a generic integration glyph. */}
 				<DockIconButton
 					label="MCP"
-					icon={<McpIcon className="h-5 w-5" />}
+					icon={<McpIcon className="h-4 w-4" />}
 					onClick={() => onOpenSurface('mcp')}
 				/>
 				<DockIconButton
 					label="Settings"
-					icon={<Settings className="h-5 w-5" />}
+					icon={<Settings className="h-4 w-4" />}
 					onClick={() => onOpenSurface('settings')}
 				/>
 
@@ -103,13 +103,13 @@ export function AgentDock({
 						<DockDivider />
 						<Tooltip content="Archive this agent (irreversible)" interactiveChild>
 							<Button
-								variant="ghost"
-								size="sm"
+								variant="danger"
+								size="icon-xs"
 								onClick={onArchive}
 								aria-label={`Archive ${agent.name}`}
-								className="text-danger hover:bg-danger/10 hover:text-danger shrink-0 px-2 py-1.5"
+								className="shrink-0"
 							>
-								<Archive className="h-5 w-5" aria-hidden="true" />
+								<Archive className="h-4 w-4" aria-hidden="true" />
 								<span className="sr-only">Archive</span>
 							</Button>
 						</Tooltip>
@@ -120,8 +120,8 @@ export function AgentDock({
 	);
 }
 
-/** One icon verb: icon-only at every breakpoint — the tooltip and aria-label
- * carry the name. */
+/** One icon verb: a quiet 28px tonal square at every breakpoint — the tooltip
+ * and aria-label carry the name. */
 function DockIconButton({
 	label,
 	icon,
@@ -134,11 +134,11 @@ function DockIconButton({
 	return (
 		<Tooltip content={label} interactiveChild>
 			<Button
-				variant="ghost"
-				size="sm"
+				variant="tonal"
+				size="icon-xs"
 				onClick={onClick}
 				aria-label={label}
-				className="shrink-0 px-2 py-1.5"
+				className="shrink-0"
 			>
 				<span aria-hidden="true" className="flex items-center">
 					{icon}
@@ -302,10 +302,10 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				}
 				data-testid="dock-serving-toggle"
 				className={cn(
-					'shrink-0 gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium',
+					'shrink-0 gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium',
 					serving
-						? 'bg-success/10 text-success border-success/30 hover:bg-success/20 hover:text-success'
-						: 'bg-danger/10 text-danger border-danger/30 hover:bg-danger/20 hover:text-danger',
+						? 'bg-success/10 text-success hover:bg-success/20 hover:text-success'
+						: 'bg-danger/10 text-danger hover:bg-danger/20 hover:text-danger',
 				)}
 			>
 				{!togglePending &&

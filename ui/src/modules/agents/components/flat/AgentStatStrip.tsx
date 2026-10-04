@@ -36,7 +36,8 @@ interface Clause {
 }
 
 const TONE_CLASS: Record<NonNullable<Clause['tone']>, string> = {
-	warning: 'text-warning',
+	// Words stay neutral; the clause is set apart by weight, not hue.
+	warning: 'text-foreground-lighter font-semibold',
 	danger: 'text-danger',
 };
 
@@ -59,6 +60,11 @@ export function AgentStatStrip({
 				text: `${access.needsSetup} to set up`,
 				tone: 'warning',
 			});
+		}
+		// Blocked tiles (no rules / all denied) reach nothing — named, so the
+		// reachable figure below them doesn't read as a contradiction.
+		if (access && access.blocked > 0) {
+			clauses.push({ key: 'blocked', text: `${access.blocked} blocked`, tone: 'warning' });
 		}
 		// "reachable" is load-bearing: the figure excludes paused bindings, so a bare
 		// `0 operations` beside a tile advertising 900 would read as a contradiction.
