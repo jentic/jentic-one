@@ -246,8 +246,7 @@ export default function MonitorPage() {
 							actions={
 								<Button
 									variant="ghost"
-									size="sm"
-									className="h-8 w-8 p-0"
+									size="icon-xs"
 									aria-label="Expand activity to the full log"
 									title="Expand to the full log"
 									onClick={() => setExpanded(true)}

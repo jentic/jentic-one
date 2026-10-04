@@ -176,7 +176,7 @@ export function TraceDetail({
 function ExecutionCard({ exec }: { exec: ExecutionResponse }) {
 	const status = toExecutionStatus(exec.status);
 	return (
-		<li className="border-border/70 bg-muted/20 rounded-lg border p-3">
+		<li className="bg-field rounded-lg p-3">
 			<div className="flex items-start gap-2">
 				<StatusGlyph tone={EXECUTION_TONE[status]} label={EXECUTION_LABEL[status]} />
 				<p className="text-foreground min-w-0 flex-1 font-mono text-[13px] break-all">

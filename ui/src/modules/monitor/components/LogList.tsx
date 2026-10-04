@@ -140,8 +140,8 @@ export function LogRow({
 	return (
 		<li
 			className={cn(
-				'border-border/40 relative border-b last:border-b-0',
-				nested && 'bg-muted/25',
+				'border-hairline-row relative border-b last:border-b-0',
+				nested && 'bg-tint',
 				failure && !muted && 'bg-danger/[0.035]',
 			)}
 		>
@@ -178,7 +178,7 @@ export function LogRow({
 					'grid scroll-mt-[calc(var(--log-top,0px)+4rem)] scroll-mb-4 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 sm:px-4',
 					WIDE_COLS,
 					'@3xl:items-center @3xl:gap-x-4',
-					'hover:bg-muted/50 focus-visible:ring-ring cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset',
+					'hover:bg-surface-1-hover focus-visible:ring-ring cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset',
 					active && 'bg-primary/[0.06] hover:bg-primary/[0.08]',
 					nested && 'pl-6 @3xl:pl-4',
 				)}
@@ -293,7 +293,7 @@ export function LogList({
 		<section
 			aria-label={ariaLabel}
 			className={cn(
-				'border-border bg-card @container overflow-clip rounded-xl border',
+				'bg-surface-1 @container overflow-clip rounded-lg [--field-bg:var(--surface-field)]',
 				className,
 			)}
 			style={{ '--log-action': actionWidth } as CSSProperties}
@@ -303,7 +303,7 @@ export function LogList({
 			<div
 				aria-hidden="true"
 				className={cn(
-					'text-muted-foreground border-border/60 hidden gap-x-4 border-b px-4 py-2 text-[11px] font-medium tracking-wide uppercase @3xl:grid',
+					'text-muted-foreground border-hairline hidden gap-x-4 border-b px-4 py-2 text-[11px] font-medium tracking-wide uppercase @3xl:grid',
 					WIDE_COLS,
 				)}
 			>
@@ -341,7 +341,7 @@ export function groupByDay<T>(
 export function LogDay({ label, children }: { label: string; children: ReactNode }) {
 	return (
 		<Fragment>
-			<h3 className="bg-muted/85 text-muted-foreground border-border/60 sticky top-[var(--log-top,0px)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
+			<h3 className="bg-surface-1/90 text-muted-foreground border-hairline sticky top-[var(--log-top,0px)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
 				{label}
 			</h3>
 			<ul aria-label={label}>{children}</ul>

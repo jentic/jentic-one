@@ -134,7 +134,7 @@ export function JobsTab() {
 												}
 												action={
 													<ChevronRight
-														className="text-muted-foreground/60 h-4 w-4"
+														className="text-foreground-faint h-4 w-4"
 														aria-hidden="true"
 													/>
 												}

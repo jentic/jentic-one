@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
-import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState } from '@/shared/ui';
+import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState, ConfirmDialog } from '@/shared/ui';
 import {
 	isTerminalJobStatus,
 	toJobStatus,
@@ -16,7 +16,6 @@ import {
 	useCancelJob,
 	useJob,
 } from '@/modules/monitor/api';
-import { ConfirmDialog } from '@/modules/monitor/components/ConfirmDialog';
 import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
 import {
 	DetailFrame,
@@ -167,6 +166,7 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 					</>
 				}
 				confirmLabel="Cancel job"
+				cancelLabel="Keep job"
 				onConfirm={confirmCancel}
 				onClose={() => setConfirmOpen(false)}
 				pending={cancel.isPending}
