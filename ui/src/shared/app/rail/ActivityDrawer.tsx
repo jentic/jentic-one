@@ -42,7 +42,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 				aria-expanded={open}
 				title={label}
 				className={cn(
-					'text-muted-foreground hover:bg-muted hover:text-foreground relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150',
+					'text-muted-foreground hover:bg-surface-tonal hover:text-foreground relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150',
 					className,
 				)}
 			>
@@ -56,7 +56,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 				open={open}
 				onClose={() => setOpen(false)}
 				ariaLabel="Activity"
-				className="bg-muted flex flex-col sm:w-[360px]"
+				className="bg-surface-sheet flex flex-col sm:w-[360px]"
 			>
 				<ActivityRailBody
 					variant="drawer"

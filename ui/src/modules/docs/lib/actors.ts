@@ -22,7 +22,7 @@ export type ActorType = (typeof ACTOR_TYPES)[number];
 /** Typical-caller buckets, mirroring `endpoints.go`'s group constants + order. */
 export type CallerGroup = 'agent' | 'operator' | 'any' | 'public';
 
-export const CALLER_GROUP_ORDER: CallerGroup[] = ['agent', 'operator', 'any', 'public'];
+const CALLER_GROUP_ORDER: CallerGroup[] = ['agent', 'operator', 'any', 'public'];
 
 export const CALLER_GROUP_LABEL: Record<CallerGroup, string> = {
 	agent: 'Agent-facing',
@@ -39,7 +39,7 @@ export const CALLER_GROUP_BLURB: Record<CallerGroup, string> = {
 };
 
 /** Classify one endpoint into its caller bucket — mirrors `endpoint.group()`. */
-export function callerGroupOf(e: ReferenceEndpoint): CallerGroup {
+function callerGroupOf(e: ReferenceEndpoint): CallerGroup {
 	if (e.public) return 'public';
 	switch (e.typical_caller) {
 		case 'agent':

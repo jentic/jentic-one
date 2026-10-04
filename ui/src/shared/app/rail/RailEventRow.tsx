@@ -99,7 +99,7 @@ function TimeStamp({ tsMs, className }: { tsMs: number; className?: string }) {
 		>
 			<time
 				dateTime={Number.isNaN(tsMs) ? undefined : new Date(tsMs).toISOString()}
-				className="text-muted-foreground/80 text-[10px] tabular-nums"
+				className="text-muted-foreground text-[10px] tabular-nums"
 			>
 				{formatStreamAgo(tsMs, now)}
 			</time>
@@ -234,7 +234,7 @@ function RailEventRowContent({
 					stripeClass(ev),
 					arrived && 'animate-arrive',
 					ev.acknowledged && 'opacity-55',
-					(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
+					(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 				)}
 			>
 				{overlay}
@@ -256,7 +256,7 @@ function RailEventRowContent({
 				stripeClass(ev),
 				arrived && 'animate-arrive',
 				failing && 'bg-danger/5',
-				(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
+				(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 			)}
 		>
 			{overlay}

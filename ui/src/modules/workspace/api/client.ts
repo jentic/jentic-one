@@ -296,8 +296,8 @@ export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<
  * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
  *
  * The backend exposes `POST /catalog/{api_id}:snooze` (optional `{snoozed_until}`
- * body) + `POST /catalog/{api_id}:unsnooze`, both gated on `events:write`. Both
- * are served by the generated `CatalogService`. `snoozedUntil` omitted → mute
+ * body), gated on `events:write` and served by the generated `CatalogService`
+ * (its `:unsnooze` counterpart has no UI yet). `snoozedUntil` omitted → mute
  * until a newer upstream digest lands; a value → time-boxed snooze.
  */
 export async function snoozeCatalogEntry(
@@ -311,15 +311,6 @@ export async function snoozeCatalogEntry(
 		});
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to mute update notifications.');
-	}
-}
-
-/** Un-snooze catalog-update notifications for an API (`POST /catalog/{id}:unsnooze`). */
-export async function unsnoozeCatalogEntry(apiId: string): Promise<void> {
-	try {
-		await CatalogService.unsnoozeCatalogEntry({ apiId });
-	} catch (error) {
-		throw toWorkspaceError(error, 'Failed to resume update notifications.');
 	}
 }
 

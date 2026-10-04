@@ -70,7 +70,7 @@ export function RailHeader({
 	}
 
 	return (
-		<div className="border-border border-b">
+		<div className="border-hairline border-b">
 			<div className="flex items-center gap-2 py-2 pr-2 pl-3">
 				<LiveDot tone={dot.tone} label={dot.label} />
 				<span className="text-foreground text-sm font-semibold">Activity</span>
@@ -180,7 +180,7 @@ export function RailHeader({
 						'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors',
 						failuresOnly
 							? 'border-danger/50 bg-danger/10 text-danger'
-							: 'border-border text-muted-foreground hover:text-foreground',
+							: 'border-hairline-field bg-surface-field text-muted-foreground hover:bg-surface-tonal hover:text-foreground',
 					)}
 				>
 					Failures only

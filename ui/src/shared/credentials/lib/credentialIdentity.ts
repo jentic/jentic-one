@@ -98,38 +98,6 @@ export function credentialAwaitsConsent(credential: Credential | undefined): boo
 	return details.grant_type === 'authorization_code' && details.connected === false;
 }
 
-/** The API an access-request item names; `name`/`version` left open mean "any". */
-export interface ApiReference {
-	vendor: string;
-	name?: string | null;
-	version?: string | null;
-}
-
-/**
- * The active credentials that serve `ref`, the way the platform resolves a bind
- * that names no credential: an open axis on the reference matches any value, a
- * credential with no API name serves its whole vendor, and credentials pinned to
- * the exact name win over vendor-wide ones.
- */
-export function credentialsServingReference(
-	credentials: readonly Credential[],
-	ref: ApiReference,
-): Credential[] {
-	const vendor = slugifyApiField(ref.vendor);
-	const name = ref.name?.trim() ? slugifyApiField(ref.name) : null;
-	const version = ref.version?.trim() || null;
-	const serving = credentials.filter((cred) => {
-		if (!cred.active || slugifyApiField(cred.api.vendor) !== vendor) return false;
-		const credName = cred.api.name?.trim() ? slugifyApiField(cred.api.name) : null;
-		if (name && credName && credName !== name) return false;
-		const credVersion = cred.api.version?.trim() || null;
-		return !version || !credVersion || credVersion === version;
-	});
-	if (!name) return serving;
-	const exact = serving.filter((cred) => cred.api.name?.trim());
-	return exact.length > 0 ? exact : serving;
-}
-
 /** How two credential names compare: case and surrounding space never tell them apart. */
 function nameKey(name: string): string {
 	return name.trim().toLowerCase();

@@ -48,8 +48,7 @@ const TLD_SUFFIXES = new Set([
  * label is title-cased on its own (internal hyphen/underscore/space runs
  * humanise to spaces) and the labels re-join with dots. This keeps a
  * multi-part public suffix readable (`bbc.co.uk` → `Bbc.Co.Uk`,
- * `foo.bar.com` → `Foo.Bar.Com`) instead of collapsing the leading dots into
- * spaces and only re-joining the last one (which produced `Foo Bar.Com`).
+ * `foo.bar.com` → `Foo.Bar.Com`) rather than space-joining the leading labels.
  *
  * TLD dot-join rule (the hyphenated path). Because the real vendor data in this
  * app is *hyphenated* (`posthog-com`, `github-com`), not dotted, a strict
@@ -58,16 +57,15 @@ const TLD_SUFFIXES = new Set([
  * AND there are exactly 2 tokens — the shape of a real `<vendor>-<tld>` domain
  * slug (`posthog-com` → `Posthog.Com`). The "exactly 2 tokens" allowance means
  * 3+-token hyphenated product names like `stable-diffusion-ai` always stay
- * space-joined (`Stable Diffusion Ai`, killing the false positive).
+ * space-joined (`Stable Diffusion Ai`).
  */
 function humanize(segment: string, domainSlug: boolean): string {
 	// A segment that already carried a real dot is a genuinely dotted domain.
 	// When its trailing label is a recognised TLD (`TLD_SUFFIXES`), preserve the
 	// dotted STRUCTURE so a multi-part public suffix (`bbc.co.uk`,
 	// `foo.bar.com`) stays dot-joined across ALL labels rather than only the
-	// trailing TLD — the old rule produced `Foo Bar.Com` by collapsing the
-	// leading dots into spaces. Each dot label is title-cased independently (its
-	// own hyphen/underscore/space runs humanise to spaces).
+	// trailing TLD. Each dot label is title-cased independently (its own
+	// hyphen/underscore/space runs humanise to spaces).
 	if (segment.includes('.')) {
 		const labels = segment.split('.').filter(Boolean);
 		const lastLabel = labels[labels.length - 1] ?? '';
@@ -75,7 +73,7 @@ function humanize(segment: string, domainSlug: boolean): string {
 			return labels.map((label) => titleCaseWords(label)).join('.');
 		}
 		// A dotted input whose trailing label ISN'T a known TLD (`acme.biz`)
-		// isn't treated as a domain — space-join every token as before.
+		// isn't treated as a domain — space-join every token.
 		return titleCaseTokens(segment).join(' ');
 	}
 	const parts = titleCaseTokens(segment);
@@ -219,8 +217,8 @@ function tupleDisplayName(vendor: string, rawName: string): string {
 }
 
 /**
- * API display name for the credential picker rows, the workspace `ApiCard` /
- * detail heading, and the credential card's friendly fallback.
+ * API display name for the API picker rows, the agents' API tiles, and the
+ * credential cards' friendly fallback.
  *
  *   1. Explicit `displayName` wins verbatim (user-set label) — but only when
  *      it carries non-whitespace content; a whitespace-only string is treated
@@ -259,31 +257,6 @@ export function formatApiVersion(version: string | null | undefined): string | n
 	if (!v) return null;
 	// Already a version label: `v` (or `V`) immediately followed by a digit.
 	return /^v\d/i.test(v) ? v : `v${v}`;
-}
-
-/**
- * Raw machine-identity subtitle. The persisted catalog slug wins verbatim —
- * it IS the machine identity (`nytimes.com/article_search`) and is what the
- * user saw when they picked the API. Legacy rows join `vendor/name`, dropping
- * a leading vendor repeat when `name` is itself a `vendor/name`-shaped tuple
- * (so it can't render `posthog-com/posthog-com/…`). Returns whichever single
- * field exists when the others are absent, or `''` when all are.
- */
-export function apiIdentityTuple(input: {
-	catalogApiId?: string | null;
-	vendor?: string | null;
-	name?: string | null;
-}): string {
-	const apiId = input.catalogApiId?.trim();
-	if (apiId) return apiId;
-	const vendor = input.vendor ?? '';
-	const rawName = input.name ?? '';
-	let name = rawName;
-	if (vendor && rawName.toLowerCase().startsWith(`${vendor.toLowerCase()}/`)) {
-		name = rawName.slice(vendor.length + 1);
-	}
-	if (vendor && name) return `${vendor}/${name}`;
-	return vendor || name;
 }
 
 /**

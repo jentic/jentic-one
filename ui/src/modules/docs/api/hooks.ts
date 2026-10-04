@@ -16,7 +16,7 @@ import {
 } from '@/modules/docs/api/client';
 import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
 
-export const docsKeys = {
+const docsKeys = {
 	all: ['docs'] as const,
 	bundle: ['docs', 'bundle'] as const,
 	cli: ['docs', 'cli'] as const,

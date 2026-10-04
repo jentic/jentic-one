@@ -18,9 +18,7 @@ export {
 	useDeleteApi,
 	useReimportFromCatalog,
 	useApiNotes,
-	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
-export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';
 export { workspaceApiDisplayTitle } from '@/modules/workspace/api/adapters';
@@ -36,16 +34,8 @@ export {
 export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks';
 export { callsInWeek } from '@/shared/credentials/api/apiHealth';
 
-export {
-	parseSpecOperations,
-	opDetailKey,
-	specAuthRequirement,
-} from '@/modules/workspace/api/specOperations';
-export type {
-	ParsedSpec,
-	SpecOperationDetail,
-	SpecAuthRequirement,
-} from '@/modules/workspace/api/specOperations';
+export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
+export type { ParsedSpec } from '@/modules/workspace/api/specOperations';
 
 export {
 	shortOverlayId,
@@ -60,29 +50,20 @@ export {
 	overlayForRevision,
 	revisionChangeSummary,
 	diffBaseFor,
-	describeLastChange,
 	describeServingState,
 } from '@/modules/workspace/api/insights';
 export type { OverlayLifecycle, SpecDiffBase } from '@/modules/workspace/api/insights';
 
 export { diffSpecs } from '@/modules/workspace/api/specDiff';
-export type { SpecDiffEntry, SpecDiffKind, SpecDiffResult } from '@/modules/workspace/api/specDiff';
+export type { SpecDiffEntry } from '@/modules/workspace/api/specDiff';
 
-export { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
+export { formatApiKey } from '@/modules/workspace/api/apiId';
 export type { ApiKey } from '@/modules/workspace/api/apiId';
 
 export type {
-	ApiNote,
-	ApiRef,
 	WorkspaceApi,
 	ApiOperation,
 	ApiRevision,
 	RevisionState,
-	RevisionOrigin,
 	Overlay,
-	OverlayStatus,
-	CursorPage,
-	ImportJob,
-	JobStatus,
-	ImportSource,
 } from '@/modules/workspace/api/types';

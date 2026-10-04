@@ -48,10 +48,10 @@ export const STATUS_BADGE_VARIANT: Record<ActorStatus, BadgeVariant> = {
 
 /** Status indicator dot colour (Tailwind bg-*) per status. */
 export const STATUS_DOT: Record<ActorStatus, string> = {
-	pending: 'bg-accent-orange',
+	pending: 'bg-warning',
 	active: 'bg-success',
 	rejected: 'bg-danger',
-	disabled: 'bg-warning',
+	disabled: 'bg-caution',
 	archived: 'bg-muted-foreground/40',
 };
 
@@ -61,11 +61,11 @@ export const STATUS_DOT: Record<ActorStatus, string> = {
  * `pending` and `disabled` are adjacent warm hues, easily collapsed into one.
  */
 export const STATUS_TINT: Record<ActorStatus, string> = {
-	pending: 'text-accent-orange',
+	pending: 'text-warning',
 	active: 'text-success',
 	rejected: 'text-danger',
-	disabled: 'text-warning',
-	archived: 'text-muted-foreground/40',
+	disabled: 'text-caution',
+	archived: 'text-foreground-faint',
 };
 
 /**

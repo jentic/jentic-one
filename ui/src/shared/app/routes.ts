@@ -55,12 +55,11 @@ export const ROUTES = {
  * Path prefix of every workspace API hub (`/library/workspace/:v/:n/:ver`).
  * Not a page of its own (it redirects to the Library) — never link to it bare.
  */
-export const WORKSPACE_API_HUB_BASE = '/library/workspace';
+const WORKSPACE_API_HUB_BASE = '/library/workspace';
 
 /**
  * Detail-route path builders for surfaces addressed by an id/sub-path. Kept as
- * functions (not literals) so callers can't forget to encode a segment; mirrors
- * each module's own encoder (e.g. workspace's `encodeApiId`).
+ * functions (not literals) so callers can't forget to encode a segment.
  */
 export const ROUTE_PATHS = {
 	/**

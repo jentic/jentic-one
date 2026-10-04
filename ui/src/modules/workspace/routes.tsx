@@ -12,9 +12,9 @@
  * The hub route spreads the API's `(vendor, name, version)` identity triple
  * across three path segments — the same shape the backend uses
  * (`/apis/{vendor}/{name}/{version}`) — so the URL is human-readable and no
- * opaque id encoding is needed. `ApiCard` builds these links via `encodeApiId`
- * (which percent-encodes each segment); the page reads them back from
- * `useParams`.
+ * opaque id encoding is needed. Links are built with
+ * `ROUTE_PATHS.workspaceApiHub` (which percent-encodes each segment); the page
+ * reads them back from `useParams`.
  *
  * The retired `/app/workspace/:vendor/:name/:version` redirects to its hub
  * with the search string and hash preserved (so `?tab=` deep links keep

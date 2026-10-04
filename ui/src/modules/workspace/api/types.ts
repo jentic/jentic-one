@@ -189,6 +189,6 @@ export interface ApiNote {
 	updatedAt: string;
 }
 
-// Spec-import and job-poll shapes live in `@/shared/credentials/api` — the import
-// dialog is shared. Re-exported so this module's call sites keep one import path.
-export type { ImportJob, JobStatus, ImportSource } from '@/shared/credentials/api';
+// The spec-import job shape lives in `@/shared/credentials/api` — the import
+// dialog is shared. Re-exported for the re-import client call.
+export type { ImportJob } from '@/shared/credentials/api';
