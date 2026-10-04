@@ -7,7 +7,9 @@ import {
 	ErrorAlert,
 	Input,
 	Label,
-	SegmentedToggle,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
 	toast,
@@ -44,6 +46,10 @@ import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
+import {
+	CredentialVersionScope,
+	pinnableVersionOf,
+} from '@/shared/credentials/components/CredentialVersionScope';
 import {
 	VendorConnectFlow,
 	type PostConnectInfo,
@@ -113,9 +119,8 @@ interface CreateCredentialFlowProps {
 	 * picker. Each (re)open starts from it; a different API re-seeds the flow.
 	 * `pinnedApi` wins when both are set.
 	 *
-	 * The credential defaults to this API's version (the host is about that one
-	 * registered revision); the form offers "Any version" to unpin. An API
-	 * re-picked in step 1 starts unpinned, like any other pick.
+	 * Like every pick, the credential defaults to "Any version"; the form's
+	 * "Use for" picker offers this API's registered version to pin instead.
 	 */
 	initialApi?: SelectedApi;
 	/**
@@ -147,9 +152,6 @@ interface CreateCredentialFlowProps {
 }
 
 type Step = 'pick' | 'form' | 'vendor';
-
-/** Which versions of the seeded API the credential covers. */
-type VersionScope = 'pinned' | 'any';
 
 /**
  * The guided flow for creating a credential.
@@ -197,18 +199,14 @@ export function CreateCredentialFlow({
 	// The API the flow starts on: fixed (`pinnedApi`) or just preselected
 	// (`initialApi`). Only `pinnedApi` hides the way back to the picker.
 	const seedApi = pinnedApi ?? initialApi;
-	// Only a host opened from one API (`initialApi`) defaults the credential to
-	// that API's version; the setup queue's `pinnedApi` batch stays unpinned, as
-	// a catalog pick's version isn't the registry's yet.
-	const seedVersion = pinnedApi ? '' : (initialApi?.version?.trim() ?? '');
+	// Every credential starts on "Any version"; a workspace API's registered
+	// version is offered as the pin (a catalog pick has no real one yet).
+	const seedVersion = seedApi ? pinnableVersionOf(seedApi) : '';
 	const seedForm = (): CredentialFormState =>
-		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false, !!seedVersion) : EMPTY_FORM;
+		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM;
 	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
-	/**
-	 * The version the form can pin to: the seeded API's own, until the operator
-	 * picks an API in step 1 (a pick is unpinned, with nothing to toggle).
-	 */
+	/** The registry version the form's "Use for" picker can pin to (`''` hides it). */
 	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
@@ -407,7 +405,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(api);
 		setSelectedVendor(null);
 		setManualMode(false);
-		setPinnableVersion('');
+		setPinnableVersion(pinnableVersionOf(api));
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
@@ -589,10 +587,9 @@ export function CreateCredentialFlow({
 
 	// The picked-API summary banner shown atop the form step (label + the
 	// vendor/name triple + whether saving will trigger a catalog import). The
-	// version shown is the one the credential is saved with: a picker pick is
+	// version shown is the one the credential is saved with: every pick starts
 	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
-	// "any version" rather than the catalog's version string; a flow opened from
-	// one API reads that API's version until the operator switches to any.
+	// "any version" until the operator pins the API's version in "Use for".
 	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
@@ -646,13 +643,13 @@ export function CreateCredentialFlow({
 		<span>Fill in the credential details for {pinnedApi.label}</span>
 	) : step === 'pick' ? (
 		<span>
-			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
-			Choose a one-click sign-in, or pick an API to authenticate against
+			<span className="text-[10.5px] font-bold tracking-[0.08em] uppercase">Step 1 of 2</span>{' '}
+			· Choose a one-click sign-in, or pick an API to authenticate against
 		</span>
 	) : (
 		<span>
-			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
-			Fill in the credential details
+			<span className="text-[10.5px] font-bold tracking-[0.08em] uppercase">Step 2 of 2</span>{' '}
+			· Fill in the credential details
 		</span>
 	);
 
@@ -681,7 +678,7 @@ export function CreateCredentialFlow({
 				size="sm"
 				onClick={openUpload}
 				type="button"
-				className="text-muted-foreground hover:text-foreground mr-auto"
+				className="mr-auto"
 			>
 				<Upload className="h-3.5 w-3.5" />
 				Upload an API
@@ -787,12 +784,12 @@ export function CreateCredentialFlow({
 				>
 					{apiSummary && (
 						<div
-							className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
+							className="bg-surface-inset flex items-center gap-3 rounded-lg px-3 py-2.5"
 							data-testid="selected-api-summary"
 						>
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2">
-									<p className="text-foreground truncate text-sm font-medium">
+									<p className="text-foreground-name truncate text-sm font-semibold">
 										{apiSummary.label}
 									</p>
 									{specPending && (
@@ -805,7 +802,7 @@ export function CreateCredentialFlow({
 								<p className="text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs">
 									{apiSummary.triple}
 									{apiSummary.willImport && (
-										<span className="text-muted-foreground/80 inline-flex items-center gap-1">
+										<span className="text-muted-foreground inline-flex items-center gap-1">
 											<span aria-hidden>·</span>
 											<Download className="h-3 w-3" />
 											imports on save
@@ -813,22 +810,9 @@ export function CreateCredentialFlow({
 									)}
 								</p>
 								{pinnableVersion && (
-									<div className="mt-2 flex flex-wrap items-center gap-2">
-										<span
-											aria-hidden="true"
-											className="text-muted-foreground text-xs"
-										>
-											Use for
-										</span>
-										<SegmentedToggle<VersionScope>
-											ariaLabel="Use this credential for"
-											options={[
-												{
-													value: 'pinned',
-													label: `Version ${pinnableVersion}`,
-												},
-												{ value: 'any', label: 'Any version' },
-											]}
+									<div className="mt-2">
+										<CredentialVersionScope
+											version={pinnableVersion}
 											value={pinnedVersion ? 'pinned' : 'any'}
 											onChange={(scope): void =>
 												patch({
@@ -844,9 +828,9 @@ export function CreateCredentialFlow({
 								<Button
 									type="button"
 									variant="ghost"
-									size="sm"
+									size="xs"
 									onClick={goBackToPick}
-									className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
+									className="shrink-0"
 								>
 									Change
 								</Button>
@@ -855,11 +839,11 @@ export function CreateCredentialFlow({
 					)}
 
 					{manualMode && (
-						<fieldset className="border-border space-y-3 rounded-lg border p-3">
-							<legend className="text-muted-foreground px-1 text-xs font-medium">
+						<fieldset className="bg-surface-inset space-y-3 rounded-lg p-3">
+							<legend className="text-foreground-sub float-left mb-3 w-full text-xs font-medium">
 								API reference
 							</legend>
-							<div className="space-y-1.5">
+							<div className="clear-both space-y-1.5">
 								<Label htmlFor={`${fieldId}-vendor`} required>
 									Vendor
 								</Label>
@@ -945,7 +929,7 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.15 }}
-								className="border-border border-t pt-5"
+								className="border-hairline border-t pt-5"
 							>
 								<AuthSectionSkeleton />
 							</motion.div>
@@ -956,11 +940,11 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1, y: 0 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.2, ease: 'easeOut' }}
-								className="border-border space-y-5 border-t pt-5"
+								className="border-hairline space-y-5 border-t pt-5"
 							>
 								{!manualMode && schemesResult.error && (
 									<p
-										className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
+										className="bg-surface-inset text-foreground-sub rounded-lg p-3 text-xs leading-snug"
 										role="note"
 									>
 										We couldn&apos;t read the API spec — pick the type manually
@@ -1024,7 +1008,7 @@ export function CreateCredentialFlow({
 
 								{usingPipedream && (
 									<div
-										className="border-primary/20 bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg border p-3 text-xs leading-snug"
+										className="bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg p-3 text-xs leading-snug"
 										role="note"
 									>
 										<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -1088,31 +1072,32 @@ export function CreateCredentialFlow({
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">
-				<header className="border-border flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
+				<SheetHeader className="justify-between">
 					<div className="min-w-0">
-						<h2 id={headingId} className="text-foreground text-base font-semibold">
+						<h2
+							id={headingId}
+							className="font-heading text-foreground-name text-lg leading-tight font-semibold"
+						>
 							{title}
 						</h2>
-						<div className="text-muted-foreground text-xs">{subtitle}</div>
+						<div className="text-foreground-sub mt-1 text-xs">{subtitle}</div>
 					</div>
 					<Button
 						variant="ghost"
-						size="sm"
+						size="icon"
 						aria-label="Close"
 						onClick={onClose}
-						className="text-muted-foreground hover:text-foreground shrink-0"
+						className="-mt-1 -mr-1.5 shrink-0"
 					>
 						<X className="h-4 w-4" />
 					</Button>
-				</header>
+				</SheetHeader>
 
-				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
+				{/* The connect flow draws its own action band flush with the body's
+				    bottom edge, so the body keeps a matching bottom padding then. */}
+				<SheetBody className={connectInPlay ? 'pb-4' : undefined}>{body}</SheetBody>
 
-				{footer && (
-					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
-						{footer}
-					</footer>
-				)}
+				{footer && <SheetFooter className="flex-wrap gap-2">{footer}</SheetFooter>}
 			</div>
 		</SheetPrimitive>
 	);
@@ -1125,7 +1110,7 @@ export function CreateCredentialFlow({
  */
 function FormSectionLabel({ children }: { children: React.ReactNode }) {
 	return (
-		<p className="text-muted-foreground px-0.5 font-mono text-[10px] tracking-widest uppercase">
+		<p className="text-foreground-faint px-0.5 text-[10.5px] font-bold tracking-[0.08em] uppercase">
 			{children}
 		</p>
 	);
@@ -1144,19 +1129,19 @@ function AuthSectionSkeleton() {
 				<Skeleton className="h-4 w-44" />
 				<Skeleton className="h-3 w-64" />
 				<div className="grid gap-2.5 sm:grid-cols-2">
-					<Skeleton className="h-[4.5rem] rounded-xl" />
-					<Skeleton className="h-[4.5rem] rounded-xl" />
+					<Skeleton className="h-[4.5rem] rounded-lg" />
+					<Skeleton className="h-[4.5rem] rounded-lg" />
 				</div>
 			</div>
 			{/* Field stack */}
 			<div className="space-y-4">
 				<div className="space-y-1.5">
 					<Skeleton className="h-3.5 w-20" />
-					<Skeleton className="h-9 w-full rounded-lg" />
+					<Skeleton className="rounded-field h-9 w-full" />
 				</div>
 				<div className="space-y-1.5">
 					<Skeleton className="h-3.5 w-24" />
-					<Skeleton className="h-9 w-full rounded-lg" />
+					<Skeleton className="rounded-field h-9 w-full" />
 				</div>
 			</div>
 		</div>

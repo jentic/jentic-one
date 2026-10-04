@@ -210,7 +210,7 @@ export interface VendorOperationsPage {
  * exhaustion; this single-page variant stays exported for tests + narrow
  * consumers that only need the first page.
  */
-export async function listVendorOperations(
+async function listVendorOperations(
 	vendor: string,
 	name: string,
 	version: string,

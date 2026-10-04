@@ -21,12 +21,12 @@ import {
 } from '@/shared/credentials/api/vendors-client';
 import type { AgentListResponse } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
+import { credentialKeys } from './keys';
 import type {
 	ConfirmRequest,
 	ConfirmResponse,
 	ConnectRequest,
 	ConnectResponse,
-	PermissionRule,
 	ReviewSession,
 	StatusResponse,
 	VendorAuthCapabilities,
@@ -174,60 +174,17 @@ export function useBindCredentialToAgents() {
 			}
 		},
 		onSuccess: (_res, { credentialId, agentIds }) => {
-			// Literal keys: `credentialKeys` lives in `./index`, which re-exports
-			// this file (importing it back would close a cycle). They mirror
-			// `agentsKeys.credentialBindings(aid)` (the agent's binding list) and
-			// `credentialKeys.agents(credentialId)` (the credential's agent roster —
-			// the slice the API hub's "Who can use it" and the Library's workspace
-			// agent counts read); the prefix also sweeps its all-pages variant.
+			// The agent's binding list (a literal mirroring
+			// `agentsKeys.credentialBindings(aid)` — shared code can't import the
+			// agents module) and the credential's agent roster — the slice the API
+			// hub's "Who can use it" and the Library's workspace agent counts read;
+			// the prefix also sweeps its all-pages variant.
 			for (const aid of agentIds) {
 				void client.invalidateQueries({
 					queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
 				});
 			}
-			void client.invalidateQueries({ queryKey: ['credentials', 'agents', credentialId] });
-		},
-	});
-}
-
-/**
- * Combined start+confirm mutation for the user-driven vendor connect flow.
- * The user has already chosen an agent and scopes upfront, so there's no
- * middle "review" step — we open the session and confirm it in one shot,
- * then hand the caller both the session identifiers and the vendor challenge
- * to display. Split lets callers still call the two separately when they
- * need the review page in between (agent-driven flow).
- */
-export interface StartAndConfirmVars extends ConnectRequest {
-	permission_rules: PermissionRule[];
-}
-
-export interface StartAndConfirmResult {
-	session_id: string;
-	poll_token: string;
-	challenge: ConfirmResponse;
-}
-
-export function useStartAndConfirmVendorConnect() {
-	const client = useQueryClient();
-	return useMutation<StartAndConfirmResult, Error, StartAndConfirmVars>({
-		mutationFn: async ({ permission_rules, ...connect }) => {
-			const started = await startIntegrationConnect(connect);
-			const challenge = await confirmConnectSession(started.session_id, started.poll_token, {
-				confirmed_scopes: connect.requested_scopes ?? [],
-				permission_rules,
-			});
-			return {
-				session_id: started.session_id,
-				poll_token: started.poll_token,
-				challenge,
-			};
-		},
-		onSuccess: () => {
-			// A pending credential row exists on the backend from the moment
-			// `:connect` returns — surface it in the credentials list right
-			// away so the user can see the pending state.
-			void client.invalidateQueries({ queryKey: ['credentials'] });
+			void client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
 		},
 	});
 }

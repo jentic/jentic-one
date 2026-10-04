@@ -1,7 +1,7 @@
 /**
  * Per-API health signals, joined once from already-shared reads so every
- * surface that shows them (the Library's "Your workspace" digest/panel and the
- * Workspace grid's `ApiCard`) derives them identically:
+ * surface that shows them (the Library's "Your workspace" digest and docked
+ * panel) derives them identically:
  *
  *   | signal                        | source                                                 |
  *   |-------------------------------|--------------------------------------------------------|

@@ -406,19 +406,17 @@ export function resetConnectSessionsStore(): void {
 }
 
 /** Seed the `/vendors` registry. */
-export function setMockVendors(vendors: VendorSummary[]): void {
+function setMockVendors(vendors: VendorSummary[]): void {
 	vendorsStore = [...vendors];
 }
 
 /** Seed a vendor's `/vendors/{key}/auth-capabilities` payload. */
-export function setMockVendorCapabilities(key: string, caps: VendorAuthCapabilities): void {
+function setMockVendorCapabilities(key: string, caps: VendorAuthCapabilities): void {
 	vendorCapabilitiesStore[key] = caps;
 }
 
 /** Choose which challenge shape `:confirm` returns. */
-export function setMockConfirmChallengeKind(
-	kind: 'device_authorization' | 'authorization_code',
-): void {
+function setMockConfirmChallengeKind(kind: 'device_authorization' | 'authorization_code'): void {
 	confirmChallengeKind = kind;
 }
 
@@ -428,7 +426,7 @@ export function getMockConnectSessions(): readonly MockConnectSession[] {
 }
 
 /** Drive a session's `/status` poll result (e.g. flip it to a terminal state). */
-export function setMockConnectSessionStatus(
+function setMockConnectSessionStatus(
 	sessionId: string,
 	status: Partial<StatusResponse> & { status: SessionStatus },
 ): void {
@@ -465,7 +463,7 @@ function isMockSession(v: unknown): v is MockConnectSession {
 	return typeof v === 'object' && v != null && 'poll_token' in v;
 }
 
-export const connectSessionsHandlers = [
+const connectSessionsHandlers = [
 	http.get('/vendors', () => HttpResponse.json({ data: vendorsStore })),
 
 	http.get('/vendors/:key/auth-capabilities', ({ params }) => {

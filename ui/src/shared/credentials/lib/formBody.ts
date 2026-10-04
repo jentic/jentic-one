@@ -326,20 +326,16 @@ export function validateUpdate(
  * vendor/name pair with the picker's values and uses the API's display name as
  * a sensible default credential name.
  *
- * Version is NOT seeded by default: it stays empty, which the backend stores
+ * Version is deliberately NOT seeded: it stays empty, which the backend stores
  * as the wildcard (`APIReferenceRequest.version` defaults to `""`, and
  * `canonical_credential_scope` coerces empty to NULL = covers any version). The
- * broker treats a pinned version as pinned, so stamping a picker pick's version
+ * broker treats a pinned version as pinned, so stamping the pick's version here
  * would scope the credential to one spec revision and the next call after a
  * re-ingest resolves no covering credential — `CredentialNotProvisionedError`
  * on a credential the operator believes they set up. A catalog pick makes that
  * immediate rather than latent: its version comes from the catalog, and the
- * registry's ingested spec need not report the same string.
- *
- * `pinVersion` is for a host that opened the flow FROM one registered API (its
- * hub, the Library panel's "no credential" item): that API's version is the
- * registry's own, so the credential defaults to it. The form still offers
- * "Any version" to unpin.
+ * registry's ingested spec need not report the same string. Pinning is opt-in:
+ * the form's "Use for" picker (`CredentialVersionScope`) pins on request.
  *
  * `nameDirty` guards the credential name: when the user hasn't manually edited
  * it we always refresh it to the newly-picked API's label (so switching APIs
@@ -349,13 +345,12 @@ export function seedFormFromSelectedApi(
 	state: CredentialFormState,
 	api: SelectedApi,
 	nameDirty = false,
-	pinVersion = false,
 ): CredentialFormState {
 	return {
 		...state,
 		apiVendor: api.vendor,
 		apiName: api.name,
-		apiVersion: pinVersion ? (api.version?.trim() ?? '') : '',
+		apiVersion: '',
 		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
 	};
