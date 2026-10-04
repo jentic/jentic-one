@@ -23,7 +23,12 @@
 import { http, HttpResponse, type HttpHandler } from 'msw';
 import { CredentialType, type Credential } from '@/shared/credentials/api';
 import { seedMockCredentials } from '@/shared/credentials/mocks/handlers';
-import { mockCatalogVendor, patchMockCatalogEntry } from '@/modules/discover/mocks/handlers';
+import {
+	addMockCatalogEntries,
+	mockCatalogVendor,
+	patchMockCatalogEntry,
+	type MockCatalogRow,
+} from '@/modules/discover/mocks/handlers';
 import { patchMockApi, registerMockCatalogImport } from '@/modules/workspace/mocks/handlers';
 
 const STRIPE = { vendor: 'stripe', name: 'stripe-api' };
@@ -82,6 +87,90 @@ const scenarioCredentials: Credential[] = [
 	},
 ];
 
+/**
+ * A realistic slice of the public catalog for reviewing the Library ledger:
+ * a big umbrella vendor (googleapis.com, > 5 sub-APIs → one collapsed row),
+ * small multi-API vendors (2–5 → header + children), and single-API vendors
+ * across the alphabet — enough rows to span more than one keyset page.
+ */
+const SCENARIO_CATALOG: MockCatalogRow[] = [
+	{ api_id: 'googleapis.com/gmail', vendor: 'googleapis.com', version: 'v1' },
+	{ api_id: 'googleapis.com/drive', vendor: 'googleapis.com', version: 'v3' },
+	{ api_id: 'googleapis.com/calendar', vendor: 'googleapis.com', version: 'v3' },
+	{ api_id: 'googleapis.com/sheets', vendor: 'googleapis.com', version: 'v4' },
+	{ api_id: 'googleapis.com/youtube', vendor: 'googleapis.com', version: 'v3' },
+	{ api_id: 'googleapis.com/translate', vendor: 'googleapis.com', version: 'v3' },
+	{ api_id: 'googleapis.com/storage', vendor: 'googleapis.com', version: 'v1' },
+	{ api_id: 'googleapis.com/bigquery', vendor: 'googleapis.com', version: 'v2' },
+	{ api_id: 'googleapis.com/people', vendor: 'googleapis.com', version: 'v1' },
+	{ api_id: '0xerr0r.github.io', vendor: '0xerr0r.github.io', version: '0.1.0' },
+	{ api_id: '100hires.com', vendor: '100hires.com', version: '1.0.0' },
+	{ api_id: '100ms.live', vendor: '100ms.live', version: '2.0.0' },
+	{ api_id: '123formbuilder.com', vendor: '123formbuilder.com', version: '2.0.0' },
+	{ api_id: '15five.com', vendor: '15five.com', version: '1.0.0' },
+	{ api_id: '1forge.com', vendor: '1forge.com', version: '0.0.1' },
+	{ api_id: 'abstractapi.com', vendor: 'abstractapi.com', version: '1.0.0' },
+	{ api_id: 'adyen.com', vendor: 'adyen.com', version: '71' },
+	{ api_id: 'airtable.com', vendor: 'airtable.com', version: '0.1.0' },
+	{ api_id: 'algolia.com', vendor: 'algolia.com', version: '1.0.0' },
+	{ api_id: 'asana.com', vendor: 'asana.com', version: '1.0.0' },
+	{ api_id: 'auth0.com', vendor: 'auth0.com', version: '2.0.0' },
+	{ api_id: 'bitbucket.org', vendor: 'bitbucket.org', version: '2.0' },
+	{ api_id: 'box.com', vendor: 'box.com', version: '2.0.0' },
+	{ api_id: 'brex.com', vendor: 'brex.com', version: '1.0.0' },
+	{ api_id: 'calendly.com', vendor: 'calendly.com', version: '2.0.0' },
+	{ api_id: 'circleci.com', vendor: 'circleci.com', version: '2.0' },
+	{ api_id: 'clickup.com', vendor: 'clickup.com', version: '2.0' },
+	{ api_id: 'cloudflare.com', vendor: 'cloudflare.com', version: '4.0.0' },
+	{ api_id: 'datadoghq.com', vendor: 'datadoghq.com', version: '1.0' },
+	{ api_id: 'digitalocean.com', vendor: 'digitalocean.com', version: '2.0' },
+	{ api_id: 'discord.com', vendor: 'discord.com', version: '10' },
+	{ api_id: 'docusign.net', vendor: 'docusign.net', version: '2.1' },
+	{ api_id: 'dropbox.com', vendor: 'dropbox.com', version: '2.0' },
+	{ api_id: 'elastic.co', vendor: 'elastic.co', version: '8.0' },
+	{ api_id: 'etsy.com', vendor: 'etsy.com', version: '3.0.0' },
+	{ api_id: 'figma.com', vendor: 'figma.com', version: '1.0.0' },
+	{ api_id: 'freshdesk.com', vendor: 'freshdesk.com', version: '2.0' },
+	{ api_id: 'hubspot.com', vendor: 'hubspot.com', version: '3.0' },
+	{ api_id: 'intercom.io', vendor: 'intercom.io', version: '2.10' },
+	{ api_id: 'jira.atlassian.com', vendor: 'jira.atlassian.com', version: '3.0' },
+	{ api_id: 'klaviyo.com', vendor: 'klaviyo.com', version: '2024-02-15' },
+	{ api_id: 'linear.app', vendor: 'linear.app', version: '1.0.0' },
+	{ api_id: 'mailchimp.com', vendor: 'mailchimp.com', version: '3.0.0' },
+	{ api_id: 'miro.com', vendor: 'miro.com', version: '2.0' },
+	{ api_id: 'notion.com', vendor: 'notion.com', version: '2022-06-28' },
+	{ api_id: 'okta.com', vendor: 'okta.com', version: '1.0.0' },
+	{ api_id: 'openai.com', vendor: 'openai.com', version: '2.0.0' },
+	{ api_id: 'pagerduty.com', vendor: 'pagerduty.com', version: '2.0' },
+	{ api_id: 'paypal.com', vendor: 'paypal.com', version: '2.0' },
+	{ api_id: 'plaid.com', vendor: 'plaid.com', version: '2020-09-14' },
+	{ api_id: 'postmarkapp.com', vendor: 'postmarkapp.com', version: '1.0.0' },
+	{ api_id: 'quickbooks.com', vendor: 'quickbooks.com', version: '3.0' },
+	{ api_id: 'resend.com', vendor: 'resend.com', version: '1.0.0' },
+	{ api_id: 'salesforce.com', vendor: 'salesforce.com', version: '58.0' },
+	{ api_id: 'sendgrid.com', vendor: 'sendgrid.com', version: '3.0' },
+	{ api_id: 'shopify.com', vendor: 'shopify.com', version: '2024-01' },
+	{ api_id: 'square.com', vendor: 'square.com', version: '2.0' },
+	{ api_id: 'trello.com', vendor: 'trello.com', version: '1.0' },
+	{ api_id: 'typeform.com', vendor: 'typeform.com', version: '1.0' },
+	{ api_id: 'vercel.com', vendor: 'vercel.com', version: '1.0' },
+	{ api_id: 'webflow.com', vendor: 'webflow.com', version: '2.0.0' },
+	{ api_id: 'xero.com', vendor: 'xero.com', version: '2.0' },
+	{ api_id: 'youtrack.com', vendor: 'youtrack.com', version: '1.0' },
+	{ api_id: 'zendesk.com', vendor: 'zendesk.com', version: '2.0' },
+	{ api_id: 'zoom.us', vendor: 'zoom.us', version: '2.0.0' },
+	{ api_id: '1password.com/events', vendor: '1password.com', version: '1.0.0' },
+	{ api_id: '1password.com/connect', vendor: '1password.com', version: '1.0.0' },
+	{ api_id: 'amazonaws.com/ec2', vendor: 'amazonaws.com', version: '2016-11-15' },
+	{ api_id: 'amazonaws.com/s3', vendor: 'amazonaws.com', version: '2016-11-15' },
+	{ api_id: 'amazonaws.com/lambda', vendor: 'amazonaws.com', version: '2016-11-15' },
+	{ api_id: 'amazonaws.com/dynamodb', vendor: 'amazonaws.com', version: '2016-11-15' },
+	{ api_id: 'amazonaws.com/sqs', vendor: 'amazonaws.com', version: '2016-11-15' },
+	{ api_id: 'twilio.com/messaging', vendor: 'twilio.com', version: '1.55.0' },
+	{ api_id: 'twilio.com/verify', vendor: 'twilio.com', version: '1.55.0' },
+	{ api_id: 'twilio.com/voice', vendor: 'twilio.com', version: '1.55.0' },
+];
+
 /** Seed the scenario's rows into the shared stores. Call once, before the worker starts. */
 export function installReviewScenario(): void {
 	seedMockCredentials(scenarioCredentials);
@@ -96,6 +185,7 @@ export function installReviewScenario(): void {
 	patchMockCatalogEntry('stripe.com', { registered: true, update_available: true });
 	patchMockCatalogEntry('github.com', { registered: true });
 	patchMockCatalogEntry('slack.com', { registered: true });
+	addMockCatalogEntries(SCENARIO_CATALOG);
 }
 
 /** How long a scenario catalog import takes to "land" (the async job). */

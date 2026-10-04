@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { catalogImportRef } from '@/shared/credentials/lib/apiIdentity';
 import {
 	credentialsCoveringEntry,
 	readyCredentialsFor,
@@ -68,26 +67,6 @@ const STRIPE = { apiId: 'stripe.com', catalogVendor: 'stripe.com' };
 function ids(creds: Credential[] | null): string[] | null {
 	return creds?.map((c) => c.credential_id) ?? null;
 }
-
-describe('catalogImportRef', () => {
-	it('mirrors the import: slugged entry vendor + slugged whole api_id', () => {
-		expect(
-			catalogImportRef({ apiId: 'nytimes.com/article_search', vendor: 'nytimes.com' }),
-		).toEqual({
-			vendor: 'nytimes-com',
-			name: 'nytimes-com-article-search',
-		});
-		expect(catalogImportRef({ apiId: 'stripe.com', vendor: 'stripe.com' })).toEqual({
-			vendor: 'stripe-com',
-			name: 'stripe-com',
-		});
-	});
-
-	it('is unknown without a catalog vendor (the importer would read the spec)', () => {
-		expect(catalogImportRef({ apiId: 'example.org' })).toBeNull();
-		expect(catalogImportRef({ apiId: 'example.org', vendor: '  ' })).toBeNull();
-	});
-});
 
 describe('credentialsCoveringEntry', () => {
 	it('a vendor-wide credential (wildcard name/version) covers every API of that vendor', () => {

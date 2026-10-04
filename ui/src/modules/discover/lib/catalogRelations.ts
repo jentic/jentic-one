@@ -1,7 +1,7 @@
 /**
  * How a catalog entry relates to things you already have — derived only from
  * data the Library has already loaded (the catalog list, the drained
- * `GET /apis` joined with the drained `GET /credentials`), never per tile.
+ * `GET /apis` joined with the drained `GET /credentials`), never per row.
  *
  * Every catalog ⇄ workspace match keys on `catalog_api_id`, the catalog
  * identity slug (`domain[/sub-api]`) the backend records verbatim on a
@@ -37,7 +37,7 @@ export function workspaceHrefFor(
 
 /**
  * Credentials that can already reach a catalog entry — the ONE credential ↔
- * API rule the hub, the panel and the workspace tiles use for "Credential
+ * API rule the hub, the panel and the catalog rows use for "Credential
  * missing": an ACTIVE credential whose `api` scope covers (`apiScopeCovers`) a
  * workspace API imported from this entry. The rows carry that per-API answer
  * (`credentials`, null while the credential list is still draining), so this

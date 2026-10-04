@@ -4,18 +4,16 @@
  * Discover browses the public catalog (`GET /catalog`): a single keyset-paginated
  * feed of importable APIs, each carrying a `registered` flag (true once it's been
  * imported into this deployment). There is no server-side blend of local + catalog
- * (the old `GET /apis?source=` shape was rejected under D-005a) — the catalog's own
- * per-entry `registered` boolean is the source of truth for the Imported/Available
- * badge, so the grid is fed entirely from `/catalog`.
+ * — the catalog's own per-entry `registered` boolean is the source of truth for
+ * the "In your workspace" marker, so the ledger is fed entirely from `/catalog`.
  *
- * Scope note: this slice has no `workflow` /
- * `endpoint` entity types — the catalog backend exposes only API-level discovery.
+ * Scope: there are no `workflow` / `endpoint` entity types — the catalog
+ * backend exposes only API-level discovery.
  */
 
 /**
  * A discoverable catalog API, normalized from a `GET /catalog` entry. Components
- * render only this shape; `raw` carries the original payload for detail panels
- * that need a field not surfaced here.
+ * render only this shape.
  */
 export interface DiscoveryEntity {
 	/** Stable, unique row id (also the React key). Mirrors the catalog `api_id`. */
@@ -42,7 +40,7 @@ export interface DiscoveryEntity {
 	/**
 	 * Whether this (registered) entry has an upstream spec update the local
 	 * revision hasn't adopted yet. Always false for unregistered entries — drives
-	 * the "Update available" badge, mirroring the Workspace ApiCard signal.
+	 * the "Update available" badge.
 	 */
 	updateAvailable: boolean;
 	/** Vendor / domain key (e.g. `stripe.com`) used for the vendor icon. */
@@ -60,7 +58,6 @@ export interface DiscoveryEntity {
 	version?: string;
 	/** GitHub source URL for the catalog spec, when the manifest has one. */
 	githubUrl?: string;
-	raw: unknown;
 }
 
 /**

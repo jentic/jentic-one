@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import {
 	renderWithProviders,
 	screen,
@@ -31,19 +31,30 @@ describe('LibraryPage', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('renders the public catalog with imported/available badges', async () => {
+	it('renders the public catalog as a ledger with in-workspace markers', async () => {
 		renderWithProviders(<LibraryPage />);
 
 		expect(await screen.findByText('stripe.com')).toBeInTheDocument();
 		expect(await screen.findByText('github.com')).toBeInTheDocument();
 		expect(await screen.findByText('slack.com')).toBeInTheDocument();
 
-		// stripe.com is registered (Imported); the rest are Available.
-		expect(screen.getByTestId('card-status-imported')).toBeInTheDocument();
-		expect(screen.getAllByTestId('card-status-available').length).toBeGreaterThanOrEqual(2);
+		// stripe.com is registered (In your workspace, grouped first); the rest
+		// are available — a blank status, no marker.
+		expect(screen.getByRole('table', { name: 'API catalog' })).toBeInTheDocument();
+		expect(screen.getByTestId('catalog-status-imported')).toBeInTheDocument();
+		expect(
+			screen.getByText('In your workspace', { selector: '[role="cell"]' }),
+		).toBeInTheDocument();
+		const available = screen
+			.getAllByTestId('catalog-row')
+			.filter((row) => row.dataset.registered === 'false');
+		expect(available.length).toBeGreaterThanOrEqual(2);
+		for (const row of available) {
+			expect(within(row).queryByTestId(/^catalog-status-/)).not.toBeInTheDocument();
+		}
 	});
 
-	it('offers "Open" on imported cards and not on available ones', async () => {
+	it('offers "Open" on imported rows and not on available ones', async () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 
@@ -51,22 +62,28 @@ describe('LibraryPage', () => {
 		// docked panel lists the workspace): the default registry has no row
 		// whose `catalog_api_id` is `stripe.com`, so there's no unambiguous hub
 		// to deep-link to — and no versions to filter the panel to.
-		const link = screen.getByTestId('discovery-card-open-workspace');
+		const link = screen.getByTestId('catalog-row-open');
 		expect(link).toHaveAttribute('href', '/library');
 
 		// Available cards expose Import, never the workspace link — there's exactly
 		// one imported entry in the default catalog, so exactly one such link.
-		expect(screen.getAllByTestId('discovery-card-open-workspace')).toHaveLength(1);
+		expect(screen.getAllByTestId('catalog-row-open')).toHaveLength(1);
 	});
 
 	it('shows the whole-manifest status row', async () => {
 		renderWithProviders(<LibraryPage />);
 		const status = await screen.findByTestId('discover-status');
 		expect(within(status).getByText(/APIs in the catalog/)).toBeInTheDocument();
-		expect(within(status).getByText(/imported/)).toBeInTheDocument();
+		expect(within(status).getByText(/in your workspace/)).toBeInTheDocument();
+		// The vendor total has no backend source yet: the placeholder figure.
+		expect(within(status).getByTestId('discover-status-vendors')).toHaveTextContent('vendors');
 		// It heads the catalog column, directly above the toolbar — not a
-		// full-width strip of its own under the page header.
-		expect(status.nextElementSibling).toBe(screen.getByTestId('discover-toolbar'));
+		// full-width strip of its own under the page header. (The toolbar's
+		// zero-height scroll sentinel sits between them.)
+		expect(status.nextElementSibling).toBe(screen.getByTestId('discover-toolbar-sentinel'));
+		expect(status.nextElementSibling?.nextElementSibling).toBe(
+			screen.getByTestId('discover-toolbar'),
+		);
 	});
 
 	it('disambiguates umbrella sub-APIs by title (nytimes.com)', async () => {
@@ -81,28 +98,34 @@ describe('LibraryPage', () => {
 		expect(await screen.findByText('Article Search')).toBeInTheDocument();
 		expect(screen.getByText('Top Stories')).toBeInTheDocument();
 		expect(screen.getByText('Books')).toBeInTheDocument();
-		// The vendor still appears, but only as the shared subtitle line.
-		expect(screen.getAllByText('nytimes.com').length).toBe(3);
+		// Search is a flat list: no vendor header, the vendor inline on each row.
+		await waitFor(() => expect(screen.getAllByTestId('catalog-row')).toHaveLength(3));
+		const rows = screen.getAllByTestId('catalog-row');
+		for (const row of rows) expect(row).toHaveTextContent('nytimes.com');
+		expect(screen.queryByTestId('catalog-vendor-row')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('alpha-rail')).not.toBeInTheDocument();
+		// The query is highlighted.
+		expect(rows[0].querySelector('mark')).toHaveTextContent('nyt');
 	});
 
-	it('shows the spec version parsed from a jentic-public-apis spec_url on catalog tiles', async () => {
+	it('shows the spec version parsed from a jentic-public-apis spec_url on catalog rows', async () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
-		const versions = screen
-			.getAllByTestId('discovery-card-version')
-			.map((el) => el.textContent);
+		const versions = screen.getAllByTestId('catalog-row-version').map((el) => el.textContent);
 		// Every mock entry uses the real layout: `…/{domain}/{sub}/{version}/openapi.json`.
 		expect(versions).toEqual(
 			expect.arrayContaining(['v2024-01-01', 'v1.1.4', 'v1.0.0', 'v2.0.0', 'v3.0.0']),
 		);
 		const books = screen
 			.getByRole('button', { name: 'View Books' })
-			.closest('[data-testid="discovery-card-api"]') as HTMLElement;
-		expect(within(books).getByTestId('discovery-card-subtitle')).toHaveTextContent(
-			'nytimes.com·v3.0.0',
-		);
-		// List data only: catalog tiles never show usage / credential health.
-		expect(screen.queryByTestId('discovery-card-usage')).not.toBeInTheDocument();
+			.closest<HTMLElement>('[role="row"]')!;
+		expect(within(books).getByTestId('catalog-row-vendor')).toHaveTextContent('nytimes.com');
+		expect(within(books).getByTestId('catalog-row-version')).toHaveTextContent('v3.0.0');
+		// Browsing nests a vendor's 2–5 APIs under one vendor header.
+		const header = screen
+			.getAllByTestId('catalog-vendor-row')
+			.find((row) => row.dataset.vendor === 'nytimes.com');
+		expect(header).toHaveTextContent('3 APIs');
 	});
 
 	it('marks an un-imported entry "Credential ready" from a vendor-wide credential alone', async () => {
@@ -140,17 +163,24 @@ describe('LibraryPage', () => {
 			),
 		);
 		renderWithProviders(<LibraryPage />);
-		const chip = await screen.findByTestId('discovery-card-credential-ready');
+		const chip = await screen.findByTestId('catalog-row-credential-ready');
 		expect(chip).toHaveAttribute('title', expect.stringContaining('GitHub org token'));
 		expect(chip).not.toHaveAttribute('title', expect.stringContaining('Other'));
-		const tile = chip.closest('[data-testid="discovery-card-api"]');
-		expect(tile).toHaveTextContent('github.com');
-		expect(screen.getAllByTestId('discovery-card-credential-ready')).toHaveLength(1);
+		const row = chip.closest('[data-testid="catalog-row"]');
+		expect(row).toHaveTextContent('github.com');
+		expect(screen.getAllByTestId('catalog-row-credential-ready')).toHaveLength(1);
 	});
 
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
+		// Let the header's entrance fade finish — mid-fade text reads as low contrast.
+		const heading = screen.getByRole('heading', { name: 'Library' });
+		await waitFor(() => {
+			for (let el: HTMLElement | null = heading; el; el = el.parentElement) {
+				expect(getComputedStyle(el).opacity).toBe('1');
+			}
+		});
 		await checkA11y(container);
 	});
 
@@ -164,7 +194,11 @@ describe('LibraryPage', () => {
 		await waitFor(() => {
 			expect(screen.queryByText('stripe.com')).not.toBeInTheDocument();
 		});
-		expect(await screen.findByText('github.com')).toBeInTheDocument();
+		// Search rows highlight the match, so the name is split around a <mark>.
+		const row = (
+			await screen.findByRole('button', { name: 'View github.com' })
+		).closest<HTMLElement>('[role="row"]')!;
+		expect(row.querySelector('mark')).toHaveTextContent('github');
 	});
 
 	it('resets scroll to the top when the search query changes (#602)', async () => {
@@ -208,7 +242,7 @@ describe('LibraryPage', () => {
 		});
 	});
 
-	it('offers All / Available / Updates as catalog filters (no "In your workspace")', async () => {
+	it('offers All / Available / Update available as catalog filters (no "In your workspace")', async () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('stripe.com');
 		const toolbar = screen.getByTestId('discover-toolbar');
@@ -238,14 +272,18 @@ describe('LibraryPage', () => {
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
 
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 
 		const dialog = await screen.findByRole('dialog');
 		expect(await within(dialog).findByText('Get a repository')).toBeInTheDocument();
 		expect(within(dialog).getByText('Create an issue')).toBeInTheDocument();
 	});
 
-	it('closes the detail sheet from its header X and returns focus to the card', async () => {
+	it("closes the detail sheet from its header X and returns focus to the row's button", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
@@ -269,7 +307,11 @@ describe('LibraryPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 
 		const dialog = await screen.findByRole('dialog');
 		// Click the operation row to open its detail.
@@ -292,7 +334,11 @@ describe('LibraryPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 
 		const dialog = await screen.findByRole('dialog');
 		await within(dialog).findByText('Get a repository');
@@ -350,7 +396,11 @@ describe('LibraryPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 		const dialog = await screen.findByRole('dialog');
 
 		// First page: 25 rows loaded, footer says "Showing 25 of 60".
@@ -400,7 +450,11 @@ describe('LibraryPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 		const dialog = await screen.findByRole('dialog');
 		await within(dialog).findByText('Showing 25 of 60');
 
@@ -418,7 +472,11 @@ describe('LibraryPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
 		await screen.findByText('github.com');
-		await user.click(screen.getByRole('button', { name: 'View github.com' }));
+		await user.click(
+			screen
+				.getByRole('button', { name: 'View github.com' })
+				.closest<HTMLElement>('[role="row"]')!,
+		);
 
 		const dialog = await screen.findByRole('dialog');
 		const summary = await within(dialog).findByTestId('api-summary');
@@ -433,8 +491,7 @@ describe('LibraryPage', () => {
 		expect(within(summary).getByText(/Show more toggle to expand/)).toBeInTheDocument();
 	});
 
-	it('enqueues an import from an available card', async () => {
-		const user = userEvent.setup();
+	it('enqueues an import from an available row', async () => {
 		let importHit = false;
 		worker.use(
 			http.post('/catalog/*', ({ request }) => {
@@ -459,16 +516,17 @@ describe('LibraryPage', () => {
 		);
 		await screen.findByText('github.com');
 
-		const githubCard = screen.getByRole('button', { name: 'View github.com' }).closest('div');
-		const importBtn = within(githubCard as HTMLElement).getByTestId('discovery-card-import');
-		await user.click(importBtn);
+		const githubCard = screen
+			.getByRole('button', { name: 'View github.com' })
+			.closest<HTMLElement>('[role="row"]')!;
+		// Row actions reveal on hover/focus; fire the click directly.
+		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
 
 		await waitFor(() => expect(importHit).toBe(true));
 		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
 	});
 
-	it('flips a card to Imported when the polled catalog reports it registered', async () => {
-		const user = userEvent.setup();
+	it('flips a row to In your workspace when the polled catalog reports it registered', async () => {
 		let imported = false;
 		// Catalog reads that answered `registered: true` — the poll's own signal.
 		let pollsAfterImport = 0;
@@ -528,28 +586,25 @@ describe('LibraryPage', () => {
 		);
 		await screen.findByText('github.com');
 
-		const githubCard = screen.getByRole('button', { name: 'View github.com' }).closest('div');
-		await user.click(within(githubCard as HTMLElement).getByTestId('discovery-card-import'));
+		const githubCard = screen
+			.getByRole('button', { name: 'View github.com' })
+			.closest<HTMLElement>('[role="row"]')!;
+		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
 
-		// Immediately enters the pending state: the button spins, the pill keeps
-		// the entry's normal status.
+		// Immediately enters the pending state: the button spins and the status
+		// reads "Adding…".
 		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
-		expect(
-			within(githubCard as HTMLElement).getByTestId('discovery-card-import'),
-		).toHaveTextContent('Adding…');
-		expect(
-			within(githubCard as HTMLElement).getByTestId('card-status-available'),
-		).toBeInTheDocument();
+		expect(within(githubCard).getByTestId('catalog-row-add')).toHaveTextContent('Adding…');
+		expect(within(githubCard).getByTestId('catalog-status-pending')).toBeInTheDocument();
 
 		// The poll picks up registered: true and resolves the card on its own —
 		// wait on the poll itself, then on the (default-budget) UI flip.
 		await waitFor(() => expect(pollsAfterImport).toBeGreaterThan(0));
 		expect(await screen.findByText('Added to workspace')).toBeInTheDocument();
-		expect(await screen.findByTestId('card-status-imported')).toBeInTheDocument();
+		expect(await screen.findByTestId('catalog-status-imported')).toBeInTheDocument();
 	});
 
 	it('invalidates the workspace API list when an import lands (so it is not stale)', async () => {
-		const user = userEvent.setup();
 		let imported = false;
 
 		let pollsAfterImport = 0;
@@ -612,8 +667,10 @@ describe('LibraryPage', () => {
 		const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
 		await screen.findByText('github.com');
-		const githubCard = screen.getByRole('button', { name: 'View github.com' }).closest('div');
-		await user.click(within(githubCard as HTMLElement).getByTestId('discovery-card-import'));
+		const githubCard = screen
+			.getByRole('button', { name: 'View github.com' })
+			.closest<HTMLElement>('[role="row"]')!;
+		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
 
 		// Once the poll observes registered: true, the workspace list must be
 		// invalidated — otherwise the 30s global staleTime serves a pre-import
@@ -623,6 +680,91 @@ describe('LibraryPage', () => {
 		await waitFor(() =>
 			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: sharedQueryKeys.workspaceApis }),
 		);
+	});
+
+	it('resolves an import started from a rail-jump range (not in the head feed), live in the sheet', async () => {
+		// The head feed stops at `acme.com` (its next page never answers), so
+		// `zoom.us` is only ever reachable through the Z jump range — and, once
+		// registered, the "In your workspace" feed. The import must still land
+		// off those polled feeds, not time out waiting on the head.
+		let imported = false;
+		let pollsAfterImport = 0;
+		restorePollInterval = setImportPollIntervalForTests(100);
+		const row = (apiId: string, registered: boolean) => ({
+			api_id: apiId,
+			vendor: apiId,
+			path: `apis/${apiId}`,
+			spec_url: `https://example.com/${apiId}.json`,
+			registered,
+			_links: {
+				self: `/catalog/${apiId}`,
+				operations: `/catalog/${apiId}/operations`,
+				import: `/catalog/${apiId}:import`,
+				github: null,
+			},
+		});
+		const cursorId = (cursor: string | null) =>
+			cursor ? (JSON.parse(atob(cursor)) as { id: string }).id : null;
+		const page = (data: ReturnType<typeof row>[], more = false) =>
+			HttpResponse.json({
+				data,
+				catalog_total: 3,
+				registered_count: imported ? 1 : 0,
+				manifest_age_seconds: 5,
+				has_more: more,
+				next_cursor: more
+					? btoa(JSON.stringify({ id: data[data.length - 1].api_id }))
+					: null,
+			});
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const url = new URL(request.url);
+				if (imported) pollsAfterImport += 1;
+				if (url.searchParams.get('registered_only') === 'true') {
+					return page(imported ? [row('zoom.us', true)] : []);
+				}
+				const after = cursorId(url.searchParams.get('cursor'));
+				// `acme.com` sits at the frontier, so it's held back; `abc.com` shows.
+				if (after == null)
+					return page([row('abc.com', false), row('acme.com', false)], true);
+				if (after === 'z') return page([row('zoom.us', imported)]);
+				// The head's own next page: never answers (keeps zoom.us out of it).
+				await delay('infinite');
+				return page([]);
+			}),
+			http.post('/catalog/*', () => {
+				imported = true;
+				return HttpResponse.json(
+					{ job_id: 'job_zoom', status: 'queued', _links: { self: '/jobs/job_zoom' } },
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<LibraryPage />
+				<Toaster />
+			</>,
+		);
+		await screen.findByText('abc.com');
+
+		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		fireEvent.click(within(rail).getByRole('button', { name: /^Z — / }));
+		fireEvent.click(await screen.findByRole('button', { name: 'View zoom.us' }));
+
+		const sheet = await screen.findByRole('dialog');
+		fireEvent.click(within(sheet).getByTestId('sheet-import'));
+		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
+		expect(within(sheet).getByTestId('sheet-import')).toHaveTextContent('Adding…');
+
+		// The polled jump range / workspace feed report it registered: the
+		// import resolves (no "Still adding" timeout) and the open sheet flips.
+		await waitFor(() => expect(pollsAfterImport).toBeGreaterThan(0));
+		expect(await screen.findByText('Added to workspace')).toBeInTheDocument();
+		expect(await within(sheet).findByTestId('sheet-status-imported')).toBeInTheDocument();
+		expect(within(sheet).queryByTestId('sheet-import')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('catalog-status-pending')).not.toBeInTheDocument();
 	});
 
 	it('refreshes the catalog via POST /catalog:refresh', async () => {

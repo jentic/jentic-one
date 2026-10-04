@@ -1,22 +1,22 @@
 /**
- * WorkspaceDockPanel — the "Your workspace" card docked beside the Library
+ * WorkspaceDockPanel — the "Your workspace" panel docked beside the Library
  * catalog (sticky on xl, like Monitor's Live activity panel). High-level and
  * human: each block answers one question, in the order an operator asks it.
  *
  *   1. Does anything need me?   — only non-zero attention items (collapsible,
  *                                 `NeedsAttention`), else "All good"
- *   2. What's importing?        — the catalog's own in-flight imports (transient)
- *   3. What's in my workspace?  — the FULL list (newest first), narrowed by a
+ *   2. What's in my workspace?  — the FULL list (newest first), narrowed by a
  *                                 text filter + Live / Draft / Update toggle
- *                                 (`?q=` / `?status=` on `/library`); each row
- *                                 links to the API's hub
- *   4. What just happened?      — API events off the shell's live stream
+ *                                 (`?q=` / `?status=` on `/library`); the
+ *                                 catalog's in-flight imports sit at its top as
+ *                                 "Adding…" rows; each row links to the API's hub
+ *   3. What just happened?      — API events off the shell's live stream
  *                                 (collapsed under the list)
  *
- * This panel IS the workspace view — there is no separate Workspace page any
- * more (`/library/workspace` redirects here). The card's header and footer
- * stay put; only the body scrolls, so it fits the viewport like the sticky
- * dock it is.
+ * This panel IS the workspace view (`/library/workspace` redirects here).
+ * The title and the footer stay put; only the body scrolls, so it fits the
+ * viewport like the sticky dock it is. Calm by design: one tonal surface, no
+ * borders or dividers, small caps section labels, quiet meta lines.
  *
  * Every figure comes from {@link useWorkspaceDigest} (real registry, credential
  * and usage reads) or the live event stream; a signal whose read hasn't
@@ -26,36 +26,39 @@
  * Add credential flow in place, on that API's form (the host owns the flow —
  * `usePanelCredentialFlow`), and the panel confirms a usable credential with a
  * transient "Credential added" row at the top.
+ *
+ * Drag-to-add: the host's drag hook passes `drop` while a catalog row is being
+ * dragged; the panel lights up (`data-drag`) and shows a drop slot at the top
+ * of the list. `justAddedApiIds` flashes the rows that just landed.
  */
 import { memo, useId, useMemo, useState, type Ref } from 'react';
 import {
+	ArrowUpCircle,
 	Bot,
 	CheckCircle2,
 	ChevronDown,
 	Filter,
 	KeyRound,
-	Loader2,
 	Plus,
 	Upload,
 	X,
 	Zap,
 } from 'lucide-react';
 import {
-	ApiStateBadges,
+	API_STATE_LABELS,
 	AppLink,
 	Button,
-	Card,
-	CardBody,
-	CardFooter,
-	CardHeader,
-	CardTitle,
 	ErrorAlert,
+	MetaLine,
 	SearchInput,
+	SectionLabel,
 	SegmentedToggle,
 	Skeleton,
-	ApiUsageSummary,
+	StatusText,
 	StreamEventRow,
 	VendorIcon,
+	apiServingState,
+	type MetaLineItem,
 } from '@/shared/ui';
 import {
 	callsInWeek,
@@ -74,44 +77,23 @@ import {
 	useWorkspaceListFilter,
 	type WorkspaceStatusFilter,
 } from '@/modules/discover/lib/workspaceListFilter';
+import type { DragDropState } from '@/modules/discover/lib/useDragToAdd';
 
 const RECENT_LIMIT = 5;
 
-/** Sentence-case heading for a block of the panel (section-title style, not an eyebrow). */
-function SectionLabel({ children }: { children: React.ReactNode }) {
-	return (
-		<h3 className="font-heading text-foreground mb-1.5 px-1 text-sm font-semibold">
-			{children}
-		</h3>
-	);
-}
+/** The usage figure's hover title (usage is grouped by vendor/name). */
+const USAGE_TITLE = 'Calls in the last 7 days (all versions)';
+
+/**
+ * A list row's shape, shared by API rows and "Adding…" rows: 28px mark, name
+ * + meta, a right column. Bleeds 8px into the panel padding so its hover
+ * fill lines up with the text above it.
+ */
+const ROW_CLASS =
+	'rounded-field -mx-2 grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2.5 p-2';
 
 function plural(n: number, noun: string): string {
 	return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
-}
-
-/** One muted "icon + number" figure on a row's meta line, with a spoken name. */
-function MetaCount({
-	icon: Icon,
-	value,
-	label,
-	title,
-	testId,
-}: {
-	icon: typeof Bot;
-	value: string;
-	/** Accessible name, e.g. "2 credentials". */
-	label: string;
-	title: string;
-	testId: string;
-}) {
-	return (
-		<span className="inline-flex items-center gap-0.5" title={title} data-testid={testId}>
-			<Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
-			<span aria-hidden="true">{value}</span>
-			<span className="sr-only">{label}</span>
-		</span>
-	);
 }
 
 function ApiRow({
@@ -120,6 +102,7 @@ function ApiRow({
 	agentsAtLeast,
 	showUsage,
 	usageExhaustive,
+	justAdded,
 }: {
 	row: WorkspaceDigestRow;
 	/** Agents with access; null while loading or unknowable (then omitted). */
@@ -128,17 +111,89 @@ function ApiRow({
 	agentsAtLeast: boolean;
 	showUsage: boolean;
 	usageExhaustive: boolean;
+	/** Just landed in the workspace — a one-off green wash. */
+	justAdded: boolean;
 }) {
 	const calls = callsInWeek(row.usage, usageExhaustive);
-	// The one-line health hint ApiCard carried: only with every credential
-	// page loaded (`credentialCount` non-null) may "No credential" be claimed.
+	const failed = row.usage?.failed ?? 0;
+	// Only with every credential page loaded (`credentialCount` non-null) may
+	// "No credential" be claimed.
 	const credentialMissing = isCredentialMissing(row.needsAuth, row.credentialCount);
+	const { serving, updateAvailable } = apiServingState(row);
+
+	// state · 🤖 agents · ⚡ ops · 🔑 credentials (credentials last, so a missing
+	// one leaves the rest aligned) · "Update available".
+	const meta: MetaLineItem[] = [
+		{ key: 'state', value: API_STATE_LABELS[serving], testId: `api-state-${serving}` },
+	];
+	if (agentCount != null) {
+		const n = `${agentCount}${agentsAtLeast ? '+' : ''}`;
+		const label = `${n} ${agentCount === 1 && !agentsAtLeast ? 'agent' : 'agents'} with access`;
+		meta.push({
+			key: 'agents',
+			icon: <Bot />,
+			value: n,
+			label,
+			title: label,
+			testId: 'workspace-panel-api-agents',
+		});
+	}
+	if (row.operationCount != null) {
+		const label = plural(row.operationCount, 'operation');
+		meta.push({
+			key: 'ops',
+			icon: <Zap />,
+			value: row.operationCount.toLocaleString(),
+			label,
+			title: label,
+			testId: 'workspace-panel-api-ops',
+		});
+	}
+	if (credentialMissing) {
+		meta.push({
+			key: 'creds',
+			icon: <KeyRound />,
+			value: 'No credential',
+			title: 'No credential — agents can’t call it',
+			// Grey word, muted-ochre key: noted, not alarming (Needs attention
+			// above already lists it as the thing to do).
+			tone: 'text-foreground-sub',
+			iconTone: 'text-caution',
+			testId: 'workspace-panel-api-no-credential',
+		});
+	} else if (row.credentialCount != null && row.credentialCount > 0) {
+		const label = plural(row.credentialCount, 'credential');
+		meta.push({
+			key: 'creds',
+			icon: <KeyRound />,
+			value: row.credentialCount.toLocaleString(),
+			label,
+			title: label,
+			testId: 'workspace-panel-api-credentials',
+		});
+	}
+	if (updateAvailable) {
+		meta.push({
+			key: 'update',
+			icon: <ArrowUpCircle />,
+			value: API_STATE_LABELS.update,
+			tone: 'text-foreground-sub',
+			iconTone: 'text-caution',
+			testId: 'api-state-update',
+		});
+	}
+
 	return (
 		<li>
 			<AppLink
 				href={row.href}
-				className="hover:bg-muted/60 flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors"
+				className={cn(
+					ROW_CLASS,
+					'hover:bg-surface-field transition-colors duration-[140ms]',
+					justAdded && 'animate-flash-added',
+				)}
 				data-testid="workspace-panel-api"
+				data-just-added={justAdded || undefined}
 			>
 				<VendorIcon
 					{...vendorIconPropsFor({
@@ -149,77 +204,70 @@ function ApiRow({
 					})}
 					size="sm"
 				/>
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-1.5">
-						<span className="text-foreground truncate text-sm font-medium">
-							{row.title}
-						</span>
-					</div>
-					{/* state · 🤖 agents · ⚡ ops · 🔑 credentials (last, so a missing
-					    or amber one leaves the rest aligned) — one line at
-					    docked widths; wraps to a tidy second line, never overflows. */}
-					<div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-						<ApiStateBadges
-							currentRevisionId={row.currentRevisionId}
-							updateAvailable={row.updateAvailable}
-							short
-							className="px-1.5 py-0 text-[10px]"
-						/>
-						{agentCount != null && (
-							<MetaCount
-								icon={Bot}
-								value={`${agentCount}${agentsAtLeast ? '+' : ''}`}
-								label={`${agentCount}${agentsAtLeast ? '+' : ''} ${
-									agentCount === 1 && !agentsAtLeast ? 'agent' : 'agents'
-								} with access`}
-								title={
-									agentsAtLeast
-										? 'At least this many agents are bound to a credential for this API'
-										: 'Agents bound to a credential for this API'
-								}
-								testId="workspace-panel-api-agents"
-							/>
-						)}
-						{row.operationCount != null && (
-							<MetaCount
-								icon={Zap}
-								value={row.operationCount.toLocaleString()}
-								label={plural(row.operationCount, 'operation')}
-								title="Operations in this API's spec"
-								testId="workspace-panel-api-ops"
-							/>
-						)}
-						{credentialMissing ? (
-							<span
-								className="text-accent-orange inline-flex min-w-0 items-center gap-0.5 truncate"
-								title="No credential — agents can’t call it"
-								data-testid="workspace-panel-api-no-credential"
-							>
-								<KeyRound className="h-3 w-3 shrink-0" aria-hidden="true" />
-								No credential
-							</span>
-						) : row.credentialCount != null && row.credentialCount > 0 ? (
-							<MetaCount
-								icon={KeyRound}
-								value={row.credentialCount.toLocaleString()}
-								label={plural(row.credentialCount, 'credential')}
-								title="Active credentials covering this API"
-								testId="workspace-panel-api-credentials"
-							/>
-						) : null}
-					</div>
+				<div className="min-w-0">
+					<p className="text-foreground-name truncate text-[13.5px] font-semibold">
+						{row.title}
+					</p>
+					<MetaLine items={meta} className="text-foreground-faint mt-0.5 text-xs" />
 				</div>
-				{showUsage && calls != null && (
-					<ApiUsageSummary
-						size="compact"
-						calls={calls}
-						failed={row.usage?.failed}
-						trend={row.usage?.trend}
-						failuresTestId="workspace-panel-api-failed"
-					/>
+				{showUsage && calls != null ? (
+					<span
+						className="text-foreground-faint text-right font-mono text-[11px] leading-[1.35]"
+						title={USAGE_TITLE}
+					>
+						<span className="block">{plural(calls, 'call')}</span>
+						{failed > 0 && (
+							<span
+								className="text-danger block"
+								data-testid="workspace-panel-api-failed"
+							>
+								{failed.toLocaleString()} failed
+							</span>
+						)}
+					</span>
+				) : (
+					<span />
 				)}
 			</AppLink>
 		</li>
+	);
+}
+
+/** An in-flight catalog import, shown at the top of the list until it lands. */
+function PendingRow({ pending }: { pending: PendingImport }) {
+	return (
+		<li className={cn(ROW_CLASS, 'bg-surface-field')}>
+			<VendorIcon name={pending.label} vendor={pending.apiId} size="sm" />
+			<div className="min-w-0">
+				<p className="text-foreground-name truncate text-[13.5px] font-semibold">
+					{pending.label}
+				</p>
+				<StatusText tone="loading" className="mt-0.5">
+					Adding…
+				</StatusText>
+			</div>
+			<span />
+		</li>
+	);
+}
+
+/** The slot a dragged catalog row lands in, at the top of the list. */
+function DropSlot({ drop }: { drop: DragDropState }) {
+	const over = drop.phase === 'over';
+	return (
+		// The drag hook announces the drop through its own live region.
+		<div
+			aria-hidden="true"
+			className={cn(
+				'rounded-field -mx-2 mb-1 flex h-11 items-center gap-2.5 px-3 text-[13px] transition-colors duration-[180ms]',
+				over ? 'bg-success/10 text-success' : 'bg-surface-field text-muted-foreground',
+			)}
+			data-testid="workspace-drop-slot"
+			data-over={over || undefined}
+		>
+			<Plus className="h-3.5 w-3.5 shrink-0" />
+			<span className="truncate">Drop to add {drop.name}</span>
+		</div>
 	);
 }
 
@@ -242,6 +290,10 @@ interface PanelContentProps {
 	/** A just-added (usable) credential to confirm at the top of the panel. */
 	credentialNotice?: CredentialAddedNotice | null;
 	onDismissCredentialNotice?: () => void;
+	/** A catalog row being dragged toward the panel; null / omitted when idle. */
+	drop?: DragDropState | null;
+	/** Catalog api ids (`WorkspaceDigestRow.catalogApiId`) of rows that just landed. */
+	justAddedApiIds?: ReadonlySet<string>;
 }
 
 /** The transient "Credential added for …" confirmation row. */
@@ -254,12 +306,12 @@ function CredentialAddedRow({
 }) {
 	return (
 		<div
-			className="border-success/30 bg-success/10 flex items-center gap-2 rounded-lg border px-2.5 py-2"
+			className="bg-success/10 rounded-field flex items-center gap-2 px-3 py-2"
 			data-testid="workspace-panel-credential-added"
 		>
 			<CheckCircle2 className="text-success h-4 w-4 shrink-0" aria-hidden="true" />
 			<p
-				className="text-foreground min-w-0 flex-1 truncate text-sm"
+				className="text-foreground-lighter min-w-0 flex-1 truncate text-[13px]"
 				title={`Credential added for ${notice.label}`}
 			>
 				Credential added for <strong className="font-semibold">{notice.label}</strong>
@@ -267,9 +319,9 @@ function CredentialAddedRow({
 			{onDismiss && (
 				<Button
 					variant="ghost"
-					size="icon"
+					size="icon-xs"
 					onClick={onDismiss}
-					className="h-6 w-6 shrink-0 p-0"
+					className="h-6 w-6 shrink-0"
 					aria-label="Dismiss"
 					data-testid="workspace-panel-credential-added-dismiss"
 				>
@@ -281,14 +333,15 @@ function CredentialAddedRow({
 }
 
 /**
- * "Your APIs" heading + the list's filter controls. Sticky at the top of the
- * panel's scrolling body, so a long list stays narrowable mid-scroll. The
+ * "Your APIs" label + the list's filter controls. Sticky at the top of the
+ * panel's scrolling body, so a long list stays narrowable mid-scroll (its fill
+ * follows the panel's, including the drag-over tint, via `--panel-bg`). The
  * text filter and the toggle are client-side over the loaded rows (Filter
  * affordance, not Search); counts appear only once every page answered, and
  * both disable when there's nothing to narrow.
  */
 function WorkspaceListControls({
-	digest,
+	complete,
 	rows,
 	q,
 	onQChange,
@@ -296,7 +349,8 @@ function WorkspaceListControls({
 	onStatusChange,
 	resultsLabel,
 }: {
-	digest: WorkspaceDigest;
+	/** Every page of the list answered (counts are only shown then). */
+	complete: boolean;
 	rows: WorkspaceDigestRow[];
 	q: string;
 	onQChange: (next: string) => void;
@@ -313,7 +367,7 @@ function WorkspaceListControls({
 		[rows],
 	);
 	// Never a "· 0" while loading — counts only once the list is whole.
-	const countSuffix = (n: number) => (digest.complete ? ` · ${n}` : '');
+	const countSuffix = (n: number) => (complete ? ` · ${n}` : '');
 	const options: { value: WorkspaceStatusFilter; label: string }[] = [
 		{ value: 'all', label: 'All' },
 		{ value: 'live', label: `Live${countSuffix(counts.live)}` },
@@ -325,11 +379,11 @@ function WorkspaceListControls({
 	const disabled = rows.length === 0;
 	return (
 		<div
-			className="bg-card sticky -top-3 z-10 -mx-3 space-y-2 px-3 pt-1 pb-2"
+			className="sticky top-0 z-10 -mx-2.5 flex flex-col gap-2 bg-[hsl(var(--panel-bg,var(--card)))] px-2.5 pb-1.5"
 			data-testid="workspace-panel-filter"
 		>
-			<div className="flex items-baseline justify-between gap-2 px-1">
-				<h3 className="font-heading text-foreground text-sm font-semibold">Your APIs</h3>
+			<div className="flex items-baseline justify-between gap-2">
+				<SectionLabel as="h3">Your APIs</SectionLabel>
 				{resultsLabel && (
 					<span
 						className="text-muted-foreground text-xs"
@@ -343,6 +397,10 @@ function WorkspaceListControls({
 				value={q}
 				onValueChange={onQChange}
 				size="sm"
+				tone="inset"
+				// Keeps the shared control edge: on the panel's tonal fill the
+				// field alone was ≈1.1:1 and disappeared.
+				field
 				icon={<Filter className="h-3.5 w-3.5" />}
 				placeholder="Filter by name, vendor or description…"
 				aria-label="Filter your APIs"
@@ -354,6 +412,7 @@ function WorkspaceListControls({
 				onChange={onStatusChange}
 				ariaLabel="Filter by serving state"
 				disabled={disabled}
+				tone="inset"
 				className="w-fit max-w-full"
 			/>
 		</div>
@@ -361,9 +420,10 @@ function WorkspaceListControls({
 }
 
 /**
- * The panel's scrolling body — attention, importing, your APIs, recent changes
- * (or the empty / loading / error state). Shared verbatim by the docked
- * desktop card and the mobile bottom sheet.
+ * The panel's scrolling body — attention, your APIs (with in-flight imports
+ * and the drop slot at the top), recent changes (or the empty / loading /
+ * error state). Shared verbatim by the docked desktop panel and the mobile
+ * bottom sheet.
  */
 export function WorkspacePanelBody({
 	digest,
@@ -372,6 +432,8 @@ export function WorkspacePanelBody({
 	onAddCredential,
 	credentialNotice,
 	onDismissCredentialNotice,
+	drop,
+	justAddedApiIds,
 	className,
 }: PanelContentProps & { className?: string }) {
 	const stream = useAgentStreamOptional();
@@ -407,7 +469,7 @@ export function WorkspacePanelBody({
 	);
 
 	return (
-		<div className={cn('space-y-4', className)}>
+		<div className={cn('flex flex-col gap-[18px]', className)}>
 			{/* Always-present polite live region, so the confirmation is announced. */}
 			<div role="status" aria-live="polite" className="empty:hidden">
 				{credentialNotice && (
@@ -426,16 +488,21 @@ export function WorkspacePanelBody({
 					<Skeleton className="h-8 w-full" />
 				</div>
 			) : empty ? (
-				<div className="px-1 py-4 text-center" data-testid="workspace-panel-empty">
-					<p className="text-foreground text-sm font-medium">Your workspace is empty</p>
-					<p className="text-muted-foreground mt-1 text-xs">
-						Add an API from the catalog, or import your own OpenAPI spec. Added APIs
-						show up here.
-					</p>
-					<Button variant="outline" size="sm" className="mt-3" onClick={onImportOwn}>
-						<Upload size={14} aria-hidden="true" />
-						Import your own API
-					</Button>
+				<div>
+					{drop && <DropSlot drop={drop} />}
+					<div className="px-1 py-4 text-center" data-testid="workspace-panel-empty">
+						<p className="text-foreground-lighter text-sm font-semibold">
+							Your workspace is empty
+						</p>
+						<p className="text-muted-foreground mt-1 text-xs">
+							Add an API from the catalog, or import your own OpenAPI spec. Added APIs
+							show up here.
+						</p>
+						<Button variant="tonal" size="xs" className="mt-3" onClick={onImportOwn}>
+							<Upload size={14} aria-hidden="true" />
+							Import your own API
+						</Button>
+					</div>
 				</div>
 			) : (
 				<>
@@ -445,13 +512,9 @@ export function WorkspacePanelBody({
 							onAddCredential={onAddCredential}
 						/>
 					) : digest.attentionComplete ? (
-						<div
-							className="border-border/60 bg-muted/30 rounded-lg border px-2 py-2"
-							data-testid="workspace-panel-attention"
-							data-tone="neutral"
-						>
+						<div data-testid="workspace-panel-attention" data-tone="neutral">
 							<p
-								className="text-muted-foreground flex items-center gap-1.5 px-1 text-sm"
+								className="bg-surface-field rounded-field text-foreground-lighter flex h-[38px] items-center gap-2.5 px-3 text-[13.5px]"
 								data-testid="workspace-panel-all-good"
 							>
 								<CheckCircle2 className="text-success h-4 w-4" aria-hidden="true" />
@@ -460,38 +523,17 @@ export function WorkspacePanelBody({
 						</div>
 					) : !digest.attentionSettled ? (
 						<div data-testid="workspace-panel-attention">
-							<SectionLabel>Needs attention</SectionLabel>
+							<SectionLabel as="h3" className="mb-1.5">
+								Needs attention
+							</SectionLabel>
 							<Skeleton className="h-6 w-full" />
 						</div>
 					) : null}
 
-					{pendingImports.length > 0 && (
-						<div data-testid="workspace-panel-importing">
-							<SectionLabel>Adding</SectionLabel>
-							<ul className="space-y-1">
-								{pendingImports.map((p) => (
-									<li
-										key={p.apiId}
-										className="bg-primary/5 text-foreground flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm"
-									>
-										<Loader2
-											className="text-primary h-3.5 w-3.5 animate-spin"
-											aria-hidden="true"
-										/>
-										<span className="min-w-0 flex-1 truncate">{p.label}</span>
-										<span className="text-muted-foreground text-[11px]">
-											Adding…
-										</span>
-									</li>
-								))}
-							</ul>
-						</div>
-					)}
-
-					{rows.length > 0 && (
+					{(rows.length > 0 || pendingImports.length > 0) && (
 						<div data-testid="workspace-panel-apis">
 							<WorkspaceListControls
-								digest={digest}
+								complete={digest.complete}
 								rows={rows}
 								q={filter.q}
 								onQChange={filter.setQ}
@@ -503,8 +545,16 @@ export function WorkspacePanelBody({
 										: undefined
 								}
 							/>
+							{drop && <DropSlot drop={drop} />}
+							{pendingImports.length > 0 && (
+								<ul data-testid="workspace-panel-importing" className="space-y-0.5">
+									{pendingImports.map((p) => (
+										<PendingRow key={p.apiId} pending={p} />
+									))}
+								</ul>
+							)}
 							{shownRows.length > 0 ? (
-								<ul className="mt-1.5 space-y-0.5">
+								<ul className="space-y-0.5">
 									{shownRows.map((row) => {
 										const figure = agentFigure(row.credentials);
 										return (
@@ -515,11 +565,16 @@ export function WorkspacePanelBody({
 												agentsAtLeast={figure.agentsAtLeast}
 												showUsage={digest.usageAvailable}
 												usageExhaustive={digest.usageExhaustive}
+												justAdded={
+													row.catalogApiId != null &&
+													(justAddedApiIds?.has(row.catalogApiId) ??
+														false)
+												}
 											/>
 										);
 									})}
 								</ul>
-							) : (
+							) : rows.length > 0 ? (
 								<div
 									className="px-1 py-4 text-center"
 									data-testid="workspace-panel-no-matches"
@@ -529,31 +584,31 @@ export function WorkspacePanelBody({
 									</p>
 									<Button
 										variant="ghost"
-										size="sm"
-										className="mt-1 h-7 text-xs"
+										size="xs"
+										className="mt-1"
 										onClick={filter.clear}
 									>
 										Clear filter
 									</Button>
 								</div>
-							)}
+							) : null}
 						</div>
 					)}
 
 					{recent.length > 0 && (
-						<div data-testid="workspace-panel-recent">
+						<div className="-mt-2" data-testid="workspace-panel-recent">
 							<Button
 								variant="ghost"
 								size="sm"
 								onClick={() => setRecentOpen((v) => !v)}
 								aria-expanded={recentOpen}
 								aria-controls={recentId}
-								className="font-heading text-foreground hover:bg-muted/60 h-auto w-full justify-between rounded-md px-1 py-1 text-sm font-semibold active:scale-100"
+								className="text-foreground-lighter hover:text-foreground h-auto w-full justify-between rounded-md px-0 py-1 text-[13px] font-semibold hover:bg-transparent active:scale-100"
 								data-testid="workspace-panel-recent-toggle"
 							>
 								<span>
 									Recent changes{' '}
-									<span className="text-muted-foreground text-xs font-normal">
+									<span className="text-foreground-faint font-normal">
 										· {recent.length}
 									</span>
 								</span>
@@ -578,14 +633,14 @@ export function WorkspacePanelBody({
 	);
 }
 
-/** "Import your own API" — the panel's footer action (opens the dialog in place). */
+/** "+ Import your own API" — the panel's footer action (opens the dialog in place). */
 export function WorkspacePanelFooterActions({ onImportOwn }: { onImportOwn: () => void }) {
 	return (
 		<Button
 			variant="ghost"
 			size="sm"
 			onClick={onImportOwn}
-			className="text-primary hover:text-primary -ml-2 h-7 gap-1 px-2 text-sm font-medium"
+			className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-0 py-0 text-[13px] font-normal hover:bg-transparent active:scale-100"
 			data-testid="workspace-panel-import-own"
 		>
 			<Plus size={14} aria-hidden="true" />
@@ -595,9 +650,8 @@ export function WorkspacePanelFooterActions({ onImportOwn }: { onImportOwn: () =
 }
 
 /**
- * "N APIs · X live · Y drafts" beside the title, once the list has answered
- * (folded in from the retired Workspace page's stats strip). A zero part is
- * left out rather than shown as "0 drafts".
+ * "N APIs · X live · Y drafts" beside the title, once the list has answered.
+ * A zero part is left out rather than shown as "0 drafts".
  */
 export function WorkspaceApiCount({ digest }: { digest: WorkspaceDigest }) {
 	const { apis, live, draft } = digest.totals;
@@ -621,9 +675,19 @@ export interface WorkspaceDockPanelProps extends PanelContentProps {
 }
 
 /**
- * The docked desktop card (≥ xl), beside the catalog. Memoised so a catalog
- * search keystroke doesn't re-render the whole panel. Header and footer are
- * fixed; only the body scrolls (the host sizes the card to the viewport).
+ * Panel fill per drag phase. The fill is set through `--panel-bg` so the
+ * sticky filter bar inside the scrolling body can paint the same colour.
+ */
+const DRAG_SURFACE: Record<'idle' | DragDropState['phase'], string> = {
+	idle: '[--panel-bg:var(--surface-1)]',
+	dragging: '[--panel-bg:var(--surface-drop)] shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.22)]',
+	over: '[--panel-bg:var(--surface-drop-over)] shadow-[inset_0_0_0_1.5px_hsl(var(--success)/0.5)]',
+};
+
+/**
+ * The docked desktop panel (≥ xl), beside the catalog. Memoised so a catalog
+ * search keystroke doesn't re-render the whole panel. The title and footer
+ * are fixed; only the body scrolls (the host sizes the panel to the viewport).
  */
 export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	digest,
@@ -632,41 +696,47 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	onAddCredential,
 	credentialNotice,
 	onDismissCredentialNotice,
+	drop,
+	justAddedApiIds,
 	className,
 	ref,
 }: WorkspaceDockPanelProps) {
+	const phase = drop?.phase ?? 'idle';
 	return (
 		<section
 			ref={ref}
 			aria-label="Your workspace"
-			className={className}
+			className={cn(
+				'rounded-panel flex flex-col overflow-hidden bg-[hsl(var(--panel-bg))] pt-[18px] transition-[background-color,box-shadow] duration-[180ms]',
+				DRAG_SURFACE[phase],
+				className,
+			)}
 			data-testid="workspace-dock-panel"
+			data-drag={phase}
 		>
-			<Card className="flex h-full flex-col overflow-hidden">
-				<CardHeader className="flex shrink-0 items-center gap-2 py-3">
-					<div className="flex min-w-0 items-baseline gap-2">
-						<CardTitle as="h2" className="shrink-0 text-base">
-							Your workspace
-						</CardTitle>
-						<WorkspaceApiCount digest={digest} />
-					</div>
-				</CardHeader>
+			<div className="mb-3.5 flex min-w-0 shrink-0 items-baseline gap-2 px-[18px]">
+				<h2 className="font-heading shrink-0 text-[15.5px] font-bold text-white">
+					Your workspace
+				</h2>
+				<WorkspaceApiCount digest={digest} />
+			</div>
 
-				<CardBody className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
-					<WorkspacePanelBody
-						digest={digest}
-						pendingImports={pendingImports}
-						onImportOwn={onImportOwn}
-						onAddCredential={onAddCredential}
-						credentialNotice={credentialNotice}
-						onDismissCredentialNotice={onDismissCredentialNotice}
-					/>
-				</CardBody>
+			<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[18px] pb-3">
+				<WorkspacePanelBody
+					digest={digest}
+					pendingImports={pendingImports}
+					onImportOwn={onImportOwn}
+					onAddCredential={onAddCredential}
+					credentialNotice={credentialNotice}
+					onDismissCredentialNotice={onDismissCredentialNotice}
+					drop={drop}
+					justAddedApiIds={justAddedApiIds}
+				/>
+			</div>
 
-				<CardFooter className="flex shrink-0 items-center gap-2 py-2">
-					<WorkspacePanelFooterActions onImportOwn={onImportOwn} />
-				</CardFooter>
-			</Card>
+			<div className="border-hairline mx-[18px] flex shrink-0 items-center border-t pt-3 pb-3">
+				<WorkspacePanelFooterActions onImportOwn={onImportOwn} />
+			</div>
 		</section>
 	);
 });

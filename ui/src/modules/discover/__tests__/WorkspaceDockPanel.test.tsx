@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { useLocation } from 'react-router';
-import { renderWithProviders, screen, userEvent, within } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, within, checkA11y } from '@/__tests__/test-utils';
 import {
 	WorkspaceApiCount,
 	WorkspaceDockPanel,
+	type WorkspaceDockPanelProps,
 } from '@/modules/discover/components/WorkspaceDockPanel';
 import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
 import { makeDigestRow } from '@/modules/discover/__tests__/digestFixtures';
@@ -56,10 +57,19 @@ function digestWith(rows: WorkspaceDigestRow[], partial: Partial<WorkspaceDigest
 	} satisfies WorkspaceDigest;
 }
 
-function renderPanel(digest: WorkspaceDigest, route = '/library') {
+function renderPanel(
+	digest: WorkspaceDigest,
+	route = '/library',
+	extra: Partial<WorkspaceDockPanelProps> = {},
+) {
 	return renderWithProviders(
 		<>
-			<WorkspaceDockPanel digest={digest} pendingImports={[]} onImportOwn={() => {}} />
+			<WorkspaceDockPanel
+				digest={digest}
+				pendingImports={[]}
+				onImportOwn={() => {}}
+				{...extra}
+			/>
 			<LocationProbe />
 		</>,
 		{ route },
@@ -225,6 +235,100 @@ describe('WorkspaceDockPanel — row meta (ops · credentials · agents)', () =>
 	it('shows a draft API’s reported operation count too', () => {
 		const row = single({ currentRevisionId: null, operationCount: 1 });
 		expect(within(row).getByText('1 operation')).toBeInTheDocument();
+	});
+});
+
+describe('WorkspaceDockPanel — serving state, usage, pending imports', () => {
+	it('names the serving state as a plain word, and appends "Update available"', () => {
+		renderPanel(digestWith([makeDigestRow('Solo', { updateAvailable: true })]));
+		const row = screen.getByTestId('workspace-panel-api');
+		expect(within(row).getByTestId('api-state-live')).toHaveTextContent(/^Live$/);
+		expect(within(row).getByTestId('api-state-update')).toHaveTextContent('Update available');
+	});
+
+	it('shows 7-day calls and failures in the right column, with no sparkline', () => {
+		renderPanel(
+			digestWith(
+				[
+					makeDigestRow('Solo', {
+						usage: {
+							total: 47,
+							failed: 8,
+							trend: [1, 2, 3],
+						} as WorkspaceDigestRow['usage'],
+					}),
+				],
+				{ usageAvailable: true },
+			),
+		);
+		const row = screen.getByTestId('workspace-panel-api');
+		expect(row).toHaveTextContent('47 calls');
+		expect(within(row).getByTestId('workspace-panel-api-failed')).toHaveTextContent('8 failed');
+		// The sparkline was dropped: no chart svg in the row (lucide icons only).
+		expect(row.querySelector('svg.overflow-visible')).toBeNull();
+	});
+
+	it('lists in-flight imports at the top of the list as "Adding…" rows', () => {
+		renderWithProviders(
+			<WorkspaceDockPanel
+				digest={digestWith(manyRows())}
+				pendingImports={[{ apiId: 'petstore', label: 'Petstore' }]}
+				onImportOwn={() => {}}
+			/>,
+		);
+		const pending = screen.getByTestId('workspace-panel-importing');
+		expect(pending).toHaveTextContent(/Petstore.*Adding…/);
+	});
+
+	it('has no critical a11y violations', async () => {
+		const { container } = renderPanel(digestWith(manyRows()));
+		await checkA11y(container);
+	});
+});
+
+describe('WorkspaceDockPanel — drag-to-add', () => {
+	it('is idle with no drop slot when nothing is dragged', () => {
+		renderPanel(digestWith(manyRows()), '/library', { drop: null });
+		expect(screen.getByTestId('workspace-dock-panel')).toHaveAttribute('data-drag', 'idle');
+		expect(screen.queryByTestId('workspace-drop-slot')).not.toBeInTheDocument();
+	});
+
+	it('shows the drop slot with the dragged name while dragging', () => {
+		renderPanel(digestWith(manyRows()), '/library', {
+			drop: { phase: 'dragging', name: 'Petstore' },
+		});
+		expect(screen.getByTestId('workspace-dock-panel')).toHaveAttribute('data-drag', 'dragging');
+		const slot = screen.getByTestId('workspace-drop-slot');
+		expect(slot).toHaveTextContent('Drop to add Petstore');
+		expect(slot).not.toHaveAttribute('data-over');
+		// The slot sits above the first API row.
+		const first = screen.getAllByTestId('workspace-panel-api')[0];
+		expect(slot.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it('marks the slot and the panel when the drag is over it', () => {
+		renderPanel(digestWith(manyRows()), '/library', {
+			drop: { phase: 'over', name: 'Petstore' },
+		});
+		expect(screen.getByTestId('workspace-dock-panel')).toHaveAttribute('data-drag', 'over');
+		expect(screen.getByTestId('workspace-drop-slot')).toHaveAttribute('data-over', 'true');
+	});
+
+	it('shows the drop slot on an empty workspace too', () => {
+		renderPanel(digestWith([]), '/library', { drop: { phase: 'dragging', name: 'Petstore' } });
+		expect(screen.getByTestId('workspace-drop-slot')).toBeInTheDocument();
+		expect(screen.getByTestId('workspace-panel-empty')).toBeInTheDocument();
+	});
+
+	it('flashes the rows whose catalog api id just landed', () => {
+		const rows = manyRows().map((r, i) => (i === 4 ? { ...r, catalogApiId: 'cat_5' } : r));
+		renderPanel(digestWith(rows), '/library', { justAddedApiIds: new Set(['cat_5']) });
+		const flashed = screen
+			.getAllByTestId('workspace-panel-api')
+			.filter((a) => a.hasAttribute('data-just-added'));
+		expect(flashed).toHaveLength(1);
+		expect(flashed[0]).toHaveTextContent('Api05');
+		expect(flashed[0]).toHaveClass('animate-flash-added');
 	});
 });
 

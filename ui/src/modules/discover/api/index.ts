@@ -8,20 +8,14 @@
  */
 export {
 	useDiscoverCatalog,
+	useCatalogInWorkspace,
+	useCatalogJump,
 	useOperationPreview,
 	useImportCatalogApi,
 	useRefreshCatalog,
-	discoverKeys,
 	setImportPollIntervalForTests,
 	OPERATION_PREVIEW_PAGE_SIZE,
 } from '@/modules/discover/api/hooks';
-
-export type {
-	UseDiscoverCatalogResult,
-	UseOperationPreviewResult,
-} from '@/modules/discover/api/hooks';
-
-export { DiscoverApiError } from '@/modules/discover/api/client';
 
 export { useWorkspaceDigest } from '@/modules/discover/api/workspaceDigest';
 export type {
@@ -33,11 +27,7 @@ export type {
 
 export type { DiscoveryEntity, CatalogFilter } from '@/modules/discover/api/types';
 
-// Re-export the generated preview types the views render, so view components
-// consume them through the module's api barrel rather than reaching into the
+// Re-export the generated preview type the views render, so view components
+// consume it through the module's api barrel rather than reaching into the
 // @/shared/api facade directly (which the layering ESLint rule forbids).
-export type {
-	OperationPreviewListResponse,
-	PreviewOperationResponse,
-	PreviewInfoResponse,
-} from '@/shared/api';
+export type { PreviewOperationResponse } from '@/shared/api';

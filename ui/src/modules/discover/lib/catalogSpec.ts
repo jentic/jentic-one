@@ -1,7 +1,7 @@
 /**
- * What a catalog tile can say about an entry from the `GET /catalog` LIST
+ * What a catalog row can say about an entry from the `GET /catalog` LIST
  * payload alone (`CatalogEntryResponse`: api_id, vendor, path, spec_url, …) —
- * no per-tile requests.
+ * no per-row requests.
  *
  * The one extra fact the list carries is the spec version, and only
  * implicitly: every entry the backend builds (`manifest_builder.parse_apis_json`)

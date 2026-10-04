@@ -11,9 +11,6 @@ import { titleFromApiId } from '@/shared/lib';
 import type { DiscoveryEntity } from '@/modules/discover/api/types';
 import { parseCatalogSpecUrl } from '@/modules/discover/lib/catalogSpec';
 
-// Re-export so this module's tests + any consumers keep the pre-move import path.
-export { titleFromApiId };
-
 /**
  * Raw `GET /catalog` manifest entry → `DiscoveryEntity`.
  *
@@ -40,6 +37,5 @@ export function catalogEntryToEntity(entry: CatalogEntryResponse): DiscoveryEnti
 		catalogVendor: vendor,
 		version: parseCatalogSpecUrl(entry.spec_url, entry.api_id) ?? undefined,
 		githubUrl: entry._links.github ?? undefined,
-		raw: entry,
 	};
 }
