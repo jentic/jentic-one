@@ -49,4 +49,36 @@ describe('Toaster + toastStore', () => {
 		await screen.findByText('Accessible toast');
 		await checkA11y(container);
 	});
+
+	it('every variant is the same neutral card; only the icon is tinted, errors add a red bar', async () => {
+		renderWithProviders(<Toaster />);
+		for (const variant of ['success', 'info', 'warning', 'error'] as const) {
+			toast({ id: variant, title: `${variant} title`, description: 'body', variant });
+		}
+		const cards = await screen.findAllByTestId('toast');
+		expect(cards).toHaveLength(4);
+		for (const card of cards) {
+			expect(card).toHaveClass('bg-surface-sheet', 'border-hairline-field');
+			expect(card.className).not.toMatch(/emerald|rose|bg-(success|danger|warning)\//);
+			expect(screen.getByText(`${card.dataset.variant} title`)).toHaveClass(
+				'text-foreground',
+			);
+		}
+		const bars = screen.getAllByTestId('toast-accent-bar');
+		expect(bars).toHaveLength(1);
+		expect(bars[0].closest('[data-testid="toast"]')).toHaveAttribute('data-variant', 'error');
+		const errorIcon = cards
+			.find((c) => c.dataset.variant === 'error')
+			?.querySelector('[data-testid="toast-icon"]');
+		expect(errorIcon).toHaveClass('text-danger');
+	});
+
+	it('renders the action as a borderless tonal button', async () => {
+		renderWithProviders(<Toaster />);
+		toast({ title: 'Removed', action: { label: 'Undo', onClick: () => {} } });
+		const undo = await screen.findByRole('button', { name: 'Undo' });
+		expect(undo).toHaveAttribute('data-variant', 'tonal');
+		expect(undo.className).not.toMatch(/control-edge/);
+		expect(getComputedStyle(undo).borderTopWidth).toBe('0px');
+	});
 });

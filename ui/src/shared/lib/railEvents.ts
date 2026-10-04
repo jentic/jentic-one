@@ -42,7 +42,7 @@ export class RailApiError extends Error {
 	}
 }
 
-export function toRailError(error: unknown, fallback: string): RailApiError {
+function toRailError(error: unknown, fallback: string): RailApiError {
 	if (error instanceof ApiError) {
 		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
 		return new RailApiError(detail || fallback, error.status, error);
