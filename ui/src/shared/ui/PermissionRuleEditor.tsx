@@ -1,5 +1,14 @@
 import type { ReactNode } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import {
+	AlertTriangle,
+	ArrowDown,
+	ArrowUp,
+	Check,
+	Plus,
+	ShieldCheck,
+	ShieldOff,
+	Trash2,
+} from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
 import { Select } from '@/shared/ui/Select';
@@ -28,14 +37,14 @@ export type PermissionRuleInput = PermissionRuleSchema;
  * (`allow` / `deny`). Defined here so views/editors don't import the generated
  * enum *value* (which the layering ESLint rule forbids outside `api/client.ts`).
  */
-export const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
+const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
 export type PermissionEffect = (typeof PERMISSION_EFFECTS)[number];
 
 /**
  * Path match modes, mirroring the backend enum (`regex` full-match / literal
  * `prefix` / literal `exact`) as plain literals for the same layering reason.
  */
-export const PERMISSION_MATCH_MODES = [
+const PERMISSION_MATCH_MODES = [
 	{ value: 'regex', label: 'Regex', placeholder: 'Path regex — empty matches any path' },
 	{ value: 'prefix', label: 'Prefix', placeholder: 'Path prefix — e.g. /repos/acme/' },
 	{ value: 'exact', label: 'Exact', placeholder: 'Exact path — e.g. /user' },
@@ -169,9 +178,12 @@ export function PermissionRuleEditor({
 	return (
 		<div className="space-y-3">
 			{rules.length === 0 && (
-				<div className="border-warning/40 bg-warning/5 rounded-lg border p-3">
+				<div className="bg-surface-inset rounded-lg p-3">
 					<div className="flex items-start gap-2">
-						<AlertTriangle className="text-warning mt-0.5 h-4 w-4 shrink-0" />
+						<ShieldOff
+							className="text-caution mt-0.5 h-4 w-4 shrink-0"
+							aria-hidden="true"
+						/>
 						<div className="space-y-2">
 							<p className="text-foreground text-xs font-medium">
 								No rules defined — all operations will be denied by default.
@@ -196,8 +208,8 @@ export function PermissionRuleEditor({
 						data-testid="permission-rule-row"
 						className={
 							invalid
-								? 'border-danger/50 bg-card space-y-2 rounded-lg border p-3'
-								: 'border-border bg-card space-y-2 rounded-lg border p-3'
+								? 'bg-surface-inset space-y-2 rounded-lg p-3 shadow-[inset_0_0_0_1px_hsl(var(--danger)/0.5)] [--field-bg:var(--surface-tonal)]'
+								: 'bg-surface-inset space-y-2 rounded-lg p-3 [--field-bg:var(--surface-tonal)]'
 						}
 					>
 						{/* Line 1 — effect + match mode, path taking the rest. The selects sit in
@@ -206,7 +218,7 @@ export function PermissionRuleEditor({
 							{/* The rule's evaluation position — the SAME number the rule
 							    tester's verdict cites, so "#2" always has an anchor. */}
 							<span
-								className="bg-muted text-muted-foreground inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 font-mono text-[11px] font-semibold"
+								className="bg-surface-chip text-foreground-sub inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 font-mono text-[11px] font-semibold"
 								aria-label={`Rule ${index + 1}`}
 							>
 								#{index + 1}
@@ -278,7 +290,7 @@ export function PermissionRuleEditor({
 											className={
 												selected
 													? 'bg-primary text-background inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold'
-													: 'border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors'
+													: 'bg-surface-chip text-foreground-sub hover:bg-surface-chip-active hover:text-foreground inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs transition-colors'
 											}
 										>
 											{selected && (
@@ -288,7 +300,7 @@ export function PermissionRuleEditor({
 										</button>
 									);
 								})}
-								<span className="text-muted-foreground/60 text-[10px]">
+								<span className="text-muted-foreground text-[10px]">
 									none = any method
 								</span>
 							</div>
