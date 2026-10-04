@@ -21,7 +21,7 @@ import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
 import type { WorkspaceDigestRow } from '@/modules/discover/api';
 
 /** How long the panel's "Credential added" notice stays up. */
-export const CREDENTIAL_NOTICE_MS = 7000;
+const CREDENTIAL_NOTICE_MS = 7000;
 
 export interface CredentialAddedNotice {
 	/** Changes per success, so a repeat for the same API restarts the timer. */

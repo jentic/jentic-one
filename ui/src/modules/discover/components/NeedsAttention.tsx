@@ -1,27 +1,24 @@
 /**
- * The workspace panel's "Needs attention" block — collapsible, like "Recent
- * changes". Expanded it is the full list (headline per kind, the API names,
- * "+N more" in place, a "no credential" name opening Add credential in place).
+ * The workspace panel's "Needs attention" block — a quiet list under a small
+ * caps label, no tinted box: each item is a tone-coloured icon, a headline
+ * ("2 APIs · failed calls in the last 7 days") and a faint line of the API
+ * names. Every name stays actionable — a link to its hub, or (for "no
+ * credential", when the host offers it) a button opening Add credential in
+ * place; "+N more" expands the names in place.
  *
- * Collapsed, it keeps the first two items (the digest's `ATTENTION_ORDER`: most impact on agents first) in full and
- * offers "Show all (N)".
+ * Collapsed, it keeps the first two items (the digest's `ATTENTION_ORDER`:
+ * most impact on agents first) and a quiet "Show all (N)" text button under
+ * them, which turns into "Show less" once expanded.
  *
- * With ≤ 2 items there is nothing to collapse: the header is a plain heading
- * (no toggle) and every item shows, whatever the stored preference says (it
- * is neither read nor overwritten). With more, the header is the toggle —
- * collapsed by default; once the user toggles, the choice is stored
- * (`library.attention.expanded`) and wins over that default on later visits.
+ * With ≤ 2 items there is nothing to collapse: no toggle, and every item
+ * shows whatever the stored preference says (it is neither read nor
+ * overwritten). With more, collapsed is the default; once the user toggles,
+ * the choice is stored (`library.attention.expanded`) and wins over that
+ * default on later visits.
  */
 import { useId, useState } from 'react';
-import {
-	AlertTriangle,
-	ChevronDown,
-	FileClock,
-	GitPullRequestArrow,
-	KeyRound,
-	RefreshCw,
-} from 'lucide-react';
-import { AppLink, Button } from '@/shared/ui';
+import { AlertTriangle, FileClock, GitPullRequestArrow, KeyRound, RefreshCw } from 'lucide-react';
+import { AppLink, Button, SectionLabel } from '@/shared/ui';
 import { readBool, writeBool } from '@/shared/app/rail/railPreferences';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { cn } from '@/shared/lib/utils';
@@ -45,9 +42,16 @@ const ATTENTION_TONE: Record<AttentionId, string> = {
 	updates: 'text-warning',
 	overlays: 'text-primary',
 	failures: 'text-danger',
-	credentials: 'text-accent-orange',
-	drafts: 'text-muted-foreground',
+	credentials: 'text-warning',
+	drafts: 'text-foreground-faint',
 };
+
+/**
+ * An API name in an item's detail line: quiet (inherits the faint tier) until
+ * hovered; the keyboard focus ring comes from `Button` / `AppLink`.
+ */
+const NAME_CLASS =
+	'min-w-0 truncate rounded-sm text-xs text-inherit hover:bg-transparent hover:text-foreground hover:underline active:scale-100';
 
 /** Names an attention item lists before "+N more" (which expands the rest in place). */
 const ATTENTION_PREVIEW = 3;
@@ -77,47 +81,51 @@ function AttentionItem({
 	const rest = count - ATTENTION_PREVIEW;
 	const noun = count === 1 ? 'API' : 'APIs';
 	return (
-		<li className="flex items-start gap-2.5 px-1 py-1.5" data-testid={`attention-${entry.id}`}>
+		<li
+			className="grid grid-cols-[16px_minmax(0,1fr)] items-start gap-2.5 py-1.5"
+			data-testid={`attention-${entry.id}`}
+		>
 			<Icon
-				className={`mt-0.5 h-4 w-4 shrink-0 ${ATTENTION_TONE[entry.id]}`}
+				className={`mt-0.5 h-[15px] w-[15px] shrink-0 ${ATTENTION_TONE[entry.id]}`}
 				aria-hidden="true"
 			/>
-			<div className="min-w-0 flex-1">
-				<p className="text-foreground text-sm">
-					<strong className="font-semibold">
-						{count}
-						{entry.atLeast ? '+' : ''}
-					</strong>{' '}
-					{noun} · {entry.label}
+			<div className="min-w-0">
+				<p className="text-foreground-lighter text-[13.5px] leading-snug font-semibold">
+					{count}
+					{entry.atLeast ? '+' : ''} {noun} · {entry.label}
 				</p>
-				<p id={listId} className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs">
-					{shown.map((row) =>
-						entry.id === 'credentials' && onAddCredential ? (
-							<Button
-								key={row.key}
-								variant="ghost"
-								size="sm"
-								onClick={() => onAddCredential(row)}
-								aria-label={`Add a credential for ${row.title}`}
-								title={`Add a credential for ${row.title}`}
-								className="text-primary hover:text-primary h-auto min-w-0 truncate rounded-sm p-0 text-xs font-normal hover:bg-transparent hover:underline active:scale-100"
-								data-testid="attention-add-credential"
-							>
-								{row.title}
-							</Button>
-						) : (
-							<AppLink
-								key={row.key}
-								href={hrefFor(row, entry)}
-								className="text-primary truncate hover:underline"
-							>
-								{row.title}
-								{entry.id === 'failures' && row.usage
-									? ` (${row.usage.failed})`
-									: ''}
-							</AppLink>
-						),
-					)}
+				<p
+					id={listId}
+					className="text-foreground-faint mt-px flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs"
+				>
+					{shown.map((row, i) => (
+						<span
+							key={row.key}
+							className="inline-flex min-w-0 items-baseline gap-x-1.5"
+						>
+							{i > 0 && <span aria-hidden="true">·</span>}
+							{entry.id === 'credentials' && onAddCredential ? (
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => onAddCredential(row)}
+									aria-label={`Add a credential for ${row.title}`}
+									title={`Add a credential for ${row.title}`}
+									className={cn(NAME_CLASS, 'h-auto p-0 font-normal')}
+									data-testid="attention-add-credential"
+								>
+									{row.title}
+								</Button>
+							) : (
+								<AppLink href={hrefFor(row, entry)} className={NAME_CLASS}>
+									{row.title}
+									{entry.id === 'failures' && row.usage
+										? ` (${row.usage.failed})`
+										: ''}
+								</AppLink>
+							)}
+						</span>
+					))}
 					{rest > 0 && (
 						<Button
 							variant="ghost"
@@ -125,7 +133,10 @@ function AttentionItem({
 							onClick={() => setExpanded((v) => !v)}
 							aria-expanded={expanded}
 							aria-controls={listId}
-							className="text-muted-foreground hover:text-foreground h-auto rounded-sm p-0 text-xs font-normal hover:bg-transparent active:scale-100"
+							className={cn(
+								NAME_CLASS,
+								'text-foreground-sub h-auto p-0 font-semibold',
+							)}
 							data-testid="attention-more"
 						>
 							{expanded ? 'Show fewer' : `+${rest} more`}
@@ -168,61 +179,30 @@ export function NeedsAttention({
 	}
 
 	const shown = expanded ? attention : attention.slice(0, TOP_N);
-	const hiddenCount = attention.length - shown.length;
 
 	return (
-		<div
-			className="border-warning/30 bg-warning/10 rounded-lg border px-2 pt-1.5 pb-1"
-			data-testid="workspace-panel-attention"
-			data-tone="warning"
-			data-expanded={expanded}
-		>
-			{!collapsible ? (
-				<h3 className="font-heading text-warning flex items-center gap-1.5 px-1 py-1 text-sm font-semibold">
-					<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-					Needs attention{' '}
-					<span className="text-xs font-normal">· {attention.length}</span>
-				</h3>
-			) : (
-				<h3 className="font-heading text-sm font-semibold">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setExpanded(!expanded)}
-						aria-expanded={expanded}
-						aria-controls={listId}
-						className="text-warning hover:text-warning hover:bg-warning/10 h-auto w-full justify-between rounded-md px-1 py-1 text-sm font-semibold active:scale-100"
-						data-testid="workspace-panel-attention-toggle"
-					>
-						<span className="flex items-center gap-1.5">
-							<AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-							Needs attention{' '}
-							<span className="text-xs font-normal">· {attention.length}</span>
-						</span>
-						<ChevronDown
-							className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')}
-							aria-hidden="true"
-						/>
-					</Button>
-				</h3>
-			)}
+		<div data-testid="workspace-panel-attention" data-tone="warning" data-expanded={expanded}>
+			<SectionLabel as="h3" className="mb-1.5">
+				Needs attention · {attention.length}
+			</SectionLabel>
 
-			<ul id={listId} className="divide-warning/15 divide-y">
+			<ul id={listId}>
 				{shown.map((entry) => (
 					<AttentionItem key={entry.id} entry={entry} onAddCredential={onAddCredential} />
 				))}
 			</ul>
 
-			{hiddenCount > 0 && (
+			{collapsible && (
 				<Button
 					variant="ghost"
 					size="sm"
-					onClick={() => setExpanded(true)}
+					onClick={() => setExpanded(!expanded)}
+					aria-expanded={expanded}
 					aria-controls={listId}
-					className="text-warning hover:text-warning hover:bg-warning/10 mb-0.5 h-7 w-full rounded-md text-xs font-medium active:scale-100"
-					data-testid="attention-show-all"
+					className="text-foreground-sub hover:text-foreground h-auto rounded-sm px-0 pt-1 pb-0 pl-6 text-xs font-semibold hover:bg-transparent active:scale-100"
+					data-testid="workspace-panel-attention-toggle"
 				>
-					Show all ({attention.length})
+					{expanded ? 'Show less' : `Show all (${attention.length})`}
 				</Button>
 			)}
 		</div>

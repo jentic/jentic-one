@@ -20,7 +20,7 @@ export type WorkspaceStatusFilter = 'all' | 'live' | 'draft' | 'update';
 const STATUS_FILTERS: readonly WorkspaceStatusFilter[] = ['all', 'live', 'draft', 'update'];
 
 /** URL params the filter owns on `/library`. */
-export const WORKSPACE_FILTER_PARAMS = { q: 'q', status: 'status' } as const;
+const WORKSPACE_FILTER_PARAMS = { q: 'q', status: 'status' } as const;
 
 function isStatusFilter(value: string | null): value is WorkspaceStatusFilter {
 	return STATUS_FILTERS.includes(value as WorkspaceStatusFilter);

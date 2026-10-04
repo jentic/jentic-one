@@ -107,10 +107,16 @@ describe('workspace panel — add a credential in place', () => {
 		renderWithProviders(<Harness />);
 
 		const flow = await openFromAttention(user);
-		// Opened from this API, so the credential defaults to its version.
+		// Any version by default — the same "Use for" picker as every add flow.
 		expect(await within(flow).findByTestId('selected-api-summary')).toHaveTextContent(
-			'100hires.com/100hires-com@2.0.0',
+			'100hires.com/100hires-com · any version',
 		);
+		expect(
+			within(within(flow).getByRole('group', { name: 'Use this credential for' })).getByRole(
+				'button',
+				{ name: 'Any version' },
+			),
+		).toHaveAttribute('aria-pressed', 'true');
 		await user.type(await within(flow).findByLabelText(/^API key/), 'sk_test_123');
 		await user.click(within(flow).getByRole('button', { name: 'Create credential' }));
 
@@ -120,7 +126,6 @@ describe('workspace panel — add a credential in place', () => {
 			{
 				vendor: '100hires.com',
 				name: '100hires-com',
-				version: '2.0.0',
 				catalog_api_id: '100hires.com',
 			},
 		]);

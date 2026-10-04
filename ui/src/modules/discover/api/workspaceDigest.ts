@@ -78,7 +78,7 @@ export type AttentionId = 'updates' | 'overlays' | 'credentials' | 'failures' | 
  * then APIs with nothing live yet (draft only). Overlays awaiting review and
  * upstream updates are improvements, not breakage, so they come last.
  */
-export const ATTENTION_ORDER: readonly AttentionId[] = [
+const ATTENTION_ORDER: readonly AttentionId[] = [
 	'failures',
 	'credentials',
 	'drafts',

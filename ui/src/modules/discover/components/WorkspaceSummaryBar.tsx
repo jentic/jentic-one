@@ -20,7 +20,7 @@
  */
 import { useEffect, useId, useState, type MouseEvent, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronUp, Layers, Loader2, X } from 'lucide-react';
-import { Button, SheetPrimitive } from '@/shared/ui';
+import { Button, SheetBody, SheetFooter, SheetHeader, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import type { WorkspaceDigest, WorkspaceDigestRow } from '@/modules/discover/api';
 import type { CredentialAddedNotice } from '@/modules/discover/components/usePanelCredentialFlow';
@@ -57,7 +57,7 @@ function attentionCount(digest: WorkspaceDigest): { count: number; atLeast: bool
 
 function Dot() {
 	return (
-		<span aria-hidden="true" className="text-muted-foreground/60">
+		<span aria-hidden="true" className="text-meta-separator">
 			·
 		</span>
 	);
@@ -75,7 +75,7 @@ export function WorkspaceSummaryBar({
 	const [open, setOpen] = useState(false);
 	const titleId = useId();
 	// A filtered workspace link (`/library?status=draft`, e.g. a redirected
-	// `/library/workspace?…` or a catalog card's "Open" over several versions)
+	// `/library/workspace?…` or a catalog row's "Open" over several versions)
 	// is a request to see the list — open the sheet on it. Keyed on the values,
 	// so closing the sheet with a filter applied keeps it closed.
 	const listFilter = useWorkspaceListFilter();
@@ -118,10 +118,10 @@ export function WorkspaceSummaryBar({
 	} else if (needCount > 0) {
 		status = (
 			<span
-				className="bg-warning/10 border-warning/30 text-warning inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium"
+				className="text-foreground-lighter inline-flex items-center gap-1 font-semibold"
 				data-testid="workspace-summary-attention"
 			>
-				<AlertTriangle className="h-3 w-3" aria-hidden="true" />
+				<AlertTriangle className="text-warning h-3.5 w-3.5" aria-hidden="true" />
 				{needCount}
 				{atLeast ? '+' : ''} need{needCount === 1 && !atLeast ? 's' : ''} attention
 			</span>
@@ -148,14 +148,16 @@ export function WorkspaceSummaryBar({
 				aria-expanded={open}
 				aria-controls={open ? contentId : undefined}
 				className={cn(
-					'bg-card hover:bg-muted/40 justify-start gap-2 rounded-xl px-3 py-2.5 text-left font-normal active:scale-100',
+					'bg-surface-1 hover:bg-surface-1-hover rounded-panel justify-start gap-2.5 border-0 px-4 py-3 text-left text-[13px] font-normal active:scale-100',
 					className,
 				)}
 				data-testid="workspace-summary-bar"
 			>
-				<Layers className="text-primary h-4 w-4 shrink-0" aria-hidden="true" />
+				<Layers className="text-foreground-sub h-4 w-4 shrink-0" aria-hidden="true" />
 				<span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-					<span className="text-foreground font-medium">Your workspace</span>
+					<span className="font-heading text-[14px] font-bold text-white">
+						Your workspace
+					</span>
 					{digest.complete && apiCount > 0 && (
 						<>
 							<Dot />
@@ -188,7 +190,7 @@ export function WorkspaceSummaryBar({
 						<>
 							<Dot />
 							<span
-								className="text-primary inline-flex items-center gap-1 text-xs"
+								className="text-primary inline-flex items-center gap-1 text-xs font-semibold"
 								data-testid="workspace-summary-importing"
 							>
 								<Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -213,9 +215,12 @@ export function WorkspaceSummaryBar({
 					onClickCapture={closeOnLink}
 					data-testid="workspace-summary-sheet"
 				>
-					<div className="border-border/60 flex items-center justify-between gap-2 border-b px-4 py-3">
+					<SheetHeader className="items-center justify-between gap-2">
 						<div className="flex min-w-0 items-baseline gap-2">
-							<h2 id={titleId} className="text-foreground text-base font-semibold">
+							<h2
+								id={titleId}
+								className="font-heading text-[15.5px] font-bold text-white"
+							>
 								Your workspace
 							</h2>
 							<WorkspaceApiCount digest={digest} />
@@ -223,18 +228,18 @@ export function WorkspaceSummaryBar({
 						<div className="flex items-center gap-1">
 							<Button
 								variant="ghost"
-								size="icon"
+								size="icon-xs"
 								onClick={() => setOpen(false)}
-								className="h-8 w-8 p-0"
+								className="h-8 w-8"
 								aria-label="Close"
 								data-testid="workspace-summary-sheet-close"
 							>
 								<X className="h-4 w-4" aria-hidden="true" />
 							</Button>
 						</div>
-					</div>
-					<div
-						className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3"
+					</SheetHeader>
+					<SheetBody
+						className="overscroll-contain pt-0"
 						data-testid="workspace-panel-scroll"
 					>
 						<WorkspacePanelBody
@@ -245,10 +250,10 @@ export function WorkspaceSummaryBar({
 							credentialNotice={credentialNotice}
 							onDismissCredentialNotice={onDismissCredentialNotice}
 						/>
-					</div>
-					<div className="border-border/60 flex items-center gap-2 border-t px-4 py-2">
+					</SheetBody>
+					<SheetFooter className="justify-start">
 						<WorkspacePanelFooterActions onImportOwn={importOwn} />
-					</div>
+					</SheetFooter>
 				</div>
 			</SheetPrimitive>
 		</>

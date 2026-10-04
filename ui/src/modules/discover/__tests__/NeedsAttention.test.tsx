@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
 import {
 	ATTENTION_EXPANDED_KEY,
 	NeedsAttention,
@@ -50,15 +50,21 @@ describe('NeedsAttention — ≤ 2 items: nothing to collapse', () => {
 });
 
 describe('NeedsAttention — > 2 items: collapsible', () => {
-	it('is collapsed by default, header is the toggle inside the heading', () => {
+	it('is collapsed by default: a plain heading, and a "Show all (N)" toggle under the list', () => {
 		renderAttention(ALL);
 		expect(toggle()).toHaveAttribute('aria-expanded', 'false');
 		expect(toggle()).toHaveAttribute('aria-controls');
-		expect(toggle()).toHaveTextContent('Needs attention · 4');
-		expect(
-			screen.getByRole('heading', { level: 3, name: /Needs attention · 4/ }),
-		).toContainElement(toggle());
+		expect(toggle()).toHaveTextContent('Show all (4)');
+		const heading = screen.getByRole('heading', { level: 3, name: 'Needs attention · 4' });
+		expect(heading).not.toContainElement(toggle());
 		expect(items()).toHaveLength(2);
+	});
+
+	it('expanded, the toggle reads "Show less"', async () => {
+		const user = userEvent.setup();
+		renderAttention(ALL);
+		await user.click(toggle());
+		expect(toggle()).toHaveTextContent('Show less');
 	});
 
 	it('persists the user’s toggle, and the stored choice wins over the default', async () => {
@@ -98,6 +104,13 @@ describe('NeedsAttention — collapsed: top 2 + Show all', () => {
 		await user.click(showAll);
 		expect(toggle()).toHaveAttribute('aria-expanded', 'true');
 		expect(items()).toHaveLength(4);
-		expect(screen.queryByTestId('attention-show-all')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument();
+	});
+
+	it('has no critical a11y violations (quiet names keep their contrast)', async () => {
+		const { container } = renderWithProviders(
+			<NeedsAttention attention={ALL} onAddCredential={() => {}} />,
+		);
+		await checkA11y(container);
 	});
 });
