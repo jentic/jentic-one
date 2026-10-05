@@ -1,16 +1,16 @@
-"""ExecutionApproval ORM model — holds a pending human-approval request.
+"""ExecutionApproval ORM model — the human-approval record for a held execution job.
 
-One row per held execution job. Created atomically with the held job; updated
-by the reviewer decision (approve, deny) or the expiry sweep. Sits in the
-admin DB beside ``jobs`` so the `:decide` endpoint can flip both the approval
-state and the job status in one transaction with no cross-DB writes.
+One row per held execution job, created in the same transaction as the job.
+Updated by the reviewer decision (approve / deny), the expiry sweep, or the
+agent withdrawing the job. Lives in the admin DB beside ``jobs`` so ``:decide``
+updates the approval and releases or fails the job in one transaction.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Index, String, Text
+from sqlalchemy import ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -20,22 +20,32 @@ from jentic_one.shared.db.types import UTCDateTime
 
 
 class ExecutionApproval(AuditableMixin, AdminBase):
-    """Tracks the state of a held execution approval request.
+    """The approval state of one held execution job.
 
     ``state`` lifecycle: ``pending`` → ``approved`` | ``denied`` | ``expired``
-    | ``withdrawn`` (terminal). Terminal rows are not deleted on settlement;
-    they serve as the audit trail for reviewer decisions.
+    | ``withdrawn`` (terminal). Terminal rows are kept as the decision record.
 
-    Cross-DB references (``credential_id``, ``matched_rule_id``) carry no FK
-    constraints — the same precedent as ``execution_records.credential_id``.
-    ``execution_id`` is populated when the approved job completes, linking the
-    approval row to the ``execution_records`` row that ran the operation.
+    ``credential_id`` and ``matched_rule_id`` reference control-DB rows by id
+    only (no FK), the same precedent as ``execution_records.credential_id``.
+    ``execution_id`` is set once the approved job runs and its
+    ``execution_records`` row exists. The run outcome itself is the job's
+    status and ``job_results`` row, not duplicated here.
     """
 
     __tablename__ = "execution_approvals"
     __table_args__ = (
         Index("ix_execution_approvals_agent_state", "agent_id", "state"),
         Index("ix_execution_approvals_state_expires", "state", "expires_at"),
+        # At most one pending row per fingerprint: an identical retry joins the
+        # existing hold instead of filing a second one. Settled rows drop out
+        # of the index so the same request can be filed again later.
+        Index(
+            "uq_execution_approvals_pending_fingerprint",
+            "request_fingerprint",
+            unique=True,
+            postgresql_where=text("state = 'pending'"),
+            sqlite_where=text("state = 'pending'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -44,46 +54,29 @@ class ExecutionApproval(AuditableMixin, AdminBase):
         default=lambda: generate_ksuid("exap"),
         server_default=func.generate_ksuid("exap"),
     )
-
-    # The held execution job this approval is paired with.
-    job_id: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-
-    # Invoking agent (admin DB — no FK needed; same schema).
+    job_id: Mapped[str] = mapped_column(
+        String(30),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     agent_id: Mapped[str] = mapped_column(String(30), nullable=False)
-
-    # Credential selected at hold time (cross-DB ref, no FK).
     credential_id: Mapped[str] = mapped_column(String(30), nullable=False)
-
-    # Reviewer context — what the human sees on the review page.
     api_vendor: Mapped[str] = mapped_column(String(128), nullable=False)
     api_name: Mapped[str] = mapped_column(String(128), nullable=False)
     api_version: Mapped[str] = mapped_column(String(128), nullable=False)
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # SHA-256 of (agent_id, credential_id, method, path, canonical body) — used
-    # to join an identical retry to the existing pending row.
+    # SHA-256 of (agent_id, credential_id, method, path, canonical body).
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-
-    # Rule that triggered the hold (cross-DB ref, no FK). Nullable because the
-    # matched rule may have been deleted before the reviewer inspects the row.
     matched_rule_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
-
-    # Approval state machine.
-    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
-
-    # Hold expiry — set at creation from ``execution_approvals.ttl_seconds``.
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default=text("'pending'")
+    )
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
-
-    # Reviewer decision fields — populated on decide.
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
-
-    # Original trace id — for correlating the approval row to the inbound
-    # request span in distributed traces.
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-
-    # Populated once the approved job runs and an execution_records row exists.
     execution_id: Mapped[str | None] = mapped_column(String(30), nullable=True)

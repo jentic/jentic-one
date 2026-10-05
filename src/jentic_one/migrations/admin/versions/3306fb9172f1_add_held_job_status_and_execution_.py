@@ -1,13 +1,12 @@
 """add held job status and execution_approvals table
 
-Adds the ``execution_approvals`` table to the admin schema. The ``held``
-job status is a pure enum extension on the application layer — no schema
-change is needed for it (the ``jobs.status`` column is ``VARCHAR(20)``).
+Adds the ``execution_approvals`` table to the admin schema. The ``held`` job
+status needs no schema change: ``jobs.status`` is a ``VARCHAR`` and the value
+set is enforced by the application enum.
 
 The partial unique index on ``(request_fingerprint) WHERE state = 'pending'``
-lets the broker join an identical retry to the existing pending hold instead
-of inserting a duplicate. The SQLAlchemy UniqueConstraint on the model is
-advisory; this index is the real enforcement on PostgreSQL.
+enforces at most one pending approval per request fingerprint, so an identical
+retry joins the existing hold instead of filing a duplicate.
 
 Revision ID: 3306fb9172f1
 Revises: 0679072d60eb
@@ -47,12 +46,7 @@ def upgrade() -> None:
         sa.Column("path", sa.Text(), nullable=False),
         sa.Column("request_fingerprint", sa.String(64), nullable=False),
         sa.Column("matched_rule_id", sa.String(30), nullable=True),
-        sa.Column(
-            "state",
-            sa.String(16),
-            server_default=sa.text("'pending'"),
-            nullable=False,
-        ),
+        sa.Column("state", sa.String(16), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("decided_by", sa.String(30), nullable=True),
@@ -60,18 +54,13 @@ def upgrade() -> None:
         sa.Column("trace_id", sa.String(32), nullable=True),
         sa.Column("execution_id", sa.String(30), nullable=True),
         sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column("created_by", sa.String(255), nullable=True),
+        sa.ForeignKeyConstraint(["job_id"], ["jobs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -83,25 +72,18 @@ def upgrade() -> None:
     op.create_index(
         "ix_execution_approvals_state_expires", "execution_approvals", ["state", "expires_at"]
     )
-
-    # Partial unique index: only one pending row per fingerprint. This prevents
-    # a duplicated hold when a caller retries an identical request while one is
-    # already pending. Terminal rows (approved/denied/expired/withdrawn) do not
-    # participate so a new request can be filed after the original is settled.
-    if pg:
-        op.execute(
-            sa.text(
-                "CREATE UNIQUE INDEX uq_execution_approvals_pending_fingerprint "
-                "ON execution_approvals (request_fingerprint) "
-                "WHERE state = 'pending'"
-            )
-        )
+    op.create_index(
+        "uq_execution_approvals_pending_fingerprint",
+        "execution_approvals",
+        ["request_fingerprint"],
+        unique=True,
+        postgresql_where=sa.text("state = 'pending'"),
+        sqlite_where=sa.text("state = 'pending'"),
+    )
 
 
 def downgrade() -> None:
-    pg = op.get_bind().dialect.name == "postgresql"
-    if pg:
-        op.execute(sa.text("DROP INDEX IF EXISTS uq_execution_approvals_pending_fingerprint"))
+    op.drop_index("uq_execution_approvals_pending_fingerprint", table_name="execution_approvals")
     op.drop_index("ix_execution_approvals_state_expires", table_name="execution_approvals")
     op.drop_index("ix_execution_approvals_job_id", table_name="execution_approvals")
     op.drop_index("ix_execution_approvals_created_by", table_name="execution_approvals")
