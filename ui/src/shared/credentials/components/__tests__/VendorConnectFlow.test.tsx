@@ -492,7 +492,7 @@ describe('VendorConnectFlow — approve mode', () => {
 			await screen.findByText(/must constrain at least one of methods or path/i),
 		).toBeInTheDocument();
 		// Constrain the rule with a path — Save succeeds and the row appears.
-		const pathInput = screen.getByPlaceholderText('/repos');
+		const pathInput = screen.getByLabelText('Path pattern');
 		await user.type(pathInput, '/issues');
 		await user.click(screen.getByRole('button', { name: /^add$/i }));
 		// The rendered row prints ``<path> (<match_mode>)`` — match on the
@@ -789,7 +789,7 @@ describe('VendorConnectFlow — approve mode', () => {
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		// Open the Add-rule form.
 		await user.click(await screen.findByRole('button', { name: /add rule/i }));
-		const pathInput = screen.getByPlaceholderText('/repos') as HTMLInputElement;
+		const pathInput = screen.getByLabelText('Path pattern') as HTMLInputElement;
 		// Focus opens the dropdown; type ``/r`` to start filtering (the
 		// mocked op list gives suggestions starting with ``/repos``).
 		await user.click(pathInput);
