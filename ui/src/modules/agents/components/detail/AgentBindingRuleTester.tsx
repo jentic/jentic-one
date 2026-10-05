@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PauseCircle, Plus, X } from 'lucide-react';
 import { Button, Input, Select } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
@@ -8,16 +8,18 @@ import {
 	type BindingPermissionTestResult,
 } from '@/modules/agents/api';
 import { toDisplayRules } from '@/modules/agents/components/detail/shared';
+import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
+import { examplePath } from '@/shared/credentials/lib/path-completion';
 
 /**
  * Rule tester for one direct agent↔credential binding — the broker's own
  * dry-run (`POST /credentials/{cid}/agents/{aid}/permissions:test`) surfaced
  * next to the rule editor, so authoring becomes write→test→save instead of
  * write-and-pray. Rendered headless (the host's disclosure carries the "Test
- * a request" title). Transplanted from the toolkit rule tester, minus its
- * vendor-pooling disambiguation: the direct `:test` evaluates exactly this
- * binding's ordered rules, so a matched user rule always anchors to the same
- * `#N` the editor rows carry.
+ * a request" title). The direct `:test` evaluates exactly this binding's
+ * ordered rules, so a matched user rule always anchors to the same `#N` the
+ * editor rows carry.
  *
  * The verdict evaluates the SAVED rules (what the broker sees at request
  * time), not the editor's unsaved draft — the caption says so.
@@ -38,6 +40,8 @@ export interface AgentBindingRuleTesterProps {
 	 * dry-run evaluates SAVED rules, so a verdict against a stale set would
 	 * mislead. The caption names the reason. */
 	disabled?: boolean;
+	/** The API the binding covers — its real paths seed the path placeholder. */
+	apiReference?: OpsApiReference | null;
 }
 
 /** The matched rule resolved to the editor's visible numbering, when possible. */
@@ -119,7 +123,14 @@ export function AgentBindingRuleTester({
 	credentialId,
 	savedRules,
 	disabled = false,
+	apiReference,
 }: AgentBindingRuleTesterProps) {
+	// Same query key as the rule editor's suggestions, so this reads the cache.
+	const opsQuery = useVendorOperations(apiReference ?? undefined, { enabled: !!apiReference });
+	const pathPlaceholder = useMemo(
+		() => examplePath(opsQuery.data?.data?.map((op) => op.path)),
+		[opsQuery.data],
+	);
 	const [method, setMethod] = useState<string>('GET');
 	const [path, setPath] = useState('');
 	const [operationId, setOperationId] = useState('');
@@ -174,7 +185,7 @@ export function AgentBindingRuleTester({
 						aria-label="Request path"
 						value={path}
 						onChange={(e) => setPath(e.target.value)}
-						placeholder="/repos/acme/site/issues"
+						placeholder={pathPlaceholder}
 						className="px-2.5 py-1.5 font-mono text-xs"
 						disabled={disabled}
 						onKeyDown={(e) => {

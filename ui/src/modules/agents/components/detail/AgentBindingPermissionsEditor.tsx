@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUpDown, Minus, Plus, RotateCcw, Save, ShieldCheck } from 'lucide-react';
+import { ArrowUpDown, Check, Minus, Plus, RotateCcw, Save, ShieldCheck } from 'lucide-react';
 import {
 	Button,
 	allowAllRule,
@@ -26,7 +26,7 @@ import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vend
 
 /**
  * Inline editor for the permission rules on one direct agent↔credential
- * binding (theme 5 phase 5a, transplanted from the toolkit rule editor).
+ * binding.
  * System safety rules (`_system: true`) are platform-managed — they are
  * filtered out of the editor so saving never persists them as agent rules.
  *
@@ -39,6 +39,9 @@ import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vend
  *
  * `onDirtyChange` reports that dirtiness to the host so the dry-run tester, which
  * evaluates SAVED rules, can disable itself while a draft diverges.
+ *
+ * The editor stays open after a save: the foot reads "Saved" until the next
+ * edit, so the operator can keep refining and test the saved rules in place.
  */
 export interface AgentBindingPermissionsEditorProps {
 	agentId: string;
@@ -129,8 +132,14 @@ export function AgentBindingPermissionsEditor({
 		() => initialRules.filter((r) => !r._system).map(toInput),
 		[initialRules],
 	);
-	const [rules, setRules] = useState<PermissionRuleInput[]>(savedRules);
+	const [rules, setRulesState] = useState<PermissionRuleInput[]>(savedRules);
 	const replace = useReplaceAgentBindingPermissions(agentId, credentialId);
+	const { isSuccess: savedOk, reset: resetSave } = replace;
+	// Any edit after a save retires the "Saved" confirmation.
+	const setRules = (next: PermissionRuleInput[]): void => {
+		if (savedOk) resetSave();
+		setRulesState(next);
+	};
 
 	// Feed op paths + templates into the shared editor so autocomplete
 	// and the "no ops affected" warning work identically to the
@@ -195,8 +204,7 @@ export function AgentBindingPermissionsEditor({
 	};
 
 	return (
-		// A borderless card (its previous fill) above the sheet; only its form controls
-		// carry an edge (`.edged-controls`, ≥3:1 against these close surfaces).
+		// A borderless card above the sheet; only its form controls carry an edge (`.edged-controls`, ≥3:1 against these close surfaces).
 		<div className="bg-surface-inset edged-controls overflow-hidden rounded-lg">
 			<div className="px-4 pt-4 sm:px-5">
 				<div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -317,6 +325,14 @@ export function AgentBindingPermissionsEditor({
 								className="bg-caution h-1.5 w-1.5 shrink-0 rounded-full"
 							/>
 							Unsaved changes
+						</span>
+					) : savedOk ? (
+						<span
+							className="text-success inline-flex items-center gap-1.5 font-medium"
+							data-testid="rules-saved"
+						>
+							<Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+							Saved — these rules are live
 						</span>
 					) : (
 						<span className="text-foreground-sub">No unsaved changes</span>

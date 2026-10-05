@@ -106,6 +106,9 @@ export function allowAllRule(): PermissionRuleInput {
 		methods: null,
 		// A condition-less allow is rejected (422), so grant broadly via `path: ".*"`.
 		path: ALLOW_ALL_PATH,
+		// Explicit, so an editor that defaults a missing mode never reads `.*` as a
+		// literal prefix (which grants nothing).
+		match_mode: REGEX_MATCH_MODE,
 		operations: null,
 	};
 }

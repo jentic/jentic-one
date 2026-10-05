@@ -184,6 +184,56 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		).not.toBeInTheDocument();
 	});
 
+	it('Allow all → Edit → Save keeps the catch-all a REGEX (a prefix ".*" would grant nothing)', async () => {
+		const user = userEvent.setup();
+		const bodies: unknown[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			if (request.method === 'PUT' && request.url.includes('/permissions')) {
+				void request
+					.clone()
+					.json()
+					.then((b: unknown) => bodies.push(b));
+			}
+		});
+		renderPage();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		await inDialog.findByText('Permission rules for Slack bot token');
+
+		await user.click(inDialog.getByRole('button', { name: /Allow all operations/ }));
+		// Edit the new catch-all (the second row) — narrow it to GET — and save.
+		await user.click(inDialog.getAllByRole('button', { name: 'Edit rule' })[1]);
+		expect(inDialog.getByLabelText('Path match mode')).toHaveValue('regex');
+		await user.click(inDialog.getByRole('button', { name: 'GET' }));
+		await user.click(inDialog.getByRole('button', { name: 'Save' }));
+		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
+
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		worker.events.removeAllListeners('request:start');
+		const saved = bodies[0] as { path?: string; match_mode?: string; methods?: string[] }[];
+		const catchAll = saved.find((r) => r.path === '.*');
+		expect(catchAll?.methods).toEqual(['GET']);
+		// `regex` is the server default, so it may be omitted — but never prefix/exact.
+		expect(catchAll?.match_mode ?? 'regex').toBe('regex');
+	});
+
+	it('stays open after Save with a "Saved" confirmation, retired by the next edit', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		await inDialog.findByText('Permission rules for Slack bot token');
+
+		await editFirstRulePath(user, inDialog, 'post');
+		await user.click(inDialog.getByRole('button', { name: /Save rules/ }));
+		expect(await inDialog.findByTestId('rules-saved')).toHaveTextContent('Saved');
+		expect(inDialog.getByText('Permission rules for Slack bot token')).toBeInTheDocument();
+
+		await editFirstRulePath(user, inDialog, 'x');
+		expect(inDialog.queryByTestId('rules-saved')).not.toBeInTheDocument();
+		expect(inDialog.getByTestId('rules-dirty-hint')).toHaveTextContent('Unsaved changes');
+	});
+
 	it('fades the body only while content continues below it', async () => {
 		// A short viewport forces the panel to overflow; the danger zone is its
 		// last section, so the fade is what says it exists at all.

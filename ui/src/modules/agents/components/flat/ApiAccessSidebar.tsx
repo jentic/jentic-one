@@ -477,6 +477,7 @@ export function ApiAccessSidebar({
 									credentialId={shown.credentialId}
 									savedRules={permissions.data ?? []}
 									disabled={rulesDirty}
+									apiReference={apiReference}
 								/>
 							</section>
 

@@ -462,7 +462,10 @@ export function useReplaceAgentBindingPermissions(agentId: string, credentialId:
 	const qc = useQueryClient();
 	return useMutation<BindingPermissionRule[], Error, PermissionRuleInput[]>({
 		mutationFn: (rules) => replaceAgentBindingPermissions(agentId, credentialId, rules),
-		onSuccess: () => {
+		onSuccess: (saved) => {
+			// Seed the read with the PUT's echo so an open editor reads clean at
+			// once (no "Unsaved changes" flash while the refetch is in flight).
+			qc.setQueryData(agentsKeys.bindingPermissions(agentId, credentialId), saved);
 			qc.invalidateQueries({
 				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
 			});

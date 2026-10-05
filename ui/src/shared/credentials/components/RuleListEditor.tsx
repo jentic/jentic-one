@@ -10,7 +10,7 @@
  */
 
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -24,7 +24,11 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Input, Label, Select, Tooltip } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { nextPathCompletion } from '@/shared/credentials/lib/path-completion';
+import {
+	examplePath,
+	examplePathPrefix,
+	nextPathCompletion,
+} from '@/shared/credentials/lib/path-completion';
 import { ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
 import { ruleAppliesToTemplate } from '@/shared/credentials/lib/template-matcher';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
@@ -88,6 +92,29 @@ export function RuleListEditor({
 }) {
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
 	const [adding, setAdding] = useState(false);
+	// While a form is open, every other row's verbs are disabled: the open edit
+	// is addressed by position, so a delete/move underneath it would land its
+	// Save on a different rule.
+	const formOpen = adding || editingIndex !== null;
+
+	// Focus returns to the verb that opened the form (Add rule / that row's
+	// Edit) once it closes — the form's own buttons unmount with it, and focus
+	// would otherwise drop to <body>.
+	const rootRef = useRef<HTMLDivElement>(null);
+	const [returnFocusTo, setReturnFocusTo] = useState<string | null>(null);
+	useEffect(() => {
+		if (returnFocusTo == null || formOpen) return;
+		rootRef.current?.querySelector<HTMLElement>(returnFocusTo)?.focus({ preventScroll: true });
+		setReturnFocusTo(null);
+	}, [returnFocusTo, formOpen]);
+	const closeAdd = (): void => {
+		setAdding(false);
+		setReturnFocusTo('[data-rule-add]');
+	};
+	const closeEdit = (i: number): void => {
+		setEditingIndex(null);
+		setReturnFocusTo(`[data-rule-edit="${i}"]`);
+	};
 
 	// Fast index for the "requested by agent" tag. Deep-compare by
 	// JSON so rules the user edits in place lose the tag once they
@@ -107,6 +134,7 @@ export function RuleListEditor({
 				variant="secondary"
 				size="sm"
 				onClick={(): void => setAdding(true)}
+				disabled={editingIndex !== null}
 				data-rule-add=""
 			>
 				<Plus className="h-4 w-4" aria-hidden="true" />
@@ -119,7 +147,7 @@ export function RuleListEditor({
 	const defaultEmpty = isEmpty && emptyStateContent == null;
 
 	return (
-		<div className={cn('edged-controls space-y-2', className)}>
+		<div ref={rootRef} className={cn('edged-controls space-y-2', className)}>
 			{isEmpty ? (
 				defaultEmpty ? (
 					!adding && <EmptyRulesPanel actions={actionRow} />
@@ -136,9 +164,9 @@ export function RuleListEditor({
 									commitLabel="Save"
 									onCommit={(updated): void => {
 										onChange(rules.map((r, j) => (j === i ? updated : r)));
-										setEditingIndex(null);
+										closeEdit(i);
 									}}
-									onCancel={(): void => setEditingIndex(null)}
+									onCancel={(): void => closeEdit(i)}
 									pathSuggestions={pathSuggestions}
 								/>
 							) : (
@@ -148,6 +176,7 @@ export function RuleListEditor({
 									isRequested={requestedKeys.has(JSON.stringify(rule))}
 									opTemplates={opTemplates}
 									opsLoaded={opsLoaded}
+									locked={formOpen}
 									onEdit={(): void => setEditingIndex(i)}
 									onDelete={(): void => onChange(rules.filter((_, j) => j !== i))}
 									onMoveUp={
@@ -171,9 +200,9 @@ export function RuleListEditor({
 					commitLabel="Add"
 					onCommit={(rule): void => {
 						onChange([...rules, rule]);
-						setAdding(false);
+						closeAdd();
 					}}
-					onCancel={(): void => setAdding(false)}
+					onCancel={closeAdd}
 					pathSuggestions={pathSuggestions}
 				/>
 			) : (
@@ -249,6 +278,7 @@ function RulePreviewRow({
 	isRequested,
 	opTemplates,
 	opsLoaded,
+	locked = false,
 	onEdit,
 	onDelete,
 	onMoveUp,
@@ -259,6 +289,8 @@ function RulePreviewRow({
 	isRequested: boolean;
 	opTemplates?: readonly string[];
 	opsLoaded?: boolean;
+	/** Another rule's form is open — this row's verbs are disabled until it closes. */
+	locked?: boolean;
 	onEdit?: () => void;
 	onDelete?: () => void;
 	onMoveUp?: () => void;
@@ -353,6 +385,8 @@ function RulePreviewRow({
 								size="icon-xs"
 								className="text-foreground-sub"
 								aria-label="Edit rule"
+								data-rule-edit={index}
+								disabled={locked}
 								onClick={onEdit}
 							>
 								<Pencil className="h-3.5 w-3.5" />
@@ -368,7 +402,7 @@ function RulePreviewRow({
 									size="icon-xs"
 									className="text-foreground-sub"
 									aria-label="Move rule up"
-									disabled={!onMoveUp}
+									disabled={locked || !onMoveUp}
 									onClick={onMoveUp}
 								>
 									<ArrowUp className="h-3.5 w-3.5" />
@@ -379,7 +413,7 @@ function RulePreviewRow({
 									size="icon-xs"
 									className="text-foreground-sub"
 									aria-label="Move rule down"
-									disabled={!onMoveDown}
+									disabled={locked || !onMoveDown}
 									onClick={onMoveDown}
 								>
 									<ArrowDown className="h-3.5 w-3.5" />
@@ -393,6 +427,7 @@ function RulePreviewRow({
 								size="icon-xs"
 								className="text-foreground-sub hover:bg-danger/10 hover:text-danger"
 								aria-label="Delete rule"
+								disabled={locked}
 								onClick={onDelete}
 							>
 								<Trash2 className="h-3.5 w-3.5" />
@@ -474,7 +509,10 @@ function ruleDraftFromRule(rule: PermissionRule): RuleDraft {
 		effect: rule.effect,
 		methods: new Set(rule.methods ?? []),
 		path: rule.path ?? '',
-		matchMode: (rule.match_mode ?? 'prefix') as RuleDraft['matchMode'],
+		// A stored path with no mode is matched as `regex` by the backend, so the
+		// draft must read it the same way — defaulting to `prefix` would re-save
+		// `.*` as a literal that matches nothing.
+		matchMode: (rule.match_mode ?? (rule.path ? 'regex' : 'prefix')) as RuleDraft['matchMode'],
 		operations: rule.operations,
 		comment: rule.comment,
 	};
@@ -537,6 +575,19 @@ function RuleFormBody({
 	};
 
 	const paths = pathSuggestions ?? EMPTY_PATHS;
+	// The example names a route of the API being edited, never another vendor's.
+	const pathPlaceholder =
+		draft.matchMode === 'prefix' ? examplePathPrefix(paths) : examplePath(paths);
+
+	// Focus the first field when the form opens: the verb that opened it
+	// unmounts, and focus must not drop to <body>.
+	const effectGroupRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		effectGroupRef.current
+			?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
+			?.focus({ preventScroll: true });
+	}, []);
+
 	// Prefix-match filter, capped so the dropdown never dominates the
 	// dialog. ``startsWith`` matches on the raw input string — with no
 	// path typed we still surface the first ``MAX_PATH_SUGGESTIONS``
@@ -605,6 +656,7 @@ function RuleFormBody({
 			{/* Segmented allow/deny: the chosen side carries colour AND a glyph AND
 			    its word, so the effect never rests on hue alone. */}
 			<div
+				ref={effectGroupRef}
 				role="group"
 				aria-labelledby={`${ids}-effect`}
 				className="rounded-field inline-flex w-fit gap-0.5 border border-[hsl(var(--control-edge))] p-0.5"
@@ -695,7 +747,7 @@ function RuleFormBody({
 						onBlur={(): void => {
 							setTimeout(() => setSuggestOpen(false), 100);
 						}}
-						placeholder="/repos"
+						placeholder={pathPlaceholder}
 						autoComplete="off"
 						aria-label="Path pattern"
 						role="combobox"
