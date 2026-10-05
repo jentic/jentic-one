@@ -1921,9 +1921,11 @@
               "self": "/catalog/stripe.com"
             },
             "api_id": "stripe.com",
+            "description": "The Stripe REST API.",
             "path": "apis/openapi/stripe.com",
             "registered": false,
             "spec_url": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json",
+            "title": "Stripe API",
             "vendor": "stripe.com"
           }
         ],
@@ -1935,6 +1937,18 @@
             "description": "Catalog identity of the API (manifest domain, e.g. `stripe.com`).",
             "title": "Api Id",
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Short plain-text description from the manifest, when known.",
+            "title": "Description"
           },
           "path": {
             "anyOf": [
@@ -1964,6 +1978,18 @@
             ],
             "description": "Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).",
             "title": "Spec Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human display title from the manifest (e.g. `Stripe API`), when known.",
+            "title": "Title"
           },
           "update_available": {
             "default": false,

@@ -69,6 +69,109 @@ def test_parse_missing_include_key() -> None:
     assert mb.parse_apis_json({}) == []
 
 
+# ── display metadata ─────────────────────────────────────────────────────────
+
+
+def test_parse_title_from_include_name() -> None:
+    data = {
+        "include": [
+            {
+                "name": "stripe.com:main@2024-01-01 - Stripe API",
+                "url": _manifest_url("stripe.com", "main", "2024-01-01"),
+            }
+        ]
+    }
+    [entry] = mb.parse_apis_json(data)
+    assert entry.title == "Stripe API"
+
+
+@pytest.mark.parametrize(
+    ("name", "title"),
+    [
+        (
+            "adyen.com:Notify@3 - Classic Platforms - Notifications",
+            "Classic Platforms - Notifications",
+        ),
+        ("acme.io:main@1 -   Acme  ", "Acme"),
+        ("acme.io:main@1 - ", None),
+        ("acme.io:main@1", None),
+        ("", None),
+        (None, None),
+        (42, None),
+    ],
+)
+def test_title_from_include_name(name: object, title: str | None) -> None:
+    assert mb.title_from_include_name(name) == title
+
+
+def test_parse_title_comes_from_first_include_per_api_id() -> None:
+    data = {
+        "include": [
+            {"name": "acme.io:main@1 - Acme v1", "url": _manifest_url("acme.io", "main", "1")},
+            {"name": "acme.io:main@2 - Acme v2", "url": _manifest_url("acme.io", "main", "2")},
+        ]
+    }
+    [entry] = mb.parse_apis_json(data)
+    assert entry.title == "Acme v1"
+
+
+def test_parse_description_and_logo_when_present() -> None:
+    data = {
+        "include": [
+            {
+                "name": "stripe.com:main@1 - Stripe API",
+                "url": _manifest_url("stripe.com", "main"),
+                "description": "  The Stripe\n  REST API.  ",
+                "image": "https://example.com/stripe.png",
+            }
+        ]
+    }
+    [entry] = mb.parse_apis_json(data)
+    assert entry.description == "The Stripe REST API."
+    assert entry.logo_source_url == "https://example.com/stripe.png"
+
+
+def test_parse_metadata_absent_is_none() -> None:
+    [entry] = mb.parse_apis_json({"include": [_include(_manifest_url("acme.io", "main"))]})
+    assert (entry.title, entry.description, entry.logo_source_url) == (None, None, None)
+
+
+def test_parse_truncates_long_description() -> None:
+    data = {
+        "include": [
+            {"url": _manifest_url("acme.io", "main"), "description": "word " * 500},
+        ]
+    }
+    [entry] = mb.parse_apis_json(data)
+    assert entry.description is not None
+    assert len(entry.description) == mb.DESCRIPTION_MAX_CHARS
+    assert entry.description.endswith("\u2026")
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "http://example.com/logo.png",
+        "data:image/png;base64,AAAA",
+        "javascript:alert(1)",
+        "/relative/logo.png",
+        "https://",
+        "",
+        123,
+    ],
+)
+def test_parse_rejects_non_https_logo_source(image: object) -> None:
+    data = {"include": [{"url": _manifest_url("acme.io", "main"), "image": image}]}
+    [entry] = mb.parse_apis_json(data)
+    assert entry.logo_source_url is None
+
+
+def test_from_dict_tolerates_snapshot_without_metadata() -> None:
+    old = {"api_id": "stripe.com", "path": "p", "github_url": "g"}
+    entry = mb.ManifestEntry.from_dict(old)
+    assert (entry.title, entry.description, entry.logo_source_url) == (None, None, None)
+
+
 # ── vendor derivation ────────────────────────────────────────────────────────
 # The derivation itself is covered in tests/unit/shared/test_vendor_domain.py;
 # these pin that the manifest routes through it.
@@ -341,7 +444,14 @@ def test_filter_unregistered_drops_only_exact_matches() -> None:
 
 def test_manifest_entry_round_trips_through_dict() -> None:
     e = mb.ManifestEntry(
-        api_id="stripe.com", path="p", spec_url="https://x", github_url="g", vendor="stripe.com"
+        api_id="stripe.com",
+        path="p",
+        spec_url="https://x",
+        github_url="g",
+        vendor="stripe.com",
+        title="Stripe API",
+        description="d",
+        logo_source_url="https://example.com/logo.png",
     )
     assert mb.ManifestEntry.from_dict(e.to_dict()) == e
 

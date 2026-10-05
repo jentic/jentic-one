@@ -1283,7 +1283,7 @@ type CatalogEntryLinksResponse struct {
 
 // CatalogEntryResponse A single browsable catalog entry.
 //
-// Examples: {"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","vendor":"stripe.com"}
+// Examples: {"_links":{"import":"/catalog/stripe.com:import","operations":"/catalog/stripe.com/operations","self":"/catalog/stripe.com"},"api_id":"stripe.com","description":"The Stripe REST API.","path":"apis/openapi/stripe.com","registered":false,"spec_url":"https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json","title":"Stripe API","vendor":"stripe.com"}
 type CatalogEntryResponse struct {
 	// UnderscoreLinks Hypermedia links for a catalog entry.
 	//
@@ -1293,6 +1293,9 @@ type CatalogEntryResponse struct {
 	// ApiId Catalog identity of the API (manifest domain, e.g. `stripe.com`).
 	ApiId string `json:"api_id"`
 
+	// Description Short plain-text description from the manifest, when known.
+	Description *string `json:"description,omitempty"`
+
 	// Path Manifest path of the entry within the public-APIs repo.
 	Path *string `json:"path"`
 
@@ -1301,6 +1304,9 @@ type CatalogEntryResponse struct {
 
 	// SpecUrl Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).
 	SpecUrl *string `json:"spec_url"`
+
+	// Title Human display title from the manifest (e.g. `Stripe API`), when known.
+	Title *string `json:"title,omitempty"`
 
 	// UpdateAvailable Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
 	UpdateAvailable *bool `json:"update_available,omitempty"`

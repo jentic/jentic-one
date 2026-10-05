@@ -100,6 +100,8 @@ class CatalogEntryView:
     spec_url: str | None
     github_url: str | None
     registered: bool
+    title: str | None = None
+    description: str | None = None
     #: True when this entry is registered locally AND its upstream spec has a notified
     #: update the local revision hasn't adopted yet (Flow-3). Always False for
     #: unregistered entries (nothing to update).
@@ -721,6 +723,8 @@ class CatalogService:
             spec_url=entry.spec_url,
             github_url=entry.github_url or None,
             registered=registered,
+            title=entry.title,
+            description=entry.description,
             update_available=(
                 registered
                 and outdated_spec_urls is not None
