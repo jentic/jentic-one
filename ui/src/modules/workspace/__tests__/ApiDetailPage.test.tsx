@@ -16,6 +16,7 @@ import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { patchMockApi } from '@/modules/workspace/mocks/handlers';
+import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
 
 /**
  * Settle the PageHeader entrance animation before asserting (framer-motion's
@@ -621,19 +622,38 @@ describe('ApiDetailPage', () => {
 			}
 			afterEach(() => worker.events.removeAllListeners());
 
-			it('creates a no-auth credential for the API and opens the bind dialog on it', async () => {
+			it('creates the no-auth credential only when Bind is confirmed, then grants the rules', async () => {
 				const user = userEvent.setup();
 				resetCredentialsStore([]);
 				const bodies = recordCreates();
+				const ruleBodies: unknown[] = [];
+				worker.events.on('request:start', ({ request }) => {
+					if (request.method === 'PUT' && request.url.includes('/permissions'))
+						void request
+							.clone()
+							.json()
+							.then((b: unknown) => ruleBodies.push(b));
+				});
 				renderAt(BIGCO);
 
 				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
-
 				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
-				expect(await within(dialog).findByText('BigCo (no auth)')).toBeVisible();
-				expect(
+				expect(within(dialog).getByTestId('bind-agent-create-note')).toHaveTextContent(
+					'BigCo (no auth)',
+				);
+				// Opening the dialog creates nothing.
+				expect(bodies).toHaveLength(0);
+
+				await user.click(
 					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
-				).toBeVisible();
+				);
+				// Nothing preselected: Bind waits for a rules choice.
+				expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
+				await user.click(
+					within(dialog).getByRole('radio', { name: /Allow all operations/ }),
+				);
+				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
+
 				await waitFor(() => expect(bodies).toHaveLength(1));
 				// No secret, and for any version like every Add credential default.
 				expect(bodies[0]).toEqual({
@@ -642,12 +662,41 @@ describe('ApiDetailPage', () => {
 					provider: 'static',
 					api: { vendor: 'bigco', name: 'big-api' },
 				});
-				// The credentials list refetched, so the card now lists it.
+				await waitFor(() => expect(ruleBodies).toHaveLength(1));
+				expect(ruleBodies[0]).toEqual([{ effect: 'allow', path: '.*' }]);
+				await waitFor(() => expect(dialog).not.toBeVisible());
+				// The card lists the credential and the agent — not blocked.
+				const access = screen.getByTestId('hub-access');
 				expect(
-					await within(screen.getByTestId('hub-access')).findByRole('button', {
+					await within(access).findByRole('button', {
 						name: /^View BigCo \(no auth\)(\s|$)/,
 					}),
 				).toBeInTheDocument();
+				const agent = await within(access).findByRole('link', { name: /support-agent/ });
+				await waitFor(() =>
+					expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull(),
+				);
+				expect(within(agent).queryByTestId('hub-access-agent-blocked')).toBeNull();
+			});
+
+			it('cancelling leaves no credential behind', async () => {
+				const user = userEvent.setup();
+				resetCredentialsStore([]);
+				const bodies = recordCreates();
+				renderAt(BIGCO);
+				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
+				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+				await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+				await waitFor(() => expect(dialog).not.toBeVisible());
+				expect(bodies).toHaveLength(0);
+			});
+
+			it('is not offered on a draft API, which claims nothing about credentials', async () => {
+				resetCredentialsStore([]);
+				renderAt('/library/workspace/adyen/pos-terminal-management-api/1');
+				expect(await screen.findByTestId('hub-access-draft')).toHaveTextContent(/draft/);
+				expect(screen.queryByText('No credential needed')).toBeNull();
+				expect(screen.queryByTestId('hub-access-give-agent-access')).toBeNull();
 			});
 
 			it("reuses the API's existing no-auth credential instead of creating another", async () => {
@@ -669,15 +718,15 @@ describe('ApiDetailPage', () => {
 				const bodies = recordCreates();
 				renderAt(BIGCO);
 
-				// A covering credential already exists, so the card lists it and
-				// the Bind action opens on the no-auth one.
+				// A covering credential already exists, so the card lists it; the
+				// Bind action defaults to the no-auth one (no secret involved).
 				await user.click(await screen.findByTestId('hub-access-bind-agent'));
 				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
 				expect(within(dialog).getByLabelText('Credential')).toHaveValue('cred_big_noauth');
 				expect(bodies).toHaveLength(0);
 			});
 
-			it('surfaces a failed create inline and opens no dialog', async () => {
+			it('surfaces a failed create in the dialog and binds nothing', async () => {
 				const user = userEvent.setup();
 				resetCredentialsStore([]);
 				worker.use(
@@ -691,10 +740,16 @@ describe('ApiDetailPage', () => {
 				renderAt(BIGCO);
 
 				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
-
-				const state = screen.getByTestId('hub-access-no-auth');
-				expect(await within(state).findByRole('alert')).toBeVisible();
-				expect(screen.queryByRole('dialog', { name: 'Bind to an agent' })).toBeNull();
+				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+				await user.click(
+					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
+				);
+				await user.click(within(dialog).getByRole('radio', { name: /Read-only/ }));
+				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
+				expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+					"Couldn't create the no-auth credential",
+				);
+				expect(dialog).toBeVisible();
 			});
 
 			it('is not offered to a viewer who can neither create credentials nor bind', async () => {
@@ -781,22 +836,28 @@ describe('ApiDetailPage', () => {
 			const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
 			// Only one credential covers this API → it's used without a picker.
 			expect(within(dialog).getByText('Stripe live')).toBeVisible();
-			// Real agents list, with lifecycle status; archived/rejected are left out.
+			// Only ACTIVE agents: pending, disabled, archived and rejected are left out.
 			const option = await within(dialog).findByRole('checkbox', {
 				name: 'support-agent',
 			});
-			expect(within(dialog).queryByText('spammy-bot')).not.toBeInTheDocument();
+			for (const inactive of ['spammy-bot', 'legacy-scraper', 'inbox-triage-bot']) {
+				expect(within(dialog).queryByText(inactive)).not.toBeInTheDocument();
+			}
 			expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
 
 			await user.click(option);
+			// Still disabled: nothing is preselected for the rules.
+			expect(within(dialog).getByTestId('bind-agent-confirm')).toBeDisabled();
+			await user.click(within(dialog).getByRole('radio', { name: /Read-only/ }));
 			await user.click(within(dialog).getByRole('button', { name: 'Bind to agent' }));
 
-			// Same pattern as credential create/edit: close + a success toast,
-			// no extra step and no permissions prompt.
+			// Same pattern as credential create/edit: close + a success toast.
 			await waitFor(() => expect(dialog).not.toBeVisible());
 			const toast = await screen.findByTestId('toast');
 			expect(toast).toHaveTextContent('Credential bound');
-			expect(toast).toHaveTextContent('Bound “Stripe live” to support-agent.');
+			expect(toast).toHaveTextContent(
+				'Bound “Stripe live” to support-agent, with access rules.',
+			);
 			expect(within(toast).queryByRole('link')).toBeNull();
 
 			// The credential's agent roster refetched, so the card now lists it.
@@ -807,6 +868,20 @@ describe('ApiDetailPage', () => {
 			expect(
 				screen.queryByText('No agent is bound to these credentials yet.'),
 			).not.toBeInTheDocument();
+		});
+
+		it('shows a bound agent with no allow rule as Blocked in "Who can use it"', async () => {
+			resetAgentsStore();
+			seedCredentialBindings([
+				{ agent_id: 'agnt_active_1', credential_id: 'cred_stripe_live', permissions: [] },
+			]);
+			renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+			const access = await screen.findByTestId('hub-access');
+			const agent = await within(access).findByRole('link', { name: /support-agent/ });
+			expect(await within(agent).findByTestId('hub-access-agent-blocked')).toHaveTextContent(
+				'Blocked',
+			);
+			resetAgentsStore();
 		});
 
 		it('offers one card-level Bind action; the dialog picks among several credentials', async () => {

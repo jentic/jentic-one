@@ -11,8 +11,8 @@
  *     the one credential ↔ API rule: the catalog's "Credential ready" and the
  *     hub / panel / tile "No credential" all read it.
  *   - `GET /credentials/{id}/agents` (first page, per credential): the agents
- *     directly bound to a credential — theme 5's agent ↔ credential binding,
- *     the same read the credential sheet's "Bound agents" section uses (and the
+ *     directly bound to a credential (the agent ↔ credential binding), the
+ *     same read the credential sheet's "Bound agents" section uses (and the
  *     same `credentialKeys.agents(id)` cache slice, so the two never disagree).
  *     These fan out one request per credential, so they are read LAZILY
  *     ({@link useAgentAccess}) — only for the credentials of the rows a surface
@@ -102,6 +102,9 @@ export function useApiAccessIndex(opts: { enabled?: boolean } = {}): ApiAccessIn
 export interface AgentAccess {
 	/** Distinct agents bound to any of the credentials (first page of each). */
 	agents: CredentialAgentResponse[];
+	/** Every (agent, credential) binding behind `agents` — an agent bound to two
+	 * of the credentials appears twice here, once in `agents`. */
+	bindings: { agentId: string; credentialId: string; suspended: boolean }[];
 	/** Every credential's agents read has settled — answered or failed. */
 	agentsSettled: boolean;
 	/** At least one of those reads failed, so `agents` may be missing some. */
@@ -173,6 +176,7 @@ export function useAgentAccess(
 			if (credentials == null) return null;
 			const access: AgentAccess = {
 				agents: [],
+				bindings: [],
 				agentsSettled: true,
 				agentsError: false,
 				agentsTruncated: false,
@@ -189,6 +193,11 @@ export function useAgentAccess(
 				// First page only: more bound agents than one page ⇒ a floor.
 				if (read.data?.has_more) access.agentsTruncated = true;
 				for (const agent of read.data?.data ?? []) {
+					access.bindings.push({
+						agentId: agent.agent_id,
+						credentialId: cred.credential_id,
+						suspended: agent.suspended,
+					});
 					if (!access.agents.some((a) => a.agent_id === agent.agent_id)) {
 						access.agents.push(agent);
 					}

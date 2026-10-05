@@ -5,9 +5,19 @@
  * `@/shared/api` imports from views are forbidden by ESLint.
  */
 
-import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
+import {
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+	type QueryClient,
+	type UseQueryOptions,
+} from '@tanstack/react-query';
+import { useCallback } from 'react';
 import {
 	bindCredentialToAgentBlocked,
+	listBindingPermissions,
+	replaceBindingPermissions,
 	cancelConnectSession,
 	confirmConnectSession,
 	getConnectSession,
@@ -19,7 +29,11 @@ import {
 	startIntegrationConnect,
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
-import type { AgentListResponse } from '@/shared/api';
+import type {
+	AgentListResponse,
+	PermissionRuleReadSchema,
+	PermissionRuleSchema,
+} from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
 import type {
@@ -165,27 +179,142 @@ export function useStartIntegrationConnect() {
  * credential's bindings list so the surrounding UI refreshes without
  * a manual reload.
  */
+/**
+ * The agent-side caches a binding change touches, as literals mirroring
+ * `agentsKeys` (shared code can't import the agents module): each agent's
+ * binding list and its rules on this credential, plus the credential's agent
+ * roster — the slice the API hub's "Who can use it" and the Library's
+ * workspace agent counts read (the prefix also sweeps its all-pages variant).
+ */
+function invalidateBindingSurfaces(
+	client: QueryClient,
+	credentialId: string,
+	agentIds: readonly string[],
+): void {
+	for (const aid of agentIds) {
+		void client.invalidateQueries({
+			queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
+		});
+		void client.invalidateQueries({
+			queryKey: bindingPermissionsKey(aid, credentialId),
+		});
+	}
+	void client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
+}
+
+/** Mirrors `agentsKeys.bindingPermissions` — the agent rules editor reads the same slice. */
+function bindingPermissionsKey(agentId: string, credentialId: string) {
+	return [...sharedQueryKeys.agentsRoot, 'binding-permissions', agentId, credentialId] as const;
+}
+
+export interface BindResult {
+	/** Agents bound whose rules couldn't be saved — bound, but blocked until they are. */
+	rulesFailed: string[];
+}
+
+/**
+ * Bind a credential to each agent (`POST /agents/{id}/credentials`, created
+ * blocked), then — when `rules` is given — replace that binding's rules
+ * (`PUT …/permissions`), agent by agent, so each one is either fully granted
+ * or reported. A failed bind stops the run (agents before it stay bound); a
+ * failed rules save doesn't — it lands in `rulesFailed` for a retry
+ * ({@link useApplyBindingRules}). Caches are invalidated whatever the outcome,
+ * so a run that fails partway still shows the binds that landed.
+ */
 export function useBindCredentialToAgents() {
 	const client = useQueryClient();
-	return useMutation<void, Error, { credentialId: string; agentIds: readonly string[] }>({
-		mutationFn: async ({ credentialId, agentIds }) => {
+	return useMutation<
+		BindResult,
+		Error,
+		{
+			credentialId: string;
+			agentIds: readonly string[];
+			rules?: readonly PermissionRuleSchema[];
+		}
+	>({
+		mutationFn: async ({ credentialId, agentIds, rules }) => {
+			const rulesFailed: string[] = [];
 			for (const aid of agentIds) {
 				await bindCredentialToAgentBlocked(aid, credentialId);
+				if (!rules) continue;
+				try {
+					await replaceBindingPermissions(aid, credentialId, [...rules]);
+				} catch {
+					rulesFailed.push(aid);
+				}
 			}
+			return { rulesFailed };
 		},
-		onSuccess: (_res, { credentialId, agentIds }) => {
-			// The agent's binding list (a literal mirroring
-			// `agentsKeys.credentialBindings(aid)` — shared code can't import the
-			// agents module) and the credential's agent roster — the slice the API
-			// hub's "Who can use it" and the Library's workspace agent counts read;
-			// the prefix also sweeps its all-pages variant.
+		onSettled: (_res, _err, { credentialId, agentIds }) =>
+			invalidateBindingSurfaces(client, credentialId, agentIds),
+	});
+}
+
+/** Save `rules` on existing bindings (the Retry after a bind's rules failed). */
+export function useApplyBindingRules() {
+	const client = useQueryClient();
+	return useMutation<
+		BindResult,
+		Error,
+		{
+			credentialId: string;
+			agentIds: readonly string[];
+			rules: readonly PermissionRuleSchema[];
+		}
+	>({
+		mutationFn: async ({ credentialId, agentIds, rules }) => {
+			const rulesFailed: string[] = [];
 			for (const aid of agentIds) {
-				void client.invalidateQueries({
-					queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
-				});
+				try {
+					await replaceBindingPermissions(aid, credentialId, [...rules]);
+				} catch {
+					rulesFailed.push(aid);
+				}
 			}
-			void client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
+			return { rulesFailed };
 		},
+		onSettled: (_res, _err, { credentialId, agentIds }) =>
+			invalidateBindingSurfaces(client, credentialId, agentIds),
+	});
+}
+
+/** Where one binding's access stands, from its saved operator rules. */
+export type BindingAccessState = 'loading' | 'unknown' | 'blocked' | 'open';
+
+/** No operator `allow` rule ⇒ the broker denies every call (default deny). */
+function accessFromRules(rules: readonly PermissionRuleReadSchema[]): 'blocked' | 'open' {
+	return rules.some((r) => !r._system && String(r.effect) === 'allow') ? 'open' : 'blocked';
+}
+
+/**
+ * The access state of each (agent, credential) binding, keyed
+ * `${agentId}\n${credentialId}` — read from the binding's rules in the same
+ * cache slice the agent's rules editor uses, so a save there shows here.
+ */
+export function useBindingAccessStates(
+	pairs: ReadonlyArray<{ agentId: string; credentialId: string }>,
+): ReadonlyMap<string, BindingAccessState> {
+	const combine = useCallback(
+		(results: { data?: PermissionRuleReadSchema[]; isError: boolean }[]) => {
+			const map = new Map<string, BindingAccessState>();
+			results.forEach((r, i) => {
+				const pair = pairs[i];
+				if (!pair) return;
+				map.set(
+					`${pair.agentId}\n${pair.credentialId}`,
+					r.data ? accessFromRules(r.data) : r.isError ? 'unknown' : 'loading',
+				);
+			});
+			return map;
+		},
+		[pairs],
+	);
+	return useQueries({
+		queries: pairs.map(({ agentId, credentialId }) => ({
+			queryKey: bindingPermissionsKey(agentId, credentialId),
+			queryFn: () => listBindingPermissions(agentId, credentialId),
+		})),
+		combine,
 	});
 }
 
