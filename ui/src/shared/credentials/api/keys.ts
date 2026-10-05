@@ -14,7 +14,7 @@ export const credentialKeys = {
 	detail: (id: string) => ['credentials', 'detail', id] as const,
 	/**
 	 * Agents directly bound to one credential (`GET /credentials/{id}/agents`,
-	 * theme 5 phase 1's reverse lookup). The agents module's bind / unbind /
+	 * the binding's reverse lookup). The agents module's bind / unbind /
 	 * resume mutations invalidate this slice (importing this factory — the
 	 * sanctioned shared channel) so the credential-side "Bound agents" view
 	 * never shows a binding the agent side just changed.

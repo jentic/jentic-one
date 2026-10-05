@@ -67,7 +67,8 @@ export function readyCredentialsFor(
  *     will inject. Because the version is unknown before import, a
  *     version-pinned scope is not counted this way;
  *   - or it was created for exactly this entry (`catalog_api_id` equal to the
- *     entry's `api_id`).
+ *     entry's `api_id`) — whatever its version scope, since it was made for
+ *     this entry (a version pin then applies once the API is imported).
  *
  * Null while the credential list is still loading (never "none" early).
  */

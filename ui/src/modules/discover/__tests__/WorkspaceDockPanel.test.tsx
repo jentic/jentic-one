@@ -25,7 +25,7 @@ function LocationProbe() {
 const day = (n: number) => `2026-01-${String(n).padStart(2, '0')}T00:00:00Z`;
 
 function manyRows(): WorkspaceDigestRow[] {
-	// 12 APIs (more than the old 8-row cap): one draft, one with an update,
+	// 12 APIs (a list long enough to scroll): one draft, one with an update,
 	// one needing a credential.
 	return Array.from({ length: 12 }, (_, i) =>
 		makeDigestRow(`Api${String(i + 1).padStart(2, '0')}`, {

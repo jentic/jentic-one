@@ -33,7 +33,7 @@ describe('useJustLanded', () => {
 		rerender({ pending: set('b', 'c') });
 		act(() => vi.advanceTimersByTime(400));
 		// A pending-set change mid-flash (`b` lands at t=400) must not cancel
-		// `a`'s removal — that used to leave `a` flagged for good.
+		// `a`'s removal — else `a` would stay flagged for good.
 		rerender({ pending: set('c') });
 		expect([...result.current].sort()).toEqual(['a', 'b']);
 		// …nor does an unrelated change (a new import starting).

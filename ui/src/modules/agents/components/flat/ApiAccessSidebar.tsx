@@ -466,7 +466,7 @@ export function ApiAccessSidebar({
 								)}
 							</section>
 
-							{/* 3 — The rule tester (rehosted; disabled while the
+							{/* 3 — The rule tester (disabled while the
 							    editor above holds an unsaved draft). */}
 							<section aria-label="Test a request" className="space-y-3">
 								<h3 className="text-foreground text-sm font-semibold">

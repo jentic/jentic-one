@@ -3,8 +3,8 @@
  * and a serving-state filter (All / Live / Draft / Update available), both
  * client-side over the already-loaded digest rows.
  *
- * The state lives in the URL on `/library` (`?q=`, `?status=`) — the same
- * params the retired full Workspace view used — so a redirected
+ * The state lives in the URL on `/library` (`?q=`, `?status=`) — the params
+ * the `/library/workspace` redirect carries over — so a redirected
  * `/library/workspace?status=draft` link, a reload, or an in-app link
  * (`/library?q=<catalog id>`) lands on the filtered list. Only one panel
  * surface (docked card or mobile sheet) is mounted at a time, so the URL is
