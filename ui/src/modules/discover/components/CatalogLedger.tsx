@@ -11,9 +11,10 @@
  *     head and the two merge. Without `onJump` (or if the server rejects the
  *     jump cursor) it pages forward in big pages with a "Loading…" chip.
  *   - Search: a flat ranked list with the query highlighted; no rail.
- *   - Columns API · Vendor · Version · Status (API · Status on phones). A
- *     blank status means "available"; row actions (GitHub · Add / Open →
- *     / Review update →) fade in on hover/focus.
+ *   - Columns API · Vendor · Version · Status; on phones the status sits under
+ *     the API name. A blank status means "available"; row actions (GitHub ·
+ *     Add / Open → / Review update →) fade in on hover/focus, and are always
+ *     shown on phones and touch screens.
  *   - Keyboard: plain Tab order through each row's real controls (the name
  *     button previews; GitHub · Add / Open) — no custom shortcuts.
  *   - Drag a row onto "Your workspace" to add it (`useDragToAdd`, wired by
@@ -45,6 +46,7 @@ import {
 	type AlphaRailLetter,
 } from '@/shared/ui';
 import { shellScroller, shellScrollRoot, vendorIconPropsFor } from '@/shared/lib';
+import { useMediaQuery } from '@/shared/hooks';
 import type { Credential } from '@/shared/credentials/api';
 import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
 import {
@@ -72,11 +74,13 @@ import {
 	CatalogVendorSummaryRow,
 } from '@/modules/discover/components/CatalogLedgerRows';
 
-/** API · Vendor · Version · Status (≥ sm); API · Status on phones. */
+/** API · Vendor · Version · Status (≥ sm); on phones the status stacks under the name. */
 const GROUPED_COLS =
 	'[--ledger-cols:minmax(0,1fr)_auto] sm:[--ledger-cols:minmax(0,1fr)_minmax(96px,22%)_80px_128px]';
 /** Search rows carry vendor + version inline: API · Status. */
 const FLAT_COLS = '[--ledger-cols:minmax(0,1fr)_auto] sm:[--ledger-cols:minmax(0,1fr)_128px]';
+/** Tailwind `sm` — below it a row's status stacks under its name. */
+const SM_QUERY = '(min-width: 640px)';
 /** Below the sticky toolbar (its height + a little air). */
 const SPY_OFFSET_PX = 84;
 /** Where a jumped-to letter heading lands (under the sticky toolbar). */
@@ -252,6 +256,8 @@ export function CatalogLedger({
 	// rail falls back to paging forward.
 	const jump = jumpProp && !jumpProp.error ? jumpProp : undefined;
 	const searching = query.trim().length > 0;
+	// One query for the whole list (not one per memoised row).
+	const stackStatus = !useMediaQuery(SM_QUERY);
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	const [currentLetter, setCurrentLetter] = useState<string | null>(null);
 	const [seekLetter, setSeekLetter] = useState<RailLetter | null>(null);
@@ -638,6 +644,7 @@ export function CatalogLedger({
 				onImport={onImport}
 				consumeDragClick={drag?.consumeDragClick}
 				onPointerDown={drag ? onRowPointerDown : undefined}
+				stackStatus={stackStatus}
 			/>
 		);
 	};
@@ -658,7 +665,8 @@ export function CatalogLedger({
 							<LedgerHeadCell className="hidden sm:block">Version</LedgerHeadCell>
 						</>
 					)}
-					<LedgerHeadCell>Status</LedgerHeadCell>
+					{/* Phones show each row's status under its name. */}
+					{!stackStatus && <LedgerHeadCell>Status</LedgerHeadCell>}
 				</LedgerHead>
 				{model.items.map(renderItem)}
 			</Ledger>

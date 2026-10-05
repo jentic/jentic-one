@@ -308,7 +308,7 @@ describe('CatalogLedger', () => {
 		expect(stubTop).toBeGreaterThan(headerAvatar.bottom);
 		const first = cells[0];
 		const firstBox = first.getBoundingClientRect();
-		const childAvatar = first.querySelector('button')!.previousElementSibling!;
+		const childAvatar = first.querySelector('button')!.parentElement!.previousElementSibling!;
 		const elbowY = firstBox.top + px(first, '::before', 'height');
 		const centre = childAvatar.getBoundingClientRect();
 		expect(Math.abs(elbowY - (centre.top + centre.height / 2))).toBeLessThanOrEqual(1);

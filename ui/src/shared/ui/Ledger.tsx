@@ -166,7 +166,8 @@ export const LedgerRow = forwardRef<HTMLDivElement, LedgerRowProps>(function Led
  * Row actions, pinned over the row's right edge on a short fade so long names
  * slide under them. Hidden until the row is hovered, focused or selected —
  * still in the tab order (focus-within reveals them) — and always visible on
- * touch, where there's no hover.
+ * touch, where there's no hover, and below `sm`, where a hover-only reveal
+ * hides a row's main verb and a mid-fade state fails contrast.
  */
 export function LedgerRowActions({
 	children,
@@ -185,6 +186,7 @@ export function LedgerRowActions({
 				'pointer-events-none opacity-0 transition-opacity duration-[140ms]',
 				'group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-data-[selected=true]/row:pointer-events-auto group-data-[selected=true]/row:opacity-100',
 				'[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100',
+				'max-sm:pointer-events-auto max-sm:opacity-100',
 				className,
 			)}
 		>

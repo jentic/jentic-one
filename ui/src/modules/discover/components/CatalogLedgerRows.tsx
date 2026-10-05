@@ -100,6 +100,8 @@ export interface CatalogApiRowProps {
 	onPointerDown?: (event: ReactPointerEvent<HTMLElement>, entity: DiscoveryEntity) => void;
 	/** True when the click ended a drag (so it shouldn't open the preview). */
 	consumeDragClick?: () => boolean;
+	/** Phones: the status goes under the name instead of in its own column. */
+	stackStatus?: boolean;
 }
 
 function RowStatus({ entity, pending }: { entity: DiscoveryEntity; pending: boolean }) {
@@ -144,10 +146,20 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 	onImport,
 	onPointerDown,
 	consumeDragClick,
+	stackStatus = false,
 }: CatalogApiRowProps) {
 	const canAdd = !entity.registered && !pending;
 	const credentials = canAdd && readyCredentials?.length ? readyCredentials : null;
 	const draggable = canAdd && onPointerDown != null;
+	// The row's state, in one place: the Status column on wider screens, a line
+	// under the name on phones (where a column would sit under the actions).
+	const hasStatus = pending || entity.registered || credentials != null;
+	const status = hasStatus ? (
+		<>
+			<RowStatus entity={entity} pending={pending} />
+			{credentials && <CredentialReadyLink credentials={credentials} />}
+		</>
+	) : null;
 
 	return (
 		<LedgerRow
@@ -164,6 +176,7 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 			className={cn(
 				draggable && 'cursor-grab select-none active:cursor-grabbing',
 				dragging && 'opacity-35',
+				stackStatus && hasStatus && 'h-auto min-h-[38px] py-1',
 			)}
 			actions={
 				<LedgerRowActions>
@@ -205,26 +218,25 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 							)}
 						</>
 					) : (
-						<Tooltip content="Add to workspace" interactiveChild>
-							<Button
-								variant="tonal"
-								size="xs"
-								loading={pending}
-								onClick={(e) => {
-									e.stopPropagation();
-									onImport(entity);
-								}}
-								aria-label={
-									pending ? `Adding ${title}` : `Add ${title} to workspace`
-								}
-								data-testid="catalog-row-add"
-							>
-								{!pending && <Plus size={14} aria-hidden="true" />}
-								<span className="[@media(hover:none)]:sr-only">
-									{pending ? 'Adding…' : 'Add'}
-								</span>
-							</Button>
-						</Tooltip>
+						// While it's adding, the row's status says so — no second
+						// "Adding…" on the button.
+						!pending && (
+							<Tooltip content="Add to workspace" interactiveChild>
+								<Button
+									variant="tonal"
+									size="xs"
+									onClick={(e) => {
+										e.stopPropagation();
+										onImport(entity);
+									}}
+									aria-label={`Add ${title} to workspace`}
+									data-testid="catalog-row-add"
+								>
+									<Plus size={14} aria-hidden="true" />
+									<span className="[@media(hover:none)]:sr-only">Add</span>
+								</Button>
+							</Tooltip>
+						)
 					)}
 				</LedgerRowActions>
 			}
@@ -247,34 +259,53 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 					/>
 				)}
 				<VendorIcon {...icon} size="xs" />
-				{/* The row's keyboard target: Tab here, Enter/Space previews. */}
-				<button
-					type="button"
+				{/* Phones stack the name over the row's status, clear of the actions
+				    pinned on the right. */}
+				<div
 					className={cn(
-						NAME,
-						child ? 'font-medium' : 'font-semibold',
-						'focus-visible:ring-ring cursor-[inherit] rounded-[4px] text-left focus-visible:ring-2 focus-visible:outline-none',
+						'flex min-w-0 items-center gap-2.5',
+						stackStatus && 'flex-col items-start gap-0 pr-28',
 					)}
-					title={title}
-					aria-label={`View ${title}`}
-					data-testid="catalog-row-open-preview"
-					onClick={(e) => {
-						e.stopPropagation();
-						if (consumeDragClick?.()) return;
-						onOpen(entity);
-					}}
 				>
-					<Highlight text={title} query={flat ? query : undefined} />
-				</button>
-				{flat && (vendorLabel || versionLabel) && (
-					<span className="text-muted-foreground min-w-0 shrink truncate text-[12.5px]">
-						{vendorLabel && <Highlight text={vendorLabel} query={query} />}
-						{vendorLabel && versionLabel && <span aria-hidden="true"> · </span>}
-						{versionLabel && (
-							<span className="font-mono text-[11.5px]">{versionLabel}</span>
+					{/* The row's keyboard target: Tab here, Enter/Space previews. */}
+					<Button
+						variant="ghost"
+						size="xs"
+						className={cn(
+							NAME,
+							child ? 'font-medium' : 'font-semibold',
+							'block h-auto max-w-full cursor-[inherit] rounded-[4px] p-0 text-left hover:bg-transparent active:scale-100',
+							'hover:text-foreground-name focus-visible:ring-offset-0',
 						)}
-					</span>
-				)}
+						title={title}
+						aria-label={`View ${title}`}
+						data-testid="catalog-row-open-preview"
+						onClick={(e) => {
+							e.stopPropagation();
+							if (consumeDragClick?.()) return;
+							onOpen(entity);
+						}}
+					>
+						<Highlight text={title} query={flat ? query : undefined} />
+					</Button>
+					{flat && (vendorLabel || versionLabel) && (
+						<span className="text-muted-foreground max-w-full min-w-0 shrink truncate text-[12.5px]">
+							{vendorLabel && <Highlight text={vendorLabel} query={query} />}
+							{vendorLabel && versionLabel && <span aria-hidden="true"> · </span>}
+							{versionLabel && (
+								<span className="font-mono text-[11.5px]">{versionLabel}</span>
+							)}
+						</span>
+					)}
+					{stackStatus && status && (
+						<span
+							className="flex max-w-full min-w-0 items-center gap-2"
+							data-testid="catalog-row-status-stacked"
+						>
+							{status}
+						</span>
+					)}
+				</div>
 			</div>
 			{!flat && (
 				<>
@@ -295,25 +326,34 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 				</>
 			)}
 			<span role="cell" className="flex min-w-0 items-center">
-				<RowStatus entity={entity} pending={pending} />
-				{credentials && (
-					<AppLink
-						href={ROUTE_PATHS.credentialInventory()}
-						data-nodrag=""
-						className="text-success relative z-10 inline-flex min-w-0 items-center gap-1 truncate text-xs font-bold hover:underline"
-						data-testid="catalog-row-credential-ready"
-						title={`${CREDENTIAL_READY_HINT}: ${credentials.map((c) => c.name).join(', ')}`}
-						aria-label={`Credential ready. ${CREDENTIAL_READY_HINT}. Opens the Credentials list on the Agents page.`}
-						onClick={(e) => e.stopPropagation()}
-					>
-						<KeyRound size={12} aria-hidden="true" className="shrink-0" />
-						<span className="truncate">Credential ready</span>
-					</AppLink>
-				)}
+				{!stackStatus && status}
 			</span>
 		</LedgerRow>
 	);
 });
+
+/**
+ * "Credential ready" — an existing credential already covers this entry. No
+ * stacking context of its own, so the row's hover actions (painted later,
+ * positioned) sit above it and stay clickable; while they're hidden they
+ * don't take pointer events, so the chip's link works.
+ */
+function CredentialReadyLink({ credentials }: { credentials: Credential[] }) {
+	return (
+		<AppLink
+			href={ROUTE_PATHS.credentialInventory()}
+			data-nodrag=""
+			className="text-success inline-flex min-w-0 items-center gap-1 truncate text-xs font-bold hover:underline"
+			data-testid="catalog-row-credential-ready"
+			title={`${CREDENTIAL_READY_HINT}: ${credentials.map((c) => c.name).join(', ')}`}
+			aria-label={`Credential ready. ${CREDENTIAL_READY_HINT}. Opens the Credentials list on the Agents page.`}
+			onClick={(e) => e.stopPropagation()}
+		>
+			<KeyRound size={12} aria-hidden="true" className="shrink-0" />
+			<span className="truncate">Credential ready</span>
+		</AppLink>
+	);
+}
 
 /** Vendor header (2–5 APIs, or an expanded big vendor — then it collapses back). */
 export function CatalogVendorRow({
