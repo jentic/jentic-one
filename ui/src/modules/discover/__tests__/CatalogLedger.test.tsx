@@ -340,6 +340,34 @@ describe('CatalogLedger', () => {
 		expect(g).toHaveAttribute('aria-current', 'true');
 	});
 
+	it('the rail is one tab stop with arrow keys, 24px targets, and a jump lands focus on the heading', async () => {
+		const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+		onTestFinished(() => scrollTo.mockRestore());
+		const user = userEvent.setup();
+		renderWithProviders(<Harness />);
+		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const buttons = within(rail).getAllByRole('button');
+		// One tab stop for the whole rail.
+		expect(buttons.filter((b) => b.tabIndex === 0)).toHaveLength(1);
+		for (const b of buttons) {
+			const r = b.getBoundingClientRect();
+			expect(r.width).toBeGreaterThanOrEqual(24);
+			expect(r.height).toBeGreaterThanOrEqual(24);
+		}
+		const first = buttons.find((b) => b.tabIndex === 0)!;
+		first.focus();
+		await user.keyboard('{ArrowDown}');
+		expect(document.activeElement).toBe(buttons[buttons.indexOf(first) + 1]);
+		await user.keyboard('{End}');
+		expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+		// Tab leaves the rail in one step.
+		expect(buttons.filter((b) => b.tabIndex === 0)).toEqual([buttons[buttons.length - 1]]);
+
+		// A jump moves focus to the letter's heading.
+		await user.click(within(rail).getByRole('button', { name: /^B — / }));
+		expect(document.activeElement).toBe(document.getElementById('catalog-letter-B'));
+	});
+
 	it('drags a row onto the workspace panel to add it', async () => {
 		const onImport = vi.fn();
 		renderWithProviders(<Harness withDrag onImport={onImport} />);

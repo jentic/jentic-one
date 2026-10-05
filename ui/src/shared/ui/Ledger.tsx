@@ -90,7 +90,16 @@ export const LedgerGroupHeading = forwardRef<
 	{ label: ReactNode; detail?: ReactNode; className?: string; id?: string }
 >(function LedgerGroupHeading({ label, detail, className, id }, ref) {
 	return (
-		<div ref={ref} role="row" id={id} className={cn('scroll-mt-[76px]', className)}>
+		<div
+			ref={ref}
+			role="row"
+			id={id}
+			className={cn(
+				// Focusable on demand (a rail jump lands focus here), ringed only for keyboard.
+				'focus-visible:ring-ring scroll-mt-[76px] rounded-md focus:outline-none focus-visible:ring-2',
+				className,
+			)}
+		>
 			<div
 				role="cell"
 				className="font-heading text-foreground-group flex h-[34px] items-end px-2.5 pb-1.5 text-[17px] font-light tracking-[-0.01em]"

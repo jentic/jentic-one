@@ -444,8 +444,13 @@ export function CatalogLedger({
 		};
 	}, [model]);
 
+	/**
+	 * Scroll a letter's heading under the toolbar. A rail jump (`focus`) also
+	 * moves focus to that heading, so keyboard and screen-reader users land
+	 * on the list instead of staying on the rail.
+	 */
 	const scrollToLetter = useCallback(
-		(letter: RailLetter) => {
+		(letter: RailLetter, { focus = false }: { focus?: boolean } = {}) => {
 			const entry = model.rail.find((r) => r.letter === letter);
 			const el = entry?.anchorKey ? headingRefs.current.get(entry.anchorKey) : undefined;
 			if (!el) return false;
@@ -465,6 +470,10 @@ export function CatalogLedger({
 				behavior: reduce ? 'auto' : 'smooth',
 			});
 			setCurrentLetter(letter);
+			if (focus) {
+				el.tabIndex = -1;
+				el.focus({ preventScroll: true });
+			}
 			return true;
 		},
 		[model],
@@ -483,12 +492,12 @@ export function CatalogLedger({
 		}
 		setSeekLetter(null);
 		if (status === 'ready') {
-			scrollToLetter(seekLetter);
+			scrollToLetter(seekLetter, { focus: true });
 			return;
 		}
 		const after = model.rail.slice(model.rail.findIndex((r) => r.letter === seekLetter) + 1);
 		const next = after.find((r) => r.anchorKey);
-		if (next) scrollToLetter(next.letter);
+		if (next) scrollToLetter(next.letter, { focus: true });
 	}, [seekLetter, model, scrollToLetter, hasNextPage, isFetchingNextPage, onLoadMore]);
 
 	// A jump: once its range's first page is in, land on the letter — or, if
@@ -501,7 +510,7 @@ export function CatalogLedger({
 			setSeekLetter(jumpLetter);
 			return;
 		}
-		if (scrollToLetter(jumpLetter)) {
+		if (scrollToLetter(jumpLetter, { focus: true })) {
 			setJumpLetter(null);
 			return;
 		}
@@ -511,7 +520,7 @@ export function CatalogLedger({
 		const next = after.find((r) => r.anchorKey);
 		if (next) {
 			setJumpLetter(null);
-			scrollToLetter(next.letter);
+			scrollToLetter(next.letter, { focus: true });
 		} else if (jump.hasNextPage) {
 			jump.onLoadMore();
 		} else {
@@ -722,7 +731,7 @@ export function CatalogLedger({
 				busy={seekLetter ?? jumpLetter}
 				onJump={(key) => {
 					const letter = key as RailLetter;
-					if (scrollToLetter(letter)) return;
+					if (scrollToLetter(letter, { focus: true })) return;
 					setSeekLetter(null);
 					if (onJump) {
 						onJump(letter);
