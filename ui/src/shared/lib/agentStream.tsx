@@ -40,8 +40,10 @@ const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
   adapts the wire `EventResponse` into the rail's UI-shaped `StreamEvent` and
   exposes the same provider/hook surface the rail components already consume.
 
-  The SSE subscription is ORG-WIDE (toasts and the query-cache bridge below
-  must see every event). The Activity rail can narrow to one actor: `setScope`
+  The SSE subscription is unfiltered by actor (toasts and the query-cache
+  bridge below must see every event the caller can see; the server limits it
+  to the caller's own events and their agents', or the whole org for
+  `org:admin`). The Activity rail can narrow to one actor: `setScope`
   fetches that actor's backlog via `GET /events?actor_id=&actor_type=` and the
   rail filters the shared list client-side with `matchesActivityScope` — so one
   connection serves every consumer. Event types the backend can emit today:
@@ -691,7 +693,7 @@ export function AgentStreamProvider({
 		};
 	}, [upsert]);
 
-	// 1b. Scoped backlog. The shared list only holds the newest org-wide page,
+	// 1b. Scoped backlog. The shared list only holds the newest unfiltered page,
 	// which may contain nothing from a quiet agent — seed that actor's history.
 	useEffect(() => {
 		setScopedCursor(null);
@@ -710,7 +712,7 @@ export function AgentStreamProvider({
 				setScopedCursor(page.next_cursor ?? null);
 				setScopedHasMore(page.has_more);
 			} catch {
-				// Non-fatal: the lens still filters whatever the org feed holds.
+				// Non-fatal: the lens still filters whatever the shared feed holds.
 			}
 		})();
 		return () => {

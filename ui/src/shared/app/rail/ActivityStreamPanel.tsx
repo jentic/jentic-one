@@ -3,8 +3,9 @@
  * page that hides the docked rail (Monitor's side panel). It IS the rail's feed (`RailFeed`, same rows, grouping and inline
  * verbs), so the stream reads the same wherever it's docked.
  *
- * Reads the shell's one live stream (`useAgentStreamOptional`) org-wide — the
- * rail's per-agent lens is a rail concern. The built-in All / Failures control
+ * Reads the shell's one live stream (`useAgentStreamOptional`) unfiltered — the
+ * server already limits it to events the caller can see, and the rail's
+ * per-agent lens is a rail concern. The built-in All / Failures control
  * is the same shared Failures only choice the rail shows; hosts add their own
  * header actions and footer.
  *
