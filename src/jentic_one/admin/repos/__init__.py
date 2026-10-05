@@ -9,6 +9,7 @@ from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.admin.repos.audit_repo import AuditRepository
 from jentic_one.admin.repos.authorization_code_repo import AuthorizationCodeRepository
 from jentic_one.admin.repos.event_repo import EventRepository
+from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
 from jentic_one.admin.repos.execution_record_repo import ExecutionRecordRepository
 from jentic_one.admin.repos.external_identity_repo import ExternalIdentityRepository
 from jentic_one.admin.repos.invite_token_repo import InviteTokenRepository
@@ -33,6 +34,7 @@ __all__ = [
     "AuditRepository",
     "AuthorizationCodeRepository",
     "EventRepository",
+    "ExecutionApprovalRepository",
     "ExecutionRecordRepository",
     "ExternalIdentityRepository",
     "InviteTokenRepository",

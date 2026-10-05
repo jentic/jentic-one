@@ -65,6 +65,18 @@ class EventNotFoundError(NotFoundError):
         self.event_id = event_id
 
 
+class ExecutionApprovalNotFoundError(NotFoundError):
+    """Raised when an execution approval does not exist."""
+
+    def __init__(self, approval_id: str) -> None:
+        super().__init__(f"Execution approval '{approval_id}' not found")
+        self.approval_id = approval_id
+
+
+class ExecutionApprovalAlreadyDecidedError(AdminServiceError):
+    """Raised when a decide action targets a non-pending approval."""
+
+
 class ConflictError(AdminServiceError):
     """Raised when an operation conflicts with existing state."""
 

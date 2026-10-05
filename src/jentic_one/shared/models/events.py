@@ -404,6 +404,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
+    EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),
     EventType.UNAUTHORIZED_ACCESS_ATTEMPT: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
