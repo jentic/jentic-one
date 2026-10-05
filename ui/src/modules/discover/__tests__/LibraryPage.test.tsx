@@ -529,6 +529,29 @@ describe('LibraryPage', () => {
 		expect(screen.queryByText(/job_/)).not.toBeInTheDocument();
 	});
 
+	it('names the API in the toast when an import cannot be queued', async () => {
+		worker.use(
+			http.post('/catalog/*', () =>
+				HttpResponse.json({ detail: 'Import queue is full.' }, { status: 503 }),
+			),
+		);
+		renderWithProviders(
+			<>
+				<LibraryPage />
+				<Toaster />
+			</>,
+		);
+		await screen.findByText('github.com');
+		const githubCard = screen
+			.getByRole('button', { name: 'View github.com' })
+			.closest<HTMLElement>('[role="row"]')!;
+		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
+		expect(
+			await screen.findByText('Couldn’t add github.com to your workspace'),
+		).toBeInTheDocument();
+		expect(screen.getByText('Import queue is full.')).toBeInTheDocument();
+	});
+
 	it('flips a row to In your workspace when the polled catalog reports it registered', async () => {
 		let imported = false;
 		// Catalog reads that answered `registered: true` — the poll's own signal.

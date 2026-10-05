@@ -587,11 +587,11 @@ export function useImportCatalogApi(): UseImportResult {
 		onError: (error: unknown, entity) => {
 			labelsRef.current.delete(entity.apiId);
 			toast({
-				title: 'Couldn’t add to workspace',
+				title: `Couldn’t add ${entity.summary} to your workspace`,
 				description:
-					error instanceof Error
+					error instanceof Error && error.message
 						? error.message
-						: `Couldn't add ${entity.summary} to your workspace from the public catalog.`,
+						: 'The public catalog import could not be queued.',
 				variant: 'error',
 			});
 		},
