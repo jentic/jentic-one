@@ -29,6 +29,7 @@ from jentic_one.admin.services.schemas.execution_approvals import ExecutionAppro
 from jentic_one.admin.web.app import get_exception_handlers
 from jentic_one.admin.web.deps import get_execution_approval_service
 from jentic_one.admin.web.routers import execution_approvals as ea_router
+from jentic_one.admin.web.routers.execution_approvals import _approval_response
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.web import deps as shared_deps
@@ -211,8 +212,6 @@ def test_decide_passes_reason_to_service() -> None:
 
 
 def test_approval_response_links_shape() -> None:
-    from jentic_one.admin.web.routers.execution_approvals import _approval_response
-
     request = MagicMock()
     request.base_url = "http://testserver/"
     view = _make_view()
@@ -228,8 +227,6 @@ def test_approval_response_links_shape() -> None:
     ["pending", "approved", "denied", "expired", "withdrawn"],
 )
 def test_approval_response_serializes_all_states(state: str) -> None:
-    from jentic_one.admin.web.routers.execution_approvals import _approval_response
-
     request = MagicMock()
     request.base_url = "http://testserver/"
     view = _make_view(state=state)
