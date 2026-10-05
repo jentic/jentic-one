@@ -19,7 +19,7 @@ from jentic_one.admin.repos import (
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import BindingRuleRepository, CredentialRefRepository
-from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
+from jentic_one.auth.services.agent_permission_ceiling import check_agent_permission_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
@@ -106,7 +106,7 @@ class AgentService:
         if status is ActorStatus.ACTIVE:
             if payload.permissions:
                 permissions_to_grant = list(dict.fromkeys(payload.permissions))
-                check_agent_scope_grant(permissions_to_grant, identity=identity)
+                check_agent_permission_grant(permissions_to_grant, identity=identity)
             else:
                 permissions_to_grant = list(DEFAULT_AGENT_PERMISSIONS)
         async with self._ctx.admin_db.transaction() as session:
@@ -270,7 +270,7 @@ class AgentService:
             # the approver's ceiling applies to them. Requested strings outside
             # the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).
-            check_agent_scope_grant(
+            check_agent_permission_grant(
                 [g.permission for g in existing_grants if g.permission in ALL_PERMISSIONS],
                 identity=identity,
             )
@@ -750,7 +750,7 @@ class AgentService:
         """Replace the agent's permission grants (owner or ``org:admin`` only).
 
         Newly added permissions are subject to the agent permission ceiling
-        (``check_agent_scope_grant``); permissions the agent already holds may be
+        (``check_agent_permission_grant``); permissions the agent already holds may be
         kept, so an owner can narrow a set an admin widened.
         """
         permissions = list(dict.fromkeys(permissions))
@@ -764,7 +764,7 @@ class AgentService:
                     session, agent_id, actor_type=ActorType.AGENT
                 )
             ]
-            check_agent_scope_grant(permissions, identity=identity, already_held=existing)
+            check_agent_permission_grant(permissions, identity=identity, already_held=existing)
             await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             for permission in permissions:
                 await ActorPermissionGrantRepository.grant(

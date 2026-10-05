@@ -16,7 +16,7 @@
  * per-actor permission grants (`GET/PUT .../permissions`, #615). The catalogue mirrors the
  * backend's `ALL_PERMISSIONS`. Saving rejects a malformed permission (422) and, like
  * the backend's agent permission ceiling, a *newly added* permission the catalogue marks
- * `grantable_by_caller: false` (403 `scope_not_grantable`). See
+ * `grantable_by_caller: false` (403 `permission_not_grantable`). See
  * {@link validatePermissions}.
  *
  * Registered additively in src/mocks/handlers.ts.
@@ -657,7 +657,7 @@ const DEFAULT_AGENT_PERMISSIONS_MOCK = [
 ] as const;
 
 /** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
-const NON_GRANTABLE_SCOPES = new Set(
+const NON_GRANTABLE_PERMISSIONS = new Set(
 	PERMISSION_CATALOGUE.filter((p) => !p.grantable_by_caller).map((p) => p.name),
 );
 
@@ -667,11 +667,11 @@ const NON_GRANTABLE_SCOPES = new Set(
  * - A malformed permission → 422 (the `PermissionStr` regex, via Pydantic), and more
  *   than 100 entries → 422 (`Field(max_length=100)`).
  * - A newly added permission the catalogue marks `grantable_by_caller: false` →
- *   403 `scope_not_grantable` (the agent permission ceiling in
+ *   403 `permission_not_grantable` (the agent permission ceiling in
  *   `AgentService.create` / `replace_permissions`). Permissions in `alreadyHeld` are
  *   not re-checked, so an operator may keep or drop what an admin granted.
  *
- * The backend additionally 422s (`unknown_scope`) a permission outside its
+ * The backend additionally 422s (`unknown_permission`) a permission outside its
  * catalogue; this mock's catalogue is a subset, so that check is not mirrored.
  */
 function validatePermissions(
@@ -687,12 +687,12 @@ function validatePermissions(
 		}
 	}
 	for (const s of requested) {
-		if (NON_GRANTABLE_SCOPES.has(s) && !alreadyHeld.includes(s)) {
+		if (NON_GRANTABLE_PERMISSIONS.has(s) && !alreadyHeld.includes(s)) {
 			return {
 				ok: false,
 				status: 403,
-				type: 'scope_not_grantable',
-				detail: `Scope '${s}' cannot be granted by the caller`,
+				type: 'permission_not_grantable',
+				detail: `Permission '${s}' cannot be granted by the caller`,
 			};
 		}
 	}

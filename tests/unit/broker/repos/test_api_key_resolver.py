@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog.testing
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.models import ActorType
@@ -58,6 +59,124 @@ async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: Magi
     assert identity.active is True
     assert "broker:execute" in identity.permissions
     assert "toolkit:read" in identity.permissions
+
+
+def _agent_then_grant_table_db(
+    admin_db: MagicMock,
+    *,
+    agent_row: AgentRow,
+    permission_rows_by_sql: dict[str, list[Row]],
+    raise_on: dict[str, Exception] | None = None,
+) -> list[dict[str, object]]:
+    """Drive resolve(): first call returns ``agent_row``; later grant-table
+    queries are answered (or raise) by matching a substring of the SQL text.
+
+    Returns a running log of ``{"sql", "table"}`` for each grant query so a
+    test can assert which grant table the resolver actually hit and in what
+    order.
+    """
+    raise_on = raise_on or {}
+    seen: list[dict[str, object]] = []
+    session_mock = AsyncMock()
+    call_count = 0
+
+    async def _execute(stmt: object, params: dict[str, object]) -> object:
+        nonlocal call_count
+        call_count += 1
+        result = MagicMock()
+        if call_count == 1:
+            result.one_or_none.return_value = agent_row
+            return result
+        sql = str(stmt)
+        for needle, exc in raise_on.items():
+            if needle in sql:
+                seen.append({"sql": sql, "table": needle})
+                raise exc
+        for needle, rows in permission_rows_by_sql.items():
+            if needle in sql:
+                seen.append({"sql": sql, "table": needle})
+                result.all.return_value = rows
+                return result
+        result.all.return_value = []
+        return result
+
+    def _session() -> AsyncMock:
+        ctx_mgr = AsyncMock()
+        ctx_mgr.__aenter__.return_value = session_mock
+        ctx_mgr.__aexit__.return_value = None
+        return ctx_mgr
+
+    # ``_load_permissions`` opens a fresh session per grant-table attempt, so a
+    # new context manager must be handed out on every call.
+    admin_db.session.side_effect = _session
+    session_mock.execute = _execute
+    return seen
+
+
+def _op_error(msg: str) -> OperationalError:
+    return OperationalError(msg, {}, Exception(msg))
+
+
+def _prog_error(msg: str) -> ProgrammingError:
+    return ProgrammingError(msg, {}, Exception(msg))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_table_error",
+    [
+        _op_error("no such table: actor_permission_grants"),  # sqlite
+        _prog_error('relation "actor_permission_grants" does not exist'),  # postgres
+    ],
+    ids=["sqlite-OperationalError", "postgres-ProgrammingError"],
+)
+async def test_load_permissions_falls_back_to_legacy_grant_table(
+    resolver: ApiKeyResolver, admin_db: MagicMock, missing_table_error: Exception
+) -> None:
+    """During the rolling-upgrade window after the service-account drop but
+    before the tail rename, ``actor_permission_grants`` does not exist yet.
+    The resolver must fall back to ``actor_scope_grants`` (SELECT ``scope``) so
+    key auth keeps serving — on both dialects' missing-table errors. The
+    fallback must never widen: it returns exactly the stored grants."""
+    agent_row = AgentRow(agent_id="agnt_live", status="active", owner_id="usr_owner")
+    seen = _agent_then_grant_table_db(
+        admin_db,
+        agent_row=agent_row,
+        permission_rows_by_sql={"actor_scope_grants": [Row(permission="capabilities:read")]},
+        raise_on={"actor_permission_grants": missing_table_error},
+    )
+
+    identity = await resolver.resolve("jak_rolling_upgrade")
+
+    assert identity is not None and identity.sub == "agnt_live"
+    # Exactly the stored legacy grant — no widening, no default injection.
+    assert identity.permissions == ["capabilities:read"]
+    # Order proves intent: new table first, then the legacy fallback.
+    assert [s["table"] for s in seen] == ["actor_permission_grants", "actor_scope_grants"]
+
+
+@pytest.mark.asyncio
+async def test_load_permissions_fails_closed_when_both_grant_tables_missing(
+    resolver: ApiKeyResolver, admin_db: MagicMock
+) -> None:
+    """If neither grant table can be read, the resolver yields an empty
+    permission set (fail-closed) rather than raising or elevating — the agent
+    authenticates but can do nothing until the schema settles."""
+    agent_row = AgentRow(agent_id="agnt_live", status="active", owner_id="usr_owner")
+    _agent_then_grant_table_db(
+        admin_db,
+        agent_row=agent_row,
+        permission_rows_by_sql={},
+        raise_on={
+            "actor_permission_grants": _op_error("no such table: actor_permission_grants"),
+            "actor_scope_grants": _op_error("no such table: actor_scope_grants"),
+        },
+    )
+
+    identity = await resolver.resolve("jak_both_tables_gone")
+
+    assert identity is not None and identity.sub == "agnt_live"
+    assert identity.permissions == []
 
 
 def _single_row_db(admin_db: MagicMock, row: AgentRow | None) -> list[int]:

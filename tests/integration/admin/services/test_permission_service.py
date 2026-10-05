@@ -133,7 +133,7 @@ async def test_list_catalogue_includes_org_admin_for_admin(
     assert ORG_ADMIN in names
 
 
-async def test_list_catalogue_grantable_follows_agent_scope_ceiling(
+async def test_list_catalogue_grantable_follows_agent_permission_ceiling(
     integration_context: Context, regular_user: str, admin_user: str
 ) -> None:
     """``grantable_by_caller`` mirrors what ``POST /agents`` accepts from the caller.

@@ -25,7 +25,7 @@ from jentic_one.admin.services.schemas.permissions import (
     PermissionsView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
-from jentic_one.shared.auth.agent_scope_ceiling import is_agent_scope_grantable
+from jentic_one.shared.auth.agent_permission_ceiling import is_agent_permission_grantable
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import RETIRED_PERMISSIONS
 from jentic_one.shared.context import Context
@@ -40,10 +40,10 @@ class PermissionService:
     async def list_catalogue(self, caller_user_id: str) -> list[PermissionCatalogueEntry]:
         """The permission catalogue as seen by the caller.
 
-        ``grantable_by_caller`` follows the agent scope ceiling
-        (``is_agent_scope_grantable``) — the only UI consumer is the agent
-        scope picker, and the flag must never offer a scope that
-        ``POST /agents`` / ``PUT /agents/{id}/scopes`` would reject.
+        ``grantable_by_caller`` follows the agent permission ceiling
+        (``is_agent_permission_grantable``) — the only UI consumer is the agent
+        permission picker, and the flag must never offer a permission that
+        ``POST /agents`` / ``PUT /agents/{id}/permissions`` would reject.
         """
         caller_effective = await self.get_effective_for_user(caller_user_id)
         caller_effective_set = set(caller_effective.effective)
@@ -52,7 +52,7 @@ class PermissionService:
         for perm in ALL_PERMISSIONS.values():
             if perm.name == ORG_ADMIN and ORG_ADMIN not in caller_effective_set:
                 continue
-            grantable = is_agent_scope_grantable(perm.name, caller_effective_set)
+            grantable = is_agent_permission_grantable(perm.name, caller_effective_set)
             entries.append(
                 PermissionCatalogueEntry(
                     name=perm.name,
