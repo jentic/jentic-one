@@ -18,7 +18,7 @@
  *  - catalog imports that LAND: `POST /catalog/{id}:import` still answers 202,
  *    then a few seconds later the entry flips `registered` and a registry row
  *    appears (with `catalog_api_id`), as the real async import job does — so
- *    the Library panel's "Adding…" row resolves into the API list.
+ *    the catalog row's "Adding…" resolves and the API joins the panel's list.
  */
 import { http, HttpResponse, type HttpHandler } from 'msw';
 import { CredentialType, type Credential } from '@/shared/credentials/api';

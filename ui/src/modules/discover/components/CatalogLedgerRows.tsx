@@ -200,9 +200,12 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 									href={reviewHref}
 									variant="tonal"
 									size="xs"
+									aria-label={`Review the update to ${title}`}
 									data-testid="catalog-row-review-update"
 								>
-									Review update →
+									{/* Phones keep it short, so the status beside it still fits. */}
+									Review
+									<span className={cn(stackStatus && 'hidden')}> update</span> →
 								</AppLink>
 							)}
 							{openHref && !reviewHref && (
@@ -264,7 +267,9 @@ export const CatalogApiRow = memo(function CatalogApiRow({
 				<div
 					className={cn(
 						'flex min-w-0 items-center gap-2.5',
-						stackStatus && 'flex-col items-start gap-0 pr-28',
+						// Clear of the pinned actions (a little wider beside "Review →").
+						stackStatus && 'flex-col items-start gap-0',
+						stackStatus && (reviewHref ? 'pr-32' : 'pr-28'),
 					)}
 				>
 					{/* The row's keyboard target: Tab here, Enter/Space previews. */}
