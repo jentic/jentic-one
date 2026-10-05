@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
@@ -47,6 +47,44 @@ class ExecutionApprovalRepository:
         ).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def count_pending_by_agent(session: AsyncSession, agent_id: str) -> int:
+        """Return the number of pending approval rows for the given agent."""
+        stmt = (
+            select(func.count())
+            .select_from(ExecutionApproval)
+            .where(
+                ExecutionApproval.agent_id == agent_id,
+                ExecutionApproval.state == "pending",
+            )
+        )
+        result = await session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    @staticmethod
+    async def get_pending_by_fingerprint(
+        session: AsyncSession, fingerprint: str
+    ) -> ExecutionApproval | None:
+        """Return a pending approval row with the given request fingerprint, or None."""
+        stmt = select(ExecutionApproval).where(
+            ExecutionApproval.request_fingerprint == fingerprint,
+            ExecutionApproval.state == "pending",
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_approved_by_job_id(
+        session: AsyncSession, job_id: str
+    ) -> ExecutionApproval | None:
+        """Return the approved execution_approvals row for a job, or None."""
+        stmt = select(ExecutionApproval).where(
+            ExecutionApproval.job_id == job_id,
+            ExecutionApproval.state == "approved",
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def decide(

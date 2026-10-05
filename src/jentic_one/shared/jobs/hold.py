@@ -12,6 +12,8 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import func, select
+
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.shared.models.jobs import JobKind, JobStatus
@@ -110,3 +112,39 @@ async def hold_execution(
     approval_id = str(approval.id)
 
     return job_id, approval_id
+
+
+async def count_pending_by_agent(session: AsyncSession, agent_id: str) -> int:
+    """Return the number of pending approval rows for the given agent."""
+    stmt = (
+        select(func.count())
+        .select_from(ExecutionApproval)
+        .where(
+            ExecutionApproval.agent_id == agent_id,
+            ExecutionApproval.state == "pending",
+        )
+    )
+    result = await session.execute(stmt)
+    return int(result.scalar_one() or 0)
+
+
+async def get_pending_by_fingerprint(
+    session: AsyncSession, fingerprint: str
+) -> ExecutionApproval | None:
+    """Return a pending approval row with the given request fingerprint, or None."""
+    stmt = select(ExecutionApproval).where(
+        ExecutionApproval.request_fingerprint == fingerprint,
+        ExecutionApproval.state == "pending",
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_approved_by_job_id(session: AsyncSession, job_id: str) -> ExecutionApproval | None:
+    """Return the approved execution_approvals row for a job, or None."""
+    stmt = select(ExecutionApproval).where(
+        ExecutionApproval.job_id == job_id,
+        ExecutionApproval.state == "approved",
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()

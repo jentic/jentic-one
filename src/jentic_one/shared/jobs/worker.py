@@ -28,9 +28,8 @@ logger = structlog.get_logger(__name__)
 
 _POLL_INTERVAL_SECONDS = 2.0
 _RETENTION_SWEEP_INTERVAL = 60
-# Approved-execution results are retained for this many days so pollers can
-# retrieve them after the upstream call completes. Unrelated to the approval TTL.
-_APPROVED_RESULT_RETENTION_DAYS = 7
+# Fallback approved-execution result retention when no config is supplied.
+_DEFAULT_APPROVED_RESULT_RETENTION_SECONDS = 86_400
 # Post-expiry grace before an access/refresh token row is deleted by the sweep.
 # Expired tokens never verify, but keeping them briefly aids introspection and
 # refresh-token reuse forensics.
@@ -54,11 +53,13 @@ class WorkerLoop:
         *,
         poll_interval: float = _POLL_INTERVAL_SECONDS,
         worker_config: WorkerConfig | None = None,
+        approved_result_retention_seconds: int = _DEFAULT_APPROVED_RESULT_RETENTION_SECONDS,
     ) -> None:
         self._db = db
         self._handlers = handler_registry
         self._poll_interval = poll_interval
         self._config = worker_config or WorkerConfig()
+        self._approved_result_retention_seconds = approved_result_retention_seconds
         self._running = False
         self._draining = False
         self._tick_count = 0
@@ -196,6 +197,15 @@ class WorkerLoop:
             )
             return result
 
+    async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
+        """True when a job has an approved execution_approvals row."""
+        stmt = select(ExecutionApproval).where(
+            ExecutionApproval.job_id == job_id,
+            ExecutionApproval.state == "approved",
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
     async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
         """Mark job completed and write result.
 
@@ -212,9 +222,9 @@ class WorkerLoop:
             job.status = JobStatus.COMPLETED
             job.visible_at = None
             available_until = None
-            if job.payload and job.payload.get("pre_approved"):
+            if await self._is_approved_execution(session, job_id):
                 available_until = datetime.now(UTC) + timedelta(
-                    days=_APPROVED_RESULT_RETENTION_DAYS
+                    seconds=self._approved_result_retention_seconds
                 )
             job_result = JobResult(
                 job_id=job_id,
@@ -250,11 +260,13 @@ class WorkerLoop:
         a forward-dated visibility deadline). At/over the budget it is moved to
         ``DEAD_LETTER`` (poison-message handling) instead of looping forever.
 
-        Pre-approved jobs never retry: the approval was a one-shot human decision.
+        Approved-execution jobs never retry: the approval was a one-shot human decision.
         A failure after approval moves the job directly to ``FAILED`` so the
         approval surface reflects the terminal outcome without a second attempt.
         """
-        if job.payload and job.payload.get("pre_approved"):
+        async with self._db.transaction() as check_session:
+            is_approved = await self._is_approved_execution(check_session, job.id)
+        if is_approved:
             await self._terminal_job(
                 job.id, JobStatus.FAILED, error, event_summary_prefix="Import failed"
             )

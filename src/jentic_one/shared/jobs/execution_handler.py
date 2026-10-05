@@ -153,7 +153,7 @@ class ExecutionHandler:
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
-                    pre_approved=bool(payload.get("pre_approved")),
+                    job_id=job_id,
                 )
             )
             if not verdict.allowed:

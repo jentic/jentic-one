@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,13 +63,8 @@ class JobRepository:
         status: JobStatus | None = None,
         error: str | None = None,
         execution_id: str | None = None,
-        payload_update: dict[str, Any] | None = None,
     ) -> Job:
-        """Update a job using write-or-keep semantics; cannot clear fields to None.
-
-        ``payload_update``, when given, is shallow-merged into the existing
-        payload so callers can add flags without replacing the whole document.
-        """
+        """Update a job using write-or-keep semantics; cannot clear fields to None."""
         job = await session.get(Job, job_id)
         if job is None:
             raise JobNotFoundError(job_id)
@@ -81,10 +75,6 @@ class JobRepository:
             job.error = error
         if execution_id is not None:
             job.execution_id = execution_id
-        if payload_update is not None:
-            current = dict(job.payload) if job.payload else {}
-            current.update(payload_update)
-            job.payload = current
 
         await session.flush()
         return job

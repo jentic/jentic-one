@@ -33,8 +33,10 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
+    RuleVerdict,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
@@ -68,6 +70,25 @@ def _insufficient_scope_problem(instance: str) -> dict[str, object]:
     }
 
 
+def _approval_denied_problem(instance: str) -> dict[str, object]:
+    """Returned when a require-approval rule fires at run time with no approved row.
+
+    A job that reaches the worker with a require-approval verdict and no
+    approved execution_approvals row was never properly released — fail it
+    with the same permission-denied shape as a sync denial.
+    """
+    return {
+        "type": "action_denied",
+        "title": "Forbidden",
+        "status": 403,
+        "detail": (
+            "The execution was not approved. Approve or deny it via the "
+            "execution approvals surface before the worker claims it."
+        ),
+        "instance": instance,
+    }
+
+
 def _broker_path(upstream_url: str) -> str:
     """The broker request path a sync call to ``upstream_url`` would have had.
 
@@ -93,6 +114,7 @@ class QueuedExecutionAuthorizer:
         self._actor_status = actor_status
         self._credential_deriver = credential_deriver
         self._agent_rule_evaluator = agent_rule_evaluator
+        self._admin_db = ctx.admin_db
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         """Allow (with the current injection boundary) or deny (with a problem body)."""
@@ -137,22 +159,6 @@ class QueuedExecutionAuthorizer:
                 ),
             )
 
-        if request.pre_approved:
-            # A human reviewer already approved this execution via the approval
-            # surface. Skip rule re-evaluation and replay the enqueue-time
-            # credential so the same injection boundary is used.
-            logger.info(
-                "queued_execution_pre_approved",
-                actor_id=request.actor_id,
-                actor_type=request.actor_type,
-            )
-            cred = request.credential_id
-            return QueuedExecutionVerdict(
-                allowed=True,
-                allowed_credential_ids=(cred,) if cred else (),
-                credential_id=cred,
-            )
-
         identity = Identity(
             sub=request.actor_id,
             actor_type=ActorType(request.actor_type),
@@ -187,6 +193,39 @@ class QueuedExecutionAuthorizer:
                 actor_type=request.actor_type,
             )
             return QueuedExecutionVerdict(allowed=False, problem=broker_error_problem(exc))
+
+        if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
+            # Rule still requires approval at run time. The job is only
+            # allowed to proceed if a human reviewer approved it — look up
+            # the execution_approvals row linked to this job.
+            approved = False
+            if request.job_id:
+                async with self._admin_db.transaction() as session:
+                    row = await get_approved_by_job_id(session, request.job_id)
+                    approved = row is not None
+            if not approved:
+                logger.info(
+                    "queued_execution_denied",
+                    reason="require_approval_no_approved_row",
+                    job_id=request.job_id,
+                    actor_id=request.actor_id,
+                    actor_type=request.actor_type,
+                )
+                return QueuedExecutionVerdict(
+                    allowed=False, problem=_approval_denied_problem(instance)
+                )
+            logger.info(
+                "queued_execution_approved_by_row",
+                job_id=request.job_id,
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            cred = authorization.selected_credential.credential_id
+            return QueuedExecutionVerdict(
+                allowed=True,
+                allowed_credential_ids=tuple(authorization.allowed_credential_ids),
+                credential_id=cred,
+            )
 
         return QueuedExecutionVerdict(
             allowed=True,

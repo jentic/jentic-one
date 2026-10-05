@@ -105,7 +105,12 @@ from jentic_one.shared.events import (
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
-from jentic_one.shared.jobs.hold import hold_execution
+from jentic_one.shared.jobs.hold import (
+    compute_execution_fingerprint,
+    count_pending_by_agent,
+    get_pending_by_fingerprint,
+    hold_execution,
+)
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
@@ -909,6 +914,74 @@ async def _handle_hold(
     emits ``execution.approval_requested``, and returns a 202 with the held
     envelope so the agent can relay the approval context to the operator.
     """
+    ea_cfg = ctx.config.broker.execution_approvals
+    ttl = ea_cfg.ttl_seconds
+    max_pending = ea_cfg.max_pending_per_agent
+
+    # Pre-check fingerprint and cap *before* reading the body — both are fast
+    # DB reads and let us short-circuit without buffering the payload.
+    fp = compute_execution_fingerprint(
+        agent_id=identity.sub,
+        credential_id=authorization.selected_credential.credential_id,
+        method=ctx_req.method,
+        path=urlparse(ctx_req.upstream_url).path,
+    )
+    async with ctx.admin_db.transaction() as pre_session:
+        existing = await get_pending_by_fingerprint(pre_session, fp)
+        if existing is not None:
+            # Identical retry — return the existing hold instead of creating a new one.
+            existing_job_id = str(existing.job_id)
+            existing_approval_id = str(existing.id)
+            metadata = _metadata_headers(ctx_req, ctx_req.trace_id)
+            base = ctx.config.broker.jobs_api_base_url
+            job_url = f"{base}/jobs/{existing_job_id}" if base else f"/jobs/{existing_job_id}"
+            admin_base = base.rstrip("/") if base else None
+            review_url: str | None = (
+                f"{admin_base}/app/approvals/{existing_approval_id}" if admin_base else None
+            )
+            directive_params_dup: dict[str, str] = {
+                "job_id": existing_job_id,
+                "approval_id": existing_approval_id,
+            }
+            if review_url:
+                directive_params_dup["review_url"] = review_url
+            resp_dup = HeldExecutionResponse(
+                job_id=existing_job_id,
+                approval_id=existing_approval_id,
+                review_url=review_url,
+                links=AsyncQueuedResponseLinks(self_link=job_url),
+                agent_directive={
+                    "instruction": (
+                        "This execution is held pending human approval. "
+                        "Relay the approval context (job_id and approval_id) to the operator "
+                        "so they can approve or deny it in the admin panel. "
+                        "Poll get_execution_result with the job_id to check the outcome — "
+                        "do not re-send the execute call."
+                    ),
+                    "parameters": directive_params_dup,
+                },
+            )
+            return Response(
+                content=resp_dup.model_dump_json(by_alias=True),
+                status_code=202,
+                media_type="application/json",
+                headers={**metadata, "Preference-Applied": "respond-async"},
+            )
+
+        pending_count = await count_pending_by_agent(pre_session, identity.sub)
+    if pending_count >= max_pending:
+        raise ProblemDetailException(
+            status_code=429,
+            type="approval_cap_exceeded",
+            title="Too Many Pending Approvals",
+            detail=(
+                f"Agent has {pending_count} pending approval(s) — the cap is "
+                f"{max_pending}. Wait for existing approvals to be decided before "
+                "submitting more operations that require approval."
+            ),
+            instance=str(request.url),
+        )
+
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
 
@@ -921,7 +994,6 @@ async def _handle_hold(
         body=body,
     )
 
-    ttl = ctx.config.broker.execution_approvals.ttl_seconds
     async with ctx.admin_db.transaction() as session:
         job_id, approval_id = await hold_execution(
             session,
@@ -967,13 +1039,16 @@ async def _handle_hold(
     base = ctx.config.broker.jobs_api_base_url
     job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
 
-    review_url: str | None = None
+    admin_base_main = base.rstrip("/") if base else None
+    review_url_main: str | None = (
+        f"{admin_base_main}/app/approvals/{approval_id}" if admin_base_main else None
+    )
     directive_params: dict[str, str] = {
         "job_id": job_id,
         "approval_id": approval_id,
     }
-    if review_url is not None:
-        directive_params["review_url"] = review_url
+    if review_url_main is not None:
+        directive_params["review_url"] = review_url_main
     instruction = (
         "This execution is held pending human approval. "
         "Relay the approval context (job_id and approval_id) to the operator "
@@ -986,7 +1061,7 @@ async def _handle_hold(
     resp_body = HeldExecutionResponse(
         job_id=job_id,
         approval_id=approval_id,
-        review_url=review_url,
+        review_url=review_url_main,
         links=AsyncQueuedResponseLinks(self_link=job_url),
         agent_directive=agent_directive,
     )

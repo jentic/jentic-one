@@ -293,6 +293,7 @@ async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
         api_version="1.0.0",
         operation_id="listThings",
         credential_id="cred_a",
+        job_id="job_req",
     )
 
 

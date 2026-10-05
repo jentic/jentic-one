@@ -260,6 +260,8 @@ Broker surface configuration.
 | `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
 | `broker.execution_approvals.ttl_seconds` | integer | `86400` | `JENTIC__BROKER__EXECUTION_APPROVALS__TTL_SECONDS` | Seconds a pending approval row lives before the expiry sweep marks it `expired` and fails the held job. Defaults to 24 hours. |
+| `broker.execution_approvals.max_pending_per_agent` | integer | `10` | `JENTIC__BROKER__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT` | Maximum number of pending approval rows allowed per agent at any time. An execute call that would exceed this cap is denied with a distinct problem type rather than creating another pending hold. |
+| `broker.execution_approvals.result_retention_seconds` | integer | `86400` | `JENTIC__BROKER__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS` | Seconds the job_results row for an approved execution is retained after the job completes. Defaults to 24 hours, letting the agent poll the result long after the worker finishes. |
 
 ## `control`
 

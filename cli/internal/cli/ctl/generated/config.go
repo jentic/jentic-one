@@ -1122,6 +1122,16 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 // job with status “held“ and creates an “execution_approvals“ row rather than
 // executing immediately. The reviewer then approves or denies via the admin API.
 type ExecutionApprovalsConfig struct {
+	// Maximum number of pending approval rows allowed per agent at any time. An
+	// execute call that would exceed this cap is denied with a distinct problem type
+	// rather than creating another pending hold.
+	MaxPendingPerAgent int `json:"max_pending_per_agent,omitempty,omitzero" yaml:"max_pending_per_agent,omitempty" mapstructure:"max_pending_per_agent,omitempty"`
+
+	// Seconds the job_results row for an approved execution is retained after the job
+	// completes. Defaults to 24 hours, letting the agent poll the result long after
+	// the worker finishes.
+	ResultRetentionSeconds int `json:"result_retention_seconds,omitempty,omitzero" yaml:"result_retention_seconds,omitempty" mapstructure:"result_retention_seconds,omitempty"`
+
 	// Seconds a pending approval row lives before the expiry sweep marks it
 	// ``expired`` and fails the held job. Defaults to 24 hours.
 	TtlSeconds int `json:"ttl_seconds,omitempty,omitzero" yaml:"ttl_seconds,omitempty" mapstructure:"ttl_seconds,omitempty"`
@@ -1137,6 +1147,12 @@ func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
 	var plain Plain
 	if err := json.Unmarshal(value, &plain); err != nil {
 		return err
+	}
+	if v, ok := raw["max_pending_per_agent"]; !ok || v == nil {
+		plain.MaxPendingPerAgent = 10
+	}
+	if v, ok := raw["result_retention_seconds"]; !ok || v == nil {
+		plain.ResultRetentionSeconds = 86400
 	}
 	if v, ok := raw["ttl_seconds"]; !ok || v == nil {
 		plain.TtlSeconds = 86400

@@ -780,6 +780,18 @@
     "ExecutionApprovalsConfig": {
       "description": "Controls the hold-for-approval path on the broker.\n\nWhen a permission rule has ``effect=\"require-approval\"`` the broker parks the\njob with status ``held`` and creates an ``execution_approvals`` row rather than\nexecuting immediately. The reviewer then approves or denies via the admin API.",
       "properties": {
+        "max_pending_per_agent": {
+          "default": 10,
+          "description": "Maximum number of pending approval rows allowed per agent at any time. An execute call that would exceed this cap is denied with a distinct problem type rather than creating another pending hold.",
+          "title": "Max Pending Per Agent",
+          "type": "integer"
+        },
+        "result_retention_seconds": {
+          "default": 86400,
+          "description": "Seconds the job_results row for an approved execution is retained after the job completes. Defaults to 24 hours, letting the agent poll the result long after the worker finishes.",
+          "title": "Result Retention Seconds",
+          "type": "integer"
+        },
         "ttl_seconds": {
           "default": 86400,
           "description": "Seconds a pending approval row lives before the expiry sweep marks it ``expired`` and fails the held job. Defaults to 24 hours.",

@@ -196,7 +196,12 @@ def _start_worker(
     if not handler_registry.kinds:
         return None
 
-    worker = WorkerLoop(ctx.admin_db, handler_registry, worker_config=ctx.config.worker)
+    worker = WorkerLoop(
+        ctx.admin_db,
+        handler_registry,
+        worker_config=ctx.config.worker,
+        approved_result_retention_seconds=ctx.config.broker.execution_approvals.result_retention_seconds,
+    )
     task = asyncio.create_task(worker.run())
     _logger.info("worker_loop_task_started")
     return worker, task

@@ -1392,6 +1392,22 @@ class ExecutionApprovalsConfig(BaseModel):
             "``expired`` and fails the held job. Defaults to 24 hours."
         ),
     )
+    max_pending_per_agent: int = Field(
+        default=10,
+        description=(
+            "Maximum number of pending approval rows allowed per agent at any time. "
+            "An execute call that would exceed this cap is denied with a distinct "
+            "problem type rather than creating another pending hold."
+        ),
+    )
+    result_retention_seconds: int = Field(
+        default=86_400,
+        description=(
+            "Seconds the job_results row for an approved execution is retained after "
+            "the job completes. Defaults to 24 hours, letting the agent poll the "
+            "result long after the worker finishes."
+        ),
+    )
 
 
 class IdempotencyConfig(BaseModel):
