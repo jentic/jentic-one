@@ -28,7 +28,6 @@ function api(apiId: string, extra: Partial<DiscoveryEntity> = {}): DiscoveryEnti
 	};
 }
 
-const NO_TOTALS = { vendorTotals: {}, letterTotals: {} };
 const kinds = (items: LedgerItem[]) =>
 	items.map((i) =>
 		i.kind === 'group'
@@ -69,7 +68,6 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: true,
 			hasNextPage: false,
-			...NO_TOTALS,
 		});
 		expect(model.mode).toBe('flat');
 		expect(model.rail).toEqual([]);
@@ -90,7 +88,6 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: false,
 			hasNextPage: false,
-			...NO_TOTALS,
 		});
 		expect(kinds(model.items)).toEqual([
 			'group:In your workspace',
@@ -111,7 +108,6 @@ describe('catalogGroups', () => {
 			searching: false,
 			hasNextPage: true,
 			workspaceEntities: [api('zoom.us', { registered: true })],
-			...NO_TOTALS,
 		});
 		expect(kinds(model.items).slice(0, 2)).toEqual(['group:In your workspace', 'api:zoom.us']);
 	});
@@ -121,7 +117,6 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: false,
 			hasNextPage: false,
-			...NO_TOTALS,
 		});
 		expect(kinds(model.items)).toEqual([
 			'group:0–9 & symbols',
@@ -141,7 +136,6 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: false,
 			hasNextPage: false,
-			...NO_TOTALS,
 		});
 		expect(kinds(model.items)).toEqual(['group:G', 'vendor-summary:googleapis.com']);
 		const summary = model.items[1];
@@ -158,7 +152,6 @@ describe('catalogGroups', () => {
 			searching: false,
 			hasNextPage: false,
 			expandedVendors: new Set(['vendor:googleapis.com']),
-			...NO_TOTALS,
 		});
 		expect(model.items[1]).toMatchObject({ kind: 'vendor', collapsible: true });
 		expect(model.items.filter((i) => i.kind === 'api' && i.child)).toHaveLength(6);
@@ -169,7 +162,6 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: false,
 			hasNextPage: true,
-			...NO_TOTALS,
 		});
 		// zoom.us is at the frontier: its shape isn't settled, so it waits.
 		expect(kinds(model.items)).toEqual(['group:A', 'api:abc.com']);
@@ -180,37 +172,11 @@ describe('catalogGroups', () => {
 		const model = buildCatalogLedger(rows, {
 			searching: false,
 			hasNextPage: true,
-			...NO_TOTALS,
 		});
 		const summary = model.items.find((i) => i.kind === 'vendor-summary');
 		expect(
 			summary && summary.kind === 'vendor-summary' && formatVendorCount(summary.total),
 		).toBe('6+ APIs');
-	});
-
-	it('uses a known vendor total so a vendor can collapse before all its APIs load', () => {
-		const rows = ['gmail', 'drive'].map((n) => api(`googleapis.com/${n}`));
-		const model = buildCatalogLedger(rows, {
-			searching: false,
-			hasNextPage: true,
-			vendorTotals: { 'googleapis.com': 9 },
-			letterTotals: {},
-		});
-		const summary = model.items.find((i) => i.kind === 'vendor-summary');
-		expect(summary).toMatchObject({ kind: 'vendor-summary', more: 7 });
-	});
-
-	it('ignores a stale placeholder total once the vendor has fully loaded', () => {
-		const rows = [api('1password.com/events'), api('abc.com')];
-		const model = buildCatalogLedger(rows, {
-			searching: false,
-			hasNextPage: false,
-			vendorTotals: { '1password.com': 2 },
-			letterTotals: {},
-		});
-		// One loaded API → a plain row, not "2 APIs" with a single child.
-		expect(kinds(model.items)).toContain('api:1password.com/events');
-		expect(model.items.some((i) => i.kind === 'vendor')).toBe(false);
 	});
 
 	it('builds the A–Z rail by vendor, with reachable letters and tooltips', () => {
@@ -220,12 +186,7 @@ describe('catalogGroups', () => {
 			api('azure.com/storage'),
 			api('box.com'),
 		];
-		const model = buildCatalogLedger(rows, {
-			searching: false,
-			hasNextPage: false,
-			vendorTotals: {},
-			letterTotals: {},
-		});
+		const model = buildCatalogLedger(rows, { searching: false, hasNextPage: false });
 		const a = model.rail.find((r) => r.letter === 'A')!;
 		expect(model.rail[model.rail.length - 1].letter).toBe('#');
 		expect(a.vendors).toEqual(['abc.com', 'azure.com']);
@@ -236,17 +197,31 @@ describe('catalogGroups', () => {
 		expect(railLetterLabel(q, false)).toBe('Q — no vendors');
 	});
 
-	it('offers an unloaded letter while paging when the catalog has vendors there', () => {
-		const model = buildCatalogLedger([api('abc.com')], {
+	it('offers an unloaded letter while paging, labelled from loaded rows only', () => {
+		// cat.io sits at the frontier with 6 loaded APIs (a summary row, still growing).
+		const cats = ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => api(`cat.io/${n}`));
+		const model = buildCatalogLedger([api('abc.com'), api('acme.com'), ...cats], {
 			searching: false,
 			hasNextPage: true,
-			vendorTotals: {},
-			letterTotals: { Z: 33 },
 		});
+		// Z hasn't arrived: offered (vendors may still come), with no made-up count.
 		const z = model.rail.find((r) => r.letter === 'Z')!;
+		expect(z.settled).toBe(false);
 		expect(railLetterReachable(z, true)).toBe(true);
-		expect(railLetterLabel(z, true)).toBe('Z — 33 vendors (not loaded yet)');
+		expect(railLetterLabel(z, true)).toBe('Z — not loaded yet');
 		expect(railLetterReachable(z, false)).toBe(false);
+		// A is behind the frontier (C): settled, its count is exact.
+		const a = model.rail.find((r) => r.letter === 'A')!;
+		expect(a.settled).toBe(true);
+		expect(railLetterLabel(a, true)).toBe('A — 2 vendors · abc.com … acme.com');
+		// B was passed with nothing under it: settled and empty, not offered.
+		const b = model.rail.find((r) => r.letter === 'B')!;
+		expect(railLetterReachable(b, true)).toBe(false);
+		expect(railLetterLabel(b, true)).toBe('B — no vendors');
+		// The frontier letter may continue: a floor.
+		const c = model.rail.find((r) => r.letter === 'C')!;
+		expect(c.settled).toBe(false);
+		expect(railLetterLabel(c, true)).toBe('C — 1+ vendors so far · cat.io');
 	});
 
 	describe('paged loading is append-only', () => {
@@ -297,7 +272,6 @@ describe('catalogGroups', () => {
 					buildCatalogLedger(loaded, {
 						searching: false,
 						hasNextPage: n < rows.length,
-						...NO_TOTALS,
 					}),
 				);
 			}
@@ -343,14 +317,12 @@ describe('catalogGroups', () => {
 			const page1 = buildCatalogLedger(rows.slice(0, 8), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			expect(kinds(page1.items)).toEqual(['group:A', 'api:abc.com']);
 			// Once the lowercase run passes "eventbrite", it lands under E.
 			const pastE = buildCatalogLedger(rows.slice(0, 21), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			const e = kinds(pastE.items);
 			// (fox.dev is the frontier vendor, still held.)
@@ -365,13 +337,11 @@ describe('catalogGroups', () => {
 			const partial = buildCatalogLedger(rows.slice(0, 24), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			expect(partial.items.some((i) => i.key === 'letter:#')).toBe(false);
 			const full = buildCatalogLedger(rows, {
 				searching: false,
 				hasNextPage: false,
-				...NO_TOTALS,
 			});
 			const k = kinds(full.items);
 			expect(k.slice(k.indexOf('group:0–9 & symbols'))).toEqual([
@@ -390,13 +360,11 @@ describe('catalogGroups', () => {
 			const before = buildCatalogLedger(rows.slice(0, 8), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			expect(before.items.some((i) => 'vendor' in i && i.vendor === 'acme.com')).toBe(false);
 			const after = buildCatalogLedger(rows.slice(0, 11), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			// (box.com is now the frontier vendor, so it waits for the next page.)
 			expect(kinds(after.items)).toEqual([
@@ -416,7 +384,6 @@ describe('catalogGroups', () => {
 				buildCatalogLedger(rows.slice(0, n), {
 					searching: false,
 					hasNextPage: true,
-					...NO_TOTALS,
 				}).items.find((i) => i.kind === 'vendor-summary');
 			// cat.com reaches 6 APIs at row 17, 7 at row 18.
 			expect(at(17)).toMatchObject({
@@ -437,7 +404,6 @@ describe('catalogGroups', () => {
 			const m = buildCatalogLedger(rows.slice(0, 12), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			expect(seekStatus(m, 'A', true)).toBe('ready');
 			expect(seekStatus(m, 'M', true)).toBe('load');
@@ -445,7 +411,6 @@ describe('catalogGroups', () => {
 			const late = buildCatalogLedger(rows.slice(0, 24), {
 				searching: false,
 				hasNextPage: true,
-				...NO_TOTALS,
 			});
 			// The feed is at Z: K has nothing, so the seek stops.
 			expect(seekStatus(late, 'K', true)).toBe('passed');
@@ -469,7 +434,7 @@ describe('catalogGroups', () => {
 			api('acme.com'),
 			api('apex.io'),
 		];
-		const opts = { searching: false, hasNextPage: true, ...NO_TOTALS };
+		const opts = { searching: false, hasNextPage: true };
 
 		it('starts a jump right after the letter (digits / templated hosts for #)', () => {
 			expect(jumpStartKey('Y')).toBe('y');

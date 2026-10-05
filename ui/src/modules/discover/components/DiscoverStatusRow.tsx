@@ -1,7 +1,7 @@
 /**
  * DiscoverStatusRow — whole-manifest counts + freshness for the Library header,
- * as one `CountLine`: "6,345 APIs in the catalog from 4,870 vendors · 3 in
- * your workspace · 1 update available · updated 2m ago".
+ * as one `CountLine`: "6,345 APIs in the catalog from 1,200+ vendors so far · 3
+ * in your workspace · 1 update available · updated 2m ago".
  *
  * Reads `catalog_total` / `registered_count` / `outdated_count` /
  * `manifest_age_seconds` off the catalog response. These describe the WHOLE
@@ -9,12 +9,12 @@
  * paging, so the row doesn't flicker as the user scrolls.
  * `manifest_age_seconds === null` means the catalog has never been fetched / has
  * no snapshot yet. The "N update(s) available" segment renders only when
- * `outdated_count > 0`. The vendor total has no backend source yet — it comes
- * from the isolated placeholder module.
+ * `outdated_count > 0`. The catalog response carries no vendor total, so the
+ * vendor figure counts the vendors LOADED so far — a floor (`N+ … so far`)
+ * until the whole catalog has paged in, and omitted when nothing is loaded.
  */
 import { ArrowUpCircle } from 'lucide-react';
 import { CountLine, Skeleton } from '@/shared/ui';
-import { PLACEHOLDER_VENDOR_TOTAL } from '@/modules/discover/lib/catalogPlaceholders';
 
 interface DiscoverStatusRowProps {
 	catalogTotal: number;
@@ -22,6 +22,10 @@ interface DiscoverStatusRowProps {
 	outdatedCount: number;
 	manifestAgeSeconds: number | null;
 	loading: boolean;
+	/** Distinct vendors among the loaded catalog rows (0 = omit the figure). */
+	vendorsLoaded?: number;
+	/** Every catalog page is loaded, so `vendorsLoaded` is the whole count. */
+	vendorsComplete?: boolean;
 }
 
 function formatAge(seconds: number | null): string {
@@ -41,11 +45,15 @@ export function DiscoverStatusRow({
 	outdatedCount,
 	manifestAgeSeconds,
 	loading,
+	vendorsLoaded = 0,
+	vendorsComplete = false,
 }: DiscoverStatusRowProps) {
 	if (loading) {
 		return <Skeleton className="h-8 w-96 max-w-full" data-testid="discover-status-loading" />;
 	}
-	const vendorTotal = PLACEHOLDER_VENDOR_TOTAL;
+	const vendorText = vendorsComplete
+		? `${vendorsLoaded.toLocaleString()} vendor${vendorsLoaded === 1 ? '' : 's'}`
+		: `${vendorsLoaded.toLocaleString()}+ vendors`;
 
 	return (
 		<CountLine
@@ -54,13 +62,11 @@ export function DiscoverStatusRow({
 			label={
 				<>
 					APIs in the catalog
-					{vendorTotal > 0 && (
+					{vendorsLoaded > 0 && (
 						<>
 							{' '}
-							from{' '}
-							<b data-testid="discover-status-vendors">
-								{vendorTotal.toLocaleString()} vendors
-							</b>
+							from <b data-testid="discover-status-vendors">{vendorText}</b>
+							{!vendorsComplete && ' so far'}
 						</>
 					)}
 				</>

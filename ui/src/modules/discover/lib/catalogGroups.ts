@@ -12,9 +12,9 @@
  *       · 2–5 APIs  → a vendor header row + indented child rows.
  *       · > 5 APIs  → one collapsed summary row ("vendor · A, B, C, D +N more")
  *                     that expands in place to the header + children.
- *   - **Counts are honest**: a vendor's count is what's loaded so far, shown as
- *     `N+` while it may continue on the next page — unless the placeholder
- *     module knows its total.
+ *   - **Counts are honest**: every figure is what's loaded so far, shown as
+ *     `N+` while it may continue on a later page. `GET /catalog` carries no
+ *     per-vendor or per-letter totals, so none are invented.
  *
  * Paging is APPEND-ONLY. `GET /catalog` browses in plain codepoint `api_id`
  * order (Python `sorted(key=api_id)`): digits, then the few Capitalised ids
@@ -37,10 +37,6 @@
  * set (keyed by the vendor item's `key`).
  */
 import type { DiscoveryEntity } from '@/modules/discover/api';
-import {
-	PLACEHOLDER_LETTER_VENDOR_COUNTS,
-	PLACEHOLDER_VENDOR_API_COUNTS,
-} from '@/modules/discover/lib/catalogPlaceholders';
 
 /** Vendors with more APIs than this collapse into one summary row. */
 export const VENDOR_EXPAND_LIMIT = 5;
@@ -100,8 +96,12 @@ export interface RailEntry {
 	letter: RailLetter;
 	/** Vendors under this letter among the loaded rows, in order. */
 	vendors: string[];
-	/** Vendors under this letter in the whole catalog (placeholder), if known. */
-	catalogVendors: number | null;
+	/**
+	 * Every vendor under this letter is loaded: a loaded range covers the
+	 * letter and has moved past it, so `vendors` is the whole list (possibly
+	 * empty). False while more of the letter may arrive on a later page.
+	 */
+	settled: boolean;
 	/** The letter heading's item key, when it's loaded. */
 	anchorKey: string | null;
 }
@@ -160,10 +160,6 @@ export interface BuildCatalogLedgerOptions {
 	hasNextPage: boolean;
 	/** Big vendors the user expanded in place (vendor item keys, `vendor:<domain>`). */
 	expandedVendors?: ReadonlySet<string>;
-	/** Per-vendor totals for the whole catalog; defaults to the placeholder table. */
-	vendorTotals?: Readonly<Record<string, number>>;
-	/** Per-letter vendor totals; defaults to the placeholder table. */
-	letterTotals?: Readonly<Record<string, number>>;
 	/**
 	 * Every catalog entry already in your workspace (fetched on its own), so
 	 * the top group is complete before those rows' pages have loaded.
@@ -236,8 +232,6 @@ export function buildCatalogLedger(
 		searching,
 		hasNextPage,
 		expandedVendors = new Set(),
-		vendorTotals = PLACEHOLDER_VENDOR_API_COUNTS,
-		letterTotals = PLACEHOLDER_LETTER_VENDOR_COUNTS,
 		workspaceEntities = [],
 		jump,
 	}: BuildCatalogLedgerOptions,
@@ -376,14 +370,8 @@ export function buildCatalogLedger(
 		for (const run of runs) {
 			const { vendor, apis, letter } = run;
 			const growing = run === lastRun && growingVendor === vendor.toLowerCase();
-			// A placeholder total only helps a vendor still loading (to fold a big
-			// one early, with an honest "+N more"); once its rows are all in, the
-			// loaded count is the truth — the placeholder table may be stale.
-			const known = growing ? vendorTotals[vendor] : undefined;
-			const total: VendorCount =
-				known != null && known >= apis.length && known > VENDOR_EXPAND_LIMIT
-					? { count: known, atLeast: false }
-					: { count: apis.length, atLeast: growing };
+			// What's loaded — a floor (`N+`) while the vendor may continue.
+			const total: VendorCount = { count: apis.length, atLeast: growing };
 			// Its shape (plain row / small group / summary) isn't settled until we
 			// know whether the next page continues it: hold it back for now — it
 			// then appears at the bottom already in its final shape.
@@ -459,10 +447,22 @@ export function buildCatalogLedger(
 		null,
 	);
 
+	// A letter is settled once a loaded range starts at or before it and has
+	// moved past it (or reached the end). The frontier letter itself may
+	// continue; `#` settles with the symbols, which show only at the very end.
+	const settled = (letter: RailLetter): boolean => {
+		if (letter === '#') return symbolsReady;
+		return placed.some((part) => {
+			const startLetter = part.start ? jumpLetterOf(part.start) : 'A';
+			if (startLetter === '#' || letter < startLetter) return false;
+			if (!part.hasMore) return true;
+			return part.frontier !== '' && letter < railLetterOf(part.frontier);
+		});
+	};
 	const rail: RailEntry[] = RAIL_LETTERS.map((letter) => ({
 		letter,
 		vendors: railVendors.get(letter) ?? [],
-		catalogVendors: letterTotals[letter] ?? null,
+		settled: settled(letter),
 		anchorKey: anchors.get(letter) ?? null,
 	}));
 
@@ -478,11 +478,11 @@ export function buildCatalogLedger(
 
 /**
  * Whether a rail letter can be jumped to: it has loaded vendors, or (while
- * more pages exist) the catalog says it has vendors that haven't loaded yet.
+ * more pages exist) it isn't settled yet, so vendors may still arrive under it.
  */
 export function railLetterReachable(entry: RailEntry, hasNextPage: boolean): boolean {
 	if (entry.anchorKey) return true;
-	return hasNextPage && (entry.catalogVendors ?? 0) > 0;
+	return hasNextPage && !entry.settled;
 }
 
 /**
@@ -502,20 +502,21 @@ export function seekStatus(
 	return 'load';
 }
 
-/** Tooltip/label for a rail letter: "A — 312 vendors · acme.com … azure.com". */
+/**
+ * Tooltip/label for a rail letter, from loaded rows only: "A — 12 vendors ·
+ * acme.com … azure.com" once the letter is settled, "A — 3+ vendors so far · …"
+ * while it may continue, "A — not loaded yet" before any of it has arrived.
+ */
 export function railLetterLabel(entry: RailEntry, hasNextPage: boolean): string {
 	const heading = letterHeading(entry.letter);
 	const loaded = entry.vendors.length;
-	const total = entry.catalogVendors ?? (hasNextPage && loaded > 0 ? null : loaded);
-	const countText =
-		total != null
-			? `${total.toLocaleString()} vendor${total === 1 ? '' : 's'}`
-			: `${loaded}+ vendors`;
+	const exact = entry.settled || !hasNextPage;
 	if (loaded === 0) {
-		return hasNextPage && (entry.catalogVendors ?? 0) > 0
-			? `${heading} — ${countText} (not loaded yet)`
-			: `${heading} — no vendors`;
+		return exact ? `${heading} — no vendors` : `${heading} — not loaded yet`;
 	}
+	const countText = exact
+		? `${loaded.toLocaleString()} vendor${loaded === 1 ? '' : 's'}`
+		: `${loaded.toLocaleString()}+ vendors so far`;
 	const span =
 		loaded === 1 ? entry.vendors[0] : `${entry.vendors[0]} … ${entry.vendors[loaded - 1]}`;
 	return `${heading} — ${countText} · ${span}`;
