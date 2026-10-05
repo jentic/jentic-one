@@ -272,31 +272,56 @@ export function summarizeBindingRules(rules: readonly BindingPermissionRule[]): 
 	};
 }
 
+/** One binding's rules as the tiles see them: the breakdown once read, or
+ * where the read stands. A failed read is `'error'` — never silently absent,
+ * so a tile can't read as Ready over rules it couldn't see. */
+export type BindingRulesState = BindingRuleSummary | 'loading' | 'error';
+
 /**
- * Rule summaries for one agent's bindings, keyed by credential id (one
- * `useAgentBindingPermissions` read per binding). Failed reads are absent.
+ * Rule states for one agent's bindings, keyed by credential id (one
+ * `useAgentBindingPermissions` read per binding). `combine` is memoised on the
+ * id list, so the Map keeps its identity until a read actually changes and the
+ * tile grid doesn't re-render on every host render.
  */
 export function useAgentBindingRuleSummaries(
 	agentId: string | null,
 	credentialIds: string[],
-): ReadonlyMap<string, BindingRuleSummary> {
+): ReadonlyMap<string, BindingRulesState> {
+	const combine = useCallback(
+		(results: { data?: BindingPermissionRule[]; isError: boolean }[]) => {
+			const map = new Map<string, BindingRulesState>();
+			results.forEach((result, index) => {
+				const credentialId = credentialIds[index];
+				if (credentialId == null) return;
+				if (result.data) map.set(credentialId, summarizeBindingRules(result.data));
+				else map.set(credentialId, result.isError ? 'error' : 'loading');
+			});
+			return map;
+		},
+		[credentialIds],
+	);
 	return useQueries({
 		queries: credentialIds.map((credentialId) => ({
 			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
 			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
 			enabled: agentId != null,
 		})),
-		combine: (results) => {
-			const map = new Map<string, BindingRuleSummary>();
-			results.forEach((result, index) => {
-				const credentialId = credentialIds[index];
-				if (credentialId != null && result.data) {
-					map.set(credentialId, summarizeBindingRules(result.data));
-				}
-			});
-			return map;
-		},
+		combine,
 	});
+}
+
+/** Re-read one binding's rules (the tile's "Status unavailable · Retry"). */
+export function useRetryBindingRules(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		(credentialId: string) => {
+			if (!agentId) return;
+			void qc.refetchQueries({
+				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+		},
+		[agentId, qc],
+	);
 }
 
 /**

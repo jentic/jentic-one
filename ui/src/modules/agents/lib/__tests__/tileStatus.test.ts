@@ -24,8 +24,24 @@ describe('deriveTileStatus', () => {
 		expect(deriveTileStatus({ ...live, rules: rules(0, 2) })).toBe('blocked-all-denied');
 	});
 
-	it('keeps Ready while rules are unknown (loading or unreadable) — no guessed block', () => {
-		expect(deriveTileStatus({ ...live, rules: undefined })).toBe('ready');
+	it('never claims Ready over rules it has not read', () => {
+		expect(deriveTileStatus({ ...live, rules: undefined })).toBe('checking');
+		expect(deriveTileStatus({ ...live, rules: 'loading' })).toBe('checking');
+		expect(TILE_STATUS_LABEL.checking).toBe('Checking access…');
+	});
+
+	it('reads Status unavailable when the rules read failed — an unknown binding may be blocked', () => {
+		const status = deriveTileStatus({ ...live, rules: 'error' });
+		expect(status).toBe('unavailable');
+		expect(TILE_STATUS_LABEL[status]).toBe('Status unavailable');
+		expect(isBlockedStatus(status)).toBe(false);
+	});
+
+	it('lets the higher-precedence states win over an unread rules state', () => {
+		expect(deriveTileStatus({ ...live, suspended: true, rules: 'error' })).toBe('suspended');
+		expect(deriveTileStatus({ ...live, awaitingConsent: true, rules: 'loading' })).toBe(
+			'sign-in-needed',
+		);
 	});
 
 	it('follows the precedence suspended → not serving → sign-in → blocked → ready', () => {

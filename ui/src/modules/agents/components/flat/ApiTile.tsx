@@ -13,16 +13,18 @@ import { LogIn, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Button, Card, StatusText, Tooltip, VendorIcon } from '@/shared/ui';
 import { formatApiVersion, vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
-import type { BindingRuleSummary } from '@/modules/agents/api';
+import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
-import { deriveTileStatus } from '@/modules/agents/lib/tileStatus';
+import { deriveTileStatus, ruleSummaryOf } from '@/modules/agents/lib/tileStatus';
 import { TileStatusText } from '@/modules/agents/components/flat/TileStatusMarker';
 
 interface ApiTileProps {
 	tile: ApiTileModel;
-	/** Effect breakdown of the operator rules on the tile's binding; undefined while
-	 * unknown, where the summary line is omitted rather than guessed. */
-	rules: BindingRuleSummary | undefined;
+	/** Effect breakdown of the operator rules on the tile's binding, or where its
+	 * read stands — the summary line is omitted rather than guessed while unknown. */
+	rules: BindingRulesState | undefined;
+	/** Re-read the binding's rules after a failed read. */
+	onRetryRules?: () => void;
 	/** Open the access sidebar for this tile's binding. */
 	onOpen: () => void;
 	/** Open the access sidebar focused on its rules editor (the Blocked fix). */
@@ -61,6 +63,7 @@ function sameIdentity(a: string, b: string): boolean {
 export function ApiTile({
 	tile,
 	rules,
+	onRetryRules,
 	onOpen,
 	onOpenRules,
 	onSuspend,
@@ -79,7 +82,7 @@ export function ApiTile({
 	});
 	// The status already says "Blocked · no rules", so the meta line doesn't
 	// repeat it; elsewhere (e.g. a paused binding) it is the only place it shows.
-	const summary = status === 'blocked-no-rules' ? null : grantSummary(rules);
+	const summary = status === 'blocked-no-rules' ? null : grantSummary(ruleSummaryOf(rules));
 	// The host is dropped when the title is only a humanisation of it (`slack.com` →
 	// `Slack.Com`), which would stack the same word twice.
 	const identity = [
@@ -205,12 +208,14 @@ export function ApiTile({
 
 			<div className="mt-auto flex items-center justify-end gap-1.5">
 				{/* Exactly one marker (`deriveTileStatus`): suspended → not serving →
-				    sign-in needed → blocked → ready. Blocked is a button to the rules. */}
+				    sign-in needed → checking / unavailable → blocked → ready. Blocked is
+				    a button to the rules; unavailable carries a Retry. */}
 				<span className="mr-auto min-w-0">
 					<TileStatusText
 						status={status}
 						apiTitle={tile.title}
 						onOpenRules={onOpenRules ?? onOpen}
+						onRetry={onRetryRules}
 					/>
 				</span>
 				{/* Above the overlay, so these verbs are reachable — and so the tile

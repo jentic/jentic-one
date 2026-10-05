@@ -12,6 +12,7 @@ export {
 	useAgentsCredentialBindings,
 	useRefreshFleetCredentialBindings,
 	useAgentBindingRuleSummaries,
+	useRetryBindingRules,
 	summarizeBindingRules,
 	useBindAgentCredential,
 	useUnbindAgentCredential,
@@ -48,7 +49,7 @@ export {
 	useInstanceIdentity,
 	ServingRefreshError,
 } from '@/modules/agents/api/hooks';
-export type { BindingRuleSummary } from '@/modules/agents/api/hooks';
+export type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
 export type { ActorUsageDetail, AgentPatch } from '@/modules/agents/api/client';

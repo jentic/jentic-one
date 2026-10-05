@@ -1,16 +1,17 @@
 /**
  * The ONE status an API tile (and its access sheet) claims, derived in a fixed
  * precedence so two lines on the same card can never contradict each other
- * (a green "Ready" beside "No rules — all calls blocked" was exactly that).
+ * (a green "Ready" beside "No rules — all calls blocked", say).
  *
- *   Suspended → Not serving → Sign-in needed → Blocked → Ready
+ *   Suspended → Not serving → Sign-in needed → Checking / Unavailable → Blocked → Ready
  *
  * A binding is default-deny: with no operator rules every call is refused, and
- * with only deny rules nothing is allowed either — both read as Blocked. Rules
- * still loading (or unreadable) prove nothing, so the tile keeps "Ready" rather
- * than guess a block it can't show; the summary line is omitted the same way.
+ * with only deny rules nothing is allowed either — both read as Blocked. Ready
+ * is claimed only once the rules are READ: while they load the tile says
+ * "Checking access…", and when the read fails it says "Status unavailable" — an
+ * unknown binding may well be blocked, so it never looks healthy.
  */
-import type { BindingRuleSummary } from '@/modules/agents/api';
+import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api';
 
 export type TileStatus =
 	| 'suspended'
@@ -18,6 +19,8 @@ export type TileStatus =
 	| 'sign-in-needed'
 	| 'blocked-no-rules'
 	| 'blocked-all-denied'
+	| 'checking'
+	| 'unavailable'
 	| 'ready';
 
 export interface TileStatusInput {
@@ -27,8 +30,8 @@ export interface TileStatusInput {
 	agentServing: boolean;
 	/** The credential's vendor sign-in hasn't completed. */
 	awaitingConsent: boolean;
-	/** Operator-rule breakdown; `undefined` while unknown. */
-	rules: BindingRuleSummary | undefined;
+	/** Operator-rule breakdown, or where its read stands (`undefined` = not read yet). */
+	rules: BindingRulesState | undefined;
 }
 
 export function deriveTileStatus({
@@ -40,7 +43,16 @@ export function deriveTileStatus({
 	if (suspended) return 'suspended';
 	if (!agentServing) return 'not-serving';
 	if (awaitingConsent) return 'sign-in-needed';
+	if (rules === 'error') return 'unavailable';
+	if (rules === undefined || rules === 'loading') return 'checking';
 	return rulesBlock(rules) ?? 'ready';
+}
+
+/** The breakdown itself, or `undefined` while it is loading or unreadable. */
+export function ruleSummaryOf(
+	rules: BindingRulesState | undefined,
+): BindingRuleSummary | undefined {
+	return typeof rules === 'object' ? rules : undefined;
 }
 
 type BlockedStatus = 'blocked-no-rules' | 'blocked-all-denied';
@@ -66,6 +78,8 @@ export const TILE_STATUS_LABEL: Record<TileStatus, string> = {
 	'sign-in-needed': 'Sign-in needed',
 	'blocked-no-rules': 'Blocked · no rules',
 	'blocked-all-denied': 'Blocked · all denied',
+	checking: 'Checking access…',
+	unavailable: 'Status unavailable',
 	ready: 'Ready',
 };
 

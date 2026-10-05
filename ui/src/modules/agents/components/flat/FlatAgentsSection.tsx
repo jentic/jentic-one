@@ -23,6 +23,7 @@ import {
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
 	useAgentBindingRuleSummaries,
+	useRetryBindingRules,
 	useActorUsageDetail,
 	useActorExecutions,
 	usePendingAgents,
@@ -60,6 +61,7 @@ import { FirstRunChecklist } from '@/modules/agents/components/flat/FirstRunChec
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
 import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import { ruleSummaryOf } from '@/modules/agents/lib/tileStatus';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
@@ -559,6 +561,7 @@ function SelectedAgentPanel({
 		[liveBindings],
 	);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
+	const retryRules = useRetryBindingRules(agent.id);
 	// A Blocked status opens the sheet ON its rules editor: the tile key whose
 	// next open should land on "Add rule" (spent by the sheet once focused).
 	const [rulesFocusKey, setRulesFocusKey] = useState<string | null>(null);
@@ -573,7 +576,7 @@ function SelectedAgentPanel({
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
 	const stats = useMemo(
-		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
+		() => tileStats(tiles, (tile) => ruleSummaryOf(ruleSummaries.get(tile.credentialId))),
 		[tiles, ruleSummaries],
 	);
 
@@ -784,6 +787,7 @@ function SelectedAgentPanel({
 								key={tile.key}
 								tile={tile}
 								rules={ruleSummaries.get(tile.credentialId)}
+								onRetryRules={() => retryRules(tile.credentialId)}
 								onOpen={() => {
 									// A plain open never inherits a rules focus that didn't land.
 									setRulesFocusKey(null);

@@ -918,6 +918,35 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(chips.sort()).toEqual(['Not serving', 'Suspended · not serving']);
 	});
 
+	it("reads Status unavailable (never Ready) when a binding's rules read fails, and Retry recovers", async () => {
+		let failing = true;
+		worker.use(
+			http.get('*/credentials/:cid/agents/:aid/permissions', ({ params }) => {
+				if (failing && params.cid === 'cred_slack_1') {
+					return HttpResponse.json({ detail: 'boom' }, { status: 500 });
+				}
+				return undefined;
+			}),
+		);
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const retry = await screen.findByTestId('tile-status-retry', {}, { timeout: 5000 });
+		const tile = retry.closest<HTMLElement>('[data-testid="api-tile"]');
+		expect(tile).not.toBeNull();
+		expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+			'Status unavailable',
+		);
+		expect(within(tile as HTMLElement).queryByText('Ready')).not.toBeInTheDocument();
+
+		failing = false;
+		await userEvent.click(retry);
+		await waitFor(() =>
+			expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+				'Ready',
+			),
+		);
+	});
+
 	it('blocks Add APIs with a reason on a pending agent and approves from the banner', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_pending_1');

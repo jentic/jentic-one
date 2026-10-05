@@ -160,7 +160,7 @@ export function ApiAccessSidebar({
 				suspended: shown.suspended,
 				agentServing,
 				awaitingConsent: shown.awaitingConsent,
-				rules: savedRuleSummary,
+				rules: permissions.isError ? 'error' : (savedRuleSummary ?? 'loading'),
 			})
 		: 'ready';
 
