@@ -21,36 +21,46 @@ down_revision: str | None = "f3c4d5e6a7b8"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_TABLES = ("agent_permission_rules", "permission_rule_set_rules")
+
 
 def upgrade() -> None:
-    op.alter_column(
-        "agent_permission_rules",
-        "effect",
-        existing_type=sa.String(10),
-        type_=sa.String(16),
-        existing_nullable=False,
-    )
-    op.alter_column(
-        "permission_rule_set_rules",
-        "effect",
-        existing_type=sa.String(10),
-        type_=sa.String(16),
-        existing_nullable=False,
-    )
+    pg = op.get_bind().dialect.name == "postgresql"
+    for table in _TABLES:
+        if pg:
+            op.alter_column(
+                table,
+                "effect",
+                existing_type=sa.String(10),
+                type_=sa.String(16),
+                existing_nullable=False,
+            )
+        else:
+            with op.batch_alter_table(table) as batch:
+                batch.alter_column(
+                    "effect",
+                    existing_type=sa.String(10),
+                    type_=sa.String(16),
+                    existing_nullable=False,
+                )
 
 
 def downgrade() -> None:
-    op.alter_column(
-        "permission_rule_set_rules",
-        "effect",
-        existing_type=sa.String(16),
-        type_=sa.String(10),
-        existing_nullable=False,
-    )
-    op.alter_column(
-        "agent_permission_rules",
-        "effect",
-        existing_type=sa.String(16),
-        type_=sa.String(10),
-        existing_nullable=False,
-    )
+    pg = op.get_bind().dialect.name == "postgresql"
+    for table in reversed(_TABLES):
+        if pg:
+            op.alter_column(
+                table,
+                "effect",
+                existing_type=sa.String(16),
+                type_=sa.String(10),
+                existing_nullable=False,
+            )
+        else:
+            with op.batch_alter_table(table) as batch:
+                batch.alter_column(
+                    "effect",
+                    existing_type=sa.String(16),
+                    type_=sa.String(10),
+                    existing_nullable=False,
+                )

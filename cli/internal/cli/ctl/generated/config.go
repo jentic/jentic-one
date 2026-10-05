@@ -223,6 +223,9 @@ type BrokerConfig struct {
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
+	// ExecutionApprovals corresponds to the JSON schema field "execution_approvals".
+	ExecutionApprovals *ExecutionApprovalsConfig `json:"execution_approvals,omitempty,omitzero" yaml:"execution_approvals,omitempty" mapstructure:"execution_approvals,omitempty"`
+
 	// Idempotency corresponds to the JSON schema field "idempotency".
 	Idempotency *IdempotencyConfig `json:"idempotency,omitempty,omitzero" yaml:"idempotency,omitempty" mapstructure:"idempotency,omitempty"`
 
@@ -1110,6 +1113,35 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 		plain.Region = "us-east-1"
 	}
 	*j = EntitlementConfig(plain)
+	return nil
+}
+
+// Controls the hold-for-approval path on the broker.
+//
+// When a permission rule has “effect="require-approval"“ the broker parks the
+// job with status “held“ and creates an “execution_approvals“ row rather than
+// executing immediately. The reviewer then approves or denies via the admin API.
+type ExecutionApprovalsConfig struct {
+	// Seconds a pending approval row lives before the expiry sweep marks it
+	// ``expired`` and fails the held job. Defaults to 24 hours.
+	TtlSeconds int `json:"ttl_seconds,omitempty,omitzero" yaml:"ttl_seconds,omitempty" mapstructure:"ttl_seconds,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain ExecutionApprovalsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["ttl_seconds"]; !ok || v == nil {
+		plain.TtlSeconds = 86400
+	}
+	*j = ExecutionApprovalsConfig(plain)
 	return nil
 }
 

@@ -170,6 +170,9 @@
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },
+        "execution_approvals": {
+          "$ref": "#/$defs/ExecutionApprovalsConfig"
+        },
         "idempotency": {
           "$ref": "#/$defs/IdempotencyConfig"
         },
@@ -772,6 +775,19 @@
         }
       },
       "title": "EntitlementConfig",
+      "type": "object"
+    },
+    "ExecutionApprovalsConfig": {
+      "description": "Controls the hold-for-approval path on the broker.\n\nWhen a permission rule has ``effect=\"require-approval\"`` the broker parks the\njob with status ``held`` and creates an ``execution_approvals`` row rather than\nexecuting immediately. The reviewer then approves or denies via the admin API.",
+      "properties": {
+        "ttl_seconds": {
+          "default": 86400,
+          "description": "Seconds a pending approval row lives before the expiry sweep marks it ``expired`` and fails the held job. Defaults to 24 hours.",
+          "title": "Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "ExecutionApprovalsConfig",
       "type": "object"
     },
     "IdempotencyConfig": {

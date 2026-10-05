@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, Request
 
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
-from jentic_one.admin.services.schemas.execution_approvals import DecideInput
+from jentic_one.admin.services.schemas.execution_approvals import DecideInput, ExecutionApprovalView
 from jentic_one.admin.web.deps import get_execution_approval_service
 from jentic_one.admin.web.schemas.execution_approvals import (
     DecideRequest,
@@ -20,11 +20,8 @@ from jentic_one.shared.web.links import build_link
 router = APIRouter()
 
 
-def _approval_response(view: object, request: Request) -> ExecutionApprovalResponse:
+def _approval_response(view: ExecutionApprovalView, request: Request) -> ExecutionApprovalResponse:
     """Project a view model to an API response."""
-    from jentic_one.admin.services.schemas.execution_approvals import ExecutionApprovalView
-
-    assert isinstance(view, ExecutionApprovalView)
     job_link = build_link(request, f"/jobs/{view.job_id}")
     links = ExecutionApprovalLinksResponse(
         self_link=build_link(request, f"/execution-approvals/{view.id}"),

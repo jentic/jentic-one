@@ -2362,6 +2362,72 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "execution_approvals:read": []
+      },
+      "method": "GET",
+      "operation_id": "listExecutionApprovals",
+      "path": "/execution-approvals",
+      "public": false,
+      "required_scopes": [
+        "execution_approvals:read"
+      ],
+      "summary": "List Execution Approvals",
+      "surface": "execution-approvals",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "execution_approvals:read": []
+      },
+      "method": "GET",
+      "operation_id": "getExecutionApproval",
+      "path": "/execution-approvals/{approval_id}",
+      "public": false,
+      "required_scopes": [
+        "execution_approvals:read"
+      ],
+      "summary": "Get Execution Approval",
+      "surface": "execution-approvals",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "execution_approvals:write": []
+      },
+      "method": "POST",
+      "operation_id": "decideExecutionApproval",
+      "path": "/execution-approvals/{approval_id}/:decide",
+      "public": false,
+      "required_scopes": [
+        "execution_approvals:write"
+      ],
+      "summary": "Decide Execution Approval",
+      "surface": "execution-approvals",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []
@@ -4626,5 +4692,5 @@
     ],
     "total": 27
   },
-  "total": 175
+  "total": 178
 }

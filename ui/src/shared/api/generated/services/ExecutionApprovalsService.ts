@@ -8,7 +8,7 @@ import type { ExecutionApprovalResponse } from '../models/ExecutionApprovalRespo
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
-export class DefaultService {
+export class ExecutionApprovalsService {
     /**
      * List Execution Approvals
      * List execution approvals with optional state/agent filters.
