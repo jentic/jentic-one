@@ -9,7 +9,7 @@ surface and stay here.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -49,3 +49,7 @@ class HeldExecutionResponse(AsyncQueuedResponse):
     state: Literal["held"] = "held"
     approval_id: str
     review_url: str | None = None
+    # Structured guidance for the agent: instruction (human-readable step) and
+    # parameters (job_id, approval_id, review_url) so the agent can relay the
+    # approval context to the operator and poll for completion.
+    agent_directive: dict[str, Any] | None = None

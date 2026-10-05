@@ -530,6 +530,23 @@ def _cap_headers(headers: dict[str, str], budget: int) -> tuple[dict[str, str], 
     return capped, True
 
 
+def _held_envelope_directive(parsed_body: Any) -> dict[str, Any] | None:
+    """Extract the ``agent_directive`` from a held (202) broker response body.
+
+    Returns the directive dict when the body signals a held execution (``state
+    == "held"``), or ``None`` for any other response. Lifting it to the
+    top-level payload mirrors how denial directives ride the ``extra`` field so
+    the model sees the instruction at the same nesting depth regardless of
+    whether the outcome is a denial or a hold.
+    """
+    if not isinstance(parsed_body, dict) or parsed_body.get("state") != "held":
+        return None
+    directive = parsed_body.get("agent_directive")
+    if not isinstance(directive, dict):
+        return None
+    return directive
+
+
 def execute_result_payload(
     status: int, headers: httpx.Headers, body: bytes, execution_id: str
 ) -> dict[str, Any]:
@@ -564,6 +581,10 @@ def execute_result_payload(
         payload["body"] = body[:MAX_RESULT_BYTES].decode("utf-8", errors="ignore")
         payload["truncated"] = True
         payload["total_bytes"] = len(body)
+    # Lift the held-execution directive to the payload root so the model sees
+    # it at the same nesting depth as denial directives in the extra field.
+    if (directive := _held_envelope_directive(parsed_body)) is not None:
+        payload["agent_directive"] = directive
     return payload
 
 

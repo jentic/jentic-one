@@ -537,6 +537,15 @@ func (s *mcpServer) executeResultPayload(res *agentops.ExecuteResult) map[string
 		payload["total_bytes"] = len(res.Body)
 		s.logger.Info("execute result truncated", "total_bytes", len(res.Body), "cap", s.maxResultBytes)
 	}
+	// Lift the held-execution agent_directive to the payload root so the model
+	// sees it at the same nesting depth as denial directives in extra.
+	if body, ok := env.Body.(map[string]any); ok {
+		if state, _ := body["state"].(string); state == "held" {
+			if directive, ok := body["agent_directive"].(map[string]any); ok {
+				payload["agent_directive"] = directive
+			}
+		}
+	}
 	return payload
 }
 

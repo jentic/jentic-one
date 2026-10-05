@@ -967,10 +967,28 @@ async def _handle_hold(
     base = ctx.config.broker.jobs_api_base_url
     job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
 
+    review_url: str | None = None
+    directive_params: dict[str, str] = {
+        "job_id": job_id,
+        "approval_id": approval_id,
+    }
+    if review_url is not None:
+        directive_params["review_url"] = review_url
+    instruction = (
+        "This execution is held pending human approval. "
+        "Relay the approval context (job_id and approval_id) to the operator "
+        "so they can approve or deny it in the admin panel. "
+        "Poll get_execution_result with the job_id to check the outcome — "
+        "do not re-send the execute call."
+    )
+    agent_directive = {"instruction": instruction, "parameters": directive_params}
+
     resp_body = HeldExecutionResponse(
         job_id=job_id,
         approval_id=approval_id,
+        review_url=review_url,
         links=AsyncQueuedResponseLinks(self_link=job_url),
+        agent_directive=agent_directive,
     )
     return Response(
         content=resp_body.model_dump_json(by_alias=True),
