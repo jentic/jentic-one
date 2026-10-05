@@ -281,3 +281,9 @@ export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetRespo
 // RFC 9457 problem bodies: the string `detail` callers surface over the
 // transport's status text. Append-only, like the rest.
 export { problemDetailText } from '@/shared/api/problem';
+
+// Execution approvals — require-approval held-job review surface.
+export { ExecutionApprovalsService } from '@/shared/api/generated/services/ExecutionApprovalsService';
+export type { ExecutionApprovalResponse } from '@/shared/api/generated/models/ExecutionApprovalResponse';
+export type { ExecutionApprovalListResponse } from '@/shared/api/generated/models/ExecutionApprovalListResponse';
+export type { DecideRequest } from '@/shared/api/generated/models/DecideRequest';

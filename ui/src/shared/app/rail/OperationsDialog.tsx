@@ -42,10 +42,16 @@ const EFFECT_STYLES: Record<
 		Icon: ShieldBan,
 		desc: 'These operations are always refused — Block overrides everything else.',
 	},
+	'require-approval': {
+		label: 'Require approval',
+		chip: 'bg-warning/10 text-warning',
+		Icon: ShieldCheck,
+		desc: 'These operations are held until a human reviewer approves or denies them.',
+	},
 };
 
 /** The fixed broker priority order — strictest first — used to order the legend. */
-const EFFECT_ORDER: PermissionRule['effect'][] = ['deny', 'allow'];
+const EFFECT_ORDER: PermissionRule['effect'][] = ['deny', 'require-approval', 'allow'];
 
 /**
  * A short legend explaining what each effect present in THIS grant means at call

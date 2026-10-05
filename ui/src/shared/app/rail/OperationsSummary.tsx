@@ -41,6 +41,11 @@ const EFFECT_STYLES: Record<
 		chip: 'bg-danger/10 text-danger',
 		Icon: ShieldBan,
 	},
+	'require-approval': {
+		label: 'Require approval',
+		chip: 'bg-warning/10 text-warning',
+		Icon: ShieldCheck,
+	},
 };
 
 /** How many operationIds to show inline before deferring the rest to the dialog. */
