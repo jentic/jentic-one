@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from jentic_one.broker.repos.agent_rule_evaluator import AgentRuleEvaluator
-from jentic_one.shared.broker.protocols import AgentRuleEvaluatorProtocol
+from jentic_one.shared.broker.protocols import AgentRuleEvaluatorProtocol, RuleVerdict
 
 
 class _AsyncCtx:
@@ -58,7 +58,9 @@ async def test_empty_rules_denies_with_zero_loaded() -> None:
         operation_id=None,
     )
     assert result.allowed is False
+    assert result.verdict == RuleVerdict.DENY
     assert result.rules_loaded == 0
+    assert result.matched_rule_id is None
 
 
 @pytest.mark.asyncio
@@ -74,7 +76,9 @@ async def test_matching_allow_rule_allows() -> None:
         operation_id=None,
     )
     assert result.allowed is True
+    assert result.verdict == RuleVerdict.ALLOW
     assert result.rules_loaded == 1
+    assert result.matched_rule_id == "apr_test"
 
 
 @pytest.mark.asyncio
@@ -91,7 +95,30 @@ async def test_loaded_but_unmatched_denies_with_count() -> None:
         operation_id=None,
     )
     assert result.allowed is False
+    assert result.verdict == RuleVerdict.DENY
     assert result.rules_loaded == 1
+    assert result.matched_rule_id is None
+
+
+@pytest.mark.asyncio
+async def test_require_approval_rule_returns_verdict() -> None:
+    """A matching require-approval rule yields REQUIRE_APPROVAL verdict, allowed=False."""
+    mock_db, _ = _mock_db([("apr_hold", "require-approval", '["DELETE"]', ".*", None, "regex")])
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="DELETE",
+        path="/v1/things",
+        operation_id=None,
+    )
+    assert result.verdict == RuleVerdict.REQUIRE_APPROVAL
+    # allowed is False so existing deny-path code gates the execution until
+    # the hold path is wired (phase 3).
+    assert result.allowed is False
+    assert result.rules_loaded == 1
+    assert result.matched_rule_id == "apr_hold"
 
 
 @pytest.mark.asyncio

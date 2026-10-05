@@ -102,20 +102,51 @@ class TokenResolverProtocol(Protocol):
     async def resolve_access_token(self, token: str) -> Identity | None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class RuleEvaluation:
-    """Outcome of a permission-rule evaluation with just enough context to explain a deny.
+class RuleVerdict(StrEnum):
+    """Tri-state outcome of a permission-rule evaluation.
 
-    ``rules_loaded`` distinguishes two very different deny paths (#578): a
-    zero-length pool (nothing matched
-    because there was nothing to match — wrong vendor, unbound credential,
-    empty binding, misconfigured store) vs a non-empty pool where no rule
-    happened to match. The router turns this into a two-variant detail
-    sentence — no rule contents, no internal ids, redaction-safe.
+    ALLOW and DENY are the two historic outcomes. REQUIRE_APPROVAL means the
+    matching rule carries ``effect="require-approval"``: the execution is held
+    pending a human decision.
+
+    The ``allowed`` property on :class:`RuleEvaluation` maps ALLOW to True and
+    DENY or REQUIRE_APPROVAL to False so existing callers that need only the
+    binary answer continue to work without change. The hold path reads
+    ``verdict`` directly to distinguish REQUIRE_APPROVAL from DENY.
     """
 
-    allowed: bool
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require-approval"
+
+
+@dataclass(frozen=True, slots=True)
+class RuleEvaluation:
+    """Outcome of a permission-rule evaluation.
+
+    ``verdict`` is the tri-state result. ``allowed`` is a backward-compatible
+    property that returns True only for ALLOW; callers that inspect the binary
+    outcome continue to work without change.
+
+    ``rules_loaded`` distinguishes two deny paths (#578): a zero-length pool
+    (nothing matched because there was nothing to match — wrong vendor, unbound
+    credential, empty binding, misconfigured store) vs a non-empty pool where no
+    rule happened to match. The router turns this into a two-variant detail
+    sentence — no rule contents, no internal ids, redaction-safe.
+
+    ``matched_rule_id`` is the primary key of the first rule that fired, or
+    None when no rule matched (the deny is the implicit default). The hold path
+    records this on the ``execution_approvals`` row.
+    """
+
+    verdict: RuleVerdict
     rules_loaded: int
+    matched_rule_id: str | None = None
+
+    @property
+    def allowed(self) -> bool:
+        """True when the verdict is ALLOW; False for DENY or REQUIRE_APPROVAL."""
+        return self.verdict == RuleVerdict.ALLOW
 
 
 @dataclass(frozen=True, slots=True)
