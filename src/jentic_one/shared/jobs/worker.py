@@ -10,6 +10,7 @@ import structlog
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.sql import func
 
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
@@ -300,8 +301,44 @@ class WorkerLoop:
                 logger.warning("emit_event_failed", job_id=job_id)
 
     async def _sweep_expired(self) -> None:
-        """Periodically remove expired job results and long-expired token rows."""
+        """Periodically remove expired job results, expire held approvals, and
+        purge long-expired token rows."""
         try:
+            # Expire pending approval rows whose TTL has lapsed: mark the
+            # approval as ``expired`` and fail the corresponding held job so it
+            # does not sit in HELD forever.
+            now = datetime.now(UTC)
+            async with self._db.transaction() as session:
+                expired_subq = (
+                    select(ExecutionApproval.job_id)
+                    .where(
+                        ExecutionApproval.state == "pending",
+                        ExecutionApproval.expires_at < now,
+                    )
+                    .scalar_subquery()
+                )
+                approval_update = (
+                    update(ExecutionApproval)
+                    .where(
+                        ExecutionApproval.state == "pending",
+                        ExecutionApproval.expires_at < now,
+                    )
+                    .values(state="expired", decided_at=now)
+                )
+                approval_result = await session.execute(approval_update)
+                expired_count = int(approval_result.rowcount)  # type: ignore[attr-defined]
+                if expired_count > 0:
+                    job_update = (
+                        update(Job)
+                        .where(
+                            Job.id.in_(expired_subq),
+                            Job.status == JobStatus.HELD,
+                        )
+                        .values(status=JobStatus.FAILED)
+                    )
+                    await session.execute(job_update)
+                    logger.info("approval_expiry_sweep_expired", count=expired_count)
+
             async with self._db.transaction() as session:
                 stmt = delete(JobResult).where(
                     JobResult.available_until.is_not(None),

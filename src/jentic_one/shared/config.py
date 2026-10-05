@@ -1377,6 +1377,23 @@ class BrokerResilienceConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
 
 
+class ExecutionApprovalsConfig(BaseModel):
+    """Controls the hold-for-approval path on the broker.
+
+    When a permission rule has ``effect="require-approval"`` the broker parks the
+    job with status ``held`` and creates an ``execution_approvals`` row rather than
+    executing immediately. The reviewer then approves or denies via the admin API.
+    """
+
+    ttl_seconds: int = Field(
+        default=86_400,
+        description=(
+            "Seconds a pending approval row lives before the expiry sweep marks it "
+            "``expired`` and fails the held job. Defaults to 24 hours."
+        ),
+    )
+
+
 class IdempotencyConfig(BaseModel):
     """``Idempotency-Key`` replay store.
 
@@ -1537,6 +1554,7 @@ class BrokerConfig(BaseModel):
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
+    execution_approvals: ExecutionApprovalsConfig = Field(default_factory=ExecutionApprovalsConfig)
 
     _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
         _normalize_optional_base_url

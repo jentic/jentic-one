@@ -56,6 +56,7 @@ from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
     AsyncQueuedResponseLinks,
     ExecuteRequestContext,
+    HeldExecutionResponse,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
@@ -64,7 +65,10 @@ from jentic_one.broker.services.discovery import (
     discover_via_pins,
     resolve_pin_for_api,
 )
-from jentic_one.broker.services.execution.authorization import authorize_execution
+from jentic_one.broker.services.execution.authorization import (
+    ExecutionAuthorization,
+    authorize_execution,
+)
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
     default_broker,
@@ -91,17 +95,21 @@ from jentic_one.shared.broker.protocols import (
     CredentialDeriverProtocol,
     RegistryResolverProtocol,
     ResolveResult,
+    RuleVerdict,
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
+    emit_event_best_effort,
     mint_trace_id,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.jobs.hold import hold_execution
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.tracing import (
     JENTIC_TRACESTATE_KEY,
@@ -587,6 +595,12 @@ async def _handle(
         ctx_req.credential_id = selected_credential.credential_id
         ctx_req.credential_name = selected_credential.name
 
+    # A require-approval rule matched — hold the execution before any upstream
+    # call. Both the async and sync request paths enter the hold path (async
+    # preference makes no difference: the result is always a 202 held envelope).
+    if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
+        return await _handle_hold(request, ctx_req, ctx, identity, authorization)
+
     if _should_async(ctx_req.prefer):
         return await _handle_async(
             request,
@@ -880,6 +894,90 @@ def _async_job_payload(
     if body:
         payload["body_b64"] = base64.b64encode(body).decode()
     return payload
+
+
+async def _handle_hold(
+    request: Request,
+    ctx_req: ExecuteRequestContext,
+    ctx: Context,
+    identity: Identity,
+    authorization: ExecutionAuthorization,
+) -> Response:
+    """Hold an execution that matched a require-approval rule.
+
+    Creates a Job row (status=HELD) and an ExecutionApproval row atomically,
+    emits ``execution.approval_requested``, and returns a 202 with the held
+    envelope so the agent can relay the approval context to the operator.
+    """
+    execution_id = mint_execution_id()
+    body = await _read_request_body(request, ctx_req.method, ctx)
+
+    payload = _async_job_payload(
+        ctx_req,
+        execution_id=execution_id,
+        origin=identity.origin.value,
+        selected_credential_id=authorization.selected_credential.credential_id,
+        allowed_credential_ids=authorization.allowed_credential_ids,
+        body=body,
+    )
+
+    ttl = ctx.config.broker.execution_approvals.ttl_seconds
+    async with ctx.admin_db.transaction() as session:
+        job_id, approval_id = await hold_execution(
+            session,
+            execution_id=execution_id,
+            agent_id=identity.sub,
+            credential_id=authorization.selected_credential.credential_id,
+            matched_rule_id=authorization.matched_rule_id,
+            api_vendor=ctx_req.api_vendor or "",
+            api_name=ctx_req.api_name or "",
+            api_version=ctx_req.api_version or "",
+            operation_id=ctx_req.operation_id,
+            method=ctx_req.method,
+            path=urlparse(ctx_req.upstream_url).path,
+            trace_id=ctx_req.trace_id,
+            created_by=identity.sub,
+            actor_type=str(identity.actor_type),
+            ttl_seconds=ttl,
+            payload=payload,
+        )
+        await emit_event_best_effort(
+            session,
+            type=EventType.EXECUTION_APPROVAL_REQUESTED,
+            severity=EventSeverity.INFO,
+            summary=(
+                f"Execution held pending approval: "
+                f"{ctx_req.method} {ctx_req.api_vendor}/{ctx_req.api_name}"
+            ),
+            created_by=identity.sub,
+            actor_id=identity.sub,
+            actor_type=identity.actor_type.value,
+            requires_action=True,
+            data={
+                "approval_id": approval_id,
+                "job_id": job_id,
+                "method": ctx_req.method,
+                "api_vendor": ctx_req.api_vendor,
+                "api_name": ctx_req.api_name,
+                "api_version": ctx_req.api_version,
+            },
+        )
+
+    metadata = _metadata_headers(ctx_req, execution_id)
+    base = ctx.config.broker.jobs_api_base_url
+    job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
+
+    resp_body = HeldExecutionResponse(
+        job_id=job_id,
+        approval_id=approval_id,
+        links=AsyncQueuedResponseLinks(self_link=job_url),
+    )
+    return Response(
+        content=resp_body.model_dump_json(by_alias=True),
+        status_code=202,
+        media_type="application/json",
+        headers={**metadata, "Preference-Applied": "respond-async"},
+    )
 
 
 async def _handle_async(

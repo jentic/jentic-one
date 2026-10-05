@@ -35,6 +35,7 @@ from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDerivation,
     CredentialDeriverProtocol,
+    RuleVerdict,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -215,16 +216,25 @@ async def derive_credential_bindings(
 
 @dataclass(frozen=True, slots=True)
 class ExecutionAuthorization:
-    """An allowed execution's authorization outcome.
+    """An allowed-or-held execution's authorization outcome.
 
     ``allowed_credential_ids`` is the injection boundary (the caller's bound
     credentials for the API) — only these ids may resolve at injection, and an
     empty list resolves nothing. ``selected_credential`` is the credential
     already selected among them.
+
+    ``verdict`` is the tri-state rule result. ALLOW proceeds to execution;
+    REQUIRE_APPROVAL routes to the hold path; DENY never reaches here (it
+    raises ``ActionDeniedError`` inside ``authorize_execution``).
+
+    ``matched_rule_id`` carries the primary key of the rule that fired when the
+    verdict is REQUIRE_APPROVAL — recorded on the ``execution_approvals`` row.
     """
 
     allowed_credential_ids: list[str]
     selected_credential: ResolvedCredential
+    verdict: RuleVerdict = RuleVerdict.ALLOW
+    matched_rule_id: str | None = None
 
 
 async def authorize_execution(
@@ -291,6 +301,16 @@ async def authorize_execution(
         path=path,
         operation_id=operation_id,
     )
+    if evaluation.verdict == RuleVerdict.REQUIRE_APPROVAL:
+        # The matching rule requests a hold rather than an outright deny.
+        # Return to the caller so it can enter the hold path — no exception.
+        return ExecutionAuthorization(
+            allowed_credential_ids=allowed_credential_ids,
+            selected_credential=selected_credential,
+            verdict=RuleVerdict.REQUIRE_APPROVAL,
+            matched_rule_id=evaluation.matched_rule_id,
+        )
+
     if not evaluation.allowed:
         # Two-variant deny split (#578): an empty rule list (nothing
         # configured for this binding) vs loaded rules where none allowed the

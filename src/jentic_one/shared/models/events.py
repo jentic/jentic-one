@@ -125,6 +125,11 @@ class EventType:
     # transaction. Internal-only, like OAUTH_GRANT_CREATED.
     OAUTH_GRANT_REVOKED = "oauth_grant.revoked"
 
+    # Emitted by the broker hold path when an execute request matches a
+    # require-approval rule and the job is parked with HELD status.
+    # requires_action=True — a reviewer must approve or deny.
+    EXECUTION_APPROVAL_REQUESTED = "execution.approval_requested"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -164,6 +169,7 @@ class EventType:
             OAUTH_CLIENT_APPROVED,
             OAUTH_GRANT_CREATED,
             OAUTH_GRANT_REVOKED,
+            EXECUTION_APPROVAL_REQUESTED,
         }
     )
 
