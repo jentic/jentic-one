@@ -1755,3 +1755,69 @@ func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
 		t.Errorf("error should name the malformed broker_url: %q", coded.Msg)
 	}
 }
+
+func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
+	// #1429: a broker-origin 400 that is not a denial (here an unknown
+	// Jentic-Credential-Id) means the call never reached the upstream. It must
+	// exit 2 with RESOLVE_FAILED, not print the problem body and exit 0.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"credential_id_not_found","title":"Bad Request","status":400,"detail":"credential cred_nope not found"}`))
+	}))
+	defer srv.Close()
+
+	for _, extra := range [][]string{nil, {"--raw"}} {
+		app := testApp(t)
+		seedRegistered(t, app, "default", srv.URL)
+		app.Out = new(bytes.Buffer)
+		app.Err = new(bytes.Buffer)
+		root := newAPIRootCmd(app.App)
+		root.SetOut(app.Out)
+		root.SetErr(app.Err)
+		root.SetArgs(append([]string{
+			"execute", "GET:/v1/pets",
+			"--header", "Jentic-Credential-Id=cred_nope",
+			"--broker-scheme", "http",
+			"--broker-host", srv.Listener.Addr().String(),
+		}, extra...))
+
+		err := root.Execute()
+		var coded *ux.CodedError
+		if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed || coded.ExitCode() != 2 {
+			t.Fatalf("args %v: want RESOLVE_FAILED exit 2, got err=%v", extra, err)
+		}
+		if !strings.Contains(coded.Msg, "cred_nope") {
+			t.Errorf("args %v: message should carry the broker detail, got %q", extra, coded.Msg)
+		}
+	}
+}
+
+func TestExecuteCmdUpstream400StillExits0(t *testing.T) {
+	// The other side of #1429: an upstream 4xx the broker merely relayed is the
+	// caller's data and keeps exiting 0.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Jentic-Error-Origin", "upstream")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid pet name"}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	app.Out = new(bytes.Buffer)
+	app.Err = new(bytes.Buffer)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(app.Out)
+	root.SetErr(app.Err)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("an upstream 400 must exit 0, got %v", err)
+	}
+}

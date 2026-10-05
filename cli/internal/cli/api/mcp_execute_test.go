@@ -1139,3 +1139,47 @@ func problemTypeOf(body string) string {
 	_ = json.Unmarshal([]byte(body), &env)
 	return env.Type
 }
+
+// TestMCPExecute_BrokerResolveFailureIsError pins #1429 on the MCP twin: a
+// broker-origin 4xx that is not a denial is an isError RESOLVE_FAILED result,
+// non-retryable, pointing at the tool that can fix it.
+func TestMCPExecute_BrokerResolveFailureIsError(t *testing.T) {
+	cases := []struct {
+		name, body, wantNext string
+		status               int
+	}{
+		{"unknown credential id", `{"type":"credential_id_not_found","detail":"credential cred_nope not found"}`, "whoami", http.StatusBadRequest},
+		{"unregistered upstream", `{"type":"operation_not_found","detail":"no operation registered"}`, "search_apis", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("a broker resolve failure must be a soft error, not a protocol error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result for a broker resolve failure")
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != ux.CodeResolveFailed {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
+			}
+			if payload["retryable"] != false {
+				t.Errorf("retryable = %v, want false", payload["retryable"])
+			}
+			if payload["next_tool"] != tc.wantNext {
+				t.Errorf("next_tool = %v, want %q", payload["next_tool"], tc.wantNext)
+			}
+		})
+	}
+}

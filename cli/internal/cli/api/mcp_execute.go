@@ -233,6 +233,13 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		return s.executeDenialError(cctx, denial), nil
 	}
 
+	// A broker-origin error that is not a denial (unknown credential id/name,
+	// unregistered operation) never reached the upstream, so it is an error
+	// result, not a normal one (#1429). Re-sending the same call cannot succeed.
+	if coded := agentops.BrokerError(res); coded != nil {
+		return s.softErrorExtra(cctx, coded, brokerErrorNextTool(coded), map[string]any{"retryable": false}), nil
+	}
+
 	// Everything the broker relayed — 2xx, upstream 4xx/5xx, and the ask-tier
 	// 202-held envelope — is a normal result (§3.7 table row 1; §3.4: the held
 	// envelope passes through with its directive intact, the model polls with
@@ -797,4 +804,16 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			handler: s.handleGetExecutionResult,
 		},
 	}
+}
+
+// brokerErrorNextTool points a broker resolve failure at the tool that can fix
+// it: an unregistered operation needs search_apis (find the right one); anything
+// else, typically a credential selection the broker could not resolve, gets
+// whoami, the same safe default the denial path uses. Never get_started: the
+// identity already resolved.
+func brokerErrorNextTool(coded *ux.CodedError) string {
+	if pt, _ := coded.Details["problem_type"].(string); strings.Contains(pt, "operation") {
+		return "search_apis"
+	}
+	return "whoami"
 }

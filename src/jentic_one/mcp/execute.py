@@ -179,6 +179,51 @@ def _error_origin(headers: httpx.Headers) -> str:
     return value.strip().lower()
 
 
+def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:
+    """Broker resolve-failure classification (Go: ``agentops.BrokerError``), #1429.
+
+    A broker-origin 4xx that is not a denial (an unknown or unbound credential
+    id or name, an unregistered operation) never reached the upstream, so it is
+    a RESOLVE_FAILED error, not a normal result. The origin must say ``broker``
+    explicitly: 400/404/422 are what an upstream answers on a call that ran, so
+    a missing header keeps the pass-through reading. Broker 5xx is out of scope.
+    """
+    if not 400 <= status < 500 or status in _DENIAL_STATUSES:
+        return None
+    if _error_origin(headers) != "broker":
+        return None
+    problem: dict[str, Any] = {}
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            problem = parsed
+    except ValueError:
+        pass
+    detail = problem.get("detail")
+    reason = (
+        detail
+        if isinstance(detail, str) and detail
+        else str(problem.get("title") or "") or f"HTTP {status}"
+    )
+    problem_type = str(problem.get("type") or "")
+    details: dict[str, Any] = {"http_status": status, "origin": "broker"}
+    if problem_type:
+        details["problem_type"] = problem_type
+    return ToolError(
+        CODE_RESOLVE_FAILED,
+        "the broker could not resolve this call, so it never reached the upstream API "
+        f"(HTTP {status}): {reason}",
+        actionable=(
+            "Fix the request instead of retrying it: check the operation is registered and "
+            "that any Jentic-Credential-Id or Jentic-Credential-Name header names a credential "
+            "bound to it."
+        ),
+        details=details,
+        next_tool="search_apis" if "operation" in problem_type else "whoami",
+        extra={"retryable": False},
+    )
+
+
 def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:
     """Broker-denial classification (Go: ``agentops.Classify`` + ``executeDenialError``).
 

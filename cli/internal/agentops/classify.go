@@ -2,6 +2,7 @@ package agentops
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -108,10 +109,57 @@ func Classify(r *ExecuteResult) *Denial {
 	return d
 }
 
+// BrokerError classifies a broker-origin 4xx that is not a recoverable denial:
+// the broker could not resolve the call (an unknown or unbound credential id or
+// name, an unregistered operation) and never reached the upstream, so it must
+// not read as an upstream response that exits 0 (#1429). It returns
+// RESOLVE_FAILED (exit 2) carrying the problem detail, or nil.
+//
+// Unlike IsBrokerDenial it requires Jentic-Error-Origin to say "broker"
+// explicitly: 400/404/422 are exactly what an upstream answers on a call that
+// ran, so a missing header keeps the pass-through reading rather than turning a
+// real upstream answer into a failure. Broker 5xx is out of scope here; whether
+// those should be retryable is a separate decision.
+func BrokerError(r *ExecuteResult) *ux.CodedError {
+	if r == nil || r.Status < 400 || r.Status >= 500 || IsBrokerDenial(r) ||
+		errorOrigin(r) != errorOriginBroker {
+		return nil
+	}
+	var problem struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	_ = json.Unmarshal(r.Body, &problem) // best effort: FastAPI's array-form detail just leaves Detail empty
+	reason := problem.Detail
+	if reason == "" {
+		reason = problem.Title
+	}
+	if reason == "" {
+		reason = http.StatusText(r.Status)
+	}
+	details := map[string]any{"http_status": r.Status, "origin": errorOriginBroker}
+	if problem.Type != "" {
+		details["problem_type"] = problem.Type
+	}
+	return &ux.CodedError{
+		Code: ux.CodeResolveFailed,
+		Msg: fmt.Sprintf("the broker could not resolve this call, so it never reached the upstream API (HTTP %d): %s",
+			r.Status, reason),
+		Actionable: "Fix the request instead of retrying it: check the operation is registered (`jentic apis list`) and that " +
+			"any Jentic-Credential-Id or Jentic-Credential-Name header names a credential bound to it (`jentic creds list`).",
+		Details: details,
+	}
+}
+
 // errorOriginUpstream is the Jentic-Error-Origin value the broker stamps on a
 // mirrored upstream response (broker ErrorOrigin.UPSTREAM). The matching header
 // name mirrors broker/core/headers.JenticHeader.ERROR_ORIGIN.
 const errorOriginUpstream = "upstream"
+
+// errorOriginBroker is the value the broker stamps on the problem responses it
+// emits itself (broker ErrorOrigin.BROKER, broker/web/errors.py).
+const errorOriginBroker = "broker"
 
 func errorOrigin(r *ExecuteResult) string {
 	if r == nil {

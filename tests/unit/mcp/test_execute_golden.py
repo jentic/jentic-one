@@ -509,3 +509,60 @@ async def test_transport_error_envelope_carries_exception_class_not_message(brok
     assert "jak_test" not in rendered
     assert "Illegal header value" not in rendered
     assert payload["retryable"] is False
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (
+            400,
+            {"type": "credential_id_not_found", "detail": "credential cred_nope not found"},
+            "whoami",
+        ),
+        (400, {"type": "credential_name_not_found", "detail": "no credential named zzz"}, "whoami"),
+        (404, {"type": "operation_not_found", "detail": "no operation registered"}, "search_apis"),
+    ],
+)
+async def test_broker_resolve_failure_is_a_coded_soft_error(
+    broker, status, body, want_tool
+) -> None:
+    """#1429 (Go: TestMCPExecute_BrokerResolveFailureIsError): a broker-origin
+    4xx that is not a denial never reached the upstream, so it is an isError
+    RESOLVE_FAILED result, never a normal tool result."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+            content=json.dumps(body).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["details"]["http_status"] == status
+    assert payload["details"]["problem_type"] == body["type"]
+    assert body["detail"] in payload["error"]
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == want_tool
+
+
+@pytest.mark.parametrize("origin", ["upstream", None])
+async def test_non_broker_4xx_still_passes_through(broker, origin) -> None:
+    """The other side of #1429: an upstream 4xx, or one with no origin header,
+    is the caller's data and stays a normal result."""
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Jentic-Error-Origin"] = origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers=headers, content=b'{"error": "no such pet"}')
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error
