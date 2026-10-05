@@ -225,6 +225,45 @@ async def test_condition_less_allow_skipped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_condition_less_require_approval_skipped() -> None:
+    """A condition-less require-approval is skipped; evaluation falls through to the next rule."""
+    mock_db, _ = _mock_db(
+        [
+            ("apr_hold_all", "require-approval", None, None, None, "regex"),
+            ("apr_get", "allow", '["GET"]', None, None, "regex"),
+        ]
+    )
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="GET",
+        path="/x",
+        operation_id=None,
+    )
+    assert result.verdict is RuleVerdict.ALLOW
+    assert result.matched_rule_id == "apr_get"
+
+
+@pytest.mark.asyncio
+async def test_condition_less_deny_still_matches_all() -> None:
+    """A condition-less deny stays the legitimate catch-all."""
+    mock_db, _ = _mock_db([("apr_deny_all", "deny", None, None, None, "regex")])
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="POST",
+        path="/x",
+        operation_id=None,
+    )
+    assert result.verdict is RuleVerdict.DENY
+    assert result.matched_rule_id == "apr_deny_all"
+
+
+@pytest.mark.asyncio
 async def test_invalid_stored_path_is_fail_closed() -> None:
     """An unparseable stored pattern never matches (#751 carries over)."""
     mock_db, _ = _mock_db([("apr_test", "allow", None, "([unclosed", None, "regex")])

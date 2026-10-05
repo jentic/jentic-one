@@ -106,6 +106,10 @@ def _rule_matches(
     return True
 
 
+# Effects a rule may only carry when it constrains methods, path, or operations.
+_CONDITION_REQUIRED_EFFECTS = frozenset({"allow", "require-approval"})
+
+
 def _match_rule(
     rules: list[PermissionRule],
     *,
@@ -116,20 +120,20 @@ def _match_rule(
 ) -> PermissionRule | None:
     """Return the first rule that matches the request, or None if none match.
 
-    The condition-less-allow guard applies: a condition-less ``allow`` rule is
-    skipped (misconfiguration) rather than granting blanket access. A
-    condition-less ``deny`` or ``require-approval`` rule keeps its legitimate
+    Condition-less ``allow`` and ``require-approval`` rules are skipped as
+    misconfigurations: one would grant blanket access, the other would hold
+    every call for review. A condition-less ``deny`` keeps its legitimate
     match-all catch-all behaviour.
     """
     for rule in rules:
-        # Defense-in-depth: a condition-less `allow` is an unrestricted grant
-        # (matches everything) and should have been rejected at the API schema.
-        # If one reaches the broker it is a misconfiguration — skip it rather
-        # than honour blanket access.
-        if _is_condition_less(rule) and rule.effect.lower() == "allow":
+        # Defense-in-depth: the API schema rejects both shapes, so one reaching
+        # the broker is a misconfiguration — skip it rather than honour it.
+        effect = rule.effect.lower()
+        if _is_condition_less(rule) and effect in _CONDITION_REQUIRED_EFFECTS:
             _logger.warning(
-                "Ignoring misconfigured condition-less 'allow' permission rule "
+                "Ignoring misconfigured condition-less permission rule "
                 "(matches all requests); skipping to next rule",
+                effect=effect,
                 binding=binding,
             )
             continue
