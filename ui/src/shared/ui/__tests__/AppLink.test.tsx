@@ -27,6 +27,22 @@ describe('AppLink', () => {
 		expect(el).not.toHaveAttribute('href');
 	});
 
+	it('refuses a script scheme hidden behind whitespace or control characters', () => {
+		renderWithProviders(
+			<>
+				<AppLink href={'  javascript:alert(1)'}>Leading</AppLink>
+				<AppLink href={'java\tscript:alert(1)'}>Tab</AppLink>
+				<AppLink href={'\u0001javascript:alert(1)'}>Control</AppLink>
+				<AppLink href={'java\nscript:alert(1)'}>Newline</AppLink>
+			</>,
+		);
+		for (const name of ['Leading', 'Tab', 'Control', 'Newline']) {
+			const el = screen.getByText(name);
+			expect(el.tagName).toBe('SPAN');
+			expect(el).not.toHaveAttribute('href');
+		}
+	});
+
 	it('refuses data: and vbscript: hrefs', () => {
 		renderWithProviders(
 			<>

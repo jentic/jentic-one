@@ -27,6 +27,18 @@ const EXTERNAL_RE = /^([a-z][a-z0-9+.-]*:|\/\/)/i;
 const UNSAFE_RE = /^(javascript|data|vbscript):/i;
 
 /**
+ * Is `href` a script-capable URL? Checked the way a browser's URL parser
+ * reads the scheme: leading/trailing C0 controls and spaces are stripped and
+ * tabs/newlines anywhere are dropped, so ` javascript:` or `java\tscript:`
+ * must not slip past the check. (Every control/space is removed here — a
+ * superset, fine for a deny test.)
+ */
+function isUnsafeHref(href: string): boolean {
+	// eslint-disable-next-line no-control-regex -- matching control characters is the point
+	return UNSAFE_RE.test(href.replace(/[\u0000-\u0020]/g, ''));
+}
+
+/**
  * Default keyboard focus affordance. Tailwind's preflight resets the UA outline
  * on `<a>`, so without this internal/external links have no visible focus ring
  * (WCAG 2.4.7). Applied to the navigable variants; merged with any `className`.
@@ -69,7 +81,7 @@ export function AppLink({
 			: undefined;
 	const mergedClassName = cn(buttonLook, className);
 
-	if (UNSAFE_RE.test(href)) {
+	if (isUnsafeHref(href)) {
 		return (
 			<span {...props} className={mergedClassName} role="link" aria-disabled="true">
 				{children}
