@@ -14,6 +14,10 @@ class JobStatus(StrEnum):
     # Exhausted its retry budget after repeated handler failures; parked here
     # (poison-message handling) instead of looping forever.
     DEAD_LETTER = "dead_letter"
+    # Enqueued but not yet claimable — awaiting human approval. The worker
+    # skips held jobs; the approval surface flips them to QUEUED on approval
+    # or FAILED on denial / expiry.
+    HELD = "held"
 
 
 class JobKind(StrEnum):

@@ -124,13 +124,17 @@ class JobRepository:
         *,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> Job | None:
-        """Cancel a job if active (queued or running).
+        """Cancel a job if active (queued, running, or held).
 
         Returns None if already terminal or not matched by ``filters``.
+        Held jobs may be cancelled by the agent that created them (withdrawal).
         """
         stmt = (
             update(Job)
-            .where(Job.id == job_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+            .where(
+                Job.id == job_id,
+                Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.HELD]),
+            )
             .values(status=JobStatus.CANCELLED)
             .returning(Job)
         )

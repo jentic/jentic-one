@@ -53,6 +53,9 @@ class PermissionRule:
     methods: frozenset[str] | None
     path: PathMatcher | None
     operations: tuple[str, ...] | None
+    # The rule row's primary key — populated from the query so the hold path can
+    # record which rule triggered a ``require-approval`` verdict.
+    rule_id: str | None = None
 
 
 def _coerce_json_list(value: object) -> list[str] | None:
@@ -136,8 +139,10 @@ def evaluate_rules(
 
 
 # Inline per-binding rules. No credential/vendor join — the binding is the key.
+# ``id`` is selected so the hold path can record which rule triggered the hold
+# as ``matched_rule_id`` on the ``execution_approvals`` row.
 _BINDING_RULES_QUERY = text(
-    "SELECT effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode "
     "FROM agent_permission_rules "
     "WHERE agent_id = :agent_id AND credential_id = :credential_id "
     "ORDER BY sequence ASC"
@@ -146,7 +151,7 @@ _BINDING_RULES_QUERY = text(
 # Shared rule-set rules — evaluated *instead of* the inline rows when the
 # binding carries a rule_set_id (the attach API enforces this precedence).
 _RULE_SET_RULES_QUERY = text(
-    "SELECT effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode "
     "FROM permission_rule_set_rules "
     "WHERE rule_set_id = :rule_set_id "
     "ORDER BY sequence ASC"
@@ -289,12 +294,14 @@ class AgentRuleEvaluator:
         )
         async with self._control_db.session() as session:
             rows = (await session.execute(query, params)).all()
+        # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
         return [
             PermissionRule(
-                effect=row[0],
-                methods=_normalize_methods(_coerce_json_list(row[1])),
-                path=_compile_path(row[2], str(row[4] or "regex"), binding=binding_label),
-                operations=(tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None),
+                rule_id=str(row[0]) if row[0] is not None else None,
+                effect=row[1],
+                methods=_normalize_methods(_coerce_json_list(row[2])),
+                path=_compile_path(row[3], str(row[5] or "regex"), binding=binding_label),
+                operations=(tuple(ops) if (ops := _coerce_json_list(row[4])) is not None else None),
             )
             for row in rows
         ]
