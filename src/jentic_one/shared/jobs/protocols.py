@@ -106,6 +106,9 @@ class QueuedExecutionRequest:
     # Discovery could not determine those values at enqueue time — a credential
     # scoped by ``server_variables`` is then not selected (fail closed).
     server_variables_unresolved: bool = False
+    # A human reviewer already approved this execution via the approval surface.
+    # The authorizer skips rule re-evaluation and uses the enqueue-time credential.
+    pre_approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)

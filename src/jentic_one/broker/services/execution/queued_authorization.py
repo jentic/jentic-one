@@ -137,6 +137,22 @@ class QueuedExecutionAuthorizer:
                 ),
             )
 
+        if request.pre_approved:
+            # A human reviewer already approved this execution via the approval
+            # surface. Skip rule re-evaluation and replay the enqueue-time
+            # credential so the same injection boundary is used.
+            logger.info(
+                "queued_execution_pre_approved",
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            cred = request.credential_id
+            return QueuedExecutionVerdict(
+                allowed=True,
+                allowed_credential_ids=(cred,) if cred else (),
+                credential_id=cred,
+            )
+
         identity = Identity(
             sub=request.actor_id,
             actor_type=ActorType(request.actor_type),

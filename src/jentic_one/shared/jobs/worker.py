@@ -28,6 +28,9 @@ logger = structlog.get_logger(__name__)
 
 _POLL_INTERVAL_SECONDS = 2.0
 _RETENTION_SWEEP_INTERVAL = 60
+# Approved-execution results are retained for this many days so pollers can
+# retrieve them after the upstream call completes. Unrelated to the approval TTL.
+_APPROVED_RESULT_RETENTION_DAYS = 7
 # Post-expiry grace before an access/refresh token row is deleted by the sweep.
 # Expired tokens never verify, but keeping them briefly aids introspection and
 # refresh-token reuse forensics.
@@ -208,11 +211,17 @@ class WorkerLoop:
                 return
             job.status = JobStatus.COMPLETED
             job.visible_at = None
+            available_until = None
+            if job.payload and job.payload.get("pre_approved"):
+                available_until = datetime.now(UTC) + timedelta(
+                    days=_APPROVED_RESULT_RETENTION_DAYS
+                )
             job_result = JobResult(
                 job_id=job_id,
                 kind=kind,
                 body=result.body,
                 content_type=result.content_type,
+                available_until=available_until,
             )
             session.add(job_result)
             if kind != JobKind.IMPORT:
@@ -240,7 +249,18 @@ class WorkerLoop:
         query won't pick a ``QUEUED`` row before then because requeued jobs carry
         a forward-dated visibility deadline). At/over the budget it is moved to
         ``DEAD_LETTER`` (poison-message handling) instead of looping forever.
+
+        Pre-approved jobs never retry: the approval was a one-shot human decision.
+        A failure after approval moves the job directly to ``FAILED`` so the
+        approval surface reflects the terminal outcome without a second attempt.
         """
+        if job.payload and job.payload.get("pre_approved"):
+            await self._terminal_job(
+                job.id, JobStatus.FAILED, error, event_summary_prefix="Import failed"
+            )
+            logger.info("approved_job_failed_no_retry", job_id=job.id, error=error[:_ERROR_MAX_LEN])
+            return
+
         attempts = int(job.attempts or 0)
         if attempts >= self._config.max_attempts:
             await self._terminal_job(

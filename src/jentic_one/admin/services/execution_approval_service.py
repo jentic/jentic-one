@@ -105,6 +105,12 @@ class ExecutionApprovalService:
                 )
 
             new_job_status = JobStatus.QUEUED if body.decision == "approved" else JobStatus.FAILED
-            await JobRepository.update(session, updated.job_id, status=new_job_status)
+            payload_update = {"pre_approved": True} if body.decision == "approved" else None
+            await JobRepository.update(
+                session,
+                updated.job_id,
+                status=new_job_status,
+                payload_update=payload_update,
+            )
 
         return ExecutionApprovalView.model_validate(updated)
