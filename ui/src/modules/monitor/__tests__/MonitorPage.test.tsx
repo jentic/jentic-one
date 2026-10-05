@@ -661,17 +661,44 @@ describe('Monitor inter-linking', () => {
 	it('API call with unknown trace opens by execution_id, no audit link', async () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_4');
 
-		// The record leads with the operation; the raw id sits under it.
+		// Legacy id-only row (no operation_path/method): the record falls back
+		// to the generic heading — the opaque operation_id renders nowhere.
 		const dialog = await screen.findByRole('dialog');
 		expect(
-			await within(dialog).findByRole('heading', { name: 'POST /chat.postMessage' }),
+			await within(dialog).findByRole('heading', { name: 'API call' }),
 		).toBeInTheDocument();
 		expect(within(dialog).getByText('Execution')).toBeInTheDocument();
 		expect(within(dialog).getAllByText('exec_4').length).toBeGreaterThanOrEqual(1);
+		const operationLabel = await within(dialog).findByText('Operation');
+		const operationRow = operationLabel.parentElement as HTMLElement;
+		expect(within(operationRow).getByText('—')).toBeInTheDocument();
+		expect(screen.queryByText('op_chatpost01')).not.toBeInTheDocument();
+		// …but stays reachable for debugging via an icon-only copy affordance.
+		expect(
+			within(operationRow).getByRole('button', { name: 'Copy operation ID' }),
+		).toBeInTheDocument();
+		// No trace-scoped audit link is offered for an unusable trace.
 		expect(
 			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),
 		).not.toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
+	it('a multi-call trace labels every call by method + path, never the opaque id', async () => {
+		renderMonitor('/app/monitor?show=calls&trace_id=trace_aaaaaaaa');
+
+		const dialog = await screen.findByRole('dialog');
+		expect(
+			await within(dialog).findByRole('heading', { name: '2 calls in one trace' }),
+		).toBeInTheDocument();
+		expect(within(dialog).getAllByText('POST /v1/charges').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).getAllByText('POST /v1/refunds').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).queryByText('op_charges01')).not.toBeInTheDocument();
+		expect(within(dialog).queryByText('op_refunds01')).not.toBeInTheDocument();
+		// Each call keeps its id reachable through the copy affordance.
+		expect(within(dialog).getAllByRole('button', { name: 'Copy operation ID' })).toHaveLength(
+			2,
+		);
 	});
 
 	it('Execution deep-link with a real trace opens the trace, not "no trace recorded"', async () => {

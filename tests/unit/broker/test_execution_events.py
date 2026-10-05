@@ -18,6 +18,7 @@ from jentic_one.broker.services.execution.service import (
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventType
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _StatusRunner(UpstreamRunner):
@@ -58,7 +59,7 @@ def _ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation_id="testOp",
+        operation=OperationInfo(id="testOp"),
         api_vendor="example",
         api_name="api",
         api_version="1.0.0",
@@ -407,7 +408,7 @@ async def test_persist_streaming_execution_no_auth_tag_without_vendor() -> None:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation_id="testOp",
+        operation=OperationInfo(id="testOp"),
         api_vendor="",
         api_name="",
         api_version="",
@@ -455,7 +456,7 @@ async def test_run_execution_no_auth_tag_without_vendor() -> None:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation_id="testOp",
+        operation=OperationInfo(id="testOp"),
         api_vendor="",
         api_name="",
         api_version="",

@@ -184,3 +184,34 @@ func TestInspectCmdRevisionParam(t *testing.T) {
 		t.Errorf("revision_id = %q, want rev9", gotRevision)
 	}
 }
+
+// TestParseMethodURL pins the METHOD:url target grammar the steering docs
+// teach: every method the registry can ingest (including TRACE) resolves in
+// both the colon and space forms, absolute http(s) URLs only — a host-relative
+// url (a hit whose spec declares no servers) falls through to the opaque-id
+// lookup, which is why the docs keep the operation_id fallback for those hits.
+func TestParseMethodURL(t *testing.T) {
+	tests := []struct {
+		input      string
+		wantMethod string
+		wantTarget string
+		wantOK     bool
+	}{
+		{"GET:https://api.example.com/v1/things", "GET", "https://api.example.com/v1/things", true},
+		{"get https://api.example.com/v1/things", "GET", "https://api.example.com/v1/things", true},
+		{"TRACE:https://api.example.com/v1/debug", "TRACE", "https://api.example.com/v1/debug", true},
+		{"OPTIONS:http://localhost:8080/x", "OPTIONS", "http://localhost:8080/x", true},
+		// Host-relative hits (spec with no servers) do NOT match — they
+		// resolve as opaque identifiers instead.
+		{"GET:/pets", "", "", false},
+		{"op_abc123", "", "", false},
+		{"NOTAMETHOD:https://api.example.com/x", "", "", false},
+	}
+	for _, tt := range tests {
+		method, target, ok := parseMethodURL(tt.input)
+		if method != tt.wantMethod || target != tt.wantTarget || ok != tt.wantOK {
+			t.Errorf("parseMethodURL(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tt.input, method, target, ok, tt.wantMethod, tt.wantTarget, tt.wantOK)
+		}
+	}
+}

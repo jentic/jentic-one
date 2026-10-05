@@ -9,7 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +26,7 @@ class ResolveResult:
     injects no credential scoped by ``server_variables`` (fail closed).
     """
 
-    operation_id: str
+    operation: OperationInfo
     api: APIReference
     path_params: dict[str, str]
     server_variables: dict[str, str] = field(default_factory=dict)

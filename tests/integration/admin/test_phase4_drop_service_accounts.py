@@ -675,6 +675,9 @@ async def test_downgrade_is_irreversible_and_changes_nothing(
 ) -> None:
     """The drop never recreates empty tables: its downgrade raises, pointing at
     the pre-upgrade snapshot, and leaves admin at the drop revision."""
+    # Walk any reversible revisions stacked on the drop back first, so the
+    # downgrade below exercises the drop itself.
+    await asyncio.to_thread(command.downgrade, _admin_cfg(integration_config), _ADMIN_DROP)
     assert await _admin_revision(admin_db) == _ADMIN_DROP
     with pytest.raises(RuntimeError, match="irreversible") as excinfo:
         await asyncio.to_thread(command.downgrade, _admin_cfg(integration_config), _ADMIN_PRE_DROP)

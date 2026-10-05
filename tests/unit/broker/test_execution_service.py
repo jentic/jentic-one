@@ -9,6 +9,7 @@ import pytest
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _StubRunner(UpstreamRunner):
@@ -28,7 +29,7 @@ def _ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id="a" * 32,
         toolkit_id="tk_test000000000000000000",
-        operation_id="getThing",
+        operation=OperationInfo(id="getThing", path="/v1/things", method="GET"),
         api_vendor="example",
         api_name="api",
         api_version="1.0.0",
@@ -98,3 +99,27 @@ async def test_actor_fields_are_required() -> None:
     call_kwargs = mock_record.call_args.kwargs
     assert call_kwargs["actor_id"] == "usr_default"
     assert call_kwargs["actor_type"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_operation_info_forwarded_to_record_execution() -> None:
+    """The resolved operation (id + path template + method) reaches record_execution intact."""
+    session = _session_mock()
+    broker = default_broker(_StubRunner())
+
+    with patch(
+        "jentic_one.broker.services.execution.service.record_execution", new_callable=AsyncMock
+    ) as mock_record:
+        mock_record.return_value = "exec_test"
+        await run_execution(
+            _ctx_req(),
+            body=None,
+            headers=None,
+            session=session,
+            broker=broker,
+            actor_id="agt_abc123",
+            actor_type="agent",
+        )
+
+    operation = mock_record.call_args.kwargs["operation"]
+    assert operation == OperationInfo(id="getThing", path="/v1/things", method="GET")
