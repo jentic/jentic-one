@@ -15,6 +15,8 @@ interface ErrorAlertProps {
 	onRetry?: () => void;
 	/** Disable the retry button (e.g. while a refetch is already in flight). */
 	retrying?: boolean;
+	/** A short headline above the message ("Couldn't load the catalog"). */
+	title?: string;
 }
 
 type NoSchemeData = Record<string, unknown> & {
@@ -163,7 +165,7 @@ function NoSchemeError({ data }: { data: NoSchemeData }) {
 	);
 }
 
-export function ErrorAlert({ message, className, onRetry, retrying }: ErrorAlertProps) {
+export function ErrorAlert({ message, className, onRetry, retrying, title }: ErrorAlertProps) {
 	// The rich `no_security_scheme` payload lives on the generated `ApiError.body`.
 	// Module repositories often wrap that in a domain error (e.g. Monitor's
 	// `MonitorApiError`) and stash the original on `.cause`, so unwrap one level
@@ -183,6 +185,7 @@ export function ErrorAlert({ message, className, onRetry, retrying }: ErrorAlert
 			<div className="flex items-start gap-3">
 				<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
 				<div className="min-w-0 flex-1">
+					{title && <p className="mb-0.5 font-semibold">{title}</p>}
 					{errorCode === 'no_security_scheme' && apiData ? (
 						<NoSchemeError data={apiData} />
 					) : (

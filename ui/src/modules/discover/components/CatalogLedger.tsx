@@ -138,6 +138,9 @@ interface CatalogLedgerProps {
 	entities: DiscoveryEntity[];
 	loading: boolean;
 	error: Error | null;
+	/** Re-run the catalog feed (the error state's Try again). */
+	onRetry?: () => void;
+	retrying?: boolean;
 	activeId: string | null;
 	onOpen: (entity: DiscoveryEntity) => void;
 	onImport: (entity: DiscoveryEntity) => void;
@@ -226,6 +229,8 @@ export function CatalogLedger({
 	entities,
 	loading,
 	error,
+	onRetry,
+	retrying = false,
 	activeId,
 	onOpen,
 	onImport,
@@ -519,7 +524,16 @@ export function CatalogLedger({
 		[model, anyMore],
 	);
 
-	if (error) return <ErrorAlert message={error.message} />;
+	if (error) {
+		return (
+			<ErrorAlert
+				title="Couldn't load the catalog"
+				message={error.message}
+				onRetry={onRetry}
+				retrying={retrying}
+			/>
+		);
+	}
 	if (loading && entities.length === 0) return <LedgerSkeleton />;
 	if (entities.length === 0) {
 		return (

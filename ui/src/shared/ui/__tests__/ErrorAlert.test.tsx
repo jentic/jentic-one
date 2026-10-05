@@ -12,6 +12,11 @@ describe('ErrorAlert', () => {
 		expect(screen.getByRole('alert')).toHaveTextContent('Boom');
 	});
 
+	it('renders an optional title above the message', () => {
+		renderWithProviders(<ErrorAlert title="Couldn't load" message="Boom" />);
+		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't loadBoom");
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<ErrorAlert message="Network error" />);
 		await checkA11y(container);

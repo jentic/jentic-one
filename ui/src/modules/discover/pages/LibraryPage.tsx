@@ -64,6 +64,7 @@ import {
 	frontierKeyOf,
 	jumpStartKey,
 	previousJumpStartKey,
+	vendorOf,
 	type RailLetter,
 } from '@/modules/discover/lib/catalogGroups';
 import {
@@ -105,8 +106,10 @@ export default function LibraryPage() {
 	});
 	// Browsing everything: the "In your workspace" group lists all of them.
 	const browsingAll = debouncedQuery.length === 0 && filter === 'all';
+	// Fired only once the main feed has settled: on a fresh install concurrent
+	// first reads race to build the catalog snapshot, and one of them loses.
 	const workspaceEntities = useCatalogInWorkspace({
-		enabled: browsingAll,
+		enabled: browsingAll && !catalog.isPending && !catalog.error,
 		pollWhilePending: hasPendingImports,
 	});
 	// A–Z rail jump to a letter not loaded yet: a second keyset range that
@@ -205,6 +208,15 @@ export default function LibraryPage() {
 		],
 		[catalog.entities, jumpFeed.entities, workspaceEntities, browsingAll],
 	);
+
+	// The count line's vendor figure: distinct vendors among the rows loaded so
+	// far (the catalog response carries no vendor total). Browsing only — a
+	// search or filter loads a subset, which says nothing about the catalog.
+	const vendorsLoaded = useMemo(() => {
+		if (!browsingAll) return 0;
+		return new Set(loadedEntities.map((e) => vendorOf(e).toLowerCase())).size;
+	}, [browsingAll, loadedEntities]);
+	const vendorsComplete = browsingAll && !catalog.hasNextPage && !catalog.isPending;
 
 	// When the (polled) feeds update, resolve any pending import whose entry has
 	// flipped to registered — clears the row's "Adding…" state + toasts.
@@ -355,13 +367,18 @@ export default function LibraryPage() {
 				    own padding spaces them from the search — no full-width strip
 				    (and gap) of their own under the header. */}
 				<div ref={catalogColRef} className="min-w-0">
-					<DiscoverStatusRow
-						catalogTotal={catalog.catalogTotal}
-						registeredCount={catalog.registeredCount}
-						outdatedCount={catalog.outdatedCount}
-						manifestAgeSeconds={catalog.manifestAgeSeconds}
-						loading={catalog.isPending}
-					/>
+					{/* While the catalog is in error its counts are zeros, not facts. */}
+					{!catalog.error && (
+						<DiscoverStatusRow
+							catalogTotal={catalog.catalogTotal}
+							registeredCount={catalog.registeredCount}
+							outdatedCount={catalog.outdatedCount}
+							manifestAgeSeconds={catalog.manifestAgeSeconds}
+							loading={catalog.isPending}
+							vendorsLoaded={vendorsLoaded}
+							vendorsComplete={vendorsComplete}
+						/>
+					)}
 
 					<DiscoverToolbar
 						query={query}
@@ -377,6 +394,8 @@ export default function LibraryPage() {
 						entities={catalog.entities}
 						loading={catalog.isPending}
 						error={catalog.error}
+						onRetry={catalog.refetch}
+						retrying={catalog.isFetching}
 						activeId={sheetOpen ? (selected?.id ?? null) : null}
 						onOpen={handleOpen}
 						onImport={importEntity}

@@ -20,7 +20,7 @@ import { toast } from '@/shared/ui';
 import {
 	catalogCursorAfter,
 	importCatalogEntry,
-	listCatalog,
+	listCatalog as listCatalogOnce,
 	previewOperations,
 	refreshCatalog,
 	type CatalogPage,
@@ -68,6 +68,31 @@ export function setImportPollIntervalForTests(ms: number): () => void {
  */
 const IMPORT_PENDING_TIMEOUT_MS = 60_000;
 
+/** Pause before the one retry of a catalog read that hit a 409. */
+const CATALOG_CONFLICT_RETRY_MS = 400;
+
+/**
+ * Catalog reads, retried ONCE on a 409. On an instance with no catalog
+ * snapshot yet, concurrent first reads race to write it and the loser gets a
+ * 409; by the retry the snapshot exists and the read succeeds. Every other
+ * status (and a second 409) surfaces as-is — the shared QueryClient never
+ * retries a 4xx, so without this the first visit would stay on an error.
+ */
+async function listCatalog(params: Parameters<typeof listCatalogOnce>[0]): Promise<CatalogPage> {
+	try {
+		return await listCatalogOnce(params);
+	} catch (error) {
+		if ((error as { status?: unknown }).status !== 409) throw error;
+		await new Promise((resolve) => setTimeout(resolve, CATALOG_CONFLICT_RETRY_MS));
+		return listCatalogOnce(params);
+	}
+}
+
+/** The jump cursor couldn't be built — the ledger falls back to paging forward. */
+function jumpCursorUnavailable(): Error {
+	return new Error('This position in the catalog cannot be jumped to.');
+}
+
 /** Browse page size (the infinite scroll's step). */
 const CATALOG_PAGE_SIZE = 50;
 /** A seek's page size — the backend's max `limit`. */
@@ -98,6 +123,8 @@ export interface UseDiscoverCatalogResult {
 	 * letter / `#` that hasn't loaded yet), so it takes a few requests, not dozens.
 	 */
 	fetchNextPage: (options?: { bulk?: boolean }) => void;
+	/** Re-run the feed from its first page (the error state's Retry). */
+	refetch: () => void;
 }
 
 /**
@@ -160,7 +187,7 @@ export function useDiscoverCatalog(params: {
 	const first = query.data?.pages[0];
 	// Stable, so the ledger's seek / infinite-scroll effects don't re-run (and
 	// re-arm their observers) on every render.
-	const { fetchNextPage: fetchNext } = query;
+	const { fetchNextPage: fetchNext, refetch: refetchFeed } = query;
 	const fetchNextPage = useCallback(
 		(options?: { bulk?: boolean }) => {
 			bulkRef.current = options?.bulk ?? false;
@@ -168,6 +195,7 @@ export function useDiscoverCatalog(params: {
 		},
 		[fetchNext],
 	);
+	const refetch = useCallback(() => void refetchFeed(), [refetchFeed]);
 
 	return {
 		entities,
@@ -181,6 +209,7 @@ export function useDiscoverCatalog(params: {
 		hasNextPage: query.hasNextPage,
 		isFetchingNextPage: query.isFetchingNextPage,
 		fetchNextPage,
+		refetch,
 	};
 }
 
@@ -215,6 +244,7 @@ async function listCatalogRange(
 ): Promise<DiscoveryEntity[]> {
 	const rows: DiscoveryEntity[] = [];
 	let cursor: string | null = catalogCursorAfter(startKey);
+	if (cursor == null) throw jumpCursorUnavailable();
 	for (;;) {
 		const page = await listCatalog({ filter, cursor, limit: CATALOG_BULK_PAGE_SIZE });
 		rows.push(...page.entities.filter((e) => e.apiId < endKey));
@@ -238,6 +268,7 @@ export function useCatalogJump(params: {
 	pollWhilePending?: boolean;
 }): UseCatalogJumpResult {
 	const enabled = (params.enabled ?? true) && params.startKey != null;
+	const jumpCursor = params.startKey != null ? catalogCursorAfter(params.startKey) : null;
 	const query = useInfiniteQuery<
 		CatalogPage,
 		Error,
@@ -246,16 +277,17 @@ export function useCatalogJump(params: {
 		CatalogPageParam
 	>({
 		queryKey: [...discoverKeys.catalogAll, 'jump', params.startKey, params.filter] as const,
-		queryFn: ({ pageParam }) =>
-			listCatalog({
+		queryFn: ({ pageParam }) => {
+			// Every page of a jump is cursored; a null cursor means the start
+			// position couldn't be encoded, so fail and let the ledger page forward.
+			if (pageParam.cursor == null) throw jumpCursorUnavailable();
+			return listCatalog({
 				filter: params.filter,
 				cursor: pageParam.cursor,
 				limit: pageParam.limit,
-			}),
-		initialPageParam: {
-			cursor: params.startKey != null ? catalogCursorAfter(params.startKey) : null,
-			limit: CATALOG_PAGE_SIZE,
+			});
 		},
+		initialPageParam: { cursor: jumpCursor, limit: CATALOG_PAGE_SIZE },
 		getNextPageParam: (lastPage) =>
 			lastPage.hasMore && lastPage.nextCursor
 				? { cursor: lastPage.nextCursor, limit: CATALOG_PAGE_SIZE }
@@ -341,7 +373,8 @@ function combineRanges(results: { data?: DiscoveryEntity[]; isPending: boolean }
  * ledger's "In your workspace" group — so it lists all of them up front, not
  * just the ones that happen to be on the pages scrolled so far. One page is
  * plenty for a workspace; it shares the catalog root key, so refreshes and
- * import landings refetch it too.
+ * import landings refetch it too. Callers enable it only once the main feed
+ * has settled, so the two never race for the first catalog snapshot.
  */
 export function useCatalogInWorkspace(params: { enabled: boolean; pollWhilePending?: boolean }) {
 	const query = useQuery({

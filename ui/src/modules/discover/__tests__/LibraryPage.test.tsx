@@ -8,7 +8,6 @@ import {
 	userEvent,
 	fireEvent,
 	checkA11y,
-	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken, sharedQueryKeys } from '@/shared/api';
@@ -75,7 +74,7 @@ describe('LibraryPage', () => {
 		const status = await screen.findByTestId('discover-status');
 		expect(within(status).getByText(/APIs in the catalog/)).toBeInTheDocument();
 		expect(within(status).getByText(/in your workspace/)).toBeInTheDocument();
-		// The vendor total has no backend source yet: the placeholder figure.
+		// Counted from the loaded rows — the response carries no vendor total.
 		expect(within(status).getByTestId('discover-status-vendors')).toHaveTextContent('vendors');
 		// It heads the catalog column, directly above the toolbar — not a
 		// full-width strip of its own under the page header. (The toolbar's
@@ -791,9 +790,97 @@ describe('LibraryPage', () => {
 		expect(await screen.findByText('Catalog refreshed')).toBeInTheDocument();
 	});
 
-	it('surfaces an error when the catalog fails', async () => {
-		worker.use(createErrorHandler('get', '/catalog', { status: 500 }));
+	it('surfaces a titled error with Try again, and hides the count line meanwhile', async () => {
+		let failing = true;
+		worker.use(
+			http.get('/catalog', () =>
+				failing
+					? HttpResponse.json({ detail: 'Upstream down' }, { status: 500 })
+					: undefined,
+			),
+		);
+		const user = userEvent.setup();
 		renderWithProviders(<LibraryPage />);
-		expect(await screen.findByRole('alert')).toBeInTheDocument();
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent("Couldn't load the catalog");
+		expect(alert).toHaveTextContent('Upstream down');
+		// Zeros while in error are not facts: no "0 APIs … never refreshed".
+		expect(screen.queryByTestId('discover-status')).not.toBeInTheDocument();
+
+		failing = false;
+		await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+		expect(await screen.findByText('stripe.com')).toBeInTheDocument();
+		expect(await screen.findByTestId('discover-status')).toBeInTheDocument();
+	});
+
+	it('recovers from a 409 on the first catalog read (the first-snapshot race)', async () => {
+		let conflicts = 1;
+		worker.use(
+			http.get('/catalog', () => {
+				if (conflicts > 0) {
+					conflicts -= 1;
+					return HttpResponse.json(
+						{ detail: 'The request conflicts with the current state of the resource.' },
+						{ status: 409 },
+					);
+				}
+				return undefined;
+			}),
+		);
+		renderWithProviders(<LibraryPage />);
+		expect(await screen.findByText('stripe.com')).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('reads the in-workspace group only after the main feed has settled', async () => {
+		const order: string[] = [];
+		let mainDone = false;
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const registeredOnly =
+					new URL(request.url).searchParams.get('registered_only') === 'true';
+				order.push(registeredOnly ? (mainDone ? 'ws-after' : 'ws-before') : 'main');
+				if (!registeredOnly) {
+					await delay(50);
+					mainDone = true;
+				}
+				return undefined;
+			}),
+		);
+		renderWithProviders(<LibraryPage />);
+		await screen.findByText('stripe.com');
+		await waitFor(() => expect(order).toContain('ws-after'));
+		expect(order).not.toContain('ws-before');
+	});
+
+	it('labels the vendor figure as loaded-so-far while more pages exist', async () => {
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const params = new URL(request.url).searchParams;
+				if (params.get('registered_only') === 'true') return undefined;
+				// The next page never arrives: the feed stays "more to come".
+				if (params.get('cursor')) await delay('infinite');
+				return HttpResponse.json({
+					data: ['acme.com', 'beta.io/a', 'beta.io/b'].map((id) => ({
+						api_id: id,
+						summary: id,
+						spec_url: `https://example.com/${id}.json`,
+						registered: false,
+						_links: {},
+					})),
+					catalog_total: 6345,
+					registered_count: 0,
+					outdated_count: 0,
+					manifest_age_seconds: 60,
+					has_more: true,
+					next_cursor: 'eyJpZCI6ICJiZXRhLmlvL2IifQ==',
+				});
+			}),
+		);
+		renderWithProviders(<LibraryPage />);
+		const status = await screen.findByTestId('discover-status');
+		// acme.com + beta.io from the page, stripe.com from the in-workspace read.
+		await waitFor(() => expect(status).toHaveTextContent(/from 3\+ vendors so far/));
+		expect(status).not.toHaveTextContent('4,870');
 	});
 });

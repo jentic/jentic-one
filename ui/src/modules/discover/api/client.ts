@@ -75,12 +75,24 @@ export interface CatalogPage {
  * at the first entry sorting strictly after it (plain codepoint `api_id`
  * order), e.g. `y` → the first `y…` vendor.
  *
- * Mirrors the backend's keyset token (`encode_catalog_cursor`: base64 of
- * `{"id": <api_id>}`, no score for browse). If the server ever rejects it
- * (400 invalid cursor), callers fall back to paging forward.
+ * Built byte-for-byte like the backend's keyset token
+ * (`encode_catalog_cursor` in `src/jentic_one/shared/pagination.py`: base64 of
+ * Python's `json.dumps({"id": api_id})` — `": "` separator, non-ASCII escaped as
+ * `\uXXXX`), pinned by a contract test. The escaping also keeps the payload
+ * ASCII, so `btoa` (Latin-1 only) can't throw on an international id. Returns
+ * null if it can't be built; callers then page forward instead, as they do
+ * when the server rejects the token (400 invalid cursor).
  */
-export function catalogCursorAfter(apiId: string): string {
-	return btoa(JSON.stringify({ id: apiId }));
+export function catalogCursorAfter(apiId: string): string | null {
+	const id = JSON.stringify(apiId).replace(
+		/[\u0080-\uffff]/g,
+		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+	);
+	try {
+		return btoa(`{"id": ${id}}`);
+	} catch {
+		return null;
+	}
 }
 
 /**
