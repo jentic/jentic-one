@@ -979,6 +979,7 @@ components:
       - provider_config
       - oauth_client
       - oauth_grant
+      - execution_approval
       title: AuditTargetType
       type: string
     BasicAuthCreateRequest:

@@ -64,6 +64,7 @@ async def list_execution_approvals(
 ) -> ExecutionApprovalListResponse:
     """List execution approvals with optional state/agent filters."""
     page = await svc.list_approvals(
+        identity=identity,
         state=state,
         agent_id=agent_id,
         cursor=cursor,
@@ -84,7 +85,7 @@ async def get_execution_approval(
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
 ) -> ExecutionApprovalResponse:
     """Get the detail of one execution approval."""
-    view = await svc.get_approval(approval_id)
+    view = await svc.get_approval(approval_id, identity=identity)
     return _approval_response(view, request)
 
 

@@ -27,6 +27,7 @@ protocols satisfied by broker-side implementations injected at worker startup.
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -35,6 +36,7 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -67,6 +69,11 @@ logger = structlog.get_logger(__name__)
 # (which includes the actor-still-active check), so it is always True here.
 _WORKER_IDENTITY_ACTIVE = True
 
+# Payload key that signals the dict is an encryption envelope.  When this key
+# is present the handler decrypts before reading any other field.  Only held
+# jobs (require-approval path) have their payload encrypted at rest.
+_ENC_MARKER = "_enc"
+
 
 class ExecutionHandler:
     """Handles ``kind=execution`` jobs by running the shared execution pipeline."""
@@ -80,6 +87,7 @@ class ExecutionHandler:
         egress: Any | None = None,
         security_config: SecurityConfig | None = None,
         execution_authorizer: ExecutionAuthorizer | None = None,
+        encryption: EncryptionService | None = None,
     ) -> None:
         if credential_injector is not None and execution_authorizer is None:
             # Fail closed at wiring time: injecting credentials for a queued
@@ -92,6 +100,7 @@ class ExecutionHandler:
         self._credential_injector = credential_injector
         self._egress = egress
         self._security_config = security_config or SecurityConfig()
+        self._encryption = encryption
 
     async def execute(
         self,
@@ -107,6 +116,16 @@ class ExecutionHandler:
             raise ValueError("created_by and actor_type are required for execution jobs")
         if payload is None:
             payload = {}
+
+        # Held-job payloads are encrypted at rest.  Decrypt before reading any
+        # field so the rest of the path sees the plain dict regardless of
+        # whether the job was a held approval or a regular async execution.
+        if _ENC_MARKER in payload:
+            if self._encryption is None:
+                raise RuntimeError(
+                    "Encrypted execution payload found but no EncryptionService is configured"
+                )
+            payload = json.loads(self._encryption.decrypt(str(payload[_ENC_MARKER])))
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")

@@ -1555,7 +1555,8 @@
           "session",
           "provider_config",
           "oauth_client",
-          "oauth_grant"
+          "oauth_grant",
+          "execution_approval"
         ],
         "title": "AuditTargetType",
         "type": "string"

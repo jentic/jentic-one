@@ -6,6 +6,7 @@ from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import AuditRepository, JobRepository
+from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import JobNotFoundError
@@ -14,6 +15,7 @@ from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.jobs import JobStatus
 
 
 class JobService:
@@ -85,6 +87,12 @@ class JobService:
             )
             if cancelled is None:
                 return self._to_view(job)
+
+            # When cancelling a held job the agent is withdrawing its hold.
+            # Transition the linked approval row to withdrawn so the approval
+            # surface reflects the terminal outcome.
+            if job.status == JobStatus.HELD:
+                await ExecutionApprovalRepository.withdraw_by_job_id(session, job_id)
 
             await AuditRepository.record(
                 session,

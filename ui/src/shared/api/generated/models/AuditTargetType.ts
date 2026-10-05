@@ -30,4 +30,5 @@ export enum AuditTargetType {
     PROVIDER_CONFIG = 'provider_config',
     OAUTH_CLIENT = 'oauth_client',
     OAUTH_GRANT = 'oauth_grant',
+    EXECUTION_APPROVAL = 'execution_approval',
 }

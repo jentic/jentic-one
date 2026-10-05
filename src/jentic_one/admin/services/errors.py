@@ -77,6 +77,10 @@ class ExecutionApprovalAlreadyDecidedError(AdminServiceError):
     """Raised when a decide action targets a non-pending approval."""
 
 
+class ExecutionApprovalForbiddenError(AdminServiceError):
+    """Raised when a caller is not permitted to decide an approval (e.g. agent actor)."""
+
+
 class ConflictError(AdminServiceError):
     """Raised when an operation conflicts with existing state."""
 

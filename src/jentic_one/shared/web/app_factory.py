@@ -190,6 +190,7 @@ def _start_worker(
                 execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
+                encryption=(ctx.encryption if ctx.config.credentials.encryption.entries else None),
             ),
         )
 

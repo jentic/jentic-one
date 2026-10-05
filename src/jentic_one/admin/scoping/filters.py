@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
@@ -23,6 +24,10 @@ _OWNER_MODELS: dict[type[Any], Any] = {
     Job: Job.created_by,
     ExecutionRecord: ExecutionRecord.actor_id,
     Event: Event.actor_id,
+    # ExecutionApproval rows are owned by the agent that created the hold.
+    # The human owner of that agent can see their agent's approval rows too
+    # (via the _OWNED_AGENT_ACTOR_MODELS check).
+    ExecutionApproval: ExecutionApproval.agent_id,
 }
 
 # Extra subject columns matched the same way as the owner column. An event names
@@ -44,7 +49,9 @@ _DELEGATION_SCOPES: dict[type[Any], str] = {
 # Models whose owner column records the acting subject (a user *or* an agent).
 # The human owner of an agent is accountable for what it does, so a row created
 # by one of the caller's agents is visible to the caller as well.
-_OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset({Job, ExecutionRecord, Event})
+_OWNED_AGENT_ACTOR_MODELS: frozenset[type[Any]] = frozenset(
+    {Job, ExecutionRecord, Event, ExecutionApproval}
+)
 
 
 def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:

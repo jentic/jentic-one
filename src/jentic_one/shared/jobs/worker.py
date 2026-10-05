@@ -341,34 +341,54 @@ class WorkerLoop:
             # does not sit in HELD forever.
             now = datetime.now(UTC)
             async with self._db.transaction() as session:
-                expired_subq = (
-                    select(ExecutionApproval.job_id)
-                    .where(
-                        ExecutionApproval.state == "pending",
-                        ExecutionApproval.expires_at < now,
-                    )
-                    .scalar_subquery()
+                # Fetch the job IDs of pending approvals whose TTL has lapsed,
+                # then expire them and fail their jobs in one transaction.
+                fetch_stmt = select(ExecutionApproval.job_id).where(
+                    ExecutionApproval.state == "pending",
+                    ExecutionApproval.expires_at < now,
                 )
-                approval_update = (
-                    update(ExecutionApproval)
-                    .where(
-                        ExecutionApproval.state == "pending",
-                        ExecutionApproval.expires_at < now,
-                    )
-                    .values(state="expired", decided_at=now)
-                )
-                approval_result = await session.execute(approval_update)
-                expired_count = int(approval_result.rowcount)  # type: ignore[attr-defined]
+                fetch_result = await session.execute(fetch_stmt)
+                expired_job_ids: list[str] = list(fetch_result.scalars().all())
+
+                expired_count = len(expired_job_ids)
                 if expired_count > 0:
-                    job_update = (
+                    await session.execute(
+                        update(ExecutionApproval)
+                        .where(
+                            ExecutionApproval.state == "pending",
+                            ExecutionApproval.expires_at < now,
+                        )
+                        .values(state="expired", decided_at=now)
+                    )
+                    await session.execute(
                         update(Job)
                         .where(
-                            Job.id.in_(expired_subq),
+                            Job.id.in_(expired_job_ids),
                             Job.status == JobStatus.HELD,
                         )
                         .values(status=JobStatus.FAILED)
                     )
-                    await session.execute(job_update)
+                    # Write a permission-denied result for each expired job so
+                    # agents polling get_execution_result receive a structured
+                    # error instead of a missing row.
+                    for jid in expired_job_ids:
+                        session.add(
+                            JobResult(
+                                job_id=jid,
+                                kind="execution",
+                                content_type="application/problem+json",
+                                body={
+                                    "type": "execution_approval_expired",
+                                    "title": "Approval Expired",
+                                    "status": 403,
+                                    "detail": (
+                                        "The execution approval window lapsed before "
+                                        "a reviewer decided. Re-submit the request to "
+                                        "create a new approval."
+                                    ),
+                                },
+                            )
+                        )
                     logger.info("approval_expiry_sweep_expired", count=expired_count)
 
             async with self._db.transaction() as session:

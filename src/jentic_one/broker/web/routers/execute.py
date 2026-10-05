@@ -14,6 +14,7 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 from __future__ import annotations
 
 import base64
+import json
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -985,7 +986,7 @@ async def _handle_hold(
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
 
-    payload = _async_job_payload(
+    raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
         origin=identity.origin.value,
@@ -993,6 +994,15 @@ async def _handle_hold(
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
     )
+
+    # Encrypt the payload at rest if a platform key is configured.  Held jobs
+    # may sit in the database for up to the TTL (default 24 h), so encrypting
+    # keeps credentials and request bodies out of plaintext storage.
+    if ctx.config.credentials.encryption.entries:
+        blob = ctx.encryption.encrypt(json.dumps(raw_payload))
+        payload: dict[str, object] = {"_enc": blob}
+    else:
+        payload = raw_payload
 
     async with ctx.admin_db.transaction() as session:
         job_id, approval_id = await hold_execution(
