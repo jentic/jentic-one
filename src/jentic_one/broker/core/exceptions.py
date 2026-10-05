@@ -197,12 +197,12 @@ class ActionDeniedError(BrokerError):
 class CredentialIdentityMismatchError(BrokerError):
     """Bound, but no bound credential's identity covers this API (403).
 
-    Distinct from :class:`ActionDeniedError` and the missing-binding denials
-    (``no_credential_binding``; ``no_toolkit_binding`` on the flag-off
-    fallback): the agent *is* bound, but the bound credential's stored API
-    identity does not cover the resolved operation identity (#747/#748). The
-    recovery is to fix/re-provision the **credential** — this is not
-    agent-recoverable, and requesting a new binding would not help.
+    Distinct from :class:`ActionDeniedError` and the missing-binding denial
+    (``no_credential_binding``): the agent *is* bound, but the bound
+    credential's stored API identity does not cover the resolved operation
+    identity (#747/#748). The recovery is to fix/re-provision the
+    **credential** — this is not agent-recoverable, and requesting a new
+    binding would not help.
     """
 
 
@@ -271,98 +271,6 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
     )
 
 
-def no_toolkit_binding_directive(
-    *,
-    vendor: str,
-    name: str,
-    version: str,
-    toolkit_serves_api: bool,
-    connect_vendor: str | None = None,
-) -> AgentDirective:
-    """Directive for a ``no_toolkit_binding`` 403 — recover the missing binding.
-
-    Emitted only on the flag-off toolkit-derivation fallback
-    (``broker.direct_bindings_enabled=false``): the caller is authenticated but
-    bound to no toolkit that serves this API. The remediation is shaped by
-    whether anything serves the API at all:
-
-    - ``toolkit_serves_api=True`` — something already serves it, the caller
-      just isn't bound. The operator binds the agent to the serving
-      credential (binding stays human).
-    - ``toolkit_serves_api=False`` — nothing serves it yet (no credential has
-      been provisioned/bound). The *provisioning* leg is agent-initiable when
-      the API maps onto a vendor-registry entry (``connect_vendor``): the
-      agent runs ``jentic connect <vendor>`` (or calls the
-      ``request_connection`` MCP tool) and relays the resulting approval_url
-      to its operator; approval and the binding grant stay human. Off the
-      registry the whole ask stays with the operator. Deliberately
-      text-only otherwise — the broker never enumerates other credentials
-      here (that would leak instance inventory to an unbound agent, and this
-      stateless edge has no scoped view of what a future approver could
-      reuse).
-
-    ``connect_vendor`` is the vendor-registry key the caller resolved for this
-    API (``shared.access_guidance.connect_vendor_key``), or ``None`` when the
-    API is not in the registry; when set, the directive carries a runnable
-    ``parameters.suggested_command`` (``jentic connect <vendor>``).
-
-    Both variants name the exact next step so an autonomous agent can hand it to
-    its operator verbatim instead of reading docs.
-    """
-    api = "/".join(part for part in (vendor, name) if part)
-    parameters: dict[str, Any] = {
-        "api": {"vendor": vendor, "name": name, "version": version},
-        "toolkit_serves_api": toolkit_serves_api,
-    }
-    if connect_vendor:
-        parameters["suggested_command"] = f"jentic connect {connect_vendor}"
-
-    if toolkit_serves_api:
-        instruction = (
-            f"You are not bound for '{api}'. Ask your operator to bind this agent to the "
-            f"credential serving '{api}' (in the dashboard, or via "
-            "POST /agents/{agent_id}/credentials) — only a human can grant the binding. "
-            "Once bound, retry this call."
-        )
-        if connect_vendor:
-            instruction += (
-                f" Alternatively, start connecting a fresh credential yourself with "
-                f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
-                "relay its approval_url to your operator — approval is still theirs."
-            )
-        return AgentDirective(
-            strategy="prompt_human",
-            parameters=parameters,
-            human_readable_instruction=instruction,
-        )
-
-    # Nothing serves this API yet: a credential must be provisioned and bound
-    # first. For a registry vendor the agent can START that step itself (the
-    # connect session — approval stays human); otherwise both steps are the
-    # operator's, in the dashboard — tell the agent to relay one complete ask
-    # (API, auth type, proposed permission rules, and why).
-    if connect_vendor:
-        instruction = (
-            f"Nothing serves '{api}' yet. Start connecting a credential yourself: run "
-            f"`jentic connect {connect_vendor}` (or call the request_connection tool) and "
-            "relay the approval_url it returns to your operator — they approve the "
-            "connection and the binding in the browser; only a human can approve. Once "
-            "they confirm, retry this call."
-        )
-    else:
-        instruction = (
-            f"Nothing serves '{api}' yet. Ask your operator to connect or provision a "
-            f"credential for '{api}' in the dashboard and bind this agent to it — include the "
-            "auth type and permission rules you read from the API spec, and why you need it. "
-            "Only a human can grant this. Once bound, retry this call."
-        )
-    return AgentDirective(
-        strategy="prompt_human",
-        parameters=parameters,
-        human_readable_instruction=instruction,
-    )
-
-
 def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
     """Render a ``vendor/name/version`` identity with ``*`` for unset axes.
 
@@ -376,10 +284,9 @@ def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
 def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
     """Directive for a ``credential_identity_mismatch`` 403 — fix the credential.
 
-    The flag-off (toolkit-derivation fallback) variant: the agent is bound and
-    a credential exists behind that binding, but the credential's stored API
-    identity does not cover the resolved operation (#747/#748). This is not
-    agent-recoverable, so the directive points at
+    The agent is bound and a credential exists behind that binding, but the
+    credential's stored API identity does not cover the resolved operation
+    (#747/#748). This is not agent-recoverable, so the directive points at
     re-provisioning/fixing the **credential** and names the concrete
     expected-vs-found identity so the operator has an actionable diagnostic. The
     strategy is the fixed ``prompt_human`` (only a human can fix the credential).
@@ -428,67 +335,10 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
     )
 
 
-def ambiguous_toolkit_directive(candidates: list[str]) -> AgentDirective:
-    """Directive for an ``ambiguous_toolkit`` 409 — pick one bound toolkit and retry.
-
-    Emitted only on the flag-off toolkit-derivation fallback
-    (``broker.direct_bindings_enabled=false``), where several toolkits the
-    caller is bound to serve this API; the agent must resend with the
-    ``Jentic-Toolkit-Id`` header naming one of ``candidates`` — the one header
-    that disambiguates *this* denial (it stays functional for as long as the
-    fallback exists). The direct-binding path has its own twin,
-    :func:`ambiguous_credential_binding_directive`, which disambiguates on the
-    credential axis via ``Jentic-Credential-Name`` / ``Jentic-Credential-Id``.
-    The directive names the exact CLI flag form (``jentic execute --header``)
-    so an autonomous agent can recover without reading docs, mirroring
-    :func:`no_toolkit_binding_directive`.
-    """
-    pick = candidates[0] if candidates else "<toolkit_id>"
-    return AgentDirective(
-        strategy="switch_toolkit",
-        parameters={
-            "candidates": candidates,
-            # A real, runnable example using the first candidate — not a literal
-            # ellipsis template — so an agent (or its operator) can paste it as-is
-            # and only swap the id if it prefers another candidate.
-            "suggested_command": f"jentic execute --header Jentic-Toolkit-Id={pick} ...",
-        },
-        human_readable_instruction=(
-            "Multiple toolkits serve this API. Resend the same execute with "
-            "`--header Jentic-Toolkit-Id=<id>`, using one of the ids in "
-            "parameters.candidates."
-        ),
-    )
-
-
-def action_denied_directive() -> AgentDirective:
-    """Directive for an ``action_denied`` 403 — a permission rule forbids this op.
-
-    The flag-off (toolkit-derivation fallback) variant: the caller *is* bound
-    for this API, but a permission rule on the legacy toolkit path denies this
-    specific operation. The agent cannot self-recover by switching bindings or
-    filing a binding request — only a human can relax the rule — so the
-    strategy is ``prompt_human``. No ``suggested_command``: relaxing a rule is
-    an operator action with no verbatim agent-runnable command, mirroring
-    :func:`direct_action_denied_directive`.
-    """
-    return AgentDirective(
-        strategy="prompt_human",
-        parameters={},
-        human_readable_instruction=(
-            "This operation is denied by a permission rule. You are bound "
-            "for this API, but the rule forbids this specific call — "
-            "ask your operator to adjust the permission rules governing "
-            "your access. This is not something you can grant yourself."
-        ),
-    )
-
-
 # ---------------------------------------------------------------------------
-# Direct-binding directives — the agent→credential twins of the toolkit
-# directives above. These serve the default path
-# (``broker.direct_bindings_enabled``, default on); the toolkit directives
-# serve only the flag-off derivation fallback until it is retired.
+# Direct-binding directives — agent→credential recovery guidance. The only
+# authorization path since theme-5 Phase 6b deleted the legacy toolkit
+# derivation fallback (and its directive twins).
 # ---------------------------------------------------------------------------
 
 

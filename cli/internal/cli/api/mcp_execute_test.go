@@ -172,6 +172,8 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"no_credential_binding","detail":"denied"}`, "whoami",
 		},
 		{
+			// Still emitted by 0.40.x toolkit-path brokers; provisioning-shaped,
+			// but without a directive it keeps whoami.
 			"no_toolkit_binding_no_directive", http.StatusForbidden,
 			`{"type":"no_toolkit_binding","detail":"denied"}`, "whoami",
 		},
@@ -182,6 +184,11 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 		{
 			"no_credential_binding_registry_vendor", http.StatusForbidden,
 			`{"type":"no_credential_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection) and relay the approval_url."}}`, "request_connection",
+		},
+		{
+			// A 0.40.x toolkit-path broker's twin of no_credential_binding.
+			"no_toolkit_binding_registry_vendor", http.StatusForbidden,
+			`{"type":"no_toolkit_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection) and relay the approval_url."}}`, "request_connection",
 		},
 		{
 			"credential_not_provisioned_registry_vendor", http.StatusFailedDependency,

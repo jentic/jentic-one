@@ -20,17 +20,14 @@ import (
 
 // Defines values for ActorType.
 const (
-	ActorTypeAgent          ActorType = "agent"
-	ActorTypeServiceAccount ActorType = "service_account"
-	ActorTypeUser           ActorType = "user"
+	ActorTypeAgent ActorType = "agent"
+	ActorTypeUser  ActorType = "user"
 )
 
 // Valid indicates whether the value is a known member of the ActorType enum.
 func (e ActorType) Valid() bool {
 	switch e {
 	case ActorTypeAgent:
-		return true
-	case ActorTypeServiceAccount:
 		return true
 	case ActorTypeUser:
 		return true
@@ -468,21 +465,6 @@ func (e MeAgentType) Valid() bool {
 	}
 }
 
-// Defines values for MeServiceAccountType.
-const (
-	MeServiceAccountTypeServiceAccount MeServiceAccountType = "service_account"
-)
-
-// Valid indicates whether the value is a known member of the MeServiceAccountType enum.
-func (e MeServiceAccountType) Valid() bool {
-	switch e {
-	case MeServiceAccountTypeServiceAccount:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for MeUserType.
 const (
 	MeUserTypeUser MeUserType = "user"
@@ -910,40 +892,20 @@ type ActorListResponse struct {
 type ActorSummaryResponse struct {
 	Active bool `json:"active"`
 
-	// ActorType Type of authenticated actor.
+	// ActorType Type of authenticated actor: a human user or an agent.
 	//
-	// ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-	// agents the key-retirement job created, so no code path mints a
-	// toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
-	// historical rows (events, audit entries, execution records) until the
-	// Phase-6b scope-data sweep; read paths must tolerate the string without
-	// round-tripping it through this enum.
-	//
-	// ``service_account`` is deserialization-only (theme-8 Phase 2): the
-	// service-account surface is gone and no issuance path produces it, but
-	// stored token rows, grant rows, audit/execution records, and telemetry
-	// history carry the value, and the Phase-1 resolver fallback still resolves
-	// unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+	// Historical records may carry older actor-type values that are no longer
+	// issued; treat unrecognised values as opaque labels.
 	ActorType ActorType `json:"actor_type"`
 	CreatedAt time.Time `json:"created_at"`
 	Id        string    `json:"id"`
 	Name      string    `json:"name"`
 }
 
-// ActorType Type of authenticated actor.
+// ActorType Type of authenticated actor: a human user or an agent.
 //
-// “toolkit“ is retired (theme-5 Phase 4): toolkit keys resolve as the
-// agents the key-retirement job created, so no code path mints a
-// toolkit identity. Persisted “actor_type='toolkit'“ strings survive in
-// historical rows (events, audit entries, execution records) until the
-// Phase-6b scope-data sweep; read paths must tolerate the string without
-// round-tripping it through this enum.
-//
-// “service_account“ is deserialization-only (theme-8 Phase 2): the
-// service-account surface is gone and no issuance path produces it, but
-// stored token rows, grant rows, audit/execution records, and telemetry
-// history carry the value, and the Phase-1 resolver fallback still resolves
-// unmigrated “sak_“ keys as it. Deletion is a Phase-4/5 decision.
+// Historical records may carry older actor-type values that are no longer
+// issued; treat unrecognised values as opaque labels.
 type ActorType string
 
 // AgentCreateRequest Request body for creating an agent manually.
@@ -1493,12 +1455,13 @@ type CredentialBindRequest struct {
 
 // CredentialBindingEntry Direct agent↔credential binding summary for the /me response (theme 5 phase 1).
 type CredentialBindingEntry struct {
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    *bool           `json:"suspended,omitempty"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       *bool           `json:"suspended,omitempty"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialBindingListResponse List of direct credential bindings.
@@ -1508,14 +1471,15 @@ type CredentialBindingListResponse struct {
 
 // CredentialBindingResponse Direct agent↔credential binding representation in API responses.
 type CredentialBindingResponse struct {
-	AgentId      string          `json:"agent_id"`
-	BoundAt      time.Time       `json:"bound_at"`
-	CredentialId string          `json:"credential_id"`
-	Id           string          `json:"id"`
-	Name         *string         `json:"name,omitempty"`
-	RuleSetId    *string         `json:"rule_set_id,omitempty"`
-	Serves       *[]ServedApiRef `json:"serves,omitempty"`
-	Suspended    bool            `json:"suspended"`
+	AgentId         string          `json:"agent_id"`
+	BoundAt         time.Time       `json:"bound_at"`
+	CredentialId    string          `json:"credential_id"`
+	Id              string          `json:"id"`
+	Name            *string         `json:"name,omitempty"`
+	RuleSetId       *string         `json:"rule_set_id,omitempty"`
+	Serves          *[]ServedApiRef `json:"serves,omitempty"`
+	Suspended       bool            `json:"suspended"`
+	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
@@ -1707,18 +1671,24 @@ type ExecutionRecordLinks struct {
 // ExecutionResponse Execution record representation in API responses.
 type ExecutionResponse struct {
 	// UnderscoreLinks HATEOAS links for an execution record.
-	UnderscoreLinks ExecutionRecordLinks    `json:"_links"`
-	ActorId         string                  `json:"actor_id"`
-	ActorType       string                  `json:"actor_type"`
-	Api             *ApiInfoResponse        `json:"api,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
-	CredentialId    *string                 `json:"credential_id,omitempty"`
-	CredentialName  *string                 `json:"credential_name,omitempty"`
-	DurationMs      *int                    `json:"duration_ms,omitempty"`
-	Error           *string                 `json:"error,omitempty"`
-	ExecutionId     string                  `json:"execution_id"`
-	HttpStatus      *int                    `json:"http_status,omitempty"`
-	OperationId     *string                 `json:"operation_id,omitempty"`
+	UnderscoreLinks ExecutionRecordLinks `json:"_links"`
+	ActorId         string               `json:"actor_id"`
+	ActorType       string               `json:"actor_type"`
+	Api             *ApiInfoResponse     `json:"api,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	CredentialId    *string              `json:"credential_id,omitempty"`
+	CredentialName  *string              `json:"credential_name,omitempty"`
+	DurationMs      *int                 `json:"duration_ms,omitempty"`
+	Error           *string              `json:"error,omitempty"`
+	ExecutionId     string               `json:"execution_id"`
+	HttpStatus      *int                 `json:"http_status,omitempty"`
+	OperationId     *string              `json:"operation_id,omitempty"`
+
+	// OperationMethod The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+	OperationMethod *string `json:"operation_method,omitempty"`
+
+	// OperationPath The operation's spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.
+	OperationPath   *string                 `json:"operation_path,omitempty"`
 	Origin          *string                 `json:"origin,omitempty"`
 	PinnedRevisions *map[string]interface{} `json:"pinned_revisions,omitempty"`
 	StartedAt       time.Time               `json:"started_at"`
@@ -1757,10 +1727,11 @@ type GovernedHostsResponse struct {
 
 // GroupBy Grouping dimension for usage statistics.
 //
-// “TOOLKIT“ is deprecated (theme-5 Phase 5b) and will be removed one
-// release later, with the toolkit tables (Phase 6b): execution records
-// carry a “credential_id“ since Phase 2 and the direct-binding path
-// writes no “toolkit_id“, so “CREDENTIAL“ is the replacement axis.
+// “TOOLKIT“ is a legacy axis: it groups over the surviving
+// “execution_records.toolkit_id“ attribution column, which nothing writes
+// since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+// historical dashboards keep working; “CREDENTIAL“ is the live
+// consumer axis (execution records carry “credential_id“ since Phase 2).
 type GroupBy string
 
 // HealthResponse Health check response for the admin surface.
@@ -1914,31 +1885,11 @@ type MeAgent struct {
 	Scopes             []string                  `json:"scopes"`
 	Status             string                    `json:"status"`
 	TokenScopes        []string                  `json:"token_scopes"`
-	ToolkitBindings    []ToolkitBindingEntry     `json:"toolkit_bindings"`
 	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
 // MeAgentType defines model for MeAgent.Type.
 type MeAgentType string
-
-// MeServiceAccount Identity response for a (retired) service-account actor.
-//
-// Served only to callers whose unmigrated “sak_“/“jntc_live_“ key
-// resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-// fallback in Phase 4.
-type MeServiceAccount struct {
-	ApprovedBy   *string               `json:"approved_by,omitempty"`
-	Id           string                `json:"id"`
-	Name         string                `json:"name"`
-	RegisteredBy string                `json:"registered_by"`
-	Scopes       []string              `json:"scopes"`
-	Status       string                `json:"status"`
-	TokenScopes  []string              `json:"token_scopes"`
-	Type         *MeServiceAccountType `json:"type,omitempty"`
-}
-
-// MeServiceAccountType defines model for MeServiceAccount.Type.
-type MeServiceAccountType string
 
 // MeUser Identity response for a user actor.
 type MeUser struct {
@@ -1958,7 +1909,7 @@ type MeUserType string
 // NoAuthCreateRequest Create request for no_auth credentials.
 //
 // A no-auth credential carries no secret — it represents "this API is called
-// without authentication". It still exists as a credential row so a toolkit
+// without authentication". It still exists as a credential row so an agent
 // binding (and its permission rules) can hang off it, and the broker resolves
 // it as a no-op auth (see broker credential resolver / injection).
 type NoAuthCreateRequest struct {
@@ -2441,14 +2392,17 @@ type OperationResultResponse struct {
 	UnderscoreLinks SearchLinksResponse `json:"_links"`
 
 	// Api Core API identifier triple plus derived host.
-	Api            ApiReferenceResponse         `json:"api"`
-	Description    *string                      `json:"description,omitempty"`
-	Method         string                       `json:"method"`
-	Name           *string                      `json:"name,omitempty"`
-	OperationId    string                       `json:"operation_id"`
-	RelevanceScore float32                      `json:"relevance_score"`
-	Type           *OperationResultResponseType `json:"type,omitempty"`
-	Url            string                       `json:"url"`
+	Api            ApiReferenceResponse `json:"api"`
+	Description    *string              `json:"description,omitempty"`
+	Method         string               `json:"method"`
+	Name           *string              `json:"name,omitempty"`
+	OperationId    string               `json:"operation_id"`
+	RelevanceScore float32              `json:"relevance_score"`
+
+	// Target The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.
+	Target string                       `json:"target"`
+	Type   *OperationResultResponseType `json:"type,omitempty"`
+	Url    string                       `json:"url"`
 }
 
 // OperationResultResponseType defines model for OperationResultResponse.Type.
@@ -2977,7 +2931,7 @@ type SecuritySchemeResponse struct {
 	Type             string                        `json:"type"`
 }
 
-// ServedApiRef An API served by a toolkit's bound credential, keyed by its stored identity.
+// ServedApiRef An API served by an agent's bound credential, keyed by its stored identity.
 //
 // Distinct from “APIReference“ on purpose: this carries the *stored* credential
 // identity, where “api_name“/“api_version“ may be NULL (the "covers all
@@ -3056,14 +3010,6 @@ type TokenResponse struct {
 	// Scope Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
 	Scope     *string `json:"scope,omitempty"`
 	TokenType *string `json:"token_type,omitempty"`
-}
-
-// ToolkitBindingEntry Toolkit binding summary for the /me response.
-type ToolkitBindingEntry struct {
-	BoundAt   time.Time       `json:"bound_at"`
-	Name      *string         `json:"name,omitempty"`
-	Serves    *[]ServedApiRef `json:"serves,omitempty"`
-	ToolkitId string          `json:"toolkit_id"`
 }
 
 // TopOperation Aggregated execution counts for a single operation.
@@ -4408,40 +4354,6 @@ func (t *GetMe200JSONResponseBody) MergeMeAgent(v MeAgent) error {
 	return err
 }
 
-// AsMeServiceAccount returns the union data inside the GetMe200JSONResponseBody as a MeServiceAccount
-func (t GetMe200JSONResponseBody) AsMeServiceAccount() (MeServiceAccount, error) {
-	var body MeServiceAccount
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromMeServiceAccount overwrites any union data inside the GetMe200JSONResponseBody as the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) FromMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	t.union = b
-	return err
-}
-
-// MergeMeServiceAccount performs a merge with any union data inside the GetMe200JSONResponseBody, using the provided MeServiceAccount
-func (t *GetMe200JSONResponseBody) MergeMeServiceAccount(v MeServiceAccount) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"type":"service_account"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
 func (t GetMe200JSONResponseBody) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -4458,8 +4370,6 @@ func (t GetMe200JSONResponseBody) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "agent":
 		return t.AsMeAgent()
-	case "service_account":
-		return t.AsMeServiceAccount()
 	case "user":
 		return t.AsMeUser()
 	default:
@@ -5295,8 +5205,9 @@ type ClientInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 	RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5346,6 +5257,12 @@ type ClientInterface interface {
 	// PromoteRevision Promote Revision
 	//
 	// Promote a draft revision to published, archiving the current one.
+	//
+	// If the draft declares different server hosts than the API's current (or last
+	// live) revision, or serves a host over plaintext http that was https-only, and
+	// the API has credentials bound to agents, the caller also needs
+	// ``credentials:write``; otherwise the promote is refused with 403
+	// ``host_change_requires_operator``.
 	//
 	// Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
 	PromoteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5703,7 +5620,8 @@ type ClientInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -5940,6 +5858,11 @@ type ClientInterface interface {
 	// InspectOperation Inspect operation
 	//
 	// Inspect an operation — resolve to full structural detail.
+	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
 	//
 	// Corresponds with GET /inspect (the `InspectOperation` operationId).
 	InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8542,8 +8465,9 @@ func (c *Client) ConfirmOverlay(ctx context.Context, vendor string, name string,
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback (the `RollbackOverlay` operationId).
 func (c *Client) RollbackOverlay(ctx context.Context, vendor string, name string, version string, overlayId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8663,6 +8587,12 @@ func (c *Client) ArchiveRevision(ctx context.Context, vendor string, name string
 // PromoteRevision Promote Revision
 //
 // Promote a draft revision to published, archiving the current one.
+//
+// If the draft declares different server hosts than the API's current (or last
+// live) revision, or serves a host over plaintext http that was https-only, and
+// the API has credentials bound to agents, the caller also needs
+// “credentials:write“; otherwise the promote is refused with 403
+// “host_change_requires_operator“.
 //
 // Corresponds with POST /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote (the `PromoteRevision` operationId).
 func (c *Client) PromoteRevision(ctx context.Context, vendor string, name string, version string, revisionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -9360,7 +9290,8 @@ func (c *Client) UpdateCredential(ctx context.Context, credentialId string, body
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Corresponds with GET /credentials/{credential_id}/agents (the `ListCredentialAgents` operationId).
@@ -9827,6 +9758,11 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 // InspectOperation Inspect operation
 //
 // Inspect an operation — resolve to full structural detail.
+//
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
 //
 // Corresponds with GET /inspect (the `InspectOperation` operationId).
 func (c *Client) InspectOperation(ctx context.Context, params *InspectOperationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21351,8 +21287,9 @@ type ClientWithResponsesInterface interface {
 	// promotes the prior revision back to current), so it is the same operator action as
 	// confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 	// carry a recorded superseded revision that is still restorable; otherwise a 409 is
-	// returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-	// changes.
+	// returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+	// ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+	// restored revision's hosts) and nothing changes.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21416,6 +21353,12 @@ type ClientWithResponsesInterface interface {
 	// PromoteRevisionWithResponse Promote Revision
 	//
 	// Promote a draft revision to published, archiving the current one.
+	//
+	// If the draft declares different server hosts than the API's current (or last
+	// live) revision, or serves a host over plaintext http that was https-only, and
+	// the API has credentials bound to agents, the caller also needs
+	// ``credentials:write``; otherwise the promote is refused with 403
+	// ``host_change_requires_operator``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -21821,7 +21764,8 @@ type ClientWithResponsesInterface interface {
 	// List agents directly bound to a credential with cursor-based pagination.
 	//
 	// The reverse lookup for the credential-detail "Agents" view (theme 5
-	// phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+	// phase 1) — the direct-binding successor of the removed
+	// ``GET /toolkits/{id}/agents``.
 	// Suspended bindings are included with their flag set.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -22080,6 +22024,11 @@ type ClientWithResponsesInterface interface {
 	// InspectOperationWithResponse Inspect operation
 	//
 	// Inspect an operation — resolve to full structural detail.
+	//
+	// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+	// reference: the identity to use in credential scopes, revision pins and
+	// other API references. `api.display_name` (optional) is a human-readable
+	// label only.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -37953,8 +37902,9 @@ func (c *ClientWithResponses) ConfirmOverlayWithResponse(ctx context.Context, ve
 // promotes the prior revision back to current), so it is the same operator action as
 // confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
 // carry a recorded superseded revision that is still restorable; otherwise a 409 is
-// returned (“overlay_conflict“ or “overlay_rollback_target_missing“) and nothing
-// changes.
+// returned (“overlay_conflict“, “overlay_rollback_target_missing“, or
+// “host_owned_by_other_vendor“ when another vendor's live API now serves one of the
+// restored revision's hosts) and nothing changes.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -38060,6 +38010,12 @@ func (c *ClientWithResponses) ArchiveRevisionWithResponse(ctx context.Context, v
 // PromoteRevisionWithResponse Promote Revision
 //
 // Promote a draft revision to published, archiving the current one.
+//
+// If the draft declares different server hosts than the API's current (or last
+// live) revision, or serves a host over plaintext http that was https-only, and
+// the API has credentials bound to agents, the caller also needs
+// “credentials:write“; otherwise the promote is refused with 403
+// “host_change_requires_operator“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -38669,7 +38625,8 @@ func (c *ClientWithResponses) UpdateCredentialWithResponse(ctx context.Context, 
 // List agents directly bound to a credential with cursor-based pagination.
 //
 // The reverse lookup for the credential-detail "Agents" view (theme 5
-// phase 1) — the direct-binding mirror of “GET /toolkits/{id}/agents“.
+// phase 1) — the direct-binding successor of the removed
+// “GET /toolkits/{id}/agents“.
 // Suspended bindings are included with their flag set.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -39066,6 +39023,11 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 // InspectOperationWithResponse Inspect operation
 //
 // Inspect an operation — resolve to full structural detail.
+//
+// `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+// reference: the identity to use in credential scopes, revision pins and
+// other API references. `api.display_name` (optional) is a human-readable
+// label only.
 //
 // Returns a wrapper object for the known response body format(s).
 //

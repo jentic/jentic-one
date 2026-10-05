@@ -1,58 +1,24 @@
-"""Unit tests for the theme-8 Phase 1 migration job's pure disposition logic.
+"""Unit tests for the theme-8 service-account retirement's pure logic.
 
 T-1: the OQ-1 switch — ``active`` → migrate, ``disabled`` → migrate-disabled,
-``pending``/``rejected``/``archived`` → skip-but-stamp; the JSONL labels; and
-``had_client_secret`` set iff ``client_secret_hash`` is non-NULL. Pure logic
-only — the copy/revoke/stamp transaction is integration-tested against real
-databases (no DB mocking).
+``pending``/``rejected``/``archived`` → skip-but-stamp. Phase 4: the
+inline-rule parity check and the refusal error's shape. Pure logic only — the
+copy/verify/sweep transactions are integration-tested against real databases
+(no DB mocking).
 """
 
 from __future__ import annotations
 
-from collections import namedtuple
-from unittest.mock import MagicMock
-
 import pytest
 
 from jentic_one.control.services.service_account_migration import (
+    RetirementProblem,
     ServiceAccountMigrationService,
-    _PreviewCounts,
+    ServiceAccountRetirementError,
+    rule_parity_problems,
+    rule_parity_warnings,
 )
 from jentic_one.shared.models import ActorStatus
-
-_Row = namedtuple(
-    "_Row",
-    [
-        "id",
-        "name",
-        "description",
-        "owner_id",
-        "status",
-        "migrated_to_actor_id",
-        "migrated_at",
-        "api_key_hash",
-        "client_secret_hash",
-    ],
-)
-
-
-def _row(
-    status: str = "active",
-    *,
-    migrated_to_actor_id: str | None = None,
-    client_secret_hash: str | None = None,
-) -> _Row:
-    return _Row(
-        id="sva_t1",
-        name="t1",
-        description=None,
-        owner_id="usr_t1",
-        status=status,
-        migrated_to_actor_id=migrated_to_actor_id,
-        migrated_at=None,
-        api_key_hash="digest",
-        client_secret_hash=client_secret_hash,
-    )
 
 
 @pytest.mark.parametrize(
@@ -70,51 +36,62 @@ def test_disposition_switch(status: str, label: str, successor_status: str | Non
     assert ServiceAccountMigrationService._disposition(status) == (label, successor_status)
 
 
-def test_preview_labels_and_skip_reason() -> None:
-    svc = ServiceAccountMigrationService(MagicMock())
-
-    active = svc._preview(_row("active"), _PreviewCounts(stored_scopes=3))
-    assert active.outcome == "migrated"
-    assert active.reason is None
-    assert active.owner_visibility_note is not None  # OQ-5 report line
-    assert active.stored_scope_count == 3  # the computed preview counts are carried
-
-    skipped = svc._preview(_row("pending"), _PreviewCounts(access_tokens=1))
-    assert skipped.outcome == "skipped-non-active"
-    assert skipped.reason == "status=pending"
-    assert skipped.owner_visibility_note is None  # no successor, nothing to see
-    assert skipped.access_tokens_revoked == 1
+_SUCCESSORS = {"sva_now": "agnt_now", "sva_old": "agnt_old"}
 
 
-def test_preview_without_counts_reports_not_computed() -> None:
-    """No counts → ``None`` (not computed), never a misleading zero."""
-    svc = ServiceAccountMigrationService(MagicMock())
-    outcome = svc._preview(_row("active"), None)
-    assert outcome.stored_scope_count is None
-    assert outcome.access_tokens_revoked is None
+def test_rule_parity_clean() -> None:
+    counts = {
+        ("sva_now", "cred_1"): 2,
+        ("agnt_now", "cred_1"): 2,
+        ("sva_old", "cred_2"): 3,
+        ("agnt_old", "cred_2"): 1,  # edited since an earlier run: presence suffices
+    }
+    assert rule_parity_problems(counts, _SUCCESSORS, {"sva_now"}) == []
 
 
-def test_preview_short_circuits_on_stamp() -> None:
-    """A stamped row is done — successor surfaced, skip sentinel maps to None."""
-    svc = ServiceAccountMigrationService(MagicMock())
-
-    migrated = svc._preview(_row("active", migrated_to_actor_id="agnt_successor"), None)
-    assert migrated.outcome == "already_migrated"
-    assert migrated.successor_agent_id == "agnt_successor"
-    assert migrated.stored_scope_count is None  # stamped: counts not computed
-    assert migrated.permission_rule_count is None
-
-    skipped = svc._preview(_row("pending", migrated_to_actor_id="skipped"), None)
-    assert skipped.outcome == "already_migrated"
-    assert skipped.successor_agent_id is None
+def test_rule_parity_exact_for_this_runs_migrations() -> None:
+    counts = {("sva_now", "cred_1"): 2, ("agnt_now", "cred_1"): 1}
+    [problem] = rule_parity_problems(counts, _SUCCESSORS, {"sva_now"})
+    assert problem.service_account_id == "sva_now"
+    assert "holds 1 inline permission rule(s)" in problem.reason
+    assert "expected 2" in problem.reason
 
 
-@pytest.mark.parametrize(
-    ("client_secret_hash", "expected"),
-    [("secret-digest", True), (None, False)],
-)
-def test_had_client_secret_iff_hash_present(client_secret_hash: str | None, expected: bool) -> None:
-    """OQ-1: the report names every client-credentials holder before Phase 2."""
-    svc = ServiceAccountMigrationService(MagicMock())
-    outcome = svc._preview(_row("active", client_secret_hash=client_secret_hash), None)
-    assert outcome.had_client_secret is expected
+def test_rule_parity_never_blocks_on_an_earlier_successor_with_no_rules() -> None:
+    """An earlier successor binding with no rules may have been emptied on
+    purpose: a WARNING (never re-copied), not a refusal."""
+    counts = {("sva_old", "cred_2"): 3}
+    assert rule_parity_problems(counts, _SUCCESSORS, set()) == []
+    [warning] = rule_parity_warnings(counts, _SUCCESSORS, set())
+    assert (warning.service_account_id, warning.successor_agent_id) == ("sva_old", "agnt_old")
+    assert warning.not_copied == "3 inline permission rule(s) for credential cred_2"
+    assert warning.line().startswith("sva_old: 3 inline permission rule(s) for credential cred_2")
+    assert "NOT copied to successor agent agnt_old" in warning.line()
+
+
+def test_rule_parity_warnings_skip_this_runs_migrations_and_reported_pairs() -> None:
+    counts = {("sva_now", "cred_1"): 2, ("sva_old", "cred_2"): 3}
+    assert (
+        rule_parity_warnings(counts, _SUCCESSORS, {"sva_now"}, skip={("sva_old", "cred_2")}) == []
+    )
+
+
+def test_rule_parity_ignores_actors_without_successor() -> None:
+    """Skip-stamped / orphan sva_ ids and successor-side rows are not checked."""
+    counts = {("sva_skipped", "cred_1"): 1, ("agnt_now", "cred_9"): 4}
+    assert rule_parity_problems(counts, _SUCCESSORS, {"sva_now"}) == []
+
+
+def test_retirement_error_names_every_service_account_once() -> None:
+    error = ServiceAccountRetirementError(
+        [
+            RetirementProblem("sva_b", "not migrated"),
+            RetirementProblem("sva_a", "migration failed (boom)"),
+            RetirementProblem("sva_b", "successor agnt_b lacks the scope grant 'x'"),
+        ]
+    )
+    assert error.service_account_ids == ("sva_a", "sva_b")
+    message = str(error)
+    assert message.startswith("Refusing to retire the service accounts (theme-8 Phase 4)")
+    assert "2 service account(s) failed verification (sva_a, sva_b)" in message
+    assert "Nothing was swept or dropped" in message

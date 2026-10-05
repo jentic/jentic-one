@@ -14,7 +14,6 @@ pipeline stages / runner decorators (``services/execution/pipeline.py``,
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -29,25 +28,13 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
     UpstreamRunner,
 )
-from jentic_one.broker.core.denial import DenialReason
 from jentic_one.broker.core.exceptions import (
-    ActionDeniedError,
-    AmbiguousMatchError,
-    BrokerError,
-    CredentialIdentityMismatchError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
-    action_denied_directive,
-    ambiguous_toolkit_directive,
-    credential_identity_mismatch_directive,
-    direct_action_denied_directive,
-    direct_credential_identity_mismatch_directive,
-    no_credential_binding_directive,
-    no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
@@ -72,7 +59,12 @@ from jentic_one.broker.core.schemas import (
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
-from jentic_one.broker.services.discovery import discover, resolve_pin_for_api
+from jentic_one.broker.services.discovery import (
+    discover,
+    discover_via_pins,
+    resolve_pin_for_api,
+)
+from jentic_one.broker.services.execution.authorization import authorize_execution
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
     default_broker,
@@ -89,28 +81,20 @@ from jentic_one.broker.web.deps import (
     CredentialDeriver,
     HttpRunnerDep,
     IdempotencyStoreDep,
-    RequireToolkitAccess,
-    RuleEvaluatorDep,
-    ToolkitDeriver,
+    RequireExecuteAccess,
 )
 from jentic_one.broker.web.streaming import StreamingOutcome
-from jentic_one.shared.access_guidance import connect_vendor_key
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
-    CredentialDerivation,
     CredentialDeriverProtocol,
     RegistryResolverProtocol,
     ResolveResult,
-    RuleEvaluatorProtocol,
-    ToolkitDerivation,
-    ToolkitDeriverProtocol,
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
-    emit_event_best_effort,
     mint_trace_id,
     valid_trace_id_or_none,
 )
@@ -118,9 +102,7 @@ from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ExecutionStatus
-from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
-from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.tracing import (
     JENTIC_TRACESTATE_KEY,
     current_trace_id,
@@ -137,14 +119,6 @@ _meter = get_meter("broker")
 _streaming_persist_failures = _meter.create_counter(
     "broker.streaming_execution.persist_failures",
     description="Failed attempts to persist a streaming execution record",
-)
-# Denial observability (theme-5): every authorization denial increments this
-# counter with a closed-enum ``reason`` (DenialReason) + the API ``vendor`` and
-# the authorization ``mode`` (toolkit | direct), so the cutover can be watched
-# as a denial-rate delta per reason rather than grepping event summaries.
-_authz_denied = _meter.create_counter(
-    "broker.authorization.denied",
-    description="Execute requests denied by the authorization layer, by reason",
 )
 _unregistered_url_handled = _meter.create_counter(
     "broker.unregistered_url.handled",
@@ -329,384 +303,26 @@ def _context_from_discovery(
         upstream_url=upstream_url,
         method=method,
         trace_id=_derive_trace_id(headers),
-        # toolkit_id is intentionally left unset here — it is derived from the
-        # discovered API identity by ``select_toolkit`` after discovery,
-        # never taken verbatim from the inbound header.
+        # toolkit_id is nullable-legacy: nothing sets it since theme-5 Phase 6b
+        # deleted toolkit derivation; it survives on the schema so historical
+        # execution rows keep their attribution shape.
         toolkit_id=None,
-        operation_id=resolved.operation_id,
+        operation=resolved.operation,
         api_vendor=resolved.api.vendor,
         api_name=resolved.api.name,
         api_version=resolved.api.version,
         prefer=headers.get("prefer"),
         pinned_revisions=None,
+        server_variables=dict(resolved.server_variables) or None,
+        server_variable_defaults=dict(resolved.server_variable_defaults) or None,
+        server_variables_unresolved=resolved.server_variables_unresolved,
     )
-
-
-def _connect_vendor_for(ctx: Context, api: APIReference) -> str | None:
-    """Resolve the vendor-registry key covering ``api``, if any (Phase 1b).
-
-    Gates the missing-binding directives' ``suggested_command`` (``jentic
-    connect <vendor>``) on the registry: the connect surface takes the
-    registry key, not the API identity, and suggesting a connect for an
-    off-registry API would send the agent into a guaranteed
-    ``unknown vendor`` error. The broker call-path owns ``AppConfig`` via
-    ``ctx``, so the reverse map is a pure config scan — no I/O.
-    """
-    return connect_vendor_key(
-        ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
-    )
-
-
-def _empty_derivation_denial(
-    d: ToolkitDerivation,
-    api: APIReference,
-    *,
-    instance: str,
-    connect_vendor: str | None = None,
-) -> BrokerError:
-    """Pick the right denial for an empty toolkit derivation (#683 + #747/#748).
-
-    Two cases, distinguished by the structured derivation result — each with its
-    own ``detail`` so the problem+json ``type`` and ``detail`` never tell
-    different stories (e.g. a ``credential_identity_mismatch`` must not carry a
-    "not bound to toolkit" detail):
-
-    - Bound + a bound credential is a near-miss for the API → the credential's
-      identity does not cover the operation (#747/#748). Fix the *credential* —
-      an operator action; no new binding would help.
-    - Otherwise → ``no_toolkit_binding``, whose recovery ask (bind to the
-      serving credential vs. provision one first) is chosen by
-      ``no_toolkit_binding_directive``
-      from whether any toolkit serves the API at all (#683).
-    """
-    serves = bool(d.api_served_toolkits)
-    if d.agent_bound_any and not serves and d.identity_mismatch is not None:
-        return CredentialIdentityMismatchError(
-            "A bound credential's identity does not cover this API",
-            type="credential_identity_mismatch",
-            instance=instance,
-            directive=credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
-        )
-    return ActionDeniedError(
-        "No toolkit binding for this API",
-        type="no_toolkit_binding",
-        instance=instance,
-        directive=no_toolkit_binding_directive(
-            vendor=api.vendor,
-            name=api.name,
-            version=api.version,
-            toolkit_serves_api=serves,
-            connect_vendor=connect_vendor,
-        ),
-    )
-
-
-def _is_unserved_no_toolkit_binding(exc: ActionDeniedError) -> bool:
-    """True when ``exc`` denies with the pre-binding "no toolkit serves this API" case.
-
-    Splits the two ``no_toolkit_binding`` flavours ``_empty_derivation_denial``
-    emits: ``serves=True`` (a toolkit exists, the caller just isn't bound) is
-    a routine bind the operator grants on the agent's ask and does not warrant
-    an operator
-    event; ``serves=False`` (nothing serves this API yet — a credential must be
-    provisioned first) is the operator-attention case, mirroring the 424
-    ``CREDENTIAL_NOT_PROVISIONED`` event on the post-binding side.
-    """
-    if exc.type != "no_toolkit_binding" or exc.directive is None:
-        return False
-    return exc.directive.parameters.get("toolkit_serves_api") is False
-
-
-async def _emit_toolkit_binding_unserved(
-    ctx: Context, *, api: APIReference, identity: Identity
-) -> None:
-    """Emit ``TOOLKIT_BINDING_UNSERVED`` best-effort (mirrors the PBAC_DENIED emit).
-
-    Fires once per denied execute request (the caller wraps `select_toolkit`);
-    the caller's own retry loop will re-emit — acceptable at WARNING severity,
-    and consistent with how ``CREDENTIAL_NOT_PROVISIONED`` (424) already emits
-    per attempt without in-process debouncing.
-    """
-    api_id = "/".join(part for part in (api.vendor, api.name) if part) or api.vendor
-    summary = f"No toolkit serves API '{api_id}' — provision a credential to enable binding."
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
-                session,
-                type=EventType.TOOLKIT_BINDING_UNSERVED,
-                severity=EventSeverity.WARNING,
-                summary=summary,
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-                data={
-                    "api": {
-                        "vendor": api.vendor,
-                        "name": api.name,
-                        "version": api.version,
-                    },
-                },
-            )
-    except Exception:
-        logger.warning(
-            "telemetry_emit_failed",
-            event_type=EventType.TOOLKIT_BINDING_UNSERVED,
-            exc_info=True,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ToolkitSelection:
-    """The toolkit an execution runs against, and its injection boundary.
-
-    ``credential_ids`` are the selected toolkit's bound credentials that cover
-    the API — the only credentials the toolkit path may inject. Empty means
-    nothing may resolve (fail closed), never "no filter".
-    """
-
-    toolkit_id: str
-    credential_ids: tuple[str, ...]
-
-
-async def select_toolkit(
-    *,
-    deriver: ToolkitDeriverProtocol,
-    identity: Identity,
-    api: APIReference,
-    header_toolkit: str | None,
-    instance: str,
-    connect_vendor: str | None = None,
-) -> ToolkitSelection:
-    """Derive the toolkit for this execution from the caller's bindings.
-
-    ``0 → 403`` (no binding / credential identity mismatch), ``1 → use it``,
-    ``N → 409`` (caller must disambiguate with ``Jentic-Toolkit-Id``). A supplied
-    header is validated against the derived candidates; never silently honoured or
-    silently picked.
-
-    Non-agent actors (users, and not-yet-migrated service accounts) follow
-    the **same** derivation rule — there is no implicit bypass. Toolkit keys
-    — the one actor kind that authenticated *as* a toolkit and skipped
-    derivation — are retired (theme-5 Phase 4): a presented ``jntc_live_``
-    plaintext resolves as the successor the retirement job bound to the same
-    toolkit, so it derives here like any other caller.
-    """
-    # Invariant: the API identity here is the *discovered* spec identity, which is
-    # always concrete (vendor/name/version all set) — the registry never yields a
-    # wildcard. Derivation and the nearest-miss diagnostic (#748) rely on this
-    # (they slugify and compare each axis), so assert it at the boundary rather
-    # than silently deriving against a blank axis.
-    assert api.vendor and api.name and api.version, (
-        "select_toolkit requires a concrete discovered API identity"
-    )
-
-    derivation = await deriver.derive_toolkits(
-        agent_id=identity.sub,
-        vendor=api.vendor,
-        name=api.name,
-        version=api.version,
-    )
-    candidates = list(derivation.toolkits)
-
-    if header_toolkit:
-        if header_toolkit not in candidates:
-            # Recoverable: the agent named a toolkit it isn't bound to. Carry the
-            # agent-recovery contract like every other broker denial — point it at
-            # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
-            # at the correct provisioning/binding/credential-fix step. A bare
-            # Forbidden here would be a dead-end 403 with no directive.
-            if candidates:
-                raise ActionDeniedError(
-                    f"Not bound to toolkit '{header_toolkit}' for this API",
-                    type="toolkit_binding_required",
-                    instance=instance,
-                    directive=ambiguous_toolkit_directive(candidates),
-                )
-            raise _empty_derivation_denial(
-                derivation, api, instance=instance, connect_vendor=connect_vendor
-            )
-        return _selection(derivation, header_toolkit)
-
-    if not candidates:
-        raise _empty_derivation_denial(
-            derivation, api, instance=instance, connect_vendor=connect_vendor
-        )
-    if len(candidates) > 1:
-        raise AmbiguousMatchError(
-            "Multiple toolkits match this API; resend with the Jentic-Toolkit-Id header.",
-            type="ambiguous_toolkit",
-            instance=instance,
-            extra={
-                "errors": [
-                    {
-                        "detail": f"Candidate toolkit '{tk}'.",
-                        "header": "Jentic-Toolkit-Id",
-                        "code": tk,
-                    }
-                    for tk in candidates
-                ]
-            },
-            directive=ambiguous_toolkit_directive(candidates),
-        )
-    return _selection(derivation, candidates[0])
-
-
-def _selection(derivation: ToolkitDerivation, toolkit_id: str) -> ToolkitSelection:
-    return ToolkitSelection(
-        toolkit_id=toolkit_id,
-        credential_ids=tuple(derivation.credentials_by_toolkit.get(toolkit_id, ())),
-    )
-
-
-def _empty_credential_derivation_denial(
-    d: CredentialDerivation,
-    api: APIReference,
-    *,
-    instance: str,
-    connect_vendor: str | None = None,
-) -> BrokerError:
-    """Pick the right denial for an empty credential derivation (direct path).
-
-    The direct-binding twin of :func:`_empty_derivation_denial` — two cases,
-    each with its own ``detail`` so the problem+json ``type`` and ``detail``
-    never tell different stories:
-
-    - Bound + a bound credential is a near-miss for the API → the credential's
-      identity does not cover the operation (#747/#748 twin). Fix the
-      *credential*, never request another binding.
-    - Otherwise → ``no_credential_binding``, whose recovery (grant a binding
-      vs. provision a credential first) is chosen by
-      :func:`no_credential_binding_directive` from whether any credential
-      serves the API at all.
-    """
-    if d.agent_bound_any and not d.api_served and d.identity_mismatch is not None:
-        _authz_denied.add(
-            1,
-            {
-                "reason": DenialReason.CREDENTIAL_IDENTITY_MISMATCH.value,
-                "mode": "direct",
-                "vendor": api.vendor,
-            },
-        )
-        return CredentialIdentityMismatchError(
-            "A bound credential's identity does not cover this API",
-            type="credential_identity_mismatch",
-            instance=instance,
-            directive=direct_credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
-        )
-    _authz_denied.add(
-        1,
-        {
-            "reason": DenialReason.NO_CREDENTIAL_BINDING.value,
-            "mode": "direct",
-            "vendor": api.vendor,
-        },
-    )
-    return ActionDeniedError(
-        "No credential binding for this API",
-        type="no_credential_binding",
-        instance=instance,
-        directive=no_credential_binding_directive(
-            vendor=api.vendor,
-            name=api.name,
-            version=api.version,
-            api_served=d.api_served,
-            connect_vendor=connect_vendor,
-        ),
-    )
-
-
-async def _emit_credential_binding_unserved(
-    ctx: Context, *, api: APIReference, identity: Identity
-) -> None:
-    """Emit ``CREDENTIAL_BINDING_UNSERVED`` best-effort (direct-path twin).
-
-    Mirrors ``_emit_toolkit_binding_unserved``: fires once per denied execute
-    request when nothing serves the API at all — the operator-attention case
-    (a credential must be provisioned before any binding can be granted).
-    """
-    api_id = "/".join(part for part in (api.vendor, api.name) if part) or api.vendor
-    summary = f"No credential serves API '{api_id}' — provision one to enable binding."
-    try:
-        async with ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
-                session,
-                type=EventType.CREDENTIAL_BINDING_UNSERVED,
-                severity=EventSeverity.WARNING,
-                summary=summary,
-                created_by=identity.sub,
-                actor_id=identity.sub,
-                actor_type=identity.actor_type.value,
-                data={
-                    "api": {
-                        "vendor": api.vendor,
-                        "name": api.name,
-                        "version": api.version,
-                    },
-                },
-            )
-    except Exception:
-        logger.warning(
-            "telemetry_emit_failed",
-            event_type=EventType.CREDENTIAL_BINDING_UNSERVED,
-            exc_info=True,
-        )
-
-
-async def derive_credential_bindings(
-    *,
-    deriver: CredentialDeriverProtocol,
-    identity: Identity,
-    api: APIReference,
-    instance: str,
-    ctx: Context,
-) -> CredentialDerivation:
-    """Derive the caller's credential-binding candidates for this execution.
-
-    The direct-binding half of what :func:`select_toolkit` does for toolkits:
-    ``0 → 403`` (no binding / credential identity mismatch — with the
-    operator-visible ``CREDENTIAL_BINDING_UNSERVED`` emit for the pre-binding
-    nothing-serves case). Candidate *selection* among ``N ≥ 1`` (name header →
-    most-specific-wins → ``Jentic-Credential-Id`` tie-breaker → 409) is owned
-    by ``CredentialService.select``, which shares the resolver with injection
-    so selection and injection can never disagree.
-
-    Non-agent actors (users) follow the **same** derivation rule — no
-    implicit bypass, mirroring the toolkit path. Toolkit keys never
-    reach here (the caller keeps them on the legacy path until Phase 4).
-    """
-    assert api.vendor and api.name and api.version, (
-        "derive_credential_bindings requires a concrete discovered API identity"
-    )
-    derivation = await deriver.derive_credentials(
-        agent_id=identity.sub,
-        vendor=api.vendor,
-        name=api.name,
-        version=api.version,
-    )
-    if not derivation.credentials:
-        denial = _empty_credential_derivation_denial(
-            derivation,
-            api,
-            instance=instance,
-            connect_vendor=_connect_vendor_for(ctx, api),
-        )
-        # The operator-visible pre-binding signal fires only for the plain
-        # no-binding + nothing-serves case — an identity mismatch already has
-        # its own actionable diagnostic (mirrors the toolkit path's
-        # ``_is_unserved_no_toolkit_binding`` gate).
-        if not derivation.api_served and isinstance(denial, ActionDeniedError):
-            await _emit_credential_binding_unserved(ctx, api=api, identity=identity)
-        raise denial
-    return derivation
 
 
 def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict[str, str]:
     meta: dict[str, str] = {JenticHeader.EXECUTION_ID.value: execution_id}
-    if ctx_req.toolkit_id:
-        meta[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
-    if ctx_req.operation_id:
-        meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        meta[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         meta[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Emitted only when the resolver actually
@@ -747,10 +363,10 @@ async def _resolve_credentials(
     ``preresolved`` carries the direct path's already-selected credential so
     injection never re-resolves (and cannot pick a different credential than
     the one the rules were evaluated against). ``allowed_credential_ids`` is
-    the injection boundary for a path that resolves here (the toolkit path):
-    only these ids may resolve, and an empty list resolves nothing.
-    ``credential_id`` (``Jentic-Credential-Id``) disambiguates *within* that
-    boundary — it can never select a credential outside it.
+    the injection boundary: only these ids may resolve, and an empty list
+    resolves nothing. ``credential_id`` (``Jentic-Credential-Id``)
+    disambiguates *within* that boundary — it can never select a credential
+    outside it.
     """
     return await CredentialService(ctx).inject(
         api_vendor=ctx_req.api_vendor or "",
@@ -762,20 +378,28 @@ async def _resolve_credentials(
         allowed_credential_ids=allowed_credential_ids,
         trace_id=ctx_req.trace_id,
         preresolved=preresolved,
+        request_server_variables=ctx_req.server_variables,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
     )
 
 
 def _apply_injection(
-    upstream_url: str, injection: InjectedAuth, request: Request
+    upstream_url: str,
+    injection: InjectedAuth,
+    request: Request,
+    server_variable_defaults: dict[str, str] | None = None,
 ) -> tuple[str, dict[str, str]]:
     """Apply injected auth to the outbound URL + headers.
 
-    Server-variable creds are substituted into the URL template; query-param
+    Server-variable creds are substituted into the URL template (remaining
+    declared placeholders fall back to their spec defaults); query-param
     creds are merged into the URL query; cookie creds are **appended** to the
     inbound ``Cookie`` header (never overwriting forwarded cookies).
     """
-    if injection.server_variables:
-        upstream_url = apply_server_variables(upstream_url, injection.server_variables)
+    if injection.server_variables or server_variable_defaults:
+        upstream_url = apply_server_variables(
+            upstream_url, injection.server_variables, server_variable_defaults
+        )
 
     if injection.query_params:
         parsed = urlparse(upstream_url)
@@ -855,8 +479,6 @@ async def _handle(
     method: str,
     ctx: Context,
     identity: Identity,
-    deriver: ToolkitDeriverProtocol,
-    rule_evaluator: RuleEvaluatorProtocol,
     credential_deriver: CredentialDeriverProtocol,
     agent_rule_evaluator: AgentRuleEvaluatorProtocol,
     runner: UpstreamRunner,
@@ -883,6 +505,20 @@ async def _handle(
     pins = parse_revisions(_revision_header(request))
 
     resolved = await discover(resolver, method=method, url=upstream_url)
+    pinned_revisions: dict[str, str] | None = None
+    if resolved is None and pins:
+        # No live revision serves this URL; a pinned (e.g. never-promoted draft)
+        # revision still may.
+        via_pin = await discover_via_pins(
+            resolver, method=method, url=upstream_url, pins=pins, identity=identity
+        )
+        if via_pin is not None:
+            resolved, pinned_revision_id = via_pin
+            pinned_revisions = {
+                f"{resolved.api.vendor}:{resolved.api.name}:{resolved.api.version}": str(
+                    pinned_revision_id
+                )
+            }
     if resolved is None:
         handled = await _handle_unregistered_url(
             request, method=method, upstream_url=upstream_url, identity=identity
@@ -896,8 +532,7 @@ async def _handle(
 
     # If a pin applies to the discovered API, translate it to a revision_id
     # in-process (no control-plane HTTP) and re-resolve against the pinned spec.
-    pinned_revisions: dict[str, str] | None = None
-    if pins:
+    if pins and pinned_revisions is None:
         revision_id = await resolve_pin_for_api(
             resolver, api=resolved.api, pins=pins, identity=identity
         )
@@ -925,185 +560,32 @@ async def _handle(
     # credential injection substitutes it — this is the signal that drives the
     # region-mismatch hint on an upstream 401/403 (#638).
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
-    # Authorization path split (theme-5 Phase 2, config-flagged): direct
-    # agent→credential bindings when enabled; the legacy toolkit path
-    # otherwise. Every caller kind rides the same split — toolkit keys, the
-    # one identity that bypassed it, are retired (Phase 4) and resolve as
-    # successor agents holding both binding forms.
-    direct_bindings = ctx.config.broker.direct_bindings_enabled
-    selected_credential: ResolvedCredential | None = None
-    allowed_credential_ids: list[str] | None = None
-
-    if direct_bindings:
-        # Derive candidates (0 → 403 with the right directive), then select the
-        # single credential (name header → most-specific-wins →
-        # Jentic-Credential-Id tie-breaker; genuine tie → 409), then enforce the
-        # binding's rules — all before any secret is decrypted or audited.
-        derivation = await derive_credential_bindings(
-            deriver=credential_deriver,
-            identity=identity,
-            api=resolved.api,
-            instance=request.url.path,
-            ctx=ctx,
-        )
-        allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
-        rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
-        selected_credential = await CredentialService(ctx).select(
-            api_vendor=resolved.api.vendor,
-            api_name=resolved.api.name,
-            api_version=resolved.api.version,
-            identity=identity,
-            credential_name=request.headers.get("jentic-credential-name"),
-            credential_id=request.headers.get("jentic-credential-id"),
-            allowed_credential_ids=allowed_credential_ids,
-        )
-        assert selected_credential is not None  # api.vendor is concrete (asserted above)
-        # Attribution is known at selection time on this path, so the 202/
-        # streaming metadata carries it too (the buffered path re-stamps the
-        # same values from the injection result).
+    # Direct agent→credential bindings (theme-5): every caller kind rides this
+    # path — retired toolkit keys resolve as successor agents. The legacy
+    # toolkit-derivation path was deleted in Phase 6b.
+    authorization = await authorize_execution(
+        ctx=ctx,
+        identity=identity,
+        api=resolved.api,
+        operation_id=resolved.operation.id,
+        method=method,
+        path=urlparse(upstream_url).path,
+        instance=request.url.path,
+        credential_deriver=credential_deriver,
+        agent_rule_evaluator=agent_rule_evaluator,
+        credential_name=request.headers.get("jentic-credential-name"),
+        credential_id=request.headers.get("jentic-credential-id"),
+        request_server_variables=ctx_req.server_variables,
+        server_variables_unresolved=ctx_req.server_variables_unresolved,
+    )
+    selected_credential = authorization.selected_credential
+    allowed_credential_ids = authorization.allowed_credential_ids
+    if selected_credential is not None:
+        # Attribution is known at selection time on the direct path, so the
+        # 202/streaming metadata carries it too (the buffered path re-stamps
+        # the same values from the injection result).
         ctx_req.credential_id = selected_credential.credential_id
         ctx_req.credential_name = selected_credential.name
-
-        evaluation = await agent_rule_evaluator.evaluate(
-            agent_id=identity.sub,
-            credential_id=selected_credential.credential_id,
-            rule_set_id=rule_set_ids.get(selected_credential.credential_id),
-            method=method,
-            path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
-        )
-        if not evaluation.allowed:
-            # Same two-variant deny split as the toolkit path (#578): an empty
-            # rule list (nothing configured for this binding) vs loaded rules
-            # where none allowed the request.
-            no_rules = evaluation.rules_loaded == 0
-            reason = DenialReason.NO_RULES_LOADED if no_rules else DenialReason.NO_RULE_MATCHED
-            _authz_denied.add(
-                1,
-                {"reason": reason.value, "mode": "direct", "vendor": resolved.api.vendor},
-            )
-            summary = (
-                "Operation denied by credential-binding permission rules (no rules "
-                "configured for this binding)"
-                if no_rules
-                else "Operation denied by credential-binding permission rules (no rule matched)"
-            )
-            detail = (
-                "The requested operation is denied — this credential binding has no "
-                "permission rules configured. Attach rules under "
-                "PUT /credentials/{credential_id}/agents/{agent_id}/permissions "
-                "or attach a rule set."
-                if no_rules
-                else "The requested operation is denied by a credential-binding permission rule."
-            )
-            try:
-                async with ctx.admin_db.transaction() as session:
-                    await emit_event_best_effort(
-                        session,
-                        type=EventType.PBAC_DENIED,
-                        severity=EventSeverity.WARNING,
-                        summary=summary,
-                        created_by=identity.sub,
-                        actor_id=identity.sub,
-                        actor_type=identity.actor_type.value,
-                        data={"reason": reason.value, "mode": "direct"},
-                    )
-            except Exception:
-                logger.warning(
-                    "telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True
-                )
-            raise ActionDeniedError(
-                detail=detail,
-                type="action_denied",
-                instance=request.url.path,
-                directive=direct_action_denied_directive(),
-            )
-    else:
-        # Toolkit is derived from the discovered API identity (never the inbound
-        # header verbatim); drives credential injection and execution attribution.
-        try:
-            selection = await select_toolkit(
-                deriver=deriver,
-                identity=identity,
-                api=resolved.api,
-                header_toolkit=request.headers.get("jentic-toolkit-id"),
-                instance=request.url.path,
-                connect_vendor=_connect_vendor_for(ctx, resolved.api),
-            )
-        except ActionDeniedError as exc:
-            # Emit the operator-visible signal for the pre-binding no-toolkit case
-            # (nothing serves this API yet) before re-raising. The 424
-            # ``credential_not_provisioned`` path already emits
-            # ``CREDENTIAL_NOT_PROVISIONED`` (post-binding); this is the missing
-            # pre-binding twin. See ``TOOLKIT_BINDING_UNSERVED``.
-            if _is_unserved_no_toolkit_binding(exc):
-                await _emit_toolkit_binding_unserved(ctx, api=resolved.api, identity=identity)
-            raise
-        ctx_req.toolkit_id = selection.toolkit_id
-        # Injection boundary for the toolkit path: only the selected toolkit's
-        # bound credentials may resolve. Without it the resolver would consider
-        # every credential in the tenant for this vendor — including another
-        # user's, reachable by name via Jentic-Credential-Name.
-        allowed_credential_ids = list(selection.credential_ids)
-
-        # Evaluate toolkit permission rules — default-deny when no rule matches.
-        # Unconditional: even if toolkit_id were empty the evaluator returns a
-        # zero-rules-loaded denial, preserving the secure-by-default posture.
-        evaluation = await rule_evaluator.evaluate(
-            toolkit_id=ctx_req.toolkit_id,
-            method=method,
-            path=urlparse(upstream_url).path,
-            operation_id=resolved.operation_id,
-            api_vendor=resolved.api.vendor,
-        )
-        if not evaluation.allowed:
-            # #578: distinguish the two deny paths in the caller-visible detail.
-            # ``rules_loaded == 0`` means the vendor-pooled rule set is empty —
-            # nothing to match (wrong vendor, empty binding, misconfigured store);
-            # otherwise we loaded rules but none matched the request shape. Both
-            # branches emit ``PBAC_DENIED`` telemetry with the corresponding
-            # summary so operators can grep for the branch.
-            no_rules = evaluation.rules_loaded == 0
-            reason = DenialReason.NO_RULES_LOADED if no_rules else DenialReason.NO_RULE_MATCHED
-            _authz_denied.add(
-                1,
-                {"reason": reason.value, "mode": "toolkit", "vendor": resolved.api.vendor},
-            )
-            summary = (
-                "Operation denied by toolkit permission rule (no rules loaded for this vendor)"
-                if no_rules
-                else "Operation denied by toolkit permission rule (no rule matched)"
-            )
-            detail = (
-                "The requested operation is denied — no permission rules are loaded for the "
-                "target API's vendor on this binding. Ask your operator to attach rules "
-                "(with direct bindings, under "
-                "PUT /credentials/{credential_id}/agents/{agent_id}/permissions)."
-                if no_rules
-                else "The requested operation is denied by a toolkit permission rule."
-            )
-            try:
-                async with ctx.admin_db.transaction() as session:
-                    await emit_event_best_effort(
-                        session,
-                        type=EventType.PBAC_DENIED,
-                        severity=EventSeverity.WARNING,
-                        summary=summary,
-                        created_by=identity.sub,
-                        actor_id=identity.sub,
-                        actor_type=identity.actor_type.value,
-                        data={"reason": reason.value, "mode": "toolkit"},
-                    )
-            except Exception:
-                logger.warning(
-                    "telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True
-                )
-            raise ActionDeniedError(
-                detail=detail,
-                type="action_denied",
-                instance=request.url.path,
-                directive=action_denied_directive(),
-            )
 
     if _should_async(ctx_req.prefer):
         return await _handle_async(
@@ -1111,13 +593,7 @@ async def _handle(
             ctx_req,
             ctx,
             identity,
-            selected_credential_id=(
-                selected_credential.credential_id
-                if selected_credential
-                # Toolkit path: the caller's Jentic-Credential-Id, bounded by
-                # allowed_credential_ids at the worker's injection.
-                else request.headers.get("jentic-credential-id")
-            ),
+            selected_credential_id=selected_credential.credential_id,
             allowed_credential_ids=allowed_credential_ids,
         )
 
@@ -1151,13 +627,13 @@ async def _handle(
     # work — only the sync path is idempotent here.
     fp: str | None = None
     if idempotency is not None and idem_key:
-        # The fingerprint's consumer scope is the toolkit on the legacy path and
-        # the selected credential on the direct path (whose executions carry no
-        # toolkit — without this the scope component would collapse to "").
+        # The fingerprint's consumer scope is the selected credential
+        # (historically the toolkit on the pre-6b legacy path — same slot,
+        # so replay identity is stable across the cutover).
         fp = fingerprint(
             method,
             ctx_req.upstream_url,
-            ctx_req.toolkit_id or ctx_req.credential_id or "",
+            ctx_req.credential_id or "",
             body,
         )
         outcome_idem = await idempotency.begin(identity.sub, idem_key, fp)
@@ -1185,10 +661,12 @@ async def _handle(
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+    )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
-    if injection.server_variables:
+    if injection.server_variables or ctx_req.server_variable_defaults:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
@@ -1257,10 +735,12 @@ async def _handle_streaming(
         allowed_credential_ids=allowed_credential_ids,
         credential_id=request.headers.get("jentic-credential-id"),
     )
-    ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.upstream_url, auth_headers = _apply_injection(
+        ctx_req.upstream_url, injection, request, ctx_req.server_variable_defaults
+    )
     ctx_req.credential_id = injection.credential_id
     ctx_req.credential_name = injection.credential_name
-    if injection.server_variables:
+    if injection.server_variables or ctx_req.server_variable_defaults:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
         except ValueError as exc:
@@ -1354,6 +834,54 @@ def _replay_response(stored: StoredResponse) -> Response:
     )
 
 
+def _async_job_payload(
+    ctx_req: ExecuteRequestContext,
+    *,
+    execution_id: str,
+    origin: str,
+    selected_credential_id: str | None = None,
+    allowed_credential_ids: list[str] | None = None,
+    body: bytes | None = None,
+) -> dict[str, Any]:
+    """Build the job payload for an async (202) execution.
+
+    Extracted from the enqueue path so the operation dual-write below is
+    unit-testable at the producer: the worker seams (handler forwarding,
+    executor rebuild) each have their own pins, and this is the third leg.
+    """
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "upstream_url": ctx_req.upstream_url,
+        "method": ctx_req.method,
+        "trace_id": ctx_req.trace_id,
+        "operation": ctx_req.operation.model_dump() if ctx_req.operation else None,
+        # Rolling-deploy shim (#1382): a pre-``operation``-dict worker draining
+        # this job reads only the flat key — without it the record would persist
+        # with operation_id NULL and the repeated-failure detector would skip
+        # it. Drop once no pre-operation-dict workers remain (#1382).
+        "operation_id": ctx_req.operation_id,
+        "api_vendor": ctx_req.api_vendor,
+        "api_name": ctx_req.api_name,
+        "api_version": ctx_req.api_version,
+        "origin": origin,
+    }
+    if selected_credential_id is not None:
+        payload["credential_id"] = selected_credential_id
+    if allowed_credential_ids is not None:
+        payload["allowed_credential_ids"] = allowed_credential_ids
+    if ctx_req.pinned_revisions:
+        payload["pinned_revisions"] = ctx_req.pinned_revisions
+    if ctx_req.server_variables:
+        payload["server_variables"] = ctx_req.server_variables
+    if ctx_req.server_variable_defaults:
+        payload["server_variable_defaults"] = ctx_req.server_variable_defaults
+    if ctx_req.server_variables_unresolved:
+        payload["server_variables_unresolved"] = True
+    if body:
+        payload["body_b64"] = base64.b64encode(body).decode()
+    return payload
+
+
 async def _handle_async(
     request: Request,
     ctx_req: ExecuteRequestContext,
@@ -1366,34 +894,21 @@ async def _handle_async(
     """Enqueue an async (202) execution. The worker shares the same pipeline.
 
     The payload carries the injection boundary (``allowed_credential_ids`` —
-    the caller's bound credentials on the direct path, the selected toolkit's
-    on the toolkit path) and, when known, the credential id, so the worker's
+    the caller's bound credentials) and the selected credential id, so the worker's
     injection replays the same selection under the same boundary (Q-02) —
     rules were already enforced here at the edge.
     """
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
 
-    payload: dict[str, Any] = {
-        "execution_id": execution_id,
-        "upstream_url": ctx_req.upstream_url,
-        "method": ctx_req.method,
-        "toolkit_id": ctx_req.toolkit_id,
-        "trace_id": ctx_req.trace_id,
-        "operation_id": ctx_req.operation_id,
-        "api_vendor": ctx_req.api_vendor,
-        "api_name": ctx_req.api_name,
-        "api_version": ctx_req.api_version,
-        "origin": identity.origin.value,
-    }
-    if selected_credential_id is not None:
-        payload["credential_id"] = selected_credential_id
-    if allowed_credential_ids is not None:
-        payload["allowed_credential_ids"] = allowed_credential_ids
-    if ctx_req.pinned_revisions:
-        payload["pinned_revisions"] = ctx_req.pinned_revisions
-    if body:
-        payload["body_b64"] = base64.b64encode(body).decode()
+    payload = _async_job_payload(
+        ctx_req,
+        execution_id=execution_id,
+        origin=identity.origin.value,
+        selected_credential_id=selected_credential_id,
+        allowed_credential_ids=allowed_credential_ids,
+        body=body,
+    )
 
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
@@ -1429,9 +944,7 @@ async def _handle_async(
 async def proxy(
     upstream_url: str,
     request: Request,
-    identity: RequireToolkitAccess,
-    deriver: ToolkitDeriver,
-    rule_evaluator: RuleEvaluatorDep,
+    identity: RequireExecuteAccess,
     credential_deriver: CredentialDeriver,
     agent_rule_evaluator: AgentRuleEvaluatorDep,
     runner: HttpRunnerDep,
@@ -1444,8 +957,6 @@ async def proxy(
         request.method,
         ctx,
         identity,
-        deriver,
-        rule_evaluator,
         credential_deriver,
         agent_rule_evaluator,
         runner,

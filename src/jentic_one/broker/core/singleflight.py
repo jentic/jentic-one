@@ -12,7 +12,7 @@ Future instead of launching their own lookup. The single result *or exception*
 is delivered to all waiters, and the in-flight entry is removed in a ``finally``
 so a failed lookup never pins a poisoned Future (a later caller re-runs it).
 
-Pure and dependency-free so every read-mostly cache (token, toolkit-derivation,
+Pure and dependency-free so every read-mostly cache (token, binding-derivation,
 …) can coalesce consistently. Single-flight is **per instance** — it collapses
 the herd within a node, which is where the amplification hurts.
 """

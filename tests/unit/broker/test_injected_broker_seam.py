@@ -52,6 +52,7 @@ from jentic_one.shared.broker.schemas import ExecuteRequestContext
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.protocols import UpstreamExecRequest
+from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
 
@@ -284,3 +285,39 @@ def test_ctx_from_metadata_mints_a_valid_trace_id_for_garbage() -> None:
         )
     )
     assert passthrough.trace_id == "a" * 32
+
+
+def test_ctx_from_metadata_rebuilds_operation() -> None:
+    """The metadata's ``operation`` dict rebuilds a full OperationInfo; a legacy
+    flat ``operation_id`` (jobs enqueued before the dict existed) folds into an
+    id-only one; the dict wins when both ride together (dual-write payloads);
+    and no operation keys at all leave the context operation-less."""
+
+    def _ctx(metadata: dict[str, Any]) -> ExecuteRequestContext:
+        return _ctx_from_metadata(
+            UpstreamExecRequest(
+                method="GET",
+                url="https://api.example.com/v1/things",
+                headers={},
+                body=None,
+                timeout_s=30.0,
+                metadata={"actor_id": "agt_abc123", "actor_type": "agent", **metadata},
+            )
+        )
+
+    full = _ctx({"operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}})
+    assert full.operation == OperationInfo(id="op_x", path="/v1/things/{id}", method="GET")
+
+    legacy = _ctx({"operation_id": "op_legacy"})
+    assert legacy.operation == OperationInfo(id="op_legacy", path=None, method=None)
+
+    both = _ctx(
+        {
+            "operation": {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"},
+            "operation_id": "op_x",
+        }
+    )
+    assert both.operation is not None
+    assert both.operation.path == "/v1/things/{id}"
+
+    assert _ctx({}).operation is None

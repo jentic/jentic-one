@@ -34,7 +34,7 @@
     {
       "name": "search_apis",
       "title": "Search API operations",
-      "description": "Search the connected Jentic One registry for API operations by natural-language query. This is the first step of the discovery flow (whoami → search_apis → inspect_operation → execute): call it whenever you need an operation you don't already have the id of. Example: {\"query\": \"create github issue\", \"limit\": 5}. Returns one page as {data, has_more, next_cursor}; each hit carries the operation_id to pass to inspect_operation. When has_more is true, pass next_cursor back as cursor for the next page. Optionally restrict to specific APIs with apis (vendor/name/version slugs from earlier hits), e.g. {\"query\": \"list pets\", \"apis\": [\"acme/pets/v1\"]}. An empty data array means nothing matching is imported into this instance's registry yet.",
+      "description": "Search the connected Jentic One registry for API operations by natural-language query. This is the first step of the discovery flow (whoami → search_apis → inspect_operation → execute): call it whenever you need an operation you don't already know the method + URL of. Example: {\"query\": \"create github issue\", \"limit\": 5}. Returns one page as {data, has_more, next_cursor}; each hit carries a target (its METHOD:url, or its operation_id when the url is host-relative — such a target is inspect-only, execute refuses it) — pass it verbatim as inspect_operation's operation_id. When has_more is true, pass next_cursor back as cursor for the next page. Optionally restrict to specific APIs with apis (vendor/name/version slugs from earlier hits), e.g. {\"query\": \"list pets\", \"apis\": [\"acme/pets/v1\"]}. An empty data array means nothing matching is imported into this instance's registry yet.",
       "input_schema": {
         "properties": {
           "apis": {
@@ -69,11 +69,11 @@
     {
       "name": "inspect_operation",
       "title": "Inspect an operation's contract",
-      "description": "Fetch one operation's full contract before executing it: HTTP method, URL, parameters, request/response schemas, and security requirements. This is the read-contract step of the flow (whoami → search_apis → inspect_operation → execute) — always inspect before you execute. Example: {\"operation_id\": \"op_abc123\"} with an id from a search_apis hit, or a METHOD:url pair like {\"operation_id\": \"GET:https://rest.coincap.io/v3/markets\"}. Optionally pin a revision for reproducibility. If the operation is not found, call search_apis to rediscover the right id.",
+      "description": "Fetch one operation's full contract before executing it: HTTP method, URL, parameters, request/response schemas, and security requirements. This is the read-contract step of the flow (whoami → search_apis → inspect_operation → execute) — always inspect before you execute. Example: {\"operation_id\": \"GET:https://rest.coincap.io/v3/markets\"} — a search_apis hit's target, passed verbatim. Optionally pin a revision for reproducibility. If the operation is not found, call search_apis to rediscover the right target.",
       "input_schema": {
         "properties": {
           "operation_id": {
-            "description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. (A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
             "type": "string"
           },
           "revision": {
@@ -90,7 +90,7 @@
     {
       "name": "execute",
       "title": "Execute an API operation",
-      "description": "Execute an operation through the Jentic broker: the broker authenticates this agent and injects the stored upstream credential server-side — credentials never pass through this session. This is the final step of the flow (whoami → search_apis → inspect_operation → execute): always inspect the contract first, and never execute just to probe whether you have access (call whoami). Example: {\"operation_id\": \"op_abc123\", \"inputs\": {\"petId\": \"42\", \"limit\": 10}, \"body\": {\"name\": \"Bob\"}}. Returns {status, headers, body, execution_id}: any HTTP status, including upstream 4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an error result with recovery directions instead. A 202 response with a directive means the call is HELD for human approval: poll it with get_execution_result using the job id it carries — never re-send the execute. Large bodies are truncated ({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see the rest. Prefer execute_read for pure reads — it is approved more readily.",
+      "description": "Execute an operation through the Jentic broker: the broker authenticates this agent and injects the stored upstream credential server-side — credentials never pass through this session. This is the final step of the flow (whoami → search_apis → inspect_operation → execute): always inspect the contract first, and never execute just to probe whether you have access (call whoami). Example: {\"operation_id\": \"POST:https://api.example.com/v1/pets\", \"inputs\": {\"petId\": \"42\", \"limit\": 10}, \"body\": {\"name\": \"Bob\"}}. Returns {status, headers, body, execution_id}: any HTTP status, including upstream 4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an error result with recovery directions instead. A 202 response with a directive means the call is HELD for human approval: poll it with get_execution_result using the job id it carries — never re-send the execute. Large bodies are truncated ({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see the rest. Prefer execute_read for pure reads — it is approved more readily.",
       "input_schema": {
         "properties": {
           "body": {
@@ -109,7 +109,7 @@
             "type": "object"
           },
           "operation_id": {
-            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. (A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
             "type": "string"
           },
           "revision": {
@@ -139,7 +139,7 @@
             "type": "object"
           },
           "operation_id": {
-            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+            "description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. (A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
             "type": "string"
           },
           "revision": {

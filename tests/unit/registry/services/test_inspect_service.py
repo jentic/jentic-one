@@ -102,20 +102,24 @@ def test_resolve_server_expands_server_variables() -> None:
     assert result == "https://api.example.com/v2"
 
 
-def test_build_api_context_uses_display_name_when_present() -> None:
+def test_build_api_context_returns_canonical_name_and_separate_display_name() -> None:
+    # api.name is the canonical identity the broker matches on (#1468); the
+    # label rides separately in display_name.
     operation = _make_operation(api_display_name="Acme Pets API")
 
     context = InspectService._build_api_context(operation)
 
-    assert context.name == "Acme Pets API"
+    assert context.name == "pets"
+    assert context.display_name == "Acme Pets API"
 
 
-def test_build_api_context_falls_back_to_name() -> None:
+def test_build_api_context_display_name_absent_when_unset() -> None:
     operation = _make_operation(api_display_name=None)
 
     context = InspectService._build_api_context(operation)
 
     assert context.name == "pets"
+    assert context.display_name is None
 
 
 def test_build_api_context_includes_vendor_and_version() -> None:

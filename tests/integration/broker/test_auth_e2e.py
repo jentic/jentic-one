@@ -24,7 +24,6 @@ from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
@@ -50,9 +49,6 @@ async def clean_access_tokens(admin_db: DatabaseSession) -> AsyncGenerator[None,
             await session.execute(delete(RefreshToken))
             await session.execute(delete(ActorScopeGrant))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
-            await session.execute(
-                delete(ServiceAccount).where(ServiceAccount.created_by == _SEED_MARKER)
-            )
             await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
             await session.execute(delete(OAuthClient).where(OAuthClient.created_by == _SEED_MARKER))
             await session.commit()
@@ -101,23 +97,6 @@ async def _seed_user_row(admin_db: DatabaseSession, user_id: str, *, active: boo
                 last_name="E2E",
                 active=active,
                 created_by=_SEED_MARKER,
-            )
-        )
-        await session.commit()
-
-
-async def _seed_service_account_row(
-    admin_db: DatabaseSession, sa_id: str, *, owner_id: str, status: str = "active"
-) -> None:
-    async with admin_db.session() as session:
-        session.add(
-            ServiceAccount(
-                id=sa_id,
-                name=f"e2e-{sa_id}",
-                owner_id=owner_id,
-                registered_by=owner_id,
-                created_by=_SEED_MARKER,
-                status=status,
             )
         )
         await session.commit()
@@ -378,21 +357,18 @@ async def test_user_token_follows_user_active_flag(
             await _dual(admin_db).validate("at_user_token")
 
 
-@pytest.mark.parametrize("sa_status", ["active", "disabled"])
-async def test_service_account_token_is_refused_whatever_the_sa_status(
-    admin_db: DatabaseSession, clean_access_tokens: None, sa_status: str
+async def test_residual_service_account_token_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    """The SQL's `service_account` CASE branch fails closed: SA sessions are
-    retired, so even an active SA row no longer vouches for its `at_`."""
-    await _seed_user_row(admin_db, "usr_sa_owner")
-    await _seed_service_account_row(
-        admin_db, "sva_broker", owner_id="usr_sa_owner", status=sa_status
-    )
+    """The SQL's `service_account` CASE branch fails closed: a residual SA
+    session row (theme-8 Phase 4 dropped the SA tables, not the tokens) never
+    resolves to a live identity: the resolver drops the row (the actor type is
+    no longer a member of ``ActorType``) and the broker sees an unknown token."""
     await _seed_opaque_token(
         admin_db, plaintext="at_sa_token", actor_id="sva_broker", actor_type="service_account"
     )
 
-    with pytest.raises(TokenValidationError, match="token_inactive"):
+    with pytest.raises(TokenValidationError, match="unknown_token"):
         await _dual(admin_db).validate("at_sa_token")
 
 

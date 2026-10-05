@@ -45,7 +45,7 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.egress import build_strict_pinned_transport
-from jentic_one.shared.models.actors import actor_type_from_id
+from jentic_one.shared.models.actors import actor_type_label_from_id
 from jentic_one.shared.models.credentials import StoredCredentialType
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -114,7 +114,7 @@ class AuthCodeFlowHandler:
             credential_id=row.credential_id,
             provider=_PROVIDER_ID,
             actor_id=row.initiator_actor_id,
-            actor_type=actor_type_from_id(row.initiator_actor_id).value,
+            actor_type=actor_type_label_from_id(row.initiator_actor_id),
             issued_at=datetime.now(UTC),
             nonce=generate_nonce(),
             session_id=row.id,

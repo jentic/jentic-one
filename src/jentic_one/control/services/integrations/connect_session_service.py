@@ -56,11 +56,13 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.models.actors import Origin, actor_type_from_id
+from jentic_one.shared.models.actors import Origin, actor_type_label_from_id
 from jentic_one.shared.models.api_identity import canonical_credential_scope
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 _logger = structlog.get_logger(__name__)
 
@@ -238,8 +240,8 @@ def _forbid_self_confirm(row: ConnectSession, caller_actor_type: ActorType) -> N
 
 
 def _verify_poll_token(row: ConnectSession, token: str) -> None:
-    """Constant-time comparison against the session's poll_token."""
-    if not secrets.compare_digest(row.poll_token, token):
+    """Hash the presented poll_token and compare it to the stored digest in constant time."""
+    if not secrets.compare_digest(row.poll_token_hash, hash_secret(token)):
         raise InvalidPollTokenError("poll_token mismatch")
 
 
@@ -324,13 +326,15 @@ class ConnectSessionService:
         # Decompose the vendor's catalog api_id (e.g. ``github.com/api.github.com``)
         # into the same identity axes a normal catalog import puts on the
         # registered Api row and the credential: ``api_vendor`` slugged from the
-        # host portion, ``api_name`` slugged from the *whole* api_id (mirrors
-        # registry ``_to_import_source`` which passes ``entry.api_id`` verbatim as
-        # ``api_name`` and lets the import pipeline slugify it), and
+        # registrable domain of the host portion (``vendor_from_api_id``, the
+        # same helper the catalog manifest uses), ``api_name`` slugged from the
+        # *whole* api_id (mirrors registry ``_to_import_source`` which passes
+        # ``entry.api_id`` verbatim as ``api_name`` and lets the import pipeline
+        # slugify it), and
         # ``catalog_api_id`` verbatim as display-only provenance. That way the
         # credential's identity matches ``list_by_vendor`` **and** the broker's
         # per-operation identity check.
-        raw_vendor = entry.vendor.split("/", 1)[0]
+        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
         api_scope = canonical_credential_scope(
             vendor=raw_vendor,
             name=entry.vendor,
@@ -369,7 +373,7 @@ class ConnectSessionService:
                 initiator_actor_id=initiator_actor_id,
                 state="created",
                 resolved_flow=flow.kind,
-                poll_token=poll_token,
+                poll_token_hash=hash_secret(poll_token),
                 requested_scopes=requested_scopes or [],
                 requested_permission_rules=requested_permission_rules or [],
                 preferred_flow=preferred_flow,
@@ -401,7 +405,7 @@ class ConnectSessionService:
             action=AuditAction.CREATE,
             target_type=AuditTargetType.SESSION,
             target_id=row.id,
-            actor_type=actor_type_from_id(initiator_actor_id).value,
+            actor_type=actor_type_label_from_id(initiator_actor_id),
             actor_id=initiator_actor_id,
             # Agents open connect sessions; humans only confirm them.
             origin=Origin.AGENT.value,
@@ -1257,13 +1261,14 @@ class ConnectSessionService:
         # *why* (TTL vs. callback vs. user cancel); the actor field
         # names *whose* session it was, without inventing a "system"
         # sentinel that no longer exists in ``ActorType``.
-        initiator_actor_type = actor_type_from_id(row.initiator_actor_id)
+        # Tolerant of residual ``sva_`` initiators (theme-8 L4).
+        initiator_actor_type = actor_type_label_from_id(row.initiator_actor_id)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,
             target_type=AuditTargetType.SESSION,
             target_id=session_id,
-            actor_type=initiator_actor_type.value,
+            actor_type=initiator_actor_type,
             actor_id=row.initiator_actor_id,
             # Expiry, a failed poll or a cancel tears the session down on the
             # platform's side, attributed to its initiator.

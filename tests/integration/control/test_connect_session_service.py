@@ -61,6 +61,7 @@ from jentic_one.shared.config import (
     VendorScopeConfig,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import OWNER_CREDENTIALS_READ
@@ -246,6 +247,10 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     # Default when caller doesn't pass rules — the round-trip test below
     # pins the non-empty case.
     assert row.requested_permission_rules == []
+    # Only the digest of the poll token is persisted; the plaintext is
+    # returned once from create and never written to the row.
+    assert row.poll_token_hash == hash_secret(created.poll_token)
+    assert row.poll_token_hash != created.poll_token
 
 
 async def test_create_session_persists_requested_permission_rules(

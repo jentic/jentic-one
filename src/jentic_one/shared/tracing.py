@@ -52,7 +52,13 @@ from jentic_one.shared.redaction import redact_query_string, redact_url_query
 if TYPE_CHECKING:
     from opentelemetry.instrumentation.httpx import RequestInfo, ResponseInfo
     from opentelemetry.trace import Span
-    from opentelemetry.util.types import AttributeValue
+
+# A span attribute value. ``opentelemetry.util.types.AttributeValue`` stopped
+# being a valid type for mypy in 1.45 (it is now a chained assignment), so the
+# primitive and homogeneous-sequence shapes spans accept are spelled out here.
+type AttributeValue = (
+    str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
+)
 
 # ---------------------------------------------------------------------------
 # Span-attribute redaction

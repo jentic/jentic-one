@@ -356,9 +356,8 @@ async def test_two_agents_see_disjoint_host_sets(web_context: Context) -> None:
 @pytest.mark.usefixtures("clean_tables")
 async def test_archived_revision_hosts_still_governed(web_context: Context) -> None:
     """Archiving clears ``current_revision_id`` but never deletes the URL-index
-    rows, and discovery's ``lookup_by_host_any_revision`` has no revision or
-    state predicate — the archived revision's hosts still route through the
-    broker, so they must stay in the governed set."""
+    rows. Unpinned discovery no longer serves them, but the governed set stays a
+    fail-closed superset of every indexed revision's hosts."""
     await _seed_api(
         web_context, vendor=_VENDOR, name="alpha", version="v1", urls="https://alpha.gvh.test"
     )

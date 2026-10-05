@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity config-schema config-reference endpoints cli-reference broker-reference skills hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker start-local build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -152,8 +152,15 @@ start-admin: ## Start admin surface standalone
 start-control: ## Start control surface standalone
 	JENTIC__APPS=control uv run python -m jentic_one
 
-start-broker: ## Start broker surface standalone
-	JENTIC__APPS=broker uv run python -m jentic_one
+start-broker: ## Start broker surface standalone on :8100 (runs alongside start-app on :8000)
+	JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 uv run python -m jentic_one
+
+start-local: ## Start the combined app (:8000) and the broker (:8100) together for local testing
+	@echo "==> combined app → http://127.0.0.1:8000   broker → http://127.0.0.1:8100 (Ctrl-C stops both)"
+	@trap 'kill 0' INT TERM EXIT; \
+		$(MAKE) start-app & \
+		JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 uv run python -m jentic_one & \
+		wait
 
 migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/local-sqlite.yaml)
 	@mkdir -p .data

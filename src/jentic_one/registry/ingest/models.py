@@ -71,6 +71,14 @@ class IngestSpecification(BaseModel):
     #: (which must capture the current revision as the new overlay's superseded target). NULL
     #: for non-overlay ingests. Server-set (never client-controlled), like ``supersede_active``.
     overlay_id: str | None = None
+    #: Operator approval for a server-host change (``credentials:write``), stamped by
+    #: the scope-checked catalog enqueue path. Server-set, like ``supersede_active``.
+    host_change_approved: bool = False
+    #: Set by the ``Ingestor`` (never by a source) when this catalog ingest must not
+    #: change the API's server hosts on its own: the API has bound credentials and
+    #: the change is not operator-approved. ``CreateRevisionStage`` then keeps a
+    #: host-changing revision as a DRAFT instead of making it current.
+    guard_host_change: bool = False
 
     def to_log_string(self) -> str:
         fields = self.model_dump(exclude={"content"})

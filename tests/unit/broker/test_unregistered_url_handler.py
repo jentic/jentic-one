@@ -57,7 +57,7 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 from jentic_one.shared.web.app_factory import create_combined_app, create_surface_app
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
@@ -384,7 +384,7 @@ class _PinnedMissResolver:
     ) -> ResolveResult | None:
         if revision_id is None:
             return ResolveResult(
-                operation_id="op-1",
+                operation=OperationInfo(id="op-1"),
                 api=APIReference(vendor="acme", name="payments", version="v1"),
                 path_params={},
             )
@@ -438,8 +438,6 @@ async def _run_handle(request: Request) -> Response:
         "GET",
         MagicMock(),  # ctx — never reached: both paths stop at the miss
         _identity(),
-        MagicMock(),  # deriver
-        MagicMock(),  # rule_evaluator
         MagicMock(),  # credential_deriver
         MagicMock(),  # agent_rule_evaluator
         MagicMock(),  # runner

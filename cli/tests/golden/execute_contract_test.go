@@ -66,25 +66,24 @@ func TestGolden_ExecuteContract(t *testing.T) {
 	}
 	// A broker denial carrying a rich agent_directive: every rendering branch
 	// (instruction, run:, open:, candidates, retry-after, stuck?) is frozen.
-	// The wire type is the legacy flag-off no_toolkit_binding — still emitted
-	// by pre-direct-binding brokers — with a surviving suggested_command
-	// (the disambiguation header form; access requests are retired).
+	// The wire type is no_credential_binding with a suggested_command (the
+	// disambiguation header form; access requests are retired).
 	brokerDenial403Directive := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{
-			"type": "no_toolkit_binding",
-			"title": "No toolkit binding for this API",
+			"type": "no_credential_binding",
+			"title": "No credential binding for this API",
 			"status": 403,
 			"error_origin": "broker",
 			"agent_directive": {
 				"strategy": "wait",
 				"parameters": {
-					"suggested_command": "jentic execute --header Jentic-Toolkit-Id=acme/pets ...",
+					"suggested_command": "jentic execute --header Jentic-Credential-Id=cred_pets ...",
 					"provisioning_url": "https://console.example/connect/acme",
-					"candidates": ["acme/pets", "acme/pets-admin"],
+					"candidates": ["cred_pets", "cred_pets_admin"],
 					"retry_after_seconds": 30
 				},
 				"human_readable_instruction": "You are not bound for 'acme/pets'. Ask your operator to bind this agent to the credential serving 'acme/pets' (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."

@@ -296,14 +296,61 @@ Four config values have no safe default: the credential-encryption keyset
 (`credentials.encryption` — a *list*, so it cannot ride the flat `JENTIC__*`
 env convention; credential writes fail without it), the admin JWT secret, the
 invite pepper, and the connect state secret. The latter three ship a
-placeholder that `JENTIC_ENV=production` refuses to boot with; the keyset
-ships nothing at all. On the bundled-DB path
+placeholder that `JENTIC_ENV=production` refuses to boot with on every surface
+that reads them; the keyset ships nothing at all. On the bundled-DB path
 the same Secret also carries the database passwords. (A fifth value,
 `auth.id_signing`, is needed only for `openid`-scope flows — nothing
 generates it, not even the chart's generated Secret; carry it in the
-`existingSecret`'s `config.yaml` when you use OIDC/MCP interactive sign-in —
-see the [Docker guide's worked config](docker.md#2-write-the-config).) The
-chart offers three sources, in order of preference:
+`existingSecret`'s `config.yaml` (single layout) when you use OIDC/MCP
+interactive sign-in — see the [Docker guide's worked
+config](docker.md#2-write-the-config).)
+
+### Which surface gets which secret
+
+By default each surface is handed only the secrets its code reads
+(`global.appSecrets.layout: split`), one Secret key per concern:
+
+| Secret key | Config field | Reaches the pod as | app | admin | control | registry | broker |
+| ---------- | ------------ | ------------------ | :-: | :---: | :-----: | :------: | :----: |
+| `credentials-encryption.yaml` | `credentials.encryption` | file, `JENTIC_CONFIG_FILE` | yes | yes | yes | — | yes |
+| `admin-jwt-secret` | `admin.auth.jwt_secret` | env (`secretKeyRef`) | yes | yes | yes | yes | — |
+| `admin-invite-pepper` | `admin.invite.pepper` | env (`secretKeyRef`) | yes | yes | — | — | — |
+| `connect-state-secret` | `credentials.connect.state_secret` | env (`secretKeyRef`) | yes | — | yes | — | — |
+
+Admin (which also hosts the auth surface) signs admin/session JWTs; control
+and registry verify them, so they need the same HS256 secret. Admin reads the
+keyset to encrypt provider-config client secrets. The broker authenticates
+with its own `broker.jwt_secret` / trusted issuers, never the admin JWT
+secret. The config loader's production guard follows the same table: a
+standalone surface only fails its boot when a secret *it reads* is missing.
+
+The columns are the app surfaces each subchart's image runs (its baked
+`JENTIC__APPS`). A `<svc>.extraEnv.JENTIC__APPS` override changes that, and
+the chart follows it: the pod gets the union of what the listed surfaces
+read, and every secret if the list names a surface the chart does not know.
+So the published app image re-roled with `broker.extraEnv.JENTIC__APPS=broker`
+gets only the keyset.
+
+The secret env vars the chart sets on each pod:
+
+| Env var | Secret key |
+| ------- | ---------- |
+| `JENTIC_CONFIG_FILE` | `/etc/jentic/app-secrets/credentials-encryption.yaml` (the mounted `credentials-encryption.yaml` key) |
+| `JENTIC__ADMIN__AUTH__JWT_SECRET` | `admin-jwt-secret` |
+| `JENTIC__ADMIN__INVITE__PEPPER` | `admin-invite-pepper` |
+| `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET` | `connect-state-secret` |
+
+In the `single` layout only `JENTIC_CONFIG_FILE` is set, pointing at
+`/etc/jentic/app-secrets/config.yaml`.
+
+The legacy layout (`global.appSecrets.layout: single`) mounts one
+`config.yaml` key holding everything on every surface — the only layout
+chart versions before this one supported, and still the default for an
+`existingSecret` (see below).
+
+### Sources
+
+The chart offers three sources, in order of preference:
 
 1. **`global.appSecrets.generate: true`** — the chart mints random values
    into a release-scoped Secret (`<release>-app-secrets`) on first install
@@ -311,14 +358,24 @@ chart offers three sources, in order of preference:
    orphan everything already encrypted, revoke every live session, and break
    DB logins). The Secret carries `helm.sh/resource-policy: keep`, so
    `helm uninstall` leaves it behind and a same-name reinstall re-adopts it.
-   Caveat: piping `helm template` to `kubectl apply` bypasses the lookup and
-   **will** rotate the secrets — use `helm install`/`upgrade`.
+   It holds the per-concern keys above **and** a legacy `config.yaml` with
+   the same values (read only by `layout: single` and by older chart
+   versions after a rollback). Caveat: piping `helm template` to
+   `kubectl apply` bypasses the lookup and **will** rotate the secrets — use
+   `helm install`/`upgrade`.
 2. **`global.appSecrets.existingSecret: <name>`** — mount your own Secret
-   (SealedSecrets, External Secrets Operator, …). It must hold a
-   `config.yaml` key shaped like the keyset block in the
-   [worked config](docker.md#2-write-the-config), plus
-   `admin.auth.jwt_secret`, `admin.invite.pepper`, and
-   `credentials.connect.state_secret`. It must **also** hold the three
+   (SealedSecrets, External Secrets Operator, …). Two shapes:
+   - **Single layout** (the default for `existingSecret`): a `config.yaml`
+     key shaped like the keyset block in the
+     [worked config](docker.md#2-write-the-config), plus
+     `admin.auth.jwt_secret`, `admin.invite.pepper`, and
+     `credentials.connect.state_secret` — mounted on every surface.
+   - **Split layout** (`global.appSecrets.layout: split`): the four
+     per-concern keys from the table above. `credentials-encryption.yaml` is
+     a config document holding only `credentials.encryption` (same shape as
+     in the worked config); the other three hold the bare secret value.
+
+   Either way it must **also** hold the three
    `db-password-{registry,control,admin}` keys unless you set every
    `global.databases.*.password` explicitly — the pods reference those keys
    whenever app-secrets is active and the explicit value is unset,
@@ -327,13 +384,51 @@ chart offers three sources, in order of preference:
    key, `db-password-postgres`, is consumed only by the bundled Postgres.)
 3. **Per-service `configFile.contents`** (dev overlays only) — inlines
    secrets into a plain ConfigMap; never for real data. Mutually exclusive
-   with the two modes above (both claim `JENTIC_CONFIG_FILE`; the chart
-   fails the render rather than silently preferring one).
+   with the two modes above on any surface that mounts the secrets file
+   (both claim `JENTIC_CONFIG_FILE`; the chart fails the render rather than
+   silently preferring one). In the split layout the registry mounts no
+   file, so it may still use `configFile`.
+
+**`extraEnv` wins over the chart's own env.** `<svc>.extraEnv` renders after
+every env var the chart sets, and Kubernetes resolves a duplicate name to the
+last entry, so an operator value always takes effect. For the secret env vars
+above (and `JENTIC_ENV`) the chart goes further and drops its own entry when
+`extraEnv` sets the same name, so the pod spec holds a single, unambiguous
+entry: `--set registry.extraEnv.JENTIC__ADMIN__AUTH__JWT_SECRET=…` replaces
+the `secretKeyRef` on that surface. An `extraEnv` value is a plain string in
+your values, though, so use it for secrets only in dev.
+
+### Upgrading to the per-surface layout
+
+- **`generate: true`** — nothing to do. The first `helm upgrade` onto this
+  chart version reads the existing `config.yaml` and writes the per-concern
+  keys from it (same values — nothing rotates, stored credentials stay
+  decryptable, sessions stay valid), then each pod rolls onto only its own
+  keys. If that `config.yaml` was hand-edited to carry settings beyond the
+  four generated secrets, the upgrade stops with an error naming them. Either
+  set `global.appSecrets.layout: single` to keep the old mount, or move those
+  settings to `extraEnv` and delete them from the Secret's `config.yaml`. The
+  check runs on every split render, so a release kept on `single` for that
+  reason cannot later fall back to `split` and silently lose them; keep
+  `layout: single` in the values you upgrade with (`--reuse-values` does).
+  Rolling back to an older chart keeps working: the legacy `config.yaml` key
+  stays in the Secret with the values the pods use. In `split` the chart
+  rewrites it from the per-concern keys on every upgrade; in `single` it is
+  left verbatim and the per-concern keys follow it.
+- **`existingSecret`** — nothing changes until you opt in. To switch, add the
+  four per-concern keys to your Secret (copy the values out of its
+  `config.yaml` — **the same values**, or stored credentials become
+  undecryptable), then upgrade with `global.appSecrets.layout: split`. Keep
+  `config.yaml` in the Secret until you no longer need to roll back.
+- The chart and the application image must come from the same release: the
+  config loader's surface-aware production guard is what lets a standalone
+  broker or registry boot without the secrets it no longer receives.
 
 For external-database passwords there is no per-variable `secretKeyRef`
 passthrough: `extraEnv` renders name/value scalars only (a nested
-`valueFrom` map renders as a stringified value), and on duplicate names the
-chart's own env wins. Keep passwords out of values files by carrying them as
+`valueFrom` map renders as a stringified value). A plain `extraEnv` value for
+`JENTIC__DATABASES__<DB>__PASSWORD` does override the chart's (extraEnv wins,
+see above), but it puts the password in your values. Keep passwords out of values files by carrying them as
 the `db-password-*` keys of the `existingSecret` above; anything fancier
 (ExternalSecrets per variable, CSI volumes) means patching the subchart
 templates. Host/port/name/schema are not secrets — plain values are fine
@@ -342,7 +437,10 @@ for those.
 Encryption-key **rotation** is a config-level operation in every mode: add a
 new keyset entry and flip `active_id`. Stored secrets re-encrypt under the
 new key only when they are rewritten — there is no bulk re-encrypt and no
-completion check — so keep retired keys in the keyset
+completion check — so keep retired keys in the keyset (in the split layout
+the keyset lives in the `credentials-encryption.yaml` key: edit it there,
+then run a `helm upgrade`, which copies it into the legacy `config.yaml` so a
+later rollback still decrypts what was written under the new key)
 ([upgrades.md](../operations/upgrades.md#what-an-upgrade-never-does)).
 
 ## Scaling and HA

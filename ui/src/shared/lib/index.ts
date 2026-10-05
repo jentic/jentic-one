@@ -72,4 +72,5 @@ export {
 	workspaceApiTitle,
 	vendorIconPropsFor,
 	formatApiVersion,
+	formatOperation,
 } from '@/shared/lib/api-display';

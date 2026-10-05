@@ -81,14 +81,8 @@ except ImportError:  # pragma: no cover - guards against a future FastAPI refact
 
 # --- actor-type vocabulary --------------------------------------------------
 
-#: Every actor type a caller can currently *be issued* as. ``service_account``
-#: is excluded (theme-8 Phase 2): the member survives for deserialization and
-#: the Phase-1 resolver fallback still resolves an unmigrated ``sak_`` key as
-#: one until the Phase-4 drop, but no issuance path produces it, so the
-#: reference must not advertise it as a caller kind.
-_ALL_ACTORS: tuple[str, ...] = tuple(
-    a.value for a in ActorType if a is not ActorType.SERVICE_ACCOUNT
-)
+#: Every actor type a caller can be issued as.
+_ALL_ACTORS: tuple[str, ...] = tuple(a.value for a in ActorType)
 
 
 # --- typical-caller hint (NON-binding guidance, NOT enforcement) ------------

@@ -516,7 +516,14 @@ async def promote_revision(
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Promote a draft revision to published, archiving the current one."""
+    """Promote a draft revision to published, archiving the current one.
+
+    If the draft declares different server hosts than the API's current (or last
+    live) revision, or serves a host over plaintext http that was https-only, and
+    the API has credentials bound to agents, the caller also needs
+    ``credentials:write``; otherwise the promote is refused with 403
+    ``host_change_requires_operator``.
+    """
     svc = RevisionService(ctx)
     view = await svc.promote(vendor, name, version, revision_id, identity=identity)
 

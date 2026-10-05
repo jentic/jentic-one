@@ -107,7 +107,7 @@ func WantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 
 // registerProgress writes a human-facing progress line to stdout ONLY in a
 // human session. `register` is deliberately UNFENCED (agents run it as the
-// onboarding front door — api/root.go), so in agent/service-account mode these
+// onboarding front door — api/root.go), so in agent mode these
 // banners would otherwise land on stdout and corrupt the single JSON envelope an
 // agent parses (AGT-21). In machine mode the lines are suppressed here; the
 // terminal outcome is emitted once as a ux.Result via the Audience. Diagnostics
@@ -121,7 +121,7 @@ func (a *App) registerProgress(ctx context.Context, line string) {
 }
 
 // isMachineCtx reports whether the resolved mode is a fenced machine mode
-// (agent/service-account) — the same test JSONOrPretty uses, but keyed off the
+// (agent) — the same test JSONOrPretty uses, but keyed off the
 // context so the register body can consult it without a *cobra.Command. A
 // missing state (register invoked outside the interceptor) fails OPEN to human
 // prose, matching the pre-AGT-21 behavior for non-agent callers. It delegates to

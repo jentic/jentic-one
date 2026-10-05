@@ -101,7 +101,6 @@ export type { McpConfigRegistrationRequest } from './models/McpConfigRegistratio
 export type { McpConfigRegistrationResponse } from './models/McpConfigRegistrationResponse';
 export { McpConfigRuntime } from './models/McpConfigRuntime';
 export type { MeAgent } from './models/MeAgent';
-export type { MeServiceAccount } from './models/MeServiceAccount';
 export type { MeUser } from './models/MeUser';
 export type { NoAuthCreateRequest } from './models/NoAuthCreateRequest';
 export type { NoteApiReference } from './models/NoteApiReference';
@@ -182,7 +181,6 @@ export type { SetPermissionsRequest } from './models/SetPermissionsRequest';
 export type { Sigv4CreateRequest } from './models/Sigv4CreateRequest';
 export type { Sigv4UpdateRequest } from './models/Sigv4UpdateRequest';
 export type { TokenResponse } from './models/TokenResponse';
-export type { ToolkitBindingEntry } from './models/ToolkitBindingEntry';
 export type { TopOperation } from './models/TopOperation';
 export type { UsageBucket } from './models/UsageBucket';
 export type { UsageResponse } from './models/UsageResponse';

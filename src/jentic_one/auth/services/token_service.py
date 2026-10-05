@@ -82,7 +82,7 @@ async def resolve_effective_scopes(
 ) -> list[str]:
     """The scope set the live resolvers actually enforce for a token.
 
-    Non-ephemeral AGENT/SERVICE_ACCOUNT tokens draw scopes *live* from
+    Non-ephemeral AGENT tokens draw scopes *live* from
     ``actor_scope_grants`` — the mint-time snapshot is dead weight for
     enforcement on these actor types (scope edits take effect immediately by
     design). Ephemeral mints and USER tokens keep their snapshot. Either
@@ -99,7 +99,7 @@ async def resolve_effective_scopes(
     grant-channel integration suite pins all three against each other.
     """
     scopes = snapshot_scopes
-    if not is_ephemeral and actor_type in (ActorType.AGENT, ActorType.SERVICE_ACCOUNT):
+    if not is_ephemeral and actor_type == ActorType.AGENT:
         grants = await ActorScopeGrantRepository.list_for_actor(
             session, actor_id, actor_type=actor_type
         )
@@ -133,22 +133,17 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     Disabling an actor must kill its *outstanding* tokens, not just block new
     mints (#1136) — so every token verdict re-checks the actor row. Fails
     closed when the actor row is missing (e.g. a hard-deleted user whose
-    tokens were never revoked). Unknown actor types are left to their token's
-    own revocation/expiry checks.
+    tokens were never revoked). Any other actor type, including the retired
+    ``service_account`` and ``toolkit`` strings on a residual row, fails
+    closed: only users and agents can authenticate.
     """
     if actor_type == ActorType.AGENT:
         agent = await AgentRepository.get_by_id(session, actor_id)
         return agent is not None and agent.status == ActorStatus.ACTIVE
-    if actor_type == ActorType.SERVICE_ACCOUNT:
-        # Theme-8 Phase 2 (M-3): the service-account surface is gone and every
-        # SA session was revoked at migration. Refuse explicitly — deleting
-        # this arm would fall through to ``return True`` below and make any
-        # surviving SA token fail OPEN.
-        return False
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         return user is not None and user.active
-    return True
+    return False
 
 
 class TokenService:
@@ -560,7 +555,7 @@ class TokenService:
     async def resolve_access_token(self, token: str) -> Identity | None:
         """Resolve an opaque access token for downstream middleware.
 
-        For long-lived agent and service-account tokens (an access+refresh pair,
+        For long-lived agent tokens (an access+refresh pair,
         ``is_ephemeral=False``), scopes are resolved *live* from the actor's
         current ``ActorScopeGrant`` rows rather than the frozen snapshot stored
         on the token. This makes scope edits (grant/revoke, replace) take
@@ -588,6 +583,10 @@ class TokenService:
             at = await AccessTokenRepository.get_by_hash(session, token_hash)
 
             if at is None:
+                return None
+            if at.actor_type not in (ActorType.USER, ActorType.AGENT):
+                # A retired actor type on a residual row (theme 8 / theme 5):
+                # not an identity any more. Fail closed.
                 return None
 
             client_scope_ceiling: frozenset[str] | None = None
@@ -629,7 +628,7 @@ class TokenService:
             else:
                 actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
 
-            # Live grants (non-ephemeral AGENT/SA) or snapshot (ephemeral,
+            # Live grants (non-ephemeral AGENT) or snapshot (ephemeral,
             # USER), intersected with the client ceiling and the grant's
             # scope set (the quadruple intersection) — via the same helper
             # the §5.1 reporting paths use, so reported == enforced.

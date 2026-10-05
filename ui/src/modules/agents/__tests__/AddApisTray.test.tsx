@@ -61,6 +61,7 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
 		credentialId: 'cred_slack',
 		name: 'Slack bot token',
 		suspended: false,
+		suspendedReason: null,
 		ruleSetId: null,
 		boundAt: '2026-01-02T00:00:00Z',
 		serves: [{ vendor: 'slack.com', name: 'main', version: null }],

@@ -45,6 +45,26 @@ function renderPage(route = '/') {
 	);
 }
 
+/**
+ * Wait until the sheet and its cards have finished entering, so axe measures
+ * contrast against the settled surface. Two animations are still in flight once
+ * the cards' text is in the DOM: the backdrop's 300ms opacity fade (CSS) and
+ * the grid's staggered card fade-in from opacity 0 (framer-motion). axe blends
+ * a translucent ancestor into the colours it measures, so auditing a
+ * half-faded card reads its text as low-contrast.
+ */
+async function sheetSettled(): Promise<void> {
+	await waitFor(() => {
+		expect(getComputedStyle(screen.getByTestId('sheet-backdrop')).opacity).toBe('1');
+		const grid = within(screen.getByTestId('sheet-primitive')).getByTestId('credentials-grid');
+		// No cards would make the loop below pass vacuously.
+		expect(grid.children.length).toBeGreaterThan(0);
+		for (const item of Array.from(grid.children)) {
+			expect(getComputedStyle(item).opacity).toBe('1');
+		}
+	});
+}
+
 /** The page-header trigger — the only Credentials control on the surface. */
 function headerTrigger() {
 	return screen.getByRole('button', { name: 'Credentials' });
@@ -100,6 +120,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 		expect(sheet.getByText('GitHub PAT')).toBeInTheDocument();
 		expect(sheet.getByRole('button', { name: /Add credential/ })).toBeEnabled();
 
+		await sheetSettled();
 		await checkA11y(document.body, { modal: true });
 	});
 
@@ -526,6 +547,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 
 		it('passes an accessibility audit with a grouped API on screen', async () => {
 			await openInventory();
+			await sheetSettled();
 			await checkA11y(document.body, { modal: true });
 		});
 	});

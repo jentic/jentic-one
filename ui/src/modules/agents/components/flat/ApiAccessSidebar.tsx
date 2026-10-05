@@ -293,6 +293,9 @@ export function ApiAccessSidebar({
 										{shown.authLabel ? ` · ${shown.authLabel}` : ''} — access
 										for {agent.name}
 										{shown.suspended ? ' · not serving calls' : ''}
+										{shown.suspended && shown.suspendedReason === 'api_deleted'
+											? ' because its API was deleted — review the rules before resuming'
+											: ''}
 									</p>
 								</div>
 							</div>

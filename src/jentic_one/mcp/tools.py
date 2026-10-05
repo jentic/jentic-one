@@ -43,14 +43,7 @@ from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.jobs import JobView
 from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
-from jentic_one.auth.services.legacy_service_account_identity_service import (
-    LegacyServiceAccountIdentityService,
-)
-from jentic_one.auth.web.routers.identity import (
-    _resolve_agent,
-    _resolve_service_account,
-    _resolve_user,
-)
+from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
@@ -284,7 +277,9 @@ def _parse_method_url(target: str) -> tuple[str, str] | None:
     if not rest.startswith(("http://", "https://")):
         return None
     method = first.upper()
-    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+    # The full method set OpenAPI ingestion accepts (Go: ``parseMethodURL``) —
+    # a discovered TRACE operation's contract is readable; execute refuses it.
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}:
         return None
     return method, rest
 
@@ -301,10 +296,6 @@ async def handle_whoami(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.Ca
             me: Any = await _resolve_user(request, env.identity, UserService(env.ctx))
         elif sub.startswith("agnt_"):
             me = await _resolve_agent(request, env.identity, AgentService(env.ctx))
-        elif sub.startswith("sva_"):
-            me = await _resolve_service_account(
-                request, env.identity, LegacyServiceAccountIdentityService(env.ctx)
-            )
         else:
             raise ToolError(
                 CODE_NOT_AUTHENTICATED,
@@ -385,6 +376,7 @@ async def handle_search_apis(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             "operation_id": r.operation_id,
             "method": r.method,
             "url": r.url,
+            "target": r.target,
             "name": r.name or "",
             "description": r.description or "",
             "relevance_score": r.relevance_score,
@@ -427,8 +419,8 @@ async def handle_inspect_operation(
     if not target:
         raise invalid_params(
             'inspect_operation requires "operation_id" (aliases: "id", "uuid"): '
-            "a registry operation id from a search_apis hit, or a METHOD:url pair "
-            'like "GET:https://api.example.com/v1/things"'
+            'a METHOD:url pair like "GET:https://api.example.com/v1/things" '
+            "(a search_apis hit's target)"
         )
     require_scopes(env.identity, ["apis:read"])
     payload = await _inspect_document(env, target, args.get("revision", ""))
@@ -447,8 +439,7 @@ async def _inspect_document(env: CallEnv, target: str, revision: str) -> dict[st
         CODE_RESOLVE_FAILED,
         f"operation {target!r} not found",
         actionable="Call search_apis with a natural-language description of what you "
-        "want to do, then inspect the operation_id (or the METHOD:url) from one of "
-        "its hits.",
+        "want to do, then inspect the target from one of its hits.",
         next_tool="search_apis",
     )
     rev_id: uuid_mod.UUID | None = None
@@ -744,6 +735,14 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
             promoted[f"revision[{idx}]"] = "promote failed: malformed revision entry"
             continue
         state = str(rev.get("state") or "")
+        if rev.get("held_for_review"):
+            # Server-host change guard: the revision changes where the API's bound
+            # credentials are sent, so it stays a draft until an operator promotes it.
+            promoted[revision_id] = (
+                "held for operator review: the new revision changes the API's server "
+                "hosts (promoting it requires credentials:write)"
+            )
+            continue
         if state != "draft":
             promoted[revision_id] = state
             continue
@@ -988,9 +987,8 @@ async def _execute_tool(
     target = args.get("operation_id", "")
     if not target:
         raise invalid_params(
-            f'{tool_name} requires "operation_id" (aliases: "id", "uuid"): a registry '
-            "operation id from a search_apis hit, or a METHOD:url pair like "
-            '"GET:https://api.example.com/v1/things"'
+            f'{tool_name} requires "operation_id" (aliases: "id", "uuid"): a METHOD:url '
+            'pair like "GET:https://api.example.com/v1/things" (a search_apis hit\'s target)'
         )
     body_value = args.get("body")
     if read_only_variant and body_value is not None:
@@ -1011,6 +1009,29 @@ async def _execute_tool(
         upstream_target = str(doc.get("url", ""))
         if not method or not upstream_target:
             raise ToolError(CODE_INTERNAL_ERROR, "inspect response missing method or url")
+        if not upstream_target.startswith(("http://", "https://")):
+            # A host-relative url (spec declares no absolute server — the case
+            # where a search hit's target is the registry operation_id): the
+            # contract is inspectable, but there is no upstream host to proxy
+            # to (Go: ``agentops.ensureAbsoluteUpstream``).
+            raise ToolError(
+                CODE_RESOLVE_FAILED,
+                f"operation {target!r} has no upstream host (url {upstream_target!r}): "
+                "its spec declares no absolute server, so it cannot be executed",
+                actionable="Call search_apis for an operation whose target is a METHOD:url pair.",
+                next_tool="search_apis",
+            )
+    if method == "TRACE":
+        # The broker's proxy route never serves TRACE: it echoes the request
+        # back, which would reflect the credentials the broker injects. Refuse
+        # locally (Go: ``agentops.ensureExecutableMethod``) instead of a 405.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"operation {target!r} is a TRACE operation, which cannot be executed",
+            actionable="Call search_apis for a different operation; TRACE is never "
+            "proxied by the broker.",
+            next_tool="search_apis",
+        )
     if read_only_variant and method not in ("GET", "HEAD"):
         raise invalid_params(
             f"operation {target!r} resolves to {method} — execute_read only performs "

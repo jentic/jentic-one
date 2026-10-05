@@ -142,10 +142,7 @@ func (McpConfigRegistrationResponse) RequiredFields() []string {
 	return []string{"recorded", "runtime"}
 }
 func (MeAgent) RequiredFields() []string {
-	return []string{"id", "name", "scopes", "status", "token_scopes", "toolkit_bindings"}
-}
-func (MeServiceAccount) RequiredFields() []string {
-	return []string{"id", "name", "registered_by", "scopes", "status", "token_scopes"}
+	return []string{"id", "name", "scopes", "status", "token_scopes"}
 }
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "scopes", "status"}
@@ -186,7 +183,7 @@ func (OperationPreviewListResponse) RequiredFields() []string {
 	return []string{"data", "info", "offset", "security_schemes", "total", "truncated"}
 }
 func (OperationResultResponse) RequiredFields() []string {
-	return []string{"_links", "api", "method", "operation_id", "relevance_score", "url"}
+	return []string{"_links", "api", "method", "operation_id", "relevance_score", "target", "url"}
 }
 func (OperationSummaryLinksResponse) RequiredFields() []string { return []string{"inspect"} }
 func (OperationSummaryListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
@@ -255,9 +252,8 @@ func (SetPermissionsRequest) RequiredFields() []string      { return []string{"p
 func (Sigv4CreateRequest) RequiredFields() []string {
 	return []string{"access_key_id", "api", "aws_region", "aws_service", "name", "secret_access_key", "type"}
 }
-func (Sigv4UpdateRequest) RequiredFields() []string  { return []string{"type"} }
-func (TokenResponse) RequiredFields() []string       { return []string{"access_token", "expires_in"} }
-func (ToolkitBindingEntry) RequiredFields() []string { return []string{"bound_at", "toolkit_id"} }
+func (Sigv4UpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (TokenResponse) RequiredFields() []string      { return []string{"access_token", "expires_in"} }
 func (TopOperation) RequiredFields() []string {
 	return []string{"api_name", "api_vendor", "failed", "operation_id", "total"}
 }

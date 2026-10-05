@@ -153,13 +153,14 @@ async def test_missing_actor_type_fails_closed() -> None:
         await validator.validate(token)
 
 
-@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit"])
+@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit", "service_account"])
 @pytest.mark.asyncio
 async def test_unknown_actor_type_is_typed_rejection(actor_type: str) -> None:
     """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError.
 
-    ``toolkit`` is retired from the enum (theme-5 Phase 4), so a signed
-    ``toolkit`` claim is refused as unknown like any other stray string.
+    ``toolkit`` (theme-5 Phase 4) and ``service_account`` (theme-8 Phase 4)
+    are retired from the enum, so a signed claim carrying either is refused
+    as unknown like any other stray string.
     """
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
@@ -175,19 +176,6 @@ async def test_disallowed_actor_type_rejected() -> None:
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
     token = _sign({"sub": "x", "exp": exp, "actor_type": "user"})
-
-    with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
-        await validator.validate(token)
-
-
-@pytest.mark.asyncio
-async def test_service_account_actor_type_rejected() -> None:
-    """Theme-8 Phase 1 (F3): an SA claim would sail past the grant migration
-    and token revocation (no DB read on this path) — refused; assert the
-    successor agent instead."""
-    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
-    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "sva_x", "exp": exp, "actor_type": "service_account"})
 
     with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
         await validator.validate(token)

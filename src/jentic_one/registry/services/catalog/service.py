@@ -25,6 +25,7 @@ from typing import Any
 
 import structlog
 
+from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
@@ -769,11 +770,17 @@ class CatalogService:
 
     # ── import ───────────────────────────────────────────────────────────────
 
-    def _to_import_source(self, entry: CatalogEntryView, identity: Identity) -> dict[str, str]:
+    def _to_import_source(
+        self,
+        entry: CatalogEntryView,
+        identity: Identity,
+        *,
+        vendor: str | None = None,
+    ) -> dict[str, str]:
         """Build a plain url IngestSource payload — never a catalog-shaped one.
 
         The catalog already knows the vendor and api_name from the manifest folder
-        structure (``apis/openapi/{domain}/{sub}/…`` → ``extract_vendor(api_id)``),
+        structure (``apis/openapi/{domain}/{sub}/…`` → ``vendor_from_api_id(api_id)``),
         so we pass them through as overrides. Many catalog specs (e.g. coincap)
         omit ``x-vendor``/``contact.name`` in their ``info`` block, which would
         otherwise fail api_identifier resolution with "missing vendor" or "missing
@@ -783,6 +790,11 @@ class CatalogService:
 
         ``submitted_by`` attributes the resulting revision to the principal who
         triggered the (re-)import — same policy as ``POST /apis``.
+
+        ``vendor``, when given, overrides the manifest-derived vendor. A re-import
+        passes the vendor already stored on the local API so it lands on that API's
+        existing ``(vendor, name, version)`` identity even if the hostname → vendor
+        derivation has since changed.
         """
         if not entry.spec_url:
             raise CatalogUnavailableError(f"catalog entry '{entry.api_id}' has no spec url")
@@ -793,8 +805,9 @@ class CatalogService:
         }
         if identity.sub:
             source["submitted_by"] = identity.sub
-        if entry.vendor:
-            source["vendor"] = entry.vendor
+        resolved_vendor = vendor or entry.vendor
+        if resolved_vendor:
+            source["vendor"] = resolved_vendor
         if entry.api_id:
             source["api_name"] = entry.api_id
             # Also carried verbatim: `api_name` above only seeds the slugified
@@ -803,6 +816,23 @@ class CatalogService:
             # on the Api row for friendly-title derivation.
             source["catalog_api_id"] = entry.api_id
         return source
+
+    async def _registered_vendor(self, entry: CatalogEntryView) -> str | None:
+        """The vendor stored on the local API already imported from this entry, if any.
+
+        A re-import must update the API it was first imported as. Existing rows keep
+        the vendor they were created with (hostname → vendor derivation is not
+        retroactive), so re-deriving it from the api_id could point the import at a
+        new ``(vendor, name, version)`` identity and leave the existing API, and the
+        credentials and permission rules keyed on it, behind. Keyed on ``spec_url``,
+        the same coverage key as ``registered``.
+        """
+        if not entry.registered or not entry.spec_url:
+            return None
+        async with self._ctx.registry_db.session() as session:
+            return await ApiRevisionRepository.registered_vendor_for_source_url(
+                session, entry.spec_url
+            )
 
     async def _authorize_overlay_supersede(
         self, entry: CatalogEntryView, identity: Identity
@@ -884,12 +914,25 @@ class CatalogService:
         on the job so the worker auto-deprecates the overlay in the re-ingest transaction.
         An unauthorized caller is refused (``OverlaySupersedeForbiddenError``) rather than
         silently reverting the operator's fix.
+
+        If the re-import would change the server hosts of an API with bound credentials,
+        only a caller holding ``credentials:write`` makes it current; otherwise the worker
+        keeps the new revision as a draft for operator review (see
+        ``registry/ingest/host_change_guard.py``).
         """
         entry = await self.get(api_id)
         supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
-        source = self._to_import_source(entry, identity)
+        source = self._to_import_source(
+            entry, identity, vendor=await self._registered_vendor(entry)
+        )
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
+        if may_approve_host_change(identity.permissions):
+            # Server-host change guard: an operator (``credentials:write``) may let a
+            # re-import that changes the API's server hosts become current even when
+            # the API has bound credentials. Everyone else gets such a revision held
+            # as a draft for review. Server-set only; client schemas cannot carry it.
+            source["host_change_approved"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
         if supersede_overlay_id is not None:
             payload["supersede_overlay_id"] = supersede_overlay_id

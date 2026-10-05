@@ -19,7 +19,7 @@ from jentic_one.broker.adapters.runners.circuit import CircuitBreakerRunner
 from jentic_one.broker.adapters.runners.http import HttpRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.adapters.runners.sigv4 import SigV4SigningRunner
-from jentic_one.broker.core.setup import install_broker_auth
+from jentic_one.broker.core.setup import build_queued_execution_authorizer, install_broker_auth
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.execution.executor import PipelineExecutor
 from jentic_one.broker.services.execution.pipeline import build_runner
@@ -185,6 +185,11 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
             else PipelineExecutor(registry)
         )
         app.state.broker_credential_injector = CredentialService(ctx)
+        # Queued executions are re-authorized when the worker runs them (actor
+        # still active and holding the execute scope, binding still present,
+        # rules still allow) with the sync route's policy — injection never
+        # trusts the enqueue-time verdict.
+        app.state.broker_execution_authorizer = build_queued_execution_authorizer(ctx)
         try:
             yield
         finally:

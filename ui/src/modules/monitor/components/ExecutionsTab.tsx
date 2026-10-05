@@ -14,6 +14,7 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { Activity, ChevronRight, X } from 'lucide-react';
 import { ActorLabel, Button, EmptyState, ErrorAlert, SkeletonRows, VendorIcon } from '@/shared/ui';
+import { formatOperation } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { toExecutionStatus, useExecutions, type ExecutionResponse } from '@/modules/monitor/api';
 import { CursorPager } from '@/modules/monitor/components/CursorPager';
@@ -169,7 +170,7 @@ export function ExecutionsTab() {
 									{day.items.map((row) => {
 										const s = toExecutionStatus(row.status);
 										const d = detailFor(row);
-										const op = row.operation_id ?? 'Unnamed operation';
+										const op = formatOperation(row) ?? 'Unnamed operation';
 										return (
 											<LogRow
 												key={row.execution_id}

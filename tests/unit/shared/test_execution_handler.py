@@ -21,11 +21,14 @@ import pytest
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import (
     InjectedAuth,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecResult,
 )
 from jentic_one.shared.models.actors import Origin
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.schemas import OperationInfo
 
 
 class _FakeSession:
@@ -62,6 +65,8 @@ class _FakeInjector:
         self.last_trace_id: str | None = None
         self.last_allowed_credential_ids: Any = "unset"
         self.last_credential_id: str | None = None
+        self.last_request_server_variables: Any = "unset"
+        self.last_server_variables_unresolved: bool | None = None
 
     async def inject(
         self,
@@ -74,11 +79,27 @@ class _FakeInjector:
         credential_id: str | None = None,
         allowed_credential_ids: Any = None,
         trace_id: str | None = None,
+        request_server_variables: Any = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         self.last_trace_id = trace_id
         self.last_allowed_credential_ids = allowed_credential_ids
         self.last_credential_id = credential_id
+        self.last_request_server_variables = request_server_variables
+        self.last_server_variables_unresolved = server_variables_unresolved
         return self._injection
+
+
+class _FakeAuthorizer:
+    """Stands in for the broker's run-time re-authorizer (``ExecutionAuthorizer``)."""
+
+    def __init__(self, verdict: QueuedExecutionVerdict | None = None) -> None:
+        self._verdict = verdict or QueuedExecutionVerdict(allowed=True)
+        self.last_request: QueuedExecutionRequest | None = None
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
+        self.last_request = request
+        return self._verdict
 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
@@ -167,6 +188,7 @@ async def test_handler_applies_header_query_and_cookie_credentials() -> None:
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
+        execution_authorizer=_FakeAuthorizer(),
     )
 
     await handler.execute(
@@ -199,35 +221,208 @@ async def test_handler_no_injector_sends_no_auth() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("payload_extra", "expected_allowed", "expected_id"),
+    ("verdict", "expected_allowed", "expected_id"),
     [
-        # The edge's boundary (direct or toolkit path) and credential id replay verbatim.
-        ({"allowed_credential_ids": ["cred_b"], "credential_id": "cred_b"}, ["cred_b"], "cred_b"),
-        # An empty boundary stays deny-all.
-        ({"allowed_credential_ids": []}, [], None),
-        # No boundary at all fails closed — never the unfiltered tenant-wide set.
-        ({}, [], None),
+        # The re-derived boundary and pinned credential are what injection uses.
+        (
+            QueuedExecutionVerdict(
+                allowed=True, allowed_credential_ids=("cred_b",), credential_id="cred_b"
+            ),
+            ["cred_b"],
+            "cred_b",
+        ),
+        # An empty re-derived boundary stays deny-all.
+        (QueuedExecutionVerdict(allowed=True), [], None),
     ],
 )
-async def test_handler_bounds_injection_to_the_payload_boundary(
-    payload_extra: dict[str, Any], expected_allowed: list[str], expected_id: str | None
+async def test_handler_bounds_injection_to_the_run_time_boundary(
+    verdict: QueuedExecutionVerdict, expected_allowed: list[str], expected_id: str | None
 ) -> None:
+    """Injection uses the boundary re-derived at run time — never the enqueue-time
+    snapshot in the payload (which here names a credential no longer bound)."""
     executor = _RecordingExecutor(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(verdict),
+    )
 
     await handler.execute(
         "job_bound",
         _FakeSession(),
-        payload=_payload(**payload_extra),
+        payload=_payload(allowed_credential_ids=["cred_stale"], credential_id="cred_stale"),
         created_by="usr_test",
         actor_type="user",
     )
 
     assert injector.last_allowed_credential_ids == expected_allowed
     assert injector.last_credential_id == expected_id
+
+
+@pytest.mark.asyncio
+async def test_handler_passes_the_enqueue_selection_to_the_authorizer() -> None:
+    """The re-check sees the actor, operation and enqueue-time selection."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=authorizer,
+    )
+
+    await handler.execute(
+        "job_req",
+        _FakeSession(),
+        payload=_payload(operation_id="listThings", credential_id="cred_a", toolkit_id=None),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert authorizer.last_request == QueuedExecutionRequest(
+        actor_id="agt_abc123",
+        actor_type="agent",
+        method="GET",
+        upstream_url="https://api.example.com/v1/things",
+        api_vendor="example",
+        api_name="api",
+        api_version="1.0.0",
+        operation_id="listThings",
+        credential_id="cred_a",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_denied_job_fails_without_injecting_or_dispatching() -> None:
+    """A run-time denial records a failed result carrying the sync route's problem
+    body, emits EXECUTION_FAILED, and never touches the credential or upstream."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"ok", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(
+        InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+    )
+    problem = {
+        "type": "no_credential_binding",
+        "title": "No credential binding for this API",
+        "status": 403,
+        "error_origin": "broker",
+    }
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+
+    with (
+        patch(
+            "jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock
+        ) as mock_emit,
+        patch(
+            "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure",
+            new_callable=AsyncMock,
+        ) as mock_repeated,
+    ):
+        result = await handler.execute(
+            "job_denied",
+            _FakeSession(),
+            payload=_payload(credential_id="cred_a", allowed_credential_ids=["cred_a"]),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    assert executor.last_request is None
+    assert injector.last_trace_id is None  # inject() never called
+    assert result.body == {
+        "execution_id": "exec_123",
+        "status": "failed",
+        "http_status": 403,
+        "duration_ms": 0,
+        "problem": problem,
+    }
+    assert result.content_type is None
+    mock_emit.assert_awaited_once()
+    assert mock_emit.call_args.kwargs["type"] == EventType.EXECUTION_FAILED
+    assert "no_credential_binding" in mock_emit.call_args.kwargs["summary"]
+    mock_repeated.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handler_denied_job_keys_repeated_failure_on_the_folded_operation() -> None:
+    """A run-time denial still counts toward repeated-failure detection with the
+    full operation identity folded from the payload — not a dropped id."""
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=_FakeAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem={"type": "action_denied"})
+        ),
+    )
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
+
+    with (
+        patch("jentic_one.shared.jobs.execution_handler.emit_event", new_callable=AsyncMock),
+        patch(
+            "jentic_one.shared.jobs.execution_handler.maybe_emit_repeated_failure",
+            new_callable=AsyncMock,
+        ) as mock_repeated,
+    ):
+        await handler.execute(
+            "job_denied_op",
+            _FakeSession(),
+            payload=_payload(operation=operation, operation_id="op_x", credential_id="cred_a"),
+            created_by="agt_abc123",
+            actor_type="agent",
+        )
+
+    assert mock_repeated.call_args.kwargs["operation"] == OperationInfo(**operation)
+
+
+@pytest.mark.asyncio
+async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
+    """The run-time re-check reads the id off the folded ``operation`` dict, so a
+    payload carrying only the dict (no flat key) is still authorized on its id."""
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=authorizer,
+    )
+
+    await handler.execute(
+        "job_dict_only",
+        _FakeSession(),
+        payload=_payload(operation={"id": "op_dict", "path": "/v1/things", "method": "GET"}),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.operation_id == "op_dict"
+
+
+def test_handler_refuses_an_injector_without_an_authorizer() -> None:
+    """Wiring a credential injector without the run-time re-check fails closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    with pytest.raises(ValueError, match="requires an execution_authorizer"):
+        ExecutionHandler(
+            executor=executor,
+            credential_injector=_FakeInjector(
+                InjectedAuth(headers={}, query_params={}, cookies={})
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -271,7 +466,9 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
             credential_name="stripe-live",
         )
     )
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     await handler.execute(
         "job8",
@@ -302,7 +499,9 @@ async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     payload = _payload()
     payload.pop("trace_id")
@@ -333,7 +532,9 @@ async def test_handler_no_credential_leaves_attribution_none() -> None:
         UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
     )
     injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
-    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
 
     await handler.execute(
         "job9", _FakeSession(), payload=_payload(), created_by="usr_test", actor_type="user"
@@ -410,3 +611,141 @@ async def test_handler_missing_origin_emits_untagged_event() -> None:
         )
 
     assert mock_emit.call_args.kwargs["tags"] is None
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_operation_dict_in_metadata() -> None:
+    """The payload's ``operation`` dict (id + path template + method) reaches
+    the executor metadata — validated once here (the handler folds it for the
+    repeated-failure detector) — alongside the dual-written flat
+    ``operation_id``."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+    operation = {"id": "op_x", "path": "/v1/things/{id}", "method": "GET"}
+
+    await handler.execute(
+        "job_op",
+        _FakeSession(),
+        payload=_payload(operation=operation, operation_id="op_x"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == operation
+    assert executor.last_request.metadata["operation_id"] == "op_x"
+
+
+@pytest.mark.asyncio
+async def test_handler_forwards_legacy_flat_operation_id() -> None:
+    """A job enqueued before the ``operation`` dict existed carries only the
+    flat ``operation_id`` — the handler folds it into an id-only operation, so
+    the executor metadata keeps the id on the record either way."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    handler = ExecutionHandler(executor=executor)
+
+    await handler.execute(
+        "job_legacy_op",
+        _FakeSession(),
+        payload=_payload(operation_id="op_legacy"),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert executor.last_request is not None
+    assert executor.last_request.metadata["operation"] == {
+        "id": "op_legacy",
+        "path": None,
+        "method": None,
+    }
+    assert executor.last_request.metadata["operation_id"] == "op_legacy"
+
+
+@pytest.mark.asyncio
+async def test_handler_scopes_credentials_on_payload_server_variables() -> None:
+    """The server-variable values discovery resolved at enqueue time reach both
+    the run-time re-authorization and the credential injection."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=authorizer
+    )
+
+    await handler.execute(
+        "job11",
+        _FakeSession(),
+        payload=_payload(
+            upstream_url="https://api.example.com/eu/things",
+            server_variables={"region": "eu"},
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert injector.last_request_server_variables == {"region": "eu"}
+    assert injector.last_server_variables_unresolved is False
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.server_variables == {"region": "eu"}
+    assert authorizer.last_request.server_variables_unresolved is False
+
+
+@pytest.mark.asyncio
+async def test_handler_propagates_unresolved_server_variables() -> None:
+    """An enqueue-time "values unknown" flag keeps the worker failing closed."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=authorizer
+    )
+
+    await handler.execute(
+        "job13",
+        _FakeSession(),
+        payload=_payload(
+            upstream_url="https://api.example.com/us/things", server_variables_unresolved=True
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    assert injector.last_server_variables_unresolved is True
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.server_variables_unresolved is True
+
+
+@pytest.mark.asyncio
+async def test_handler_substitutes_server_variable_defaults() -> None:
+    """A templated upstream URL falls back to the declared default when the
+    credential supplies no value for the variable."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(
+        executor=executor, credential_injector=injector, execution_authorizer=_FakeAuthorizer()
+    )
+
+    await handler.execute(
+        "job12",
+        _FakeSession(),
+        payload=_payload(
+            upstream_url="https://api.example.com/{region}/things",
+            server_variable_defaults={"region": "us"},
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.url == "https://api.example.com/us/things"

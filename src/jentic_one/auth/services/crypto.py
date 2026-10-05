@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import secrets
+
+from jentic_one.shared.crypto.digest import hash_secret
+
+__all__ = ["generate_agent_api_key", "generate_client_secret", "hash_secret"]
 
 _CLIENT_SECRET_PREFIX = "jcs_"
 _AGENT_API_KEY_PREFIX = "jak_"
-
-
-def hash_secret(value: str) -> str:
-    """One-way SHA-256 hash for credential storage."""
-    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def generate_client_secret() -> str:

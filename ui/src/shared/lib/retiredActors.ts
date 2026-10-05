@@ -30,7 +30,7 @@ export function retiredServiceAccountLabel(actorId: string): string {
  * it is still the retired service account's original key.
  */
 export const MIGRATED_SERVICE_ACCOUNT_KEY_WARNING =
-	"This agent replaced a retired service account and still authenticates with that account's original key. Once replaced, that key is gone for good and cannot be restored.";
+	"This agent replaced a retired service account and still holds that account's original key. If that was a converted jntc_live_ toolkit key, callers still authenticate with it (sak_ keys stopped working in 0.41). Once replaced, that key is gone for good and cannot be restored.";
 
 /**
  * True when an agent still holds the key the theme-8 migration copied over from

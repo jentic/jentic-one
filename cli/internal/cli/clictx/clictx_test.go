@@ -14,8 +14,8 @@ func TestResolveMode_Ladder(t *testing.T) {
 		t.Errorf("--mode override lost: %q", got)
 	}
 
-	t.Setenv("JENTIC_MODE", "service-account")
-	if got := ResolveMode("", "human"); got != "service-account" {
+	t.Setenv("JENTIC_MODE", "agent")
+	if got := ResolveMode("", "human"); got != "agent" {
 		t.Errorf("JENTIC_MODE not honored: %q", got)
 	}
 
@@ -108,5 +108,33 @@ func TestActiveStateContextRoundTrip(t *testing.T) {
 	}
 	if FromContext(t.Context()) != nil {
 		t.Error("missing ActiveState should return nil")
+	}
+}
+
+// The retired service-account alias is no longer rewritten (14 BC-12 removal):
+// like any unknown value it passes through the ladder untouched, for the
+// interceptor to fail closed on.
+func TestResolveModeExplicit_ServiceAccountIsUnknown(t *testing.T) {
+	t.Setenv("JENTIC_MODE", "")
+	os.Unsetenv("JENTIC_MODE")
+
+	cases := []struct {
+		name            string
+		flag, env, pers string
+	}{
+		{"flag", "service-account", "", ""},
+		{"env", "", "service-account", ""},
+		{"persisted", "", "", "service-account"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("JENTIC_MODE", tc.env)
+			}
+			mode, explicit := ResolveModeExplicit(tc.flag, tc.pers)
+			if mode != "service-account" || !explicit {
+				t.Errorf("got (%q, %v), want (service-account, true)", mode, explicit)
+			}
+		})
 	}
 }

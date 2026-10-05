@@ -34,7 +34,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
@@ -150,7 +149,6 @@ async def actors(web_context: Context) -> AsyncGenerator[dict[str, _Actor], None
         await session.commit()
     async with ctx.admin_db.session() as session:
         await session.execute(delete(Agent).where(Agent.owner_id.in_(ids)))
-        await session.execute(delete(ServiceAccount).where(ServiceAccount.owner_id.in_(ids)))
         await session.execute(
             delete(UserPermissionGrant).where(UserPermissionGrant.user_id.in_(ids))
         )

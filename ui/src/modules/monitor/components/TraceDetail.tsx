@@ -12,6 +12,7 @@ import { ArrowUpRight } from 'lucide-react';
 import {
 	ActorLabel,
 	AppLink,
+	CopyButton,
 	ErrorAlert,
 	LoadingState,
 	StatusBadge,
@@ -36,6 +37,7 @@ import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
 import { hasTrace, monitorHref } from '@/modules/monitor/lib/links';
 import { originLabel, EXECUTION_LABEL, EXECUTION_TONE } from '@/modules/monitor/lib/logVocabulary';
 import { ORG_ADMIN, usePermission } from '@/modules/monitor/lib/usePermission';
+import { formatOperation } from '@/shared/lib';
 
 function apiName(exec: ExecutionResponse): string {
 	return exec.api?.name ?? exec.api?.host ?? 'Unknown API';
@@ -101,7 +103,7 @@ export function TraceDetail({
 	const heading =
 		executions.length > 1
 			? `${executions.length} calls in one trace`
-			: (first?.operation_id ?? (traceable ? 'Trace' : 'API call'));
+			: ((first ? formatOperation(first) : null) ?? (traceable ? 'Trace' : 'API call'));
 	const id = traceable ? effectiveTraceId : (executionId ?? '—');
 
 	return (
@@ -180,7 +182,7 @@ function ExecutionCard({ exec }: { exec: ExecutionResponse }) {
 			<div className="flex items-start gap-2">
 				<StatusGlyph tone={EXECUTION_TONE[status]} label={EXECUTION_LABEL[status]} />
 				<p className="text-foreground min-w-0 flex-1 font-mono text-[13px] break-all">
-					{exec.operation_id ?? '—'}
+					{formatOperation(exec) ?? '—'}
 				</p>
 				<StatusBadge status={exec.http_status} />
 			</div>
@@ -191,6 +193,28 @@ function ExecutionCard({ exec }: { exec: ExecutionResponse }) {
 			)}
 			<div className="mt-2">
 				<DetailRow label="Outcome" value={<ExecutionStatusPill status={status} />} />
+				<DetailRow
+					label="Operation"
+					value={
+						<span className="inline-flex items-center gap-1">
+							{formatOperation(exec) ?? '—'}
+							{exec.operation_id && (
+								// The opaque id never renders as text (it's a
+								// machine key), but stays reachable for
+								// debugging and support hand-offs.
+								<CopyButton
+									value={exec.operation_id}
+									ariaLabel="Copy operation ID"
+									toastMessage="Operation ID copied"
+									size="icon"
+									variant="ghost"
+									className="h-6 w-6 shrink-0"
+								/>
+							)}
+						</span>
+					}
+					mono
+				/>
 				<DetailRow
 					label="API"
 					value={
