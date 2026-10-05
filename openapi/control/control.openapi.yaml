@@ -6045,7 +6045,7 @@ info:
       edit.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
-      from it. To walk all executions under one logical request, use
+      from it. To walk the executions you can see under one logical request, use
       `GET /executions?trace_id=…`.
     - **Event stream.** The dashboard / operator UI consumes the
       `/events` resource (paginated list + SSE stream). Some events
@@ -18868,7 +18868,7 @@ tags:
 
     **Authentication.** Any authenticated principal (agent or human) can submit, edit, confirm, or deprecate overlays. Platform-side rate limits gate abuse.
   name: Overlays
-- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`.
+- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
 - description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs

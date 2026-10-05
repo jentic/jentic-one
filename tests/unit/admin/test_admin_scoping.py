@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.scoping.filters import build_access_filters
@@ -139,3 +140,31 @@ def test_job_model_never_delegates_to_parent_actor() -> None:
 
 def test_job_model_admin_unrestricted() -> None:
     assert build_access_filters(_identity(permissions=["org:admin"]), Job) == []
+
+
+def test_execution_record_scopes_to_actor_and_owned_agents() -> None:
+    """Executions: the actor that ran it, or the human owner of the running agent."""
+    identity = _identity(sub="usr_exec", permissions=["executions:read"])
+    filters = build_access_filters(identity, ExecutionRecord)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "execution_records.actor_id = 'usr_exec'" in sql
+    assert "agents.owner_id = 'usr_exec'" in sql
+
+
+def test_execution_record_never_delegates_to_parent_actor() -> None:
+    """An agent does not inherit its owner's executions, even with owner-read scopes."""
+    identity = _identity(
+        sub="agent_1",
+        permissions=[OWNER_AGENTS_READ, "owner:resources:read"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="user_owner",
+    )
+    filters = build_access_filters(identity, ExecutionRecord)
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agent_1" in sql
+    assert "user_owner" not in sql
+
+
+def test_execution_record_admin_unrestricted() -> None:
+    assert build_access_filters(_identity(permissions=["org:admin"]), ExecutionRecord) == []
