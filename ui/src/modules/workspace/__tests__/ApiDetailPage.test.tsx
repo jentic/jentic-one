@@ -54,6 +54,23 @@ describe('ApiDetailPage', () => {
 		expect(screen.getByTestId('operations-section')).toBeInTheDocument();
 	});
 
+	it('keeps the heading ladder on Operations and Versions (no level skipped under the h1)', async () => {
+		const check = async (route: string, section: string | RegExp) => {
+			const { unmount } = renderAt(route);
+			await screen.findByRole('heading', { name: section, level: 2 });
+			const levels = screen.getAllByRole('heading').map((h) => Number(h.tagName.slice(1)));
+			for (let i = 1; i < levels.length; i++) {
+				expect(levels[i] - levels[i - 1]).toBeLessThanOrEqual(1);
+			}
+			unmount();
+		};
+		await check(
+			'/library/workspace/stripe/stripe-api/2024-01-01?tab=operations',
+			/^Operations/,
+		);
+		await check('/library/workspace/stripe/stripe-api/2024-01-01?tab=versions', 'Revisions');
+	});
+
 	it('groups the API into Overview / Operations / Versions / Spec tabs', async () => {
 		const user = userEvent.setup();
 		renderAt('/library/workspace/stripe/stripe-api/2024-01-01');

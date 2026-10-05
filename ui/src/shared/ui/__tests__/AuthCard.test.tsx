@@ -27,4 +27,13 @@ describe('AuthCard', () => {
 		expect(card.tagName).toBe('DIV');
 		expect(card).toHaveClass('text-center', 'shadow-elevated');
 	});
+
+	it('carries an alert role through (the OAuth popup / SSO callback error cards)', () => {
+		renderWithProviders(
+			<AuthCard as="div" centered role="alert">
+				Sign-in failed
+			</AuthCard>,
+		);
+		expect(screen.getByRole('alert')).toHaveTextContent('Sign-in failed');
+	});
 });

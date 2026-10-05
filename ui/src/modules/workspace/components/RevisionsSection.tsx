@@ -229,7 +229,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 	return (
 		<Card data-testid="revisions-section">
 			<CardHeader>
-				<CardTitle>Revisions</CardTitle>
+				<CardTitle as="h2">Revisions</CardTitle>
 				<p className="text-foreground-sub mt-0.5 text-xs">
 					Every version of this API&apos;s spec, newest first. Imports, uploads, and
 					applied overlays each create one; exactly one can be live (serving traffic).

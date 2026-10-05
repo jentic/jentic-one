@@ -210,7 +210,7 @@ export function OperationsSection({
 	return (
 		<Card data-testid="operations-section">
 			<CardHeader className="flex flex-wrap items-center justify-between gap-3">
-				<CardTitle className="flex items-center gap-2">
+				<CardTitle as="h2" className="flex items-center gap-2">
 					Operations
 					{total > 0 ? (
 						<span className="text-muted-foreground text-sm font-normal tabular-nums">

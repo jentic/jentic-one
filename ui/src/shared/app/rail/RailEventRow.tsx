@@ -233,12 +233,14 @@ function RailEventRowContent({
 					'relative flex items-center gap-2 rounded-r border-l-2 px-2 py-1',
 					stripeClass(ev),
 					arrived && 'animate-arrive',
-					ev.acknowledged && 'opacity-55',
 					(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 				)}
+				data-acknowledged={ev.acknowledged || undefined}
 			>
 				{overlay}
-				<StreamEventIcon ev={ev} />
+				{/* A handled row recedes through its glyph only: dimming the whole row
+				    would take its text (and the "1h" stamp) below AA contrast. */}
+				<StreamEventIcon ev={ev} className={cn(ev.acknowledged && 'opacity-55')} />
 				<span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
 					{sentence}
 				</span>

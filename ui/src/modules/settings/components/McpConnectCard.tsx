@@ -51,7 +51,7 @@ export function McpConnectCard() {
 	return (
 		<Card>
 			<CardBody className="space-y-3">
-				<CardTitle className="flex items-center gap-2">
+				<CardTitle as="h2" className="flex items-center gap-2">
 					<Plug className="text-muted-foreground h-4 w-4" aria-hidden="true" />
 					Connect an MCP client
 				</CardTitle>

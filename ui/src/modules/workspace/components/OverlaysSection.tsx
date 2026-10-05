@@ -248,7 +248,7 @@ export function OverlaysSection({
 	return (
 		<Card data-testid="overlays-section">
 			<CardHeader>
-				<CardTitle>Overlays</CardTitle>
+				<CardTitle as="h2">Overlays</CardTitle>
 				<p className="text-foreground-sub mt-0.5 text-xs">
 					Proposed fixes layered on top of a spec — the spec itself is never edited in
 					place. Confirming an overlay applies it and produces a new revision above.

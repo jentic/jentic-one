@@ -665,7 +665,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(screen.getByText(/Failed: slack\.postMessage/i)).toBeInTheDocument();
 	});
 
-	it('acknowledging a failure dims the row (no "Acked" label) and clears the count', async () => {
+	it('acknowledging a failure recedes the row (no "Acked" label) and clears the count', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
 		await screen.findByText(/Failed: slack\.postMessage/i);
@@ -674,7 +674,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		// The row re-renders as the compact line, so re-query it.
 		await waitFor(() =>
 			expect(
-				screen.getByText(/Failed: slack\.postMessage/i).closest('.opacity-55'),
+				screen.getByText(/Failed: slack\.postMessage/i).closest('[data-acknowledged]'),
 			).not.toBeNull(),
 		);
 		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
