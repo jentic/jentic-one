@@ -170,9 +170,6 @@
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },
-        "execution_approvals": {
-          "$ref": "#/$defs/ExecutionApprovalsConfig"
-        },
         "idempotency": {
           "$ref": "#/$defs/IdempotencyConfig"
         },
@@ -778,23 +775,26 @@
       "type": "object"
     },
     "ExecutionApprovalsConfig": {
-      "description": "Controls the hold-for-approval path on the broker.\n\nWhen a permission rule has ``effect=\"require-approval\"`` the broker parks the\njob with status ``held`` and creates an ``execution_approvals`` row rather than\nexecuting immediately. The reviewer then approves or denies via the admin API.",
+      "description": "Require-approval holds: held execution jobs awaiting a human reviewer.\n\nAn execute call matching a permission rule with ``effect=\"require-approval\"``\nis enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the\nagent's owner or an ``org:admin``) approves or denies it, or it expires.",
       "properties": {
         "max_pending_per_agent": {
           "default": 10,
-          "description": "Maximum number of pending approval rows allowed per agent at any time. An execute call that would exceed this cap is denied with a distinct problem type rather than creating another pending hold.",
+          "description": "Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the ``approval_pending_limit_reached`` problem type.",
+          "minimum": 1,
           "title": "Max Pending Per Agent",
           "type": "integer"
         },
         "result_retention_seconds": {
           "default": 86400,
-          "description": "Seconds the job_results row for an approved execution is retained after the job completes. Defaults to 24 hours, letting the agent poll the result long after the worker finishes.",
+          "description": "Seconds the result of an approved execution stays readable via ``GET /jobs/{id}/result`` before the result sweep removes it. Defaults to 24 hours.",
+          "exclusiveMinimum": 0,
           "title": "Result Retention Seconds",
           "type": "integer"
         },
         "ttl_seconds": {
           "default": 86400,
-          "description": "Seconds a pending approval row lives before the expiry sweep marks it ``expired`` and fails the held job. Defaults to 24 hours.",
+          "description": "Seconds a pending approval lives before the expiry sweep marks it ``expired`` and fails its held job with a permission-denied result. Defaults to 24 hours.",
+          "exclusiveMinimum": 0,
           "title": "Ttl Seconds",
           "type": "integer"
         }
@@ -1970,6 +1970,9 @@
     },
     "entitlement": {
       "$ref": "#/$defs/EntitlementConfig"
+    },
+    "execution_approvals": {
+      "$ref": "#/$defs/ExecutionApprovalsConfig"
     },
     "ingest": {
       "$ref": "#/$defs/IngestConfig"

@@ -915,7 +915,7 @@ async def _handle_hold(
     emits ``execution.approval_requested``, and returns a 202 with the held
     envelope so the agent can relay the approval context to the operator.
     """
-    ea_cfg = ctx.config.broker.execution_approvals
+    ea_cfg = ctx.config.execution_approvals
     ttl = ea_cfg.ttl_seconds
     max_pending = ea_cfg.max_pending_per_agent
 

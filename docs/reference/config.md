@@ -259,9 +259,6 @@ Broker surface configuration.
 | `broker.egress.allowed_private_subnets` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS` | CIDRs exempted from the private-IP egress block (e.g. `["10.50.0.0/16"]`). The cloud-metadata and platform-credential IPs (e.g. 169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200) are never exempted, even when a listed range covers them. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.allowed_internal_domains` | list of string | — | `JENTIC__BROKER__EGRESS__ALLOWED_INTERNAL_DOMAINS` | Domain suffixes (e.g. `[".svc.cluster.local"]`) whose resolved private IP is permitted. The resolved IP must still fall in an allowed subnet. Accepts a YAML list or a comma-separated string. |
 | `broker.egress.dns_pinning_enabled` | boolean | `true` | `JENTIC__BROKER__EGRESS__DNS_PINNING_ENABLED` | Pin the outbound connection to the IP validated at connect time, closing the DNS-rebinding TOCTOU between pre-request validation and the runner's own resolution. Disable only to debug egress issues. |
-| `broker.execution_approvals.ttl_seconds` | integer | `86400` | `JENTIC__BROKER__EXECUTION_APPROVALS__TTL_SECONDS` | Seconds a pending approval row lives before the expiry sweep marks it `expired` and fails the held job. Defaults to 24 hours. |
-| `broker.execution_approvals.max_pending_per_agent` | integer | `10` | `JENTIC__BROKER__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT` | Maximum number of pending approval rows allowed per agent at any time. An execute call that would exceed this cap is denied with a distinct problem type rather than creating another pending hold. |
-| `broker.execution_approvals.result_retention_seconds` | integer | `86400` | `JENTIC__BROKER__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS` | Seconds the job_results row for an approved execution is retained after the job completes. Defaults to 24 hours, letting the agent poll the result long after the worker finishes. |
 
 ## `control`
 
@@ -412,6 +409,16 @@ AWS Marketplace license gate for the Marketplace-listed deployment. Powers the e
 | `entitlement.license_sku` | string \| null | `null` | `JENTIC__ENTITLEMENT__LICENSE_SKU` |  |
 | `entitlement.license_dimensions` | list of string | — | `JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS` |  |
 | `entitlement.endpoint` | string \| null | `null` | `JENTIC__ENTITLEMENT__ENDPOINT` |  |
+
+## `execution_approvals`
+
+Require-approval holds: held execution jobs awaiting a human reviewer. An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `execution_approvals.ttl_seconds` | integer (> 0) | `86400` | `JENTIC__EXECUTION_APPROVALS__TTL_SECONDS` | Seconds a pending approval lives before the expiry sweep marks it `expired` and fails its held job with a permission-denied result. Defaults to 24 hours. |
+| `execution_approvals.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
+| `execution_approvals.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
 
 ## `apps`
 

@@ -201,7 +201,7 @@ def _start_worker(
         ctx.admin_db,
         handler_registry,
         worker_config=ctx.config.worker,
-        approved_result_retention_seconds=ctx.config.broker.execution_approvals.result_retention_seconds,
+        approved_result_retention_seconds=ctx.config.execution_approvals.result_retention_seconds,
     )
     task = asyncio.create_task(worker.run())
     _logger.info("worker_loop_task_started")

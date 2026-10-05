@@ -223,9 +223,6 @@ type BrokerConfig struct {
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
-	// ExecutionApprovals corresponds to the JSON schema field "execution_approvals".
-	ExecutionApprovals *ExecutionApprovalsConfig `json:"execution_approvals,omitempty,omitzero" yaml:"execution_approvals,omitempty" mapstructure:"execution_approvals,omitempty"`
-
 	// Idempotency corresponds to the JSON schema field "idempotency".
 	Idempotency *IdempotencyConfig `json:"idempotency,omitempty,omitzero" yaml:"idempotency,omitempty" mapstructure:"idempotency,omitempty"`
 
@@ -559,6 +556,9 @@ type ConfigSchemaJson struct {
 
 	// Entitlement corresponds to the JSON schema field "entitlement".
 	Entitlement *EntitlementConfig `json:"entitlement,omitempty,omitzero" yaml:"entitlement,omitempty" mapstructure:"entitlement,omitempty"`
+
+	// ExecutionApprovals corresponds to the JSON schema field "execution_approvals".
+	ExecutionApprovals *ExecutionApprovalsConfig `json:"execution_approvals,omitempty,omitzero" yaml:"execution_approvals,omitempty" mapstructure:"execution_approvals,omitempty"`
 
 	// Ingest corresponds to the JSON schema field "ingest".
 	Ingest *IngestConfig `json:"ingest,omitempty,omitzero" yaml:"ingest,omitempty" mapstructure:"ingest,omitempty"`
@@ -1116,24 +1116,23 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// Controls the hold-for-approval path on the broker.
+// Require-approval holds: held execution jobs awaiting a human reviewer.
 //
-// When a permission rule has “effect="require-approval"“ the broker parks the
-// job with status “held“ and creates an “execution_approvals“ row rather than
-// executing immediately. The reviewer then approves or denies via the admin API.
+// An execute call matching a permission rule with “effect="require-approval"“
+// is enqueued as a “held“ job with a “pending“ approval; a reviewer (the
+// agent's owner or an “org:admin“) approves or denies it, or it expires.
 type ExecutionApprovalsConfig struct {
-	// Maximum number of pending approval rows allowed per agent at any time. An
-	// execute call that would exceed this cap is denied with a distinct problem type
-	// rather than creating another pending hold.
+	// Maximum pending approvals per agent. An execute call that would file another
+	// hold beyond this is denied with the ``approval_pending_limit_reached`` problem
+	// type.
 	MaxPendingPerAgent int `json:"max_pending_per_agent,omitempty,omitzero" yaml:"max_pending_per_agent,omitempty" mapstructure:"max_pending_per_agent,omitempty"`
 
-	// Seconds the job_results row for an approved execution is retained after the job
-	// completes. Defaults to 24 hours, letting the agent poll the result long after
-	// the worker finishes.
+	// Seconds the result of an approved execution stays readable via ``GET
+	// /jobs/{id}/result`` before the result sweep removes it. Defaults to 24 hours.
 	ResultRetentionSeconds int `json:"result_retention_seconds,omitempty,omitzero" yaml:"result_retention_seconds,omitempty" mapstructure:"result_retention_seconds,omitempty"`
 
-	// Seconds a pending approval row lives before the expiry sweep marks it
-	// ``expired`` and fails the held job. Defaults to 24 hours.
+	// Seconds a pending approval lives before the expiry sweep marks it ``expired``
+	// and fails its held job with a permission-denied result. Defaults to 24 hours.
 	TtlSeconds int `json:"ttl_seconds,omitempty,omitzero" yaml:"ttl_seconds,omitempty" mapstructure:"ttl_seconds,omitempty"`
 }
 
@@ -1151,11 +1150,20 @@ func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
 	if v, ok := raw["max_pending_per_agent"]; !ok || v == nil {
 		plain.MaxPendingPerAgent = 10
 	}
+	if 1 > plain.MaxPendingPerAgent {
+		return fmt.Errorf("field %s: must be >= %v", "max_pending_per_agent", 1)
+	}
 	if v, ok := raw["result_retention_seconds"]; !ok || v == nil {
 		plain.ResultRetentionSeconds = 86400
 	}
+	if 0 >= plain.ResultRetentionSeconds {
+		return fmt.Errorf("field %s: must be > %v", "result_retention_seconds", 0)
+	}
 	if v, ok := raw["ttl_seconds"]; !ok || v == nil {
 		plain.TtlSeconds = 86400
+	}
+	if 0 >= plain.TtlSeconds {
+		return fmt.Errorf("field %s: must be > %v", "ttl_seconds", 0)
 	}
 	*j = ExecutionApprovalsConfig(plain)
 	return nil

@@ -1377,39 +1377,6 @@ class BrokerResilienceConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
 
 
-class ExecutionApprovalsConfig(BaseModel):
-    """Controls the hold-for-approval path on the broker.
-
-    When a permission rule has ``effect="require-approval"`` the broker parks the
-    job with status ``held`` and creates an ``execution_approvals`` row rather than
-    executing immediately. The reviewer then approves or denies via the admin API.
-    """
-
-    ttl_seconds: int = Field(
-        default=86_400,
-        description=(
-            "Seconds a pending approval row lives before the expiry sweep marks it "
-            "``expired`` and fails the held job. Defaults to 24 hours."
-        ),
-    )
-    max_pending_per_agent: int = Field(
-        default=10,
-        description=(
-            "Maximum number of pending approval rows allowed per agent at any time. "
-            "An execute call that would exceed this cap is denied with a distinct "
-            "problem type rather than creating another pending hold."
-        ),
-    )
-    result_retention_seconds: int = Field(
-        default=86_400,
-        description=(
-            "Seconds the job_results row for an approved execution is retained after "
-            "the job completes. Defaults to 24 hours, letting the agent poll the "
-            "result long after the worker finishes."
-        ),
-    )
-
-
 class IdempotencyConfig(BaseModel):
     """``Idempotency-Key`` replay store.
 
@@ -1570,7 +1537,6 @@ class BrokerConfig(BaseModel):
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
-    execution_approvals: ExecutionApprovalsConfig = Field(default_factory=ExecutionApprovalsConfig)
 
     _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
         _normalize_optional_base_url
@@ -1922,6 +1888,43 @@ class EntitlementConfig(BaseModel):
         return self
 
 
+class ExecutionApprovalsConfig(BaseModel):
+    """Require-approval holds: held execution jobs awaiting a human reviewer.
+
+    An execute call matching a permission rule with ``effect="require-approval"``
+    is enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the
+    agent's owner or an ``org:admin``) approves or denies it, or it expires.
+    """
+
+    ttl_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        description=(
+            "Seconds a pending approval lives before the expiry sweep marks it "
+            "``expired`` and fails its held job with a permission-denied result. "
+            "Defaults to 24 hours."
+        ),
+    )
+    max_pending_per_agent: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Maximum pending approvals per agent. An execute call that would file "
+            "another hold beyond this is denied with the "
+            "``approval_pending_limit_reached`` problem type."
+        ),
+    )
+    result_retention_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        description=(
+            "Seconds the result of an approved execution stays readable via "
+            "``GET /jobs/{id}/result`` before the result sweep removes it. "
+            "Defaults to 24 hours."
+        ),
+    )
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -1951,6 +1954,7 @@ class AppConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
+    execution_approvals: ExecutionApprovalsConfig = Field(default_factory=ExecutionApprovalsConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
