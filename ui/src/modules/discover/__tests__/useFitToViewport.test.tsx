@@ -8,7 +8,7 @@ import { useFitToViewport } from '@/modules/discover/lib/useFitToViewport';
  * sticky dock was pushed up, its raw (negative) top made it taller, which made
  * the page taller — scrolling the dock's header away and leaving empty space.
  */
-function Page() {
+function Page({ mainHeight = 1600 }: { mainHeight?: number }) {
 	const dock = useRef<HTMLDivElement>(null);
 	const main = useRef<HTMLDivElement>(null);
 	useFitToViewport(dock, { until: main, min: 120 });
@@ -27,7 +27,7 @@ function Page() {
 						alignItems: 'start',
 					}}
 				>
-					<div ref={main} data-testid="main" style={{ height: 1600 }} />
+					<div ref={main} data-testid="main" style={{ height: mainHeight }} />
 					<div
 						ref={dock}
 						data-testid="dock"
@@ -67,5 +67,21 @@ describe('useFitToViewport', () => {
 		await waitFor(() => expect(Math.round(d.top - s.top)).toBeGreaterThanOrEqual(15));
 		expect(d.bottom).toBeLessThanOrEqual(Math.ceil(m.bottom));
 		expect(d.bottom).toBeLessThanOrEqual(s.bottom);
+	});
+
+	it('keeps its viewport height beside a column shorter than the viewport', async () => {
+		// No matches / still loading: a ~150px catalog column must not shrink
+		// the panel to its height.
+		renderWithProviders(<Page mainHeight={150} />);
+		const scroller = screen.getByTestId('scroller');
+		const dock = screen.getByTestId('dock');
+		await frames();
+		// Sized to the viewport (400px less its sticky line and gap), not the column.
+		const s = scroller.getBoundingClientRect();
+		await waitFor(() =>
+			expect(Math.round(dock.getBoundingClientRect().height)).toBe(
+				Math.round(s.height - 16 - 16),
+			),
+		);
 	});
 });

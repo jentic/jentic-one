@@ -17,7 +17,9 @@
  *
  * `until` (the main column beside the panel) also caps the bottom: at the end
  * of the page the panel ends with the list instead of being pushed up under
- * the top bar — unless that would make it shorter than `min` (a short list).
+ * the top bar. The cap applies only while that column is taller than the
+ * viewport — a short column (no matches, still loading) never shrinks the
+ * panel, which keeps its full viewport height.
  */
 import { useLayoutEffect, type RefObject } from 'react';
 import { shellScroller } from '@/shared/lib';
@@ -51,8 +53,11 @@ export function useFitToViewport(
 			const restTop = box.top + (Number.isFinite(stickyTop) ? stickyTop : 0);
 			const top = Math.max(el.getBoundingClientRect().top, restTop);
 			let bottom = box.bottom - gap;
-			const end = until?.current?.getBoundingClientRect().bottom;
-			if (end != null && end - top >= min) bottom = Math.min(bottom, end);
+			const column = until?.current?.getBoundingClientRect();
+			const columnOverflows = column != null && column.height > box.bottom - box.top;
+			if (columnOverflows && column.bottom - top >= min) {
+				bottom = Math.min(bottom, column.bottom);
+			}
 			const height = Math.max(min, Math.floor(bottom - top));
 			el.style.height = `${height}px`;
 		};
