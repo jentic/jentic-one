@@ -30,7 +30,7 @@ Disposition (OQ-1, rev 5): ``active`` → full migration (successor
 ``pending``/``rejected``/``archived`` → skip-but-stamp (no successor; stamp
 value ``skipped``). Successor creation is raw SQL — never
 ``AgentService.create()``/``approve()`` (F1: both default-grant
-``DEFAULT_AGENT_PERMISSIONS``; a zero-grant SA must yield a zero-grant
+``DEFAULT_AGENT_SCOPES``; a zero-grant SA must yield a zero-grant
 successor).
 
 **Retirement (theme-8 Phase 4).** :meth:`ServiceAccountMigrationService.retire`
@@ -180,7 +180,7 @@ class ServiceAccountMigrationOutcome:
     #             # already_migrated | failed
     successor_agent_id: str | None = None
     #: What this run copied/revoked.
-    stored_permission_count: int = 0
+    stored_scope_count: int = 0
     credential_binding_count: int = 0
     #: Control-DB ``agent_permission_rules`` rows copied sva_ → agnt_ (H2).
     permission_rule_count: int = 0
@@ -509,7 +509,7 @@ class ServiceAccountMigrationService:
         label = "failed"
         successor_status: str | None = None
         agent_id: str | None = None
-        stored_permissions = credential_bindings = 0
+        stored_scopes = credential_bindings = 0
         copied: list[tuple[str, str | None]] = []
         access_revoked = refresh_revoked = 0
 
@@ -546,10 +546,10 @@ class ServiceAccountMigrationService:
                         api_key_hash=current.api_key_hash,
                         agent_id=planned_id,
                     )
-                    copied = await ServiceAccountMigrationRepository.copy_permission_grants(
+                    copied = await ServiceAccountMigrationRepository.copy_scope_grants(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
-                    stored_permissions = len(copied)
+                    stored_scopes = len(copied)
                     credential_bindings = await ServiceAccountMigrationRepository.copy_bindings(
                         session, service_account_id=row.id, agent_id=agent_id
                     )
@@ -598,7 +598,7 @@ class ServiceAccountMigrationService:
                         actor_type=_AUDIT_ACTOR_TYPE,
                         actor_id=_AUDIT_ACTOR_ID,
                         after={
-                            "copied_scope_count": stored_permissions,
+                            "copied_scope_count": stored_scopes,
                             "copied_scopes": [scope for scope, _ in copied],
                             "admin_level_scopes": sorted(
                                 scope for scope, _ in copied if scope in ADMIN_LEVEL_SCOPES
@@ -688,7 +688,7 @@ class ServiceAccountMigrationService:
             service_account_id=current.id,
             outcome=label,
             successor_agent_id=agent_id,
-            stored_permission_count=stored_permissions,
+            stored_scope_count=stored_scopes,
             credential_binding_count=credential_bindings,
             access_tokens_revoked=access_revoked,
             refresh_tokens_revoked=refresh_revoked,
@@ -945,19 +945,16 @@ class ServiceAccountMigrationService:
         grants_to_copy = []
         for g in grant_gaps:
             why = _unusable(g.successor_agent_id)
-            if why is None and (g.successor_agent_id, g.permission) in removed_scopes:
+            if why is None and (g.successor_agent_id, g.scope) in removed_scopes:
                 why = "the audit log shows this scope was removed from the successor"
             if why is None:
                 grants_to_copy.append(g)
             else:
                 result.withhold(
                     RetirementWarning(
-                        g.service_account_id,
-                        g.successor_agent_id,
-                        f"scope grant {g.permission!r}",
-                        why,
+                        g.service_account_id, g.successor_agent_id, f"scope grant {g.scope!r}", why
                     ),
-                    ("grant", g.service_account_id, str(g.permission)),
+                    ("grant", g.service_account_id, str(g.scope)),
                 )
         bindings_to_copy = []
         for b in binding_gaps:
@@ -996,12 +993,12 @@ class ServiceAccountMigrationService:
             copied: dict[tuple[str, str], dict[str, list[str]]] = {}
             for gap in grants_to_copy:
                 if await ServiceAccountMigrationRepository.copy_grant_twin(
-                    session, agent_id=gap.successor_agent_id, permission=gap.permission
+                    session, agent_id=gap.successor_agent_id, scope=gap.scope
                 ):
                     result.grants += 1
                     key = (gap.service_account_id, gap.successor_agent_id)
                     copied.setdefault(key, {"scopes": [], "bindings": []})["scopes"].append(
-                        str(gap.permission)
+                        str(gap.scope)
                     )
             for gap in bindings_to_copy:
                 if await ServiceAccountMigrationRepository.copy_binding_twin(
@@ -1070,11 +1067,11 @@ class ServiceAccountMigrationService:
         problems += [
             RetirementProblem(
                 g.service_account_id,
-                f"successor {g.successor_agent_id} lacks the scope grant {g.permission!r}",
+                f"successor {g.successor_agent_id} lacks the scope grant {g.scope!r}",
             )
             for g in grant_gaps
             if (g.service_account_id in migrated_now or g.post_stamp)
-            and ("grant", g.service_account_id, str(g.permission)) not in withheld
+            and ("grant", g.service_account_id, str(g.scope)) not in withheld
         ]
         problems += [
             RetirementProblem(

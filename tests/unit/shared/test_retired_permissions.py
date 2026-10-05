@@ -11,7 +11,7 @@ Holding a retired scope grants nothing.
 
 from __future__ import annotations
 
-from jentic_one.control.repos.service_account_migration_repo import THEME8_RETIRED_PERMISSIONS
+from jentic_one.control.repos.service_account_migration_repo import THEME8_RETIRED_SCOPES
 from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     DEFAULT_AGENT_PERMISSIONS,
@@ -48,5 +48,5 @@ def test_retired_scopes_are_out_of_the_catalogue() -> None:
 def test_sa_migration_job_retired_set_is_retired() -> None:
     """The SA→agent migration job's frozen "not carried" set is exactly the
     theme-8 trio, and every member is a platform-retired permission (E2)."""
-    assert THEME8_RETIRED_PERMISSIONS <= RETIRED_PERMISSIONS
-    assert {s for s in RETIRED_PERMISSIONS if "service-accounts" in s} == THEME8_RETIRED_PERMISSIONS
+    assert THEME8_RETIRED_SCOPES <= RETIRED_PERMISSIONS
+    assert {s for s in RETIRED_PERMISSIONS if "service-accounts" in s} == THEME8_RETIRED_SCOPES

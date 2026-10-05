@@ -1,7 +1,8 @@
 """Scope ceiling for granting platform scopes to an agent.
 
-Applied by ``AgentService.create`` (explicit scopes), ``AgentService.approve``
-(scopes a self-registration requested) and ``AgentService.replace_scopes``.
+Applied by ``AgentService.create`` (explicit permissions),
+``AgentService.approve`` (permissions a self-registration requested) and
+``AgentService.replace_permissions``.
 The rules:
 
 - Every newly granted scope must be in the permission catalogue

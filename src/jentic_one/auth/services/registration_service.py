@@ -153,7 +153,7 @@ class RegistrationService:
                 after={
                     "name": client_name,
                     "status": agent.status,
-                    "scopes": requested_scopes,
+                    "permissions": requested_scopes,
                 },
                 reason="dynamic client registration",
                 origin=None,

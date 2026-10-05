@@ -145,18 +145,18 @@ export function AgentPermissionsSheet({
 				onClose={onClose}
 			>
 				<div className="space-y-4">
-					{/* Platform scopes and upstream API access are different permission models
+					{/* Platform permissions and upstream API access are different models
 					    and users conflate them — the copy must name the difference. */}
 					<p className="text-muted-foreground text-sm">
-						Scopes govern what {agent.name} may do on the Jentic control plane itself —
-						they have nothing to do with any upstream API. What it may call upstream is
-						set by the API tiles on the main screen (each tile&rsquo;s credential and
-						rules).
+						Permissions govern what {agent.name} may do on the Jentic control plane
+						itself — they have nothing to do with any upstream API. What it may call
+						upstream is set by the API tiles on the main screen (each tile&rsquo;s
+						credential and rules).
 					</p>
 					{isArchived && (
 						<p className="text-muted-foreground text-sm">
-							Archiving swept this agent&rsquo;s scope grants and OAuth consents —
-							what remains below is history.
+							Archiving swept this agent&rsquo;s permission grants and OAuth consents
+							— what remains below is history.
 						</p>
 					)}
 					<PermissionsCard

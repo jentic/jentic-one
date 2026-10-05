@@ -7,7 +7,7 @@ Two halves, mirroring the (since-deleted) Phase-4 key-retirement seam:
   against, and the acknowledgement sentinel insert.
 - :class:`FlatteningAdminRepository` — raw-SQL statements against the
   **admin** DB (``agent_toolkit_bindings`` reads, actor existence checks,
-  ``agent_credential_bindings`` reads/inserts, permission-grant reads, and the
+  ``agent_credential_bindings`` reads/inserts, scope-grant reads, and the
   ``execution_records.toolkit_name`` backfill). The control module must not
   import admin ORM models, so every
   admin-side statement is raw SQL.
@@ -346,8 +346,8 @@ _LIST_AGENT_OWNERS = text("SELECT id, owner_id FROM agents")
 
 _LIST_SERVICE_ACCOUNT_OWNERS = text("SELECT id, owner_id FROM service_accounts")
 
-_LIST_PERMISSIONS_FOR_ACTORS = text(
-    "SELECT actor_id, permission FROM actor_permission_grants ORDER BY actor_id, permission"
+_LIST_SCOPES_FOR_ACTORS = text(
+    "SELECT actor_id, scope FROM actor_scope_grants ORDER BY actor_id, scope"
 )
 
 _INSERT_CREDENTIAL_BINDING = text(
@@ -455,13 +455,13 @@ class FlatteningAdminRepository:
         return owners
 
     @staticmethod
-    async def list_permissions_by_actor(session: AsyncSession) -> dict[str, list[str]]:
-        """All permission grants grouped by actor id (converted-identity report read)."""
-        rows = (await session.execute(_LIST_PERMISSIONS_FOR_ACTORS)).all()
-        permissions: dict[str, list[str]] = {}
+    async def list_scopes_by_actor(session: AsyncSession) -> dict[str, list[str]]:
+        """All scope grants grouped by actor id (converted-identity report read)."""
+        rows = (await session.execute(_LIST_SCOPES_FOR_ACTORS)).all()
+        scopes: dict[str, list[str]] = {}
         for row in rows:
-            permissions.setdefault(str(row.actor_id), []).append(str(row.permission))
-        return permissions
+            scopes.setdefault(str(row.actor_id), []).append(str(row.scope))
+        return scopes
 
     @staticmethod
     async def insert_credential_binding(

@@ -96,8 +96,14 @@ async def _scalar(db: DatabaseSession, sql: str, params: dict[str, object] | Non
 async def _cleanup(admin_db: DatabaseSession, control_db: DatabaseSession) -> None:
     names = await _table_names(admin_db)
     successors = f"(SELECT id FROM agents WHERE registered_by = '{_SUCCESSOR_REGISTRAR}')"
+    # The grant table is ``actor_scope_grants`` while the admin chain sits below
+    # the tail rename (``e3f4a5b6c7d8``) and ``actor_permission_grants`` at head;
+    # pick whichever exists so cleanup works in both states.
+    grants_table = (
+        "actor_permission_grants" if "actor_permission_grants" in names else "actor_scope_grants"
+    )
     for table, column in (
-        ("actor_permission_grants", "actor_id"),
+        (grants_table, "actor_id"),
         ("agent_credential_bindings", "agent_id"),
         ("access_tokens", "actor_id"),
         ("refresh_tokens", "actor_id"),
@@ -228,9 +234,9 @@ async def _seed_sa(
     for scope in scopes:
         await _exec(
             admin_db,
-            "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission, granted_by,"
-            " created_by) VALUES (:id, :sa, 'service_account', :permission, :by, :by)",
-            {"id": f"asg_{sa_id[4:]}_{scope[:6]}", "sa": sa_id, "permission": scope, "by": _OWNER},
+            "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, granted_by,"
+            " created_by) VALUES (:id, :sa, 'service_account', :scope, :by, :by)",
+            {"id": f"asg_{sa_id[4:]}_{scope[:6]}", "sa": sa_id, "scope": scope, "by": _OWNER},
         )
     for credential_id in credential_ids:
         await _exec(
@@ -430,7 +436,7 @@ async def test_failed_migration_refuses_names_the_sa_drops_nothing_and_rerun_suc
     )
     assert status == "active"  # not swept
     sa_grants = await _scalar(
-        admin_db, "SELECT count(*) FROM actor_permission_grants WHERE actor_id = :id", {"id": _SA}
+        admin_db, "SELECT count(*) FROM actor_scope_grants WHERE actor_id = :id", {"id": _SA}
     )
     assert sa_grants == 1
 
@@ -454,7 +460,7 @@ async def test_orphan_sva_rows_are_cleaned_on_both_databases(
     orphan = "sva_p4test_orphan"
     await _exec(
         admin_db,
-        "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission)"
+        "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
         " VALUES ('asg_p4test_orphan', :id, 'service_account', 'toolkit:read')",
         {"id": orphan},
     )
@@ -541,13 +547,13 @@ async def test_post_stamp_rows_are_healed_onto_the_earlier_successor(
     await _seed_sa(admin_db, scopes=("toolkit:read",), stamp=_AGENT)
     await _exec(
         admin_db,
-        "UPDATE actor_permission_grants SET created_at = :before WHERE actor_id = :sa",
+        "UPDATE actor_scope_grants SET created_at = :before WHERE actor_id = :sa",
         {"before": _STAMPED_AT - dt.timedelta(days=1), "sa": _SA},
     )
     after_stamp = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)  # clock-drift proof
     await _exec(
         admin_db,
-        "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission, created_at)"
+        "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, created_at)"
         " VALUES ('asg_p4test_late', :sa, 'service_account', 'capabilities:execute', :ts)",
         {"sa": _SA, "ts": after_stamp},
     )
@@ -631,7 +637,7 @@ async def test_drop_sweeps_retired_scope_strings(
     )
     await _exec(
         admin_db,
-        "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission)"
+        "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
         " VALUES ('asg_p4test_a', :agent, 'agent', 'owner:service-accounts:read'),"
         "        ('asg_p4test_b', :agent, 'agent', 'agents:read')",
         {"agent": _AGENT},

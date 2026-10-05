@@ -127,7 +127,7 @@ def _refuses(stack: Path, match: str) -> None:
 Seeder = Callable[[Path], None]
 
 _SA_GRANT = (
-    "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission)"
+    "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
     " VALUES ('asg_p4_sa', 'sva_p4', 'service_account', 'agents:read')",
     (),
 )
@@ -193,7 +193,7 @@ def test_swept_drops_cleans_orphans_and_sweeps_retired_scopes(sqlite_stack: Path
             (),
         ),
         (
-            "INSERT INTO actor_permission_grants (id, actor_id, actor_type, permission)"
+            "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope)"
             " VALUES ('asg_p4_a', 'agnt_p4', 'agent', 'owner:service-accounts:read'),"
             "        ('asg_p4_b', 'agnt_p4', 'agent', 'agents:read'),"
             "        ('asg_p4_c', 'sva_gone', 'agent', 'agents:read')",
@@ -205,8 +205,7 @@ def test_swept_drops_cleans_orphans_and_sweeps_retired_scopes(sqlite_stack: Path
     assert "service_accounts" not in _tables(sqlite_stack)
     with _connect(sqlite_stack) as conn:
         grants = {
-            (r[0], r[1])
-            for r in conn.execute("SELECT actor_id, permission FROM actor_permission_grants")
+            (r[0], r[1]) for r in conn.execute("SELECT actor_id, scope FROM actor_scope_grants")
         }
         (sa_tokens,) = conn.execute(
             "SELECT count(*) FROM access_tokens WHERE actor_id = 'sva_p4'"

@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseSession
@@ -197,12 +198,28 @@ class ApiKeyResolver:
         )
 
     async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
-        stmt = text(
-            "SELECT permission FROM actor_permission_grants"
-            " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-        )
-        async with self._admin_db.session() as session:
-            result = await session.execute(
-                stmt, {"actor_id": actor_id, "actor_type": actor_type.value}
-            )
-            return [row.permission for row in result.all()]
+        # The grant table is ``actor_permission_grants`` at head; during a rolling
+        # upgrade a request can land after the service-account drop but before the
+        # tail rename (``e3f4a5b6c7d8``) completes, when it is still
+        # ``actor_scope_grants``. Resolve against whichever exists so key auth
+        # never blanks out mid-migration.
+        for table, column in (
+            ("actor_permission_grants", "permission"),
+            ("actor_scope_grants", "scope"),
+        ):
+            try:
+                async with self._admin_db.session() as session:
+                    result = await session.execute(
+                        text(
+                            f"SELECT {column} AS permission FROM {table}"
+                            " WHERE actor_id = :actor_id AND actor_type = :actor_type"
+                        ),
+                        {"actor_id": actor_id, "actor_type": actor_type.value},
+                    )
+                    return [row.permission for row in result.all()]
+            except (OperationalError, ProgrammingError):
+                # SQLite raises OperationalError and Postgres ProgrammingError
+                # (UndefinedTable) for a missing grant table; fall through to the
+                # legacy name.
+                continue
+        return []

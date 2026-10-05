@@ -41,7 +41,7 @@ from ..conftest import _alembic_config_for, _test_backend
 
 pytestmark = pytest.mark.integration
 
-_BEFORE = "c0e1f2a3b4c5"  # pragma: allowlist secret
+_BEFORE = "0679072d60eb"  # pragma: allowlist secret
 _RENAME = "e3f4a5b6c7d8"  # pragma: allowlist secret
 
 _OLD_TABLE = "actor_scope_grants"

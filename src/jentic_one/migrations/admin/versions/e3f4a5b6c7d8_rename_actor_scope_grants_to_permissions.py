@@ -12,7 +12,7 @@ indexes. **No value migration:** rows keep their colon-form strings
 ``id`` stays too, so existing ids remain valid. Fully reversible.
 
 Revision ID: e3f4a5b6c7d8
-Revises: c0e1f2a3b4c5
+Revises: 0679072d60eb
 Create Date: 2026-09-22
 
 """
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e3f4a5b6c7d8"  # pragma: allowlist secret
-down_revision: str | None = "c0e1f2a3b4c5"  # pragma: allowlist secret
+down_revision: str | None = "0679072d60eb"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

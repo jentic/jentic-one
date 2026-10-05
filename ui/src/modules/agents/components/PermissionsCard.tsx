@@ -82,7 +82,7 @@ export function PermissionsCard({ actorId, actorName, canEdit = true }: Permissi
 	return (
 		<>
 			<DetailSection
-				title="Permissions"
+				title="Platform permissions"
 				icon={<ShieldCheck className="h-4 w-4" />}
 				trailing={
 					canEdit && !permissionsQuery.isPending && !permissionsQuery.error ? (

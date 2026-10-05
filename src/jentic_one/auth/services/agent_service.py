@@ -139,7 +139,7 @@ class AgentService:
                     "name": payload.name,
                     "owner_id": owner_id,
                     "status": status.value,
-                    "scopes": permissions_to_grant,
+                    "permissions": permissions_to_grant,
                 },
                 origin=identity.origin.value,
             )
@@ -292,12 +292,10 @@ class AgentService:
                     target_id=agent_id,
                     actor_type=identity.actor_type,
                     actor_id=identity.sub,
-                    # The audit payload key and ``reason`` stay on the ``scopes``
-                    # spelling: the trail spans the permission rename in time, and
-                    # pre-rename rows already say ``scopes``. Renaming either is a
-                    # versioned audit-schema change.
-                    after={"scopes": list(DEFAULT_AGENT_PERMISSIONS)},
-                    reason="default_scopes",
+                    # Historical rows written before the permission rename still
+                    # say ``scopes``; new records use the ``permissions`` key.
+                    after={"permissions": list(DEFAULT_AGENT_PERMISSIONS)},
+                    reason="default_permissions",
                     origin=identity.origin.value,
                 )
             await record_audit(
@@ -309,7 +307,7 @@ class AgentService:
                 actor_id=identity.sub,
                 after={
                     "owner_id": agent.owner_id,
-                    "scopes": [g.permission for g in existing_grants]
+                    "permissions": [g.permission for g in existing_grants]
                     or list(DEFAULT_AGENT_PERMISSIONS),
                 },
                 origin=identity.origin.value,
@@ -784,11 +782,11 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                # Audit key and reason stay on the ``scopes`` spelling — see the
-                # note on the default-grant record above.
-                before={"scopes": existing},
-                after={"scopes": permissions},
-                reason="replace_scopes",
+                # Historical rows written before the permission rename still say
+                # ``scopes``; new records use the ``permissions`` key.
+                before={"permissions": existing},
+                after={"permissions": permissions},
+                reason="replace_permissions",
                 origin=identity.origin.value,
             )
         return permissions

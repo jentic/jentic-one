@@ -80,7 +80,7 @@ _AUDIT_ACTOR_TYPE = "system:job"
 CROSS_OWNER_BINDING_CATEGORY = "cross_owner_binding"
 
 #: The only scope a converted ``jntc_live_`` holder should carry (Phase 4).
-_EXECUTE_PERMISSION = "capabilities:execute"
+_EXECUTE_SCOPE = "capabilities:execute"
 
 
 #: Remediation for a live (unrevoked, unmigrated) ``jntc_live_`` key. Such a
@@ -215,7 +215,7 @@ class _Snapshot:
     toolkit_keys: list[Any]
     actor_ids: set[str]
     existing_pairs: dict[tuple[str, str], str | None]
-    permissions_by_actor: dict[str, list[str]]
+    scopes_by_actor: dict[str, list[str]]
     actor_owners: dict[str, str | None] = field(default_factory=dict)
 
 
@@ -280,9 +280,7 @@ class ToolkitFlatteningService:
             existing_pairs = await FlatteningAdminRepository.list_direct_binding_pairs(
                 admin_session
             )
-            permissions_by_actor = await FlatteningAdminRepository.list_permissions_by_actor(
-                admin_session
-            )
+            scopes_by_actor = await FlatteningAdminRepository.list_scopes_by_actor(admin_session)
             actor_owners = await FlatteningAdminRepository.list_actor_owners(admin_session)
 
         toolkit_map = {t.id: t for t in toolkits}
@@ -318,7 +316,7 @@ class ToolkitFlatteningService:
             toolkit_keys=toolkit_keys,
             actor_ids=actor_ids,
             existing_pairs=existing_pairs,
-            permissions_by_actor=permissions_by_actor,
+            scopes_by_actor=scopes_by_actor,
             actor_owners=actor_owners,
         )
 
@@ -435,18 +433,18 @@ class ToolkitFlatteningService:
                     )
                 )
             if key.migrated_actor_id is not None:
-                permissions = snapshot.permissions_by_actor.get(key.migrated_actor_id, [])
-                excess = sorted(p for p in permissions if p != _EXECUTE_PERMISSION)
+                scopes = snapshot.scopes_by_actor.get(key.migrated_actor_id, [])
+                excess = sorted(s for s in scopes if s != _EXECUTE_SCOPE)
                 if excess:
                     findings.append(
                         Finding(
-                            "permission_exceeds_execute",
+                            "scope_exceeds_execute",
                             {
                                 "actor_id": key.migrated_actor_id,
                                 "key_id": key.id,
                                 "toolkit_id": key.toolkit_id,
-                                "permissions": sorted(permissions),
-                                "excess_permissions": excess,
+                                "scopes": sorted(scopes),
+                                "excess_scopes": excess,
                             },
                         )
                     )

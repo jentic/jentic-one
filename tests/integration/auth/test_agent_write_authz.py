@@ -135,7 +135,7 @@ async def _audit_scopes(ctx: Context, agent_id: str, action: AuditAction) -> obj
     matching = [e for e in entries if e.action == action]
     assert len(matching) == 1
     assert matching[0].after is not None
-    return matching[0].after.get("scopes")
+    return matching[0].after.get("permissions")
 
 
 async def _register_audit_scopes(ctx: Context, agent_id: str) -> object:
