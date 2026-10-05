@@ -54,7 +54,6 @@ import {
 	SectionLabel,
 	SegmentedToggle,
 	Skeleton,
-	StatusText,
 	StreamEventRow,
 	VendorIcon,
 	apiServingState,
@@ -233,24 +232,6 @@ function ApiRow({
 	);
 }
 
-/** An in-flight catalog import, shown at the top of the list until it lands. */
-function PendingRow({ pending }: { pending: PendingImport }) {
-	return (
-		<li className={cn(ROW_CLASS, 'bg-surface-field')}>
-			<VendorIcon name={pending.label} vendor={pending.apiId} size="sm" />
-			<div className="min-w-0">
-				<p className="text-foreground-name truncate text-[13.5px] font-semibold">
-					{pending.label}
-				</p>
-				<StatusText tone="loading" className="mt-0.5">
-					Adding…
-				</StatusText>
-			</div>
-			<span />
-		</li>
-	);
-}
-
 /** The slot a dragged catalog row lands in, at the top of the list. */
 function DropSlot({ drop }: { drop: DragDropState }) {
 	const over = drop.phase === 'over';
@@ -278,8 +259,6 @@ export interface PendingImport {
 
 interface PanelContentProps {
 	digest: WorkspaceDigest;
-	/** Catalog imports still settling (from `useImportCatalogApi`). */
-	pendingImports: PendingImport[];
 	/** Opens the import-your-own-spec dialog. */
 	onImportOwn: () => void;
 	/**
@@ -427,7 +406,6 @@ function WorkspaceListControls({
  */
 export function WorkspacePanelBody({
 	digest,
-	pendingImports,
 	onImportOwn,
 	onAddCredential,
 	credentialNotice,
@@ -460,7 +438,9 @@ export function WorkspacePanelBody({
 		() => rows.filter((row) => matchesStatus(row, filter.status) && matchesText(row, filter.q)),
 		[rows, filter.status, filter.q],
 	);
-	const empty = digest.complete && rows.length === 0 && pendingImports.length === 0;
+	// An import still landing shows on its catalog row ("Adding…"), not here:
+	// the panel lists what IS in the workspace.
+	const empty = digest.complete && rows.length === 0;
 	// Bound agents are read only for the rows the list shows (the shared
 	// reader caps the fan-out either way).
 	const agentFigure = useAgentFigures(
@@ -530,7 +510,7 @@ export function WorkspacePanelBody({
 						</div>
 					) : null}
 
-					{(rows.length > 0 || pendingImports.length > 0) && (
+					{rows.length > 0 && (
 						<div data-testid="workspace-panel-apis">
 							<WorkspaceListControls
 								complete={digest.complete}
@@ -546,13 +526,6 @@ export function WorkspacePanelBody({
 								}
 							/>
 							{drop && <DropSlot drop={drop} />}
-							{pendingImports.length > 0 && (
-								<ul data-testid="workspace-panel-importing" className="space-y-0.5">
-									{pendingImports.map((p) => (
-										<PendingRow key={p.apiId} pending={p} />
-									))}
-								</ul>
-							)}
 							{shownRows.length > 0 ? (
 								<ul className="space-y-0.5">
 									{shownRows.map((row) => {
@@ -691,7 +664,6 @@ const DRAG_SURFACE: Record<'idle' | DragDropState['phase'], string> = {
  */
 export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 	digest,
-	pendingImports,
 	onImportOwn,
 	onAddCredential,
 	credentialNotice,
@@ -724,7 +696,6 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 			<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[18px] pb-3">
 				<WorkspacePanelBody
 					digest={digest}
-					pendingImports={pendingImports}
 					onImportOwn={onImportOwn}
 					onAddCredential={onAddCredential}
 					credentialNotice={credentialNotice}

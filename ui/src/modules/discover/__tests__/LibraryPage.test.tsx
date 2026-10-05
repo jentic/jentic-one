@@ -522,7 +522,11 @@ describe('LibraryPage', () => {
 		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
 
 		await waitFor(() => expect(importHit).toBe(true));
-		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
+		// One "Adding…" signal — the row's status. No start toast (and no job id).
+		expect(await within(githubCard).findByTestId('catalog-status-pending')).toBeInTheDocument();
+		expect(within(githubCard).queryByTestId('catalog-row-add')).not.toBeInTheDocument();
+		expect(screen.queryByText('Adding to workspace')).not.toBeInTheDocument();
+		expect(screen.queryByText(/job_/)).not.toBeInTheDocument();
 	});
 
 	it('flips a row to In your workspace when the polled catalog reports it registered', async () => {
@@ -590,11 +594,10 @@ describe('LibraryPage', () => {
 			.closest<HTMLElement>('[role="row"]')!;
 		fireEvent.click(within(githubCard).getByTestId('catalog-row-add'));
 
-		// Immediately enters the pending state: the button spins and the status
-		// reads "Adding…".
-		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
-		expect(within(githubCard).getByTestId('catalog-row-add')).toHaveTextContent('Adding…');
-		expect(within(githubCard).getByTestId('catalog-status-pending')).toBeInTheDocument();
+		// Immediately enters the pending state: the status reads "Adding…" (the
+		// Add verb steps aside meanwhile).
+		expect(await within(githubCard).findByTestId('catalog-status-pending')).toBeInTheDocument();
+		expect(within(githubCard).queryByTestId('catalog-row-add')).not.toBeInTheDocument();
 
 		// The poll picks up registered: true and resolves the card on its own —
 		// wait on the poll itself, then on the (default-budget) UI flip.
@@ -754,8 +757,9 @@ describe('LibraryPage', () => {
 
 		const sheet = await screen.findByRole('dialog');
 		fireEvent.click(within(sheet).getByTestId('sheet-import'));
-		expect(await screen.findByText('Adding to workspace')).toBeInTheDocument();
-		expect(within(sheet).getByTestId('sheet-import')).toHaveTextContent('Adding…');
+		await waitFor(() =>
+			expect(within(sheet).getByTestId('sheet-import')).toHaveTextContent('Adding…'),
+		);
 
 		// The polled jump range / workspace feed report it registered: the
 		// import resolves (no "Still adding" timeout) and the open sheet flips.

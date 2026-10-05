@@ -44,17 +44,6 @@ export interface WorkspaceSummaryBarProps {
 	className?: string;
 }
 
-/** Distinct APIs across every attention entry (an API in two entries counts once). */
-function attentionCount(digest: WorkspaceDigest): { count: number; atLeast: boolean } {
-	const keys = new Set<string>();
-	let atLeast = false;
-	for (const entry of digest.attention) {
-		for (const row of entry.rows) keys.add(row.key);
-		if (entry.atLeast) atLeast = true;
-	}
-	return { count: keys.size, atLeast };
-}
-
 function Dot() {
 	return (
 		<span aria-hidden="true" className="text-meta-separator">
@@ -86,7 +75,9 @@ export function WorkspaceSummaryBar({
 	const contentId = useId();
 
 	const apiCount = digest.rows.length;
-	const { count: needCount, atLeast } = attentionCount(digest);
+	// The same count the sheet's "Needs attention · N" heading shows: one per
+	// attention item, never a different tally of the APIs behind them.
+	const needCount = digest.attention.length;
 	const importing = pendingImports.length;
 
 	// Any link inside the sheet navigates away — close as it goes.
@@ -122,8 +113,7 @@ export function WorkspaceSummaryBar({
 				data-testid="workspace-summary-attention"
 			>
 				<AlertTriangle className="text-warning h-3.5 w-3.5" aria-hidden="true" />
-				{needCount}
-				{atLeast ? '+' : ''} need{needCount === 1 && !atLeast ? 's' : ''} attention
+				{needCount} need{needCount === 1 ? 's' : ''} attention
 			</span>
 		);
 	} else if (digest.attentionComplete) {
@@ -244,7 +234,6 @@ export function WorkspaceSummaryBar({
 					>
 						<WorkspacePanelBody
 							digest={digest}
-							pendingImports={pendingImports}
 							onImportOwn={importOwn}
 							onAddCredential={addCredential}
 							credentialNotice={credentialNotice}

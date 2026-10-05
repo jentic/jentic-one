@@ -44,7 +44,7 @@ describe('WorkspaceSummaryBar', () => {
 		expect(bar).toHaveAttribute('aria-haspopup', 'dialog');
 	});
 
-	it('counts distinct APIs needing attention and shows pending imports', () => {
+	it('counts attention items exactly as the sheet heading does, and shows pending imports', async () => {
 		const d = digestWith();
 		const [stripe, slack] = d.rows;
 		const digest = digestWith({
@@ -56,6 +56,7 @@ describe('WorkspaceSummaryBar', () => {
 					tab: 'overview',
 				},
 				{ id: 'failures', label: 'failed calls', rows: [stripe, slack], tab: 'overview' },
+				{ id: 'drafts', label: 'draft', rows: [stripe], tab: 'overview' },
 			],
 		});
 		renderWithProviders(
@@ -65,11 +66,14 @@ describe('WorkspaceSummaryBar', () => {
 				onImportOwn={() => {}}
 			/>,
 		);
+		// Three items over two APIs: the bar and the sheet both say 3.
 		expect(screen.getByTestId('workspace-summary-attention')).toHaveTextContent(
-			'2 need attention',
+			'3 need attention',
 		);
 		expect(screen.getByTestId('workspace-summary-importing')).toHaveTextContent('Adding 1…');
 		expect(screen.queryByTestId('workspace-summary-all-good')).not.toBeInTheDocument();
+		await userEvent.click(screen.getByTestId('workspace-summary-bar'));
+		expect(await screen.findByText('Needs attention · 3')).toBeInTheDocument();
 	});
 
 	it('opens the full panel in a bottom sheet; Escape closes it and focus returns to the bar', async () => {

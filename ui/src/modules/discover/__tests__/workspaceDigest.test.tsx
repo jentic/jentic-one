@@ -175,7 +175,6 @@ describe('WorkspacePanelBody attention links', () => {
 						tab: 'overview',
 					},
 				])}
-				pendingImports={[]}
 				onImportOwn={() => {}}
 			/>,
 		);
@@ -202,7 +201,6 @@ describe('WorkspacePanelBody attention links', () => {
 					},
 					{ id: 'drafts', label: 'draft only', rows, tab: 'versions' },
 				])}
-				pendingImports={[]}
 				onImportOwn={() => {}}
 			/>,
 		);
@@ -234,7 +232,6 @@ describe('WorkspacePanelBody attention links', () => {
 				digest={digestWith([
 					{ id: 'credentials', label: 'no credential', rows, tab: 'overview' },
 				])}
-				pendingImports={[]}
 				onImportOwn={() => {}}
 				onAddCredential={onAddCredential}
 			/>,
@@ -249,7 +246,6 @@ describe('WorkspacePanelBody attention links', () => {
 		renderWithProviders(
 			<WorkspacePanelBody
 				digest={{ ...digestWith([]), attentionComplete: false, attentionSettled: true }}
-				pendingImports={[]}
 				onImportOwn={() => {}}
 			/>,
 		);

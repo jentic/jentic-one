@@ -64,12 +64,7 @@ function renderPanel(
 ) {
 	return renderWithProviders(
 		<>
-			<WorkspaceDockPanel
-				digest={digest}
-				pendingImports={[]}
-				onImportOwn={() => {}}
-				{...extra}
-			/>
+			<WorkspaceDockPanel digest={digest} onImportOwn={() => {}} {...extra} />
 			<LocationProbe />
 		</>,
 		{ route },
@@ -266,18 +261,6 @@ describe('WorkspaceDockPanel — serving state, usage, pending imports', () => {
 		expect(within(row).getByTestId('workspace-panel-api-failed')).toHaveTextContent('8 failed');
 		// The sparkline was dropped: no chart svg in the row (lucide icons only).
 		expect(row.querySelector('svg.overflow-visible')).toBeNull();
-	});
-
-	it('lists in-flight imports at the top of the list as "Adding…" rows', () => {
-		renderWithProviders(
-			<WorkspaceDockPanel
-				digest={digestWith(manyRows())}
-				pendingImports={[{ apiId: 'petstore', label: 'Petstore' }]}
-				onImportOwn={() => {}}
-			/>,
-		);
-		const pending = screen.getByTestId('workspace-panel-importing');
-		expect(pending).toHaveTextContent(/Petstore.*Adding…/);
 	});
 
 	it('has no critical a11y violations', async () => {

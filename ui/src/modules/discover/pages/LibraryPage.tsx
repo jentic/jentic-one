@@ -443,7 +443,6 @@ export default function LibraryPage() {
 						// before it has stuck, too); the body scrolls inside.
 						className="xl:sticky xl:top-4 xl:h-[calc(100dvh-5rem)]"
 						digest={digest}
-						pendingImports={pendingImports}
 						onImportOwn={openImportOwn}
 						onAddCredential={credentialFlow.addCredentialFor}
 						credentialNotice={credentialFlow.notice}

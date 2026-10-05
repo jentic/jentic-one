@@ -555,13 +555,10 @@ export function useImportCatalogApi(): UseImportResult {
 			inFlightRef.current.add(entity.apiId);
 			labelsRef.current.set(entity.apiId, entity.summary);
 		},
-		onSuccess: (res, entity) => {
-			toast({
-				title: 'Adding to workspace',
-				description: `${entity.summary} is being added to your workspace (job ${res.job_id}). This can take a moment.`,
-				variant: 'success',
-			});
-			// Enter the pending state and arm a safety timeout for this id.
+		onSuccess: (_res, entity) => {
+			// Enter the pending state and arm a safety timeout for this id. The
+			// row's own status says "Adding…" meanwhile; the one toast is the
+			// final "Added to workspace" (or the timeout / failure notice).
 			setPendingApiIds((prev) => {
 				const next = new Set(prev);
 				next.add(entity.apiId);

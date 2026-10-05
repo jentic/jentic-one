@@ -45,7 +45,6 @@ function Harness({ noticeMs }: { noticeMs?: number }) {
 		<>
 			<WorkspacePanelBody
 				digest={digest}
-				pendingImports={[]}
 				onImportOwn={() => {}}
 				onAddCredential={flow.addCredentialFor}
 				credentialNotice={flow.notice}
