@@ -4533,6 +4533,7 @@ components:
           enum:
           - allow
           - deny
+          - require-approval
           title: Effect
           type: string
         match_mode:
@@ -4576,10 +4577,11 @@ components:
         operations — users must explicitly add at least one allow rule.
       properties:
         effect:
-          description: Whether this rule allows or denies the matched request.
+          description: Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
           enum:
           - allow
           - deny
+          - require-approval
           title: Effect
           type: string
         match_mode:

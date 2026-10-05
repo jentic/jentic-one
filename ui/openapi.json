@@ -6936,7 +6936,8 @@
           "effect": {
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "require-approval"
             ],
             "title": "Effect",
             "type": "string"
@@ -7002,10 +7003,11 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "properties": {
           "effect": {
-            "description": "Whether this rule allows or denies the matched request.",
+            "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "require-approval"
             ],
             "title": "Effect",
             "type": "string"

@@ -18,6 +18,7 @@ export namespace PermissionRuleReadSchema {
     export enum effect {
         ALLOW = 'allow',
         DENY = 'deny',
+        REQUIRE_APPROVAL = 'require-approval',
     }
     export enum match_mode {
         REGEX = 'regex',
