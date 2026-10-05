@@ -142,7 +142,15 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				<MetaItem
 					icon={<ShieldCheck size={13} aria-hidden="true" />}
 					label="Security"
-					value={api.securitySchemes.length > 0 ? api.securitySchemes.join(', ') : 'None'}
+					// A draft declares no schemes until a revision is promoted, so an
+					// empty list there means "not known yet", not "none".
+					value={
+						api.securitySchemes.length > 0
+							? api.securitySchemes.join(', ')
+							: hasLive
+								? 'None'
+								: 'Known once live'
+					}
 				/>
 				<MetaItem
 					icon={<Activity size={13} aria-hidden="true" />}

@@ -713,6 +713,8 @@ describe('ApiDetailPage', () => {
 				renderAt('/library/workspace/adyen/pos-terminal-management-api/1');
 				expect(await screen.findByTestId('hub-access-draft')).toHaveTextContent(/draft/);
 				expect(screen.queryByText('No credential needed')).toBeNull();
+				// Nor does its Security stat claim "None" before anything is live.
+				expect(screen.getByText('Known once live')).toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-give-agent-access')).toBeNull();
 			});
 
