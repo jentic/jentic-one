@@ -899,6 +899,22 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 		).toBeInTheDocument();
 	});
 
+	it('counts only the viewer’s agents on a shared credential', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const shared = within(await openSidebar('Slack'));
+		const meta = await shared.findByText(/· used by /);
+		expect(meta).toHaveTextContent('used by 1 of your agents');
+		expect(meta).not.toHaveTextContent('this agent only');
+	});
+
+	it('keeps the unscoped count on a credential the viewer created', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const own = within(await openSidebar('GitHub'));
+		expect(await own.findByText(/· used by /)).toHaveTextContent('used by this agent only');
+	});
+
 	it('keeps Edit and Delete on a credential the viewer created', async () => {
 		renderAuthed();
 		await screen.findByText('1 access rule');

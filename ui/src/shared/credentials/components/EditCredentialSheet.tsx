@@ -297,6 +297,7 @@ export function EditCredentialSheet({
 							    (each agent's API tiles + access sidebar). */}
 							<BoundAgentsSection
 								credentialId={cred.credential_id}
+								createdBy={cred.created_by ?? null}
 								open={open}
 								onNavigateAway={onNavigateAway}
 							/>
