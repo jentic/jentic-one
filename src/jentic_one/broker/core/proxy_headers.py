@@ -25,6 +25,13 @@ _SCHEME_RE = re.compile(r"^(https?):/([^/])")
 # must be dropped (the ASGI server recomputes ``content-length``).
 _DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-encoding"})
 
+# Inbound framing that describes the *caller's* body, not the outbound one. The
+# broker drops the body on body-less methods (GET, HEAD, OPTIONS) and httpx
+# frames whatever body it does send, so a forwarded ``content-length`` can only
+# be stale: the HTTP client rejects a declared length that the body does not
+# match, failing the request before it reaches the upstream.
+_INBOUND_FRAMING_HEADERS: frozenset[str] = frozenset({"content-length"})
+
 
 def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
     """Rebuild the upstream URL from the raw ASGI scope, byte-exact.
@@ -53,7 +60,9 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     """Filter inbound request headers for forwarding, then apply injected auth.
 
     Strips hop-by-hop (incl. ``Host``), broker-consumed, and spoofable
-    forwarding/topology headers. Injected auth headers win on conflict.
+    forwarding/topology headers, plus the inbound ``Content-Length``: httpx
+    computes the outbound length from the body actually sent. Injected auth
+    headers win on conflict.
 
     ``Cookie`` is intentionally **not** special-cased here: a cookie-located
     credential is merged explicitly at the call site by appending to the
@@ -65,6 +74,7 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
         if key.lower() not in HOP_BY_HOP_HEADERS
         and key.lower() not in BROKER_CONSUMED_HEADERS
         and key.lower() not in SPOOFABLE_HEADERS
+        and key.lower() not in _INBOUND_FRAMING_HEADERS
     }
     out.update(injected)
     return out
