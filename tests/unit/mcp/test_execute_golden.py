@@ -521,6 +521,9 @@ async def test_transport_error_envelope_carries_exception_class_not_message(brok
         ),
         (400, {"type": "credential_name_not_found", "detail": "no credential named zzz"}, "whoami"),
         (404, {"type": "operation_not_found", "detail": "no operation registered"}, "search_apis"),
+        # A contract/payload error (413/422/428) is neither a discovery nor a
+        # binding problem — it points at the operation contract, not whoami.
+        (413, {"type": "payload_too_large", "detail": "body too large"}, "inspect_operation"),
     ],
 )
 async def test_broker_resolve_failure_is_a_coded_soft_error(
@@ -549,6 +552,62 @@ async def test_broker_resolve_failure_is_a_coded_soft_error(
     assert body["detail"] in payload["error"]
     assert payload["retryable"] is False
     assert payload["next_tool"] == want_tool
+
+
+async def test_broker_resolve_failure_surfaces_array_detail(broker) -> None:
+    """A broker body whose ``detail`` is FastAPI's validation array must flatten
+    to its messages (Go: ``flattenDetail``), not be swallowed behind the status
+    text — the agent needs to see WHICH field was wrong."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422,
+            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+            content=json.dumps(
+                {"detail": [{"loc": ["header", "jentic-credential-id"], "msg": "field required"}]}
+            ).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "field required" in payload["error"]
+    assert "header.jentic-credential-id" in payload["error"]
+
+
+async def test_broker_resolve_failure_relays_candidates(broker) -> None:
+    """#1429 candidate relay: the broker embeds the caller's own covering
+    credentials on an unknown/unbound id, so they ride details["candidates"]
+    rather than forcing a follow-up whoami to learn which ids exist."""
+    candidates = [
+        {"id": "cred_real", "name": "prod", "last4": "1234"},
+        {"id": "cred_other", "name": "staging", "last4": "5678"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+            content=json.dumps(
+                {
+                    "type": "credential_id_not_found",
+                    "title": "Bad Request",
+                    "candidates": candidates,
+                }
+            ).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["details"]["candidates"] == candidates
 
 
 @pytest.mark.parametrize("origin", ["upstream", None])

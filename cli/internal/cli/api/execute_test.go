@@ -1759,38 +1759,76 @@ func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
 func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
 	// #1429: a broker-origin 400 that is not a denial (here an unknown
 	// Jentic-Credential-Id) means the call never reached the upstream. It must
-	// exit 2 with RESOLVE_FAILED, not print the problem body and exit 0.
+	// exit 2 with RESOLVE_FAILED, not print the problem body and exit 0 — on the
+	// default, --json, and --raw paths alike. The broker embeds the caller's own
+	// covering credentials; those candidates must survive into the coded error.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"type":"credential_id_not_found","title":"Bad Request","status":400,"detail":"credential cred_nope not found"}`))
+		_, _ = w.Write([]byte(`{"type":"credential_id_not_found","title":"Bad Request","status":400,` +
+			`"detail":"credential cred_nope not found","candidates":[{"id":"cred_real","name":"prod","last4":"1234"}]}`))
 	}))
 	defer srv.Close()
 
-	for _, extra := range [][]string{nil, {"--raw"}} {
-		app := testApp(t)
-		seedRegistered(t, app, "default", srv.URL)
-		app.Out = new(bytes.Buffer)
-		app.Err = new(bytes.Buffer)
-		root := newAPIRootCmd(app.App)
-		root.SetOut(app.Out)
-		root.SetErr(app.Err)
-		root.SetArgs(append([]string{
-			"execute", "GET:/v1/pets",
-			"--header", "Jentic-Credential-Id=cred_nope",
-			"--broker-scheme", "http",
-			"--broker-host", srv.Listener.Addr().String(),
-		}, extra...))
+	for _, extra := range [][]string{nil, {"--json"}, {"--raw"}} {
+		t.Run(strings.Join(append([]string{"default"}, extra...), " "), func(t *testing.T) {
+			app := testApp(t)
+			seedRegistered(t, app, "default", srv.URL)
+			out := new(bytes.Buffer)
+			errBuf := new(bytes.Buffer)
+			app.Out = out
+			app.Err = errBuf
+			root := newAPIRootCmd(app.App)
+			root.SetOut(out)
+			root.SetErr(errBuf)
+			root.SetArgs(append([]string{
+				"execute", "GET:/v1/pets",
+				"--header", "Jentic-Credential-Id=cred_nope",
+				"--broker-scheme", "http",
+				"--broker-host", srv.Listener.Addr().String(),
+			}, extra...))
 
-		err := root.Execute()
-		var coded *ux.CodedError
-		if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed || coded.ExitCode() != 2 {
-			t.Fatalf("args %v: want RESOLVE_FAILED exit 2, got err=%v", extra, err)
-		}
-		if !strings.Contains(coded.Msg, "cred_nope") {
-			t.Errorf("args %v: message should carry the broker detail, got %q", extra, coded.Msg)
-		}
+			err := root.Execute()
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed || coded.ExitCode() != 2 {
+				t.Fatalf("args %v: want RESOLVE_FAILED exit 2, got err=%v", extra, err)
+			}
+			if !strings.Contains(coded.Msg, "cred_nope") {
+				t.Errorf("args %v: message should carry the broker detail, got %q", extra, coded.Msg)
+			}
+			// The relayed candidates must reach the agent so it can pick a valid id
+			// without a follow-up whoami/creds list.
+			candidates, _ := coded.Details["candidates"].([]any)
+			if len(candidates) != 1 {
+				t.Errorf("args %v: details[candidates] = %v, want the broker's one candidate relayed",
+					extra, coded.Details["candidates"])
+			}
+
+			// Stream separation: the problem body is still written to stdout for a
+			// machine to parse, while the coded recovery error renders on stderr.
+			switch {
+			case contains(extra, "--json"):
+				var envelope map[string]any
+				if jerr := json.Unmarshal(out.Bytes(), &envelope); jerr != nil {
+					t.Fatalf("--json stdout should be the parseable envelope: %v\nraw: %s", jerr, out.String())
+				}
+				if envelope["status"] != float64(400) {
+					t.Errorf("--json envelope status = %v, want 400", envelope["status"])
+				}
+			case contains(extra, "--raw"):
+				if !strings.Contains(out.String(), "cred_nope") {
+					t.Errorf("--raw stdout should carry the raw problem body, got %q", out.String())
+				}
+			default:
+				if !strings.Contains(out.String(), "cred_nope") {
+					t.Errorf("default stdout should carry the broker problem body, got %q", out.String())
+				}
+			}
+			if !strings.Contains(errBuf.String(), "RESOLVE_FAILED") {
+				t.Errorf("args %v: stderr should render the coded error, got %q", extra, errBuf.String())
+			}
+		})
 	}
 }
 

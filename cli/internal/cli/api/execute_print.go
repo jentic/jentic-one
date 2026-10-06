@@ -37,6 +37,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 			return denial.Err()
 		}
 		if brokerErr != nil {
+			a.printBrokerResolveRecovery(cmd.Context(), brokerErr)
 			return brokerErr
 		}
 		return nil
@@ -73,6 +74,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 		return denial.Err()
 	}
 	if brokerErr != nil {
+		a.printBrokerResolveRecovery(cmd.Context(), brokerErr)
 		return brokerErr
 	}
 	return nil

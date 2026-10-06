@@ -1150,6 +1150,7 @@ func TestMCPExecute_BrokerResolveFailureIsError(t *testing.T) {
 	}{
 		{"unknown credential id", `{"type":"credential_id_not_found","detail":"credential cred_nope not found"}`, "whoami", http.StatusBadRequest},
 		{"unregistered upstream", `{"type":"operation_not_found","detail":"no operation registered"}`, "search_apis", http.StatusNotFound},
+		{"contract error points at inspect", `{"type":"payload_too_large","detail":"body too large"}`, "inspect_operation", http.StatusRequestEntityTooLarge},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

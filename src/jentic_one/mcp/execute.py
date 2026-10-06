@@ -179,6 +179,72 @@ def _error_origin(headers: httpx.Headers) -> str:
     return value.strip().lower()
 
 
+def _flatten_detail(detail: Any) -> str:
+    """Render a problem+json ``detail`` member to a string (Go: ``flattenDetail``).
+
+    A string verbatim, or FastAPI's validation array (``[{loc, msg}, …]``)
+    joined into its messages (each prefixed with its dotted location) — the
+    shape FastAPI emits for a 422 with NO top-level ``title``, which would
+    otherwise be dropped behind a bare "Unprocessable Entity". Any other shape
+    yields ``""``.
+    """
+    if isinstance(detail, str):
+        return detail
+    if not isinstance(detail, list):
+        return ""
+    msgs: list[str] = []
+    for item in detail:
+        if not isinstance(item, dict):
+            continue
+        msg = item.get("msg")
+        if not isinstance(msg, str) or not msg:
+            continue
+        loc = item.get("loc")
+        if isinstance(loc, list) and loc:
+            msgs.append(".".join(str(seg) for seg in loc) + ": " + msg)
+        else:
+            msgs.append(msg)
+    return "; ".join(msgs)
+
+
+def _broker_error_next_tool(status: int, problem_type: str) -> str:
+    """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``).
+
+    Keyed on the status AND the problem type, never a bare whoami default —
+    that sends contract/payload failures into an identity-check loop that can
+    never resolve them. An unregistered operation (404 / operation-shaped type)
+    needs search_apis; a credential the broker could not resolve gets whoami;
+    any other 4xx (405/413/422/428) points at inspect_operation.
+    """
+    if status == 404 or "operation" in problem_type:
+        return "search_apis"
+    if "credential" in problem_type:
+        return "whoami"
+    return "inspect_operation"
+
+
+def _broker_error_actionable(next_tool: str) -> str:
+    """MCP-lane recovery prose for a broker resolve failure, keyed on next_tool
+    (Go: ``brokerErrorToolHint``) so the two never disagree."""
+    if next_tool == "search_apis":
+        return (
+            "The broker has no such operation registered. Call search_apis to find the right "
+            "operation, confirm it with inspect_operation, then execute that one — do not retry "
+            "this call."
+        )
+    if next_tool == "whoami":
+        return (
+            "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker "
+            "could not resolve for this operation. Call whoami to see your credential bindings and "
+            "re-issue the call naming one bound to this operation — do not retry the same header."
+        )
+    return (
+        "The broker rejected the request shape before it reached the upstream API. Call "
+        "inspect_operation to re-read the operation's contract — the method, revision pin, payload "
+        "size, or a required header is wrong — and fix the request rather than retrying it."
+    )
+
+
 def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:
     """Broker resolve-failure classification (Go: ``agentops.BrokerError``), #1429.
 
@@ -199,27 +265,30 @@ def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> T
             problem = parsed
     except ValueError:
         pass
-    detail = problem.get("detail")
     reason = (
-        detail
-        if isinstance(detail, str) and detail
-        else str(problem.get("title") or "") or f"HTTP {status}"
+        _flatten_detail(problem.get("detail"))
+        or str(problem.get("title") or "")
+        or f"HTTP {status}"
     )
     problem_type = str(problem.get("type") or "")
     details: dict[str, Any] = {"http_status": status, "origin": "broker"}
     if problem_type:
         details["problem_type"] = problem_type
+    # The broker embeds the caller's own covering credentials on an unknown or
+    # unbound Jentic-Credential-Id/Name (orchestrator._resolve_mapped); relay
+    # them so the agent need not issue a follow-up whoami just to learn which
+    # ids exist.
+    candidates = problem.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        details["candidates"] = candidates
+    next_tool = _broker_error_next_tool(status, problem_type)
     return ToolError(
         CODE_RESOLVE_FAILED,
         "the broker could not resolve this call, so it never reached the upstream API "
         f"(HTTP {status}): {reason}",
-        actionable=(
-            "Fix the request instead of retrying it: check the operation is registered and "
-            "that any Jentic-Credential-Id or Jentic-Credential-Name header names a credential "
-            "bound to it."
-        ),
+        actionable=_broker_error_actionable(next_tool),
         details=details,
-        next_tool="search_apis" if "operation" in problem_type else "whoami",
+        next_tool=next_tool,
         extra={"retryable": False},
     )
 

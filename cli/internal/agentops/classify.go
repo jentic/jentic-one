@@ -125,30 +125,133 @@ func BrokerError(r *ExecuteResult) *ux.CodedError {
 		errorOrigin(r) != errorOriginBroker {
 		return nil
 	}
+	// Detail is decoded as a raw value, not a string: the broker's own problems
+	// carry a string detail, but FastAPI's array-form 422 (`detail: [{loc, msg}]`)
+	// must be flattened to its messages rather than discarded (a struct with a
+	// string Detail would leave it empty and lose the validation error entirely).
 	var problem struct {
-		Type   string `json:"type"`
-		Title  string `json:"title"`
-		Detail string `json:"detail"`
+		Type       string          `json:"type"`
+		Title      string          `json:"title"`
+		Detail     json.RawMessage `json:"detail"`
+		Candidates json.RawMessage `json:"candidates"`
 	}
-	_ = json.Unmarshal(r.Body, &problem) // best effort: FastAPI's array-form detail just leaves Detail empty
-	reason := problem.Detail
-	if reason == "" {
-		reason = problem.Title
-	}
-	if reason == "" {
-		reason = http.StatusText(r.Status)
-	}
+	_ = json.Unmarshal(r.Body, &problem) // best effort: a non-JSON body falls back to the status text
+	reason := problemReason(problem.Detail, problem.Title, r.Status)
 	details := map[string]any{"http_status": r.Status, "origin": errorOriginBroker}
 	if problem.Type != "" {
 		details["problem_type"] = problem.Type
+	}
+	// The broker embeds the caller's own covering credentials on an unknown or
+	// unbound Jentic-Credential-Id/Name (orchestrator._resolve_mapped). Relaying
+	// them spares the agent a follow-up whoami/`jentic creds list` just to learn
+	// which ids exist, so attach them verbatim when present.
+	if candidates := decodeCandidates(problem.Candidates); candidates != nil {
+		details["candidates"] = candidates
 	}
 	return &ux.CodedError{
 		Code: ux.CodeResolveFailed,
 		Msg: fmt.Sprintf("the broker could not resolve this call, so it never reached the upstream API (HTTP %d): %s",
 			r.Status, reason),
-		Actionable: "Fix the request instead of retrying it: check the operation is registered (`jentic apis list`) and that " +
-			"any Jentic-Credential-Id or Jentic-Credential-Name header names a credential bound to it (`jentic creds list`).",
-		Details: details,
+		Actionable: brokerErrorActionable(r.Status, problem.Type),
+		Details:    details,
+	}
+}
+
+// problemReason renders the human-readable reason from a problem body: a string
+// `detail` verbatim, FastAPI's array-form `detail` ([{loc, msg}]) flattened to
+// its messages, else the `title`, else the HTTP status text. The array form is
+// what FastAPI emits for a 422 with NO top-level title — dropping it would bury
+// the actual validation error behind a bare "Unprocessable Entity".
+func problemReason(detail json.RawMessage, title string, status int) string {
+	if s := flattenDetail(detail); s != "" {
+		return s
+	}
+	if title != "" {
+		return title
+	}
+	return http.StatusText(status)
+}
+
+// flattenDetail renders a problem+json `detail` member to a string: a JSON
+// string verbatim, or a FastAPI validation array ([{loc, msg}, …]) as its
+// semicolon-joined messages (each prefixed with its dotted location when one is
+// present). Any other shape (or an unparseable one) yields "".
+func flattenDetail(detail json.RawMessage) string {
+	if len(detail) == 0 {
+		return ""
+	}
+	var asString string
+	if json.Unmarshal(detail, &asString) == nil {
+		return asString
+	}
+	var items []struct {
+		Loc []any  `json:"loc"`
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal(detail, &items) != nil {
+		return ""
+	}
+	msgs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Msg == "" {
+			continue
+		}
+		if loc := joinLoc(item.Loc); loc != "" {
+			msgs = append(msgs, loc+": "+item.Msg)
+		} else {
+			msgs = append(msgs, item.Msg)
+		}
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// joinLoc renders a FastAPI error `loc` ([... "header", "x-id"]) as a dotted
+// path, formatting non-string segments (array indices) with %v.
+func joinLoc(loc []any) string {
+	parts := make([]string, 0, len(loc))
+	for _, seg := range loc {
+		if s, ok := seg.(string); ok {
+			parts = append(parts, s)
+		} else {
+			parts = append(parts, fmt.Sprintf("%v", seg))
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+// decodeCandidates relays the broker's candidate-credential list verbatim when
+// it is a JSON array (orchestrator attaches it as a top-level `candidates`
+// member on an unknown/unbound credential id or name). Any other shape yields
+// nil so the detail carries no half-parsed field.
+func decodeCandidates(raw json.RawMessage) []any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var candidates []any
+	if json.Unmarshal(raw, &candidates) != nil || len(candidates) == 0 {
+		return nil
+	}
+	return candidates
+}
+
+// brokerErrorActionable branches the recovery hint on what the broker could not
+// resolve, so the advice is never noise: an unregistered operation (404 or an
+// operation-shaped type) is a discovery problem, a credential-shaped type is a
+// header/binding problem, and anything else (405/413/422/428 contract or
+// payload errors) points at the operation contract rather than guessing.
+func brokerErrorActionable(status int, problemType string) string {
+	switch {
+	case status == http.StatusNotFound || strings.Contains(problemType, "operation"):
+		return "The broker has no such operation registered. Find the right one with `jentic apis list` " +
+			"(or search), then re-issue the call against a registered operation — do not retry this one."
+	case strings.Contains(problemType, "credential"):
+		return "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
+			"not resolve for this operation. List your bound credentials with `jentic creds list` and " +
+			"re-issue the call naming one bound to this operation — do not retry the same header."
+	default:
+		return "The broker rejected the request shape before it reached the upstream API. Re-check the " +
+			"operation's contract (`jentic apis inspect`) — the method, revision pin, payload size, or a " +
+			"required header is wrong — and fix the request rather than retrying it."
 	}
 }
 
