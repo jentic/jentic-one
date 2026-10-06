@@ -62,8 +62,12 @@ export function schemeTypeFromRaw(s: { type?: string; scheme?: string }): Scheme
  * rather than a blank or a misleading "Credential".
  */
 export function schemeTypeLabel(scheme: string): string {
+	// Own keys only: `in` also matches inherited names (`constructor`,
+	// `toString`). `Object.hasOwn` is ES2022, past this project's ES2021 lib.
 	const key = scheme as SchemeType;
-	return key in SCHEME_TYPE_LABELS && key !== 'unknown' ? SCHEME_TYPE_LABELS[key] : scheme;
+	return Object.prototype.hasOwnProperty.call(SCHEME_TYPE_LABELS, key) && key !== 'unknown'
+		? SCHEME_TYPE_LABELS[key]
+		: scheme;
 }
 
 /**

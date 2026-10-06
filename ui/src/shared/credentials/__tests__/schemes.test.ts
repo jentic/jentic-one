@@ -42,6 +42,11 @@ describe('credentials/lib/schemes', () => {
 			// `unknown` is a sentinel, not a real scheme name — keep it verbatim.
 			expect(schemeTypeLabel('unknown')).toBe('unknown');
 		});
+		it('never reads an inherited Object property as a label', () => {
+			expect(schemeTypeLabel('constructor')).toBe('constructor');
+			expect(schemeTypeLabel('toString')).toBe('toString');
+			expect(schemeTypeLabel('__proto__')).toBe('__proto__');
+		});
 	});
 
 	describe('parseSchemeOptions', () => {
