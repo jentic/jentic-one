@@ -106,6 +106,24 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_permissions": {},
+      "method": "GET",
+      "operation_id": "lookupActors",
+      "path": "/actors/lookup",
+      "public": false,
+      "required_permissions": [],
+      "summary": "Resolve actor names by id",
+      "surface": "actors",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_permissions": {
         "config:read": []
       },
@@ -4608,5 +4626,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 174
+  "total": 175
 }

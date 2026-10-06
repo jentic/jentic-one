@@ -836,7 +836,7 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			durationMs: 38,
 			httpStatus: 403,
 			minutesAgo: 9,
-			error: 'pbac_denied: scope violation chat:write',
+			error: 'pbac_denied: permission violation chat:write',
 		}),
 		executionRow({
 			id: 'exec_agnt_3',

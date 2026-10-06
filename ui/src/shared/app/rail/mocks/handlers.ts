@@ -69,7 +69,7 @@ export function resetRailEventsStore(): void {
 			type: 'execution.failed',
 			severity: 'critical',
 			summary: 'Execution failed: slack.postMessage',
-			detail: 'scope violation: chat:write',
+			detail: 'permission violation: chat:write',
 			requires_action: true,
 			created_at: ago(8),
 			trace_id: 'tr_1',

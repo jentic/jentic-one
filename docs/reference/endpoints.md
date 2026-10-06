@@ -215,7 +215,7 @@ _Total endpoints: **175**._
 
 ### `actors`
 
-| Method | Path | Scope(s) | Typical caller | Summary |
+| Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/actors/lookup` | _any authenticated_ | any | Resolve actor names by id |
 

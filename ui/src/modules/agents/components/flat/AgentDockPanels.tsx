@@ -2,7 +2,7 @@
  * AgentDockPanels — the dock's sheet surfaces, each hosting one agent panel (the
  * API key's metadata-always, plaintext-once rule lives in its panel). An archived
  * agent can never authenticate, so for it the MCP sheet drops the connect
- * invitation and Permissions drops the scope editor — both keep the history.
+ * invitation and Permissions drops the permission editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
 import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
@@ -128,7 +128,7 @@ export function AgentPermissionsSheet({
 	onClose: () => void;
 }) {
 	const headingId = 'agent-permissions-sheet-title';
-	// Archive sweeps this agent's scope grants and OAuth consents, so for an
+	// Archive sweeps this agent's permission grants and OAuth consents, so for an
 	// archived agent the sheet is a record, never a grant invite.
 	const isArchived = agent.status === 'archived';
 	return (

@@ -167,9 +167,10 @@ export default function AgentsPage() {
 									body: (
 										<p>
 											Service accounts have been retired. Active and disabled
-											ones were migrated to agents that keep their scopes,
-											credential bindings, and API key, so they appear in this
-											list. Create an agent for any new non-human caller.
+											ones were migrated to agents that keep their
+											permissions, credential bindings, and API key, so they
+											appear in this list. Create an agent for any new
+											non-human caller.
 										</p>
 									),
 								},
