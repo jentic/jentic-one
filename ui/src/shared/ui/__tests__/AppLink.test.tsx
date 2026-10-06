@@ -54,6 +54,51 @@ describe('AppLink', () => {
 		expect(screen.getByText('VB').tagName).toBe('SPAN');
 	});
 
+	it.each([
+		['blob:', 'blob:https://example.com/1234'],
+		['file:', 'file:///etc/passwd'],
+		['protocol-relative', '//evil.com'],
+		['a backslash after the slash', '/\\evil.com'],
+		['two backslashes', '\\\\evil.com'],
+		['a tab before //', '\t//evil.com'],
+		['a space between the slashes', '/ /evil.com'],
+		['a bare relative path', 'evil.com/x'],
+		['an unknown scheme', 'ftp://example.com'],
+	])('renders %s inert — no href, not a router link', (_label, href) => {
+		renderWithProviders(<AppLink href={href}>Target</AppLink>);
+		const el = screen.getByText('Target');
+		expect(el.tagName).toBe('SPAN');
+		expect(el).toHaveAttribute('aria-disabled', 'true');
+		expect(el).not.toHaveAttribute('href');
+	});
+
+	it('allows only http:, https: and mailto: as external links', () => {
+		renderWithProviders(
+			<>
+				<AppLink href="http://example.com">Http</AppLink>
+				<AppLink href="HTTPS://example.com/x">Https</AppLink>
+				<AppLink href="mailto:ops@example.com">Mail</AppLink>
+			</>,
+		);
+		for (const name of ['Http', 'Https', 'Mail']) {
+			expect(screen.getByRole('link', { name })).toHaveAttribute('target', '_blank');
+		}
+	});
+
+	it('keeps a single-slash path (with a query or hash) an in-app link', () => {
+		renderWithProviders(
+			<>
+				<AppLink href="/monitor?show=calls">Query</AppLink>
+				<AppLink href="/docs#installation">Hash</AppLink>
+			</>,
+		);
+		expect(screen.getByRole('link', { name: 'Query' })).toHaveAttribute(
+			'href',
+			'/monitor?show=calls',
+		);
+		expect(screen.getByRole('link', { name: 'Hash' })).not.toHaveAttribute('target');
+	});
+
 	it('gives navigable variants a visible focus-visible ring (preflight strips the UA outline)', () => {
 		renderWithProviders(
 			<>

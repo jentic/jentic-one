@@ -23,19 +23,29 @@ type AppLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> &
 		size?: ButtonSize;
 	};
 
-const EXTERNAL_RE = /^([a-z][a-z0-9+.-]*:|\/\/)/i;
-const UNSAFE_RE = /^(javascript|data|vbscript):/i;
+/** The only schemes a link may navigate to outside the app. */
+const EXTERNAL_RE = /^(https?|mailto):/i;
+/** An in-app path: one `/`, not followed by another (`//host` is protocol-relative). */
+const INTERNAL_RE = /^\/(?!\/)/;
+
+type HrefKind = 'internal' | 'external' | 'inert';
 
 /**
- * Is `href` a script-capable URL? Checked the way a browser's URL parser
- * reads the scheme: leading/trailing C0 controls and spaces are stripped and
- * tabs/newlines anywhere are dropped, so ` javascript:` or `java\tscript:`
- * must not slip past the check. (Every control/space is removed here — a
- * superset, fine for a deny test.)
+ * Classify `href` the way a browser's URL parser will read it: C0 controls
+ * and spaces are stripped (a superset of what the parser drops — so
+ * ` javascript:` or `java\tscript:` can't hide a scheme) and `\` counts as
+ * `/` (so `/\evil.com` and `\\evil.com` read as the protocol-relative
+ * `//evil.com` they resolve to). It's an allowlist: `http:`, `https:` and
+ * `mailto:` are external, a single-`/` path is internal, and anything else —
+ * `javascript:`, `data:`, `blob:`, `file:`, `//host`, a bare relative path —
+ * is inert.
  */
-function isUnsafeHref(href: string): boolean {
+function classifyHref(href: string): HrefKind {
 	// eslint-disable-next-line no-control-regex -- matching control characters is the point
-	return UNSAFE_RE.test(href.replace(/[\u0000-\u0020]/g, ''));
+	const normalised = href.replace(/[\u0000-\u0020]/g, '').replace(/\\/g, '/');
+	if (EXTERNAL_RE.test(normalised)) return 'external';
+	if (INTERNAL_RE.test(normalised)) return 'internal';
+	return 'inert';
 }
 
 /**
@@ -46,17 +56,14 @@ function isUnsafeHref(href: string): boolean {
 const FOCUS_RING =
 	'rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
-function isExternalHref(href: string): boolean {
-	return EXTERNAL_RE.test(href);
-}
-
 /**
- * Router-aware link that hardens against XSS. Hrefs using dangerous
- * schemes (`javascript:`, `data:`, `vbscript:`) are refused and rendered
- * as an inert `<span role="link" aria-disabled>` instead of a navigable
- * anchor. External hrefs open in a new tab with `noopener noreferrer`;
- * everything else goes through react-router's `<Link>`. Navigable links
- * carry a visible `focus-visible` ring for keyboard users.
+ * Router-aware link that hardens against XSS and open redirects. Only
+ * `http:`/`https:`/`mailto:` hrefs and single-`/` in-app paths navigate (see
+ * `classifyHref`); anything else renders as an inert
+ * `<span role="link" aria-disabled>` instead of an anchor. External hrefs
+ * (or `external`) open in a new tab with `noopener noreferrer`; in-app paths
+ * go through react-router's `<Link>`. Navigable links carry a visible
+ * `focus-visible` ring for keyboard users.
  */
 export function AppLink({
 	href,
@@ -81,7 +88,8 @@ export function AppLink({
 			: undefined;
 	const mergedClassName = cn(buttonLook, className);
 
-	if (isUnsafeHref(href)) {
+	const kind = classifyHref(href);
+	if (kind === 'inert') {
 		return (
 			<span {...props} className={mergedClassName} role="link" aria-disabled="true">
 				{children}
@@ -89,7 +97,7 @@ export function AppLink({
 		);
 	}
 
-	if (external || isExternalHref(href)) {
+	if (external || kind === 'external') {
 		return (
 			<a
 				href={href}
