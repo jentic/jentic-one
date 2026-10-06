@@ -7,11 +7,13 @@ control module never imports admin ORM models.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import Boolean, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import BindParameter
+
+from jentic_one.shared.db.types import UTCDateTime
 
 
 class CredentialBoundAgentRow(NamedTuple):
@@ -102,13 +104,15 @@ class PrerequisiteRepository:
         """
         conditions = ["b.credential_id = :credential_id"]
         params: dict[str, object] = {"credential_id": credential_id, "limit": limit}
-        bind_params: list[BindParameter[object]] = []
+        bind_params: list[BindParameter[Any]] = []
         if cursor is not None:
             cursor_ts, cursor_id = cursor
             conditions.append(
                 "(b.bound_at < :cursor_ts OR (b.bound_at = :cursor_ts AND b.id < :cursor_id))"
             )
             params.update(cursor_ts=cursor_ts, cursor_id=cursor_id)
+            # Typed so SQLite compares against the stored timestamp format.
+            bind_params.append(bindparam("cursor_ts", type_=UTCDateTime()))
         if visible_to is not None:
             conditions.append("(a.id = :self_id OR a.owner_id IN :owner_ids)")
             params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
@@ -124,7 +128,9 @@ class PrerequisiteRepository:
         )
         if bind_params:
             stmt = stmt.bindparams(*bind_params)
-        result = await session.execute(stmt, params)
+        # Typed result columns: SQLite returns raw strings and integers otherwise.
+        typed = stmt.columns(bound_at=UTCDateTime(), suspended=Boolean())
+        result = await session.execute(typed, params)
         return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod

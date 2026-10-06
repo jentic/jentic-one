@@ -10,6 +10,7 @@ its owner's agents when it holds ``owner:agents:read``.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
@@ -49,6 +50,7 @@ _AGENT_OWNERS = {
     _OTHER_AGENT: _OTHER_SUB,
 }
 _ALL_AGENTS = set(_AGENT_OWNERS)
+_BOUND_AT_BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 _OWNER = Identity(sub=_OWNER_SUB, email="owner@test.local", permissions=["credentials:read"])
 _ADMIN = Identity(sub="usr_cla_admin", email="admin@test.local", permissions=["org:admin"])
@@ -117,13 +119,16 @@ async def bound_credential(
                 Agent(id=agent_id, name=agent_id, owner_id=owner_id, registered_by=owner_id)
             )
         await session.flush()
-        for agent_id in _AGENT_OWNERS:
-            await AgentCredentialBindingRepository.bind(
+        for offset, agent_id in enumerate(_AGENT_OWNERS):
+            binding = await AgentCredentialBindingRepository.bind(
                 session,
                 agent_id=agent_id,
                 credential_id=created.credential_id,
                 created_by=_OWNER_SUB,
             )
+            # Distinct, explicit bind times give the (bound_at, id) cursor a
+            # stable order on both backends.
+            binding.bound_at = _BOUND_AT_BASE + timedelta(seconds=offset)
     yield created.credential_id
     await _wipe(integration_context)
 
