@@ -43,7 +43,7 @@ import { useAllCredentials } from '@/shared/credentials/api';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { CatalogLedger } from '@/modules/discover/components/CatalogLedger';
 import { useDragToAdd } from '@/modules/discover/lib/useDragToAdd';
-import { workspaceHrefFor } from '@/modules/discover/lib/catalogRelations';
+import { workspaceHrefFor, entityDisplay } from '@/modules/discover/lib/catalogRelations';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
 import { DiscoverStatusRow } from '@/modules/discover/components/DiscoverStatusRow';
 import {
@@ -257,6 +257,12 @@ export default function LibraryPage() {
 	// Prefer the live catalog row for the open sheet so its footer reflects a
 	// poll-driven Available → In your workspace flip; fall back to the opened snapshot.
 	const sheetEntity = (selected && loadedEntities.find((e) => e.id === selected.id)) ?? selected;
+	const sheetMatches = sheetEntity?.registered
+		? digest.byCatalogApiId.get(sheetEntity.apiId)
+		: undefined;
+	// The header's title + avatar: the same derivation the ledger row uses, so a
+	// matched workspace API reads as its name/colour, not the raw catalog domain.
+	const sheetDisplay = sheetEntity ? entityDisplay(sheetEntity, sheetMatches) : null;
 	const sheetWorkspaceHref = workspaceHrefFor(
 		sheetEntity ? digest.byCatalogApiId.get(sheetEntity.apiId) : undefined,
 	);
@@ -459,6 +465,8 @@ export default function LibraryPage() {
 				onClose={() => setSheetOpen(false)}
 				onImport={importEntity}
 				importPending={sheetEntity != null && pendingApiIds.has(sheetEntity.apiId)}
+				title={sheetDisplay?.title}
+				icon={sheetDisplay?.icon}
 				workspaceHref={sheetWorkspaceHref}
 			/>
 

@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
 	credentialsCoveringEntry,
+	entityDisplay,
 	readyCredentialsFor,
 	readyCredentialsForEntry,
 	workspaceHrefFor,
 } from '@/modules/discover/lib/catalogRelations';
 import type { Credential } from '@/shared/credentials/api';
+import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
 
 function cred(id: string, catalogApiId: string | null, active = true): Credential {
 	return {
@@ -190,5 +192,50 @@ describe('workspaceHrefFor', () => {
 		expect(workspaceHrefFor(undefined)).toBe('/library');
 		expect(workspaceHrefFor([])).toBe('/library');
 		expect(workspaceHrefFor([hub('1', null), hub('2', null)])).toBe('/library');
+	});
+});
+
+describe('entityDisplay', () => {
+	const entity = (over: Partial<DiscoveryEntity> = {}): DiscoveryEntity => ({
+		id: 'github.com',
+		apiId: 'github.com',
+		summary: 'github.com',
+		registered: true,
+		updateAvailable: false,
+		vendor: 'github.com',
+		...over,
+	});
+	const row = (over: Partial<WorkspaceDigestRow> = {}): WorkspaceDigestRow =>
+		({
+			ref: { vendor: 'github-com', name: '', version: '1.1.4' },
+			title: 'GitHub',
+			host: 'api.github.com',
+			iconUrl: null,
+			catalogApiId: 'github.com',
+			...over,
+		}) as WorkspaceDigestRow;
+
+	it('titles a single matched workspace API by its humanised name, not the raw domain', () => {
+		const { title, icon } = entityDisplay(entity(), [row()]);
+		expect(title).toBe('GitHub');
+		// Initials follow the title; the gradient key is the host, so the sheet's
+		// avatar matches the row's colour rather than the bare `summary`.
+		expect(icon).toEqual({ name: 'GitHub', vendor: 'api.github.com', iconUrl: null });
+	});
+
+	it('keeps the entity’s own summary + vendor when nothing matches', () => {
+		const e = entity();
+		expect(entityDisplay(e, undefined)).toEqual({
+			title: 'github.com',
+			icon: { name: 'github.com', vendor: 'github.com' },
+		});
+	});
+
+	it('does not borrow a name when several workspace APIs match the entry', () => {
+		const { title } = entityDisplay(entity(), [
+			row(),
+			row({ ref: { vendor: 'github-com', name: 'x', version: '2' } }),
+		]);
+		expect(title).toBe('github.com');
 	});
 });

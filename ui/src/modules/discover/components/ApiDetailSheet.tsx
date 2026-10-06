@@ -37,6 +37,7 @@ import { OperationPreviewList, opKey } from '@/modules/discover/components/Opera
 import { OperationDetail } from '@/modules/discover/components/OperationDetail';
 import { useDebouncedValue } from '@/shared/hooks';
 import { useOperationPreview, type DiscoveryEntity } from '@/modules/discover/api';
+import type { VendorIconFacets } from '@/modules/discover/lib/catalogRelations';
 
 interface ApiDetailSheetProps {
 	entity: DiscoveryEntity | null;
@@ -44,6 +45,14 @@ interface ApiDetailSheetProps {
 	onClose: () => void;
 	onImport: (entity: DiscoveryEntity) => void;
 	importPending: boolean;
+	/**
+	 * Display title + avatar for the open entity — the SAME derivation the
+	 * ledger row uses ({@link entityDisplay}), so a matched workspace API reads
+	 * as its humanised name ("GitHub") and shares the row's avatar colour rather
+	 * than showing the raw catalog domain. Omitted ⇒ the entity's own `summary`.
+	 */
+	title?: string;
+	icon?: VendorIconFacets;
 	/**
 	 * Where "Open in your workspace" goes for an imported entry: the matched
 	 * API's hub when the registry maps its `catalog_api_id` to exactly one API,
@@ -58,6 +67,8 @@ export function ApiDetailSheet({
 	onClose,
 	onImport,
 	importPending,
+	title,
+	icon,
 	workspaceHref,
 }: ApiDetailSheetProps) {
 	const titleId = useId();
@@ -135,6 +146,10 @@ export function ApiDetailSheet({
 	// "domain · v1.0.0" under the title: the umbrella domain for a sub-API, else
 	// the api id's host segment.
 	const domain = entity ? (entity.subtitle ?? entity.apiId.split('/')[0]) : '';
+	// Title + avatar come resolved from the ledger (a matched workspace API wins);
+	// fall back to the entity's own summary when the host renders the sheet alone.
+	const displayTitle = title ?? entity?.summary ?? '';
+	const iconProps = icon ?? { name: entity?.summary ?? '', vendor: entity?.vendor };
 	const inWorkspace = !!entity?.registered;
 	// Mid-import the CTA's "Adding…" is the honest state, so the pill waits.
 	const updateAvailable = inWorkspace && !!entity?.updateAvailable && !importPending;
@@ -151,13 +166,13 @@ export function ApiDetailSheet({
 			{entity && (
 				<>
 					<SheetHeader>
-						<VendorIcon name={entity.summary} vendor={entity.vendor} size="lg" />
+						<VendorIcon {...iconProps} size="lg" />
 						<div className="min-w-0 flex-1">
 							<h2
 								id={titleId}
 								className="font-heading truncate text-lg leading-[1.25] font-semibold text-white/92"
 							>
-								{entity.summary}
+								{displayTitle}
 							</h2>
 							<p className="text-muted-foreground mt-0.5 truncate text-[13.5px]">
 								{domain}
@@ -263,7 +278,7 @@ export function ApiDetailSheet({
 							<AppLink
 								href={entity.githubUrl}
 								className="text-muted-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors hover:text-white"
-								aria-label={`View ${entity.summary} on GitHub`}
+								aria-label={`View ${displayTitle} on GitHub`}
 							>
 								<GitHubMark size={14} />
 								GitHub

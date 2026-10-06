@@ -45,11 +45,12 @@ import {
 	Skeleton,
 	type AlphaRailLetter,
 } from '@/shared/ui';
-import { shellScroller, shellScrollRoot, vendorIconPropsFor } from '@/shared/lib';
+import { shellScroller, shellScrollRoot } from '@/shared/lib';
 import { useMediaQuery } from '@/shared/hooks';
 import type { Credential } from '@/shared/credentials/api';
 import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
 import {
+	entityDisplay,
 	readyCredentialsForEntry,
 	workspaceHrefFor,
 } from '@/modules/discover/lib/catalogRelations';
@@ -180,18 +181,11 @@ function rowFacts(
 ) {
 	const matches = entity.registered ? workspaceByCatalogId?.get(entity.apiId) : undefined;
 	const match = matches?.length === 1 ? matches[0] : null;
-	const title = match?.title ?? entity.summary;
+	const { title, icon } = entityDisplay(entity, matches);
 	const domain = vendorOf(entity);
 	return {
 		title,
-		icon: match
-			? vendorIconPropsFor({
-					title: match.title,
-					host: match.host,
-					vendor: match.ref.vendor,
-					iconUrl: match.iconUrl,
-				})
-			: { name: entity.summary, vendor: entity.vendor },
+		icon,
 		vendorLabel: domain !== title ? domain : '',
 		versionLabel: entity.version ? versionLabel(entity.version) : null,
 		openHref: entity.registered ? workspaceHrefFor(matches ?? []) : null,
@@ -266,6 +260,14 @@ export function CatalogLedger({
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
 	const gapRef = useRef<HTMLDivElement | null>(null);
 	const headingRefs = useRef(new Map<string, HTMLDivElement>());
+	// The letter a rail jump/seek is landing on, held through the range's
+	// reflow so the final layout re-pins it to the landing line (a jump's rows
+	// arrive a frame late and shorten the content above, which would otherwise
+	// clamp the smooth scroll a letter short). Cleared by a genuine user scroll.
+	const landing = useRef<RailLetter | null>(null);
+	// Set around programmatic scrolls so their scroll events aren't read as the
+	// reader taking over (which clears `landing`).
+	const programmaticScroll = useRef(false);
 
 	const model = useMemo(
 		() =>
@@ -479,6 +481,33 @@ export function CatalogLedger({
 		[model],
 	);
 
+	// A jump lands by scrolling the letter's heading to the landing line. Its
+	// range's rows arrive and reflow a frame or two later, which shortens the
+	// content above the smooth-scroll's clamp — so the animation would stop a
+	// letter short (landing on the one before the target). Hold the target
+	// until the layout settles and re-pin it to the line each commit, so the
+	// jump always lands squarely on its own letter regardless of the reflow.
+	const landing = useRef<RailLetter | null>(null);
+	useLayoutEffect(() => {
+		const letter = landing.current;
+		if (!letter) return;
+		const entry = model.rail.find((r) => r.letter === letter);
+		const el = entry?.anchorKey ? headingRefs.current.get(entry.anchorKey) : undefined;
+		if (!el) return;
+		const scroller = shellScroller();
+		const base = scroller instanceof Window ? 0 : scroller.getBoundingClientRect().top;
+		const from = scroller instanceof Window ? window.scrollY : scroller.scrollTop;
+		const target = Math.max(
+			0,
+			el.getBoundingClientRect().top - base + from - HEADING_SCROLL_MARGIN_PX,
+		);
+		if (Math.abs(target - from) >= 1) {
+			// A post-reflow correction is a snap, not a second animated scroll.
+			if (scroller instanceof Window) window.scrollTo(0, target);
+			else scroller.scrollTo({ top: target, behavior: 'auto' });
+		}
+	}, [model]);
+
 	// A letter that isn't loaded yet: page forward (big pages) until it
 	// arrives, then jump. Pages only append, so rows already on screen stay
 	// put meanwhile. If the feed passes the letter without any vendors under
@@ -492,12 +521,12 @@ export function CatalogLedger({
 		}
 		setSeekLetter(null);
 		if (status === 'ready') {
-			scrollToLetter(seekLetter, { focus: true });
+			if (scrollToLetter(seekLetter, { focus: true })) landing.current = seekLetter;
 			return;
 		}
 		const after = model.rail.slice(model.rail.findIndex((r) => r.letter === seekLetter) + 1);
 		const next = after.find((r) => r.anchorKey);
-		if (next) scrollToLetter(next.letter, { focus: true });
+		if (next && scrollToLetter(next.letter, { focus: true })) landing.current = next.letter;
 	}, [seekLetter, model, scrollToLetter, hasNextPage, isFetchingNextPage, onLoadMore]);
 
 	// A jump: once its range's first page is in, land on the letter — or, if
@@ -511,6 +540,9 @@ export function CatalogLedger({
 			return;
 		}
 		if (scrollToLetter(jumpLetter, { focus: true })) {
+			// Hold the target through the range's reflow so the landing snaps to
+			// the letter even after the rows above settle (see `landing`).
+			landing.current = jumpLetter;
 			setJumpLetter(null);
 			return;
 		}
@@ -520,7 +552,7 @@ export function CatalogLedger({
 		const next = after.find((r) => r.anchorKey);
 		if (next) {
 			setJumpLetter(null);
-			scrollToLetter(next.letter, { focus: true });
+			if (scrollToLetter(next.letter, { focus: true })) landing.current = next.letter;
 		} else if (jump.hasNextPage) {
 			jump.onLoadMore();
 		} else {
@@ -731,7 +763,13 @@ export function CatalogLedger({
 				busy={seekLetter ?? jumpLetter}
 				onJump={(key) => {
 					const letter = key as RailLetter;
-					if (scrollToLetter(letter, { focus: true })) return;
+					if (scrollToLetter(letter, { focus: true })) {
+						// Hold the target through any reflow so a loaded letter
+						// also lands squarely (see `landing`).
+						landing.current = letter;
+						return;
+					}
+					landing.current = null;
 					setSeekLetter(null);
 					if (onJump) {
 						onJump(letter);

@@ -15,8 +15,43 @@
  * (`catalogImportRef`, {@link credentialsCoveringEntry}).
  */
 import { ROUTES } from '@/shared/app/routes';
+import { vendorIconPropsFor } from '@/shared/lib';
 import type { Credential } from '@/shared/credentials/api';
 import { apiScopeCovers, catalogImportRef } from '@/shared/credentials/lib/apiIdentity';
+import type { DiscoveryEntity, WorkspaceDigestRow } from '@/modules/discover/api';
+
+/** `VendorIcon` props for a catalog ⇄ workspace display (initials + gradient key). */
+export interface VendorIconFacets {
+	name: string;
+	vendor?: string;
+	iconUrl?: string | null;
+}
+
+/**
+ * How a catalog entry reads as a primary line + avatar — the SAME on the ledger
+ * row and the preview sheet. When the registry maps the entry to exactly one
+ * workspace API (`matches` of length 1), its humanised {@link WorkspaceDigestRow.title}
+ * and {@link vendorIconPropsFor} win, so a bare-domain `api_id` like `github.com`
+ * reads as the workspace's "GitHub" with the matching avatar colour instead of
+ * the raw domain. Otherwise the entry's own `summary`/`vendor` stand.
+ */
+export function entityDisplay(
+	entity: DiscoveryEntity,
+	matches: readonly WorkspaceDigestRow[] | undefined,
+): { title: string; icon: VendorIconFacets } {
+	const match = matches?.length === 1 ? matches[0] : null;
+	return {
+		title: match?.title ?? entity.summary,
+		icon: match
+			? vendorIconPropsFor({
+					title: match.title,
+					host: match.host,
+					vendor: match.ref.vendor,
+					iconUrl: match.iconUrl,
+				})
+			: { name: entity.summary, vendor: entity.vendor },
+	};
+}
 
 /**
  * Where "Open" goes for an imported catalog entry: the API's hub when the
