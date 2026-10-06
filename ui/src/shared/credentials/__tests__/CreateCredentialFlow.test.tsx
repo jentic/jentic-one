@@ -303,6 +303,89 @@ describe('CreateCredentialFlow', () => {
 		).not.toBeInTheDocument();
 	});
 
+	describe('a catalog API whose spec declares no authentication', () => {
+		const SPEC_URL = 'https://specs.test/holidays/openapi.json';
+		const HOLIDAYS: SelectedApi = {
+			source: 'catalog',
+			registered: false,
+			vendor: 'holidays.test',
+			name: 'main',
+			version: '1.0.0',
+			label: 'Holidays',
+			apiId: 'holidays.test',
+			specUrl: SPEC_URL,
+		};
+		const stubSpec = (spec: Record<string, unknown>): void => {
+			worker.use(http.get(SPEC_URL, () => HttpResponse.json(spec)));
+		};
+		const PUBLIC_SPEC = {
+			openapi: '3.0.0',
+			info: { title: 'Holidays', version: '1.0.0' },
+			paths: { '/holidays': { get: { responses: { '200': { description: 'ok' } } } } },
+			components: { securitySchemes: {} },
+		};
+
+		it('says no authentication is needed instead of asking for a method', async () => {
+			stubSpec(PUBLIC_SPEC);
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					pinnedApi={HOLIDAYS}
+				/>,
+			);
+
+			const note = await screen.findByTestId('credential-no-auth-note');
+			expect(note).toHaveTextContent('No authentication declared');
+			expect(
+				screen.getByRole('button', { name: 'Add without a secret' }),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole('radiogroup', { name: 'Authentication method' }),
+			).not.toBeInTheDocument();
+			expect(screen.queryByLabelText(/^Token/)).not.toBeInTheDocument();
+		});
+
+		it('still offers every method when the operator says it needs a key', async () => {
+			stubSpec(PUBLIC_SPEC);
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					pinnedApi={HOLIDAYS}
+				/>,
+			);
+
+			await userEvent.click(await screen.findByTestId('credential-no-auth-override'));
+
+			const methods = await screen.findByRole('radiogroup', {
+				name: 'Authentication method',
+			});
+			expect(within(methods).getAllByRole('radio').length).toBeGreaterThan(1);
+			expect(screen.queryByTestId('credential-no-auth-note')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Create credential' })).toBeInTheDocument();
+		});
+
+		it('keeps asking when the spec requires security it does not describe', async () => {
+			stubSpec({ ...PUBLIC_SPEC, security: [{ apiKeyAuth: [] }] });
+			renderWithProviders(
+				<CreateCredentialFlow
+					open
+					onClose={vi.fn()}
+					onCreated={vi.fn()}
+					pinnedApi={HOLIDAYS}
+				/>,
+			);
+
+			expect(
+				await screen.findByRole('radiogroup', { name: 'Authentication method' }),
+			).toBeInTheDocument();
+			expect(screen.queryByTestId('credential-no-auth-note')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('a name another credential for the API holds', () => {
 		beforeEach(() => resetApisStore([ACME]));
 

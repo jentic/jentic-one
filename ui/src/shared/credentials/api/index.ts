@@ -517,6 +517,7 @@ export {
 	useApis,
 	useAllApis,
 	useApiSchemes,
+	useNoAuthPicks,
 	useCatalog,
 	useImportCatalogEntry,
 	useImportSpec,

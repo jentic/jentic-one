@@ -16,7 +16,17 @@
  * adds another credential rather than a 409.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
+import {
+	AlertTriangle,
+	ArrowLeft,
+	Check,
+	KeyRound,
+	Loader2,
+	LockOpen,
+	LogIn,
+	Minus,
+	X,
+} from 'lucide-react';
 import {
 	Badge,
 	Button,
@@ -460,6 +470,8 @@ function ActivePane({
 	const wantsNew = count === 0 || selected?.kind === 'new';
 	/** A new credential for this API is one sign-in click — the tray established it. */
 	const newIsSignIn = entry.outcome === 'oauth';
+	/** Its spec declares no authentication, so the new credential carries no secret. */
+	const newIsNoAuth = entry.outcome === 'no-auth';
 	const other = entry.existing.length > 0 ? ' other' : '';
 
 	return (
@@ -547,7 +559,9 @@ function ActivePane({
 				<p className="text-muted-foreground text-xs">
 					{newIsSignIn
 						? 'Sign in once and this API is set up — there is nothing to type in.'
-						: 'This API needs a new credential. Nothing is stored until you save it.'}
+						: newIsNoAuth
+							? "This API's spec declares no authentication, so its credential has no secret to enter."
+							: 'This API needs a new credential. Nothing is stored until you save it.'}
 				</p>
 			)}
 
@@ -595,8 +609,12 @@ function ActivePane({
 						</Button>
 					) : wantsNew ? (
 						<Button size="sm" disabled={working} onClick={onOpenForm}>
-							<KeyRound className="h-4 w-4" />
-							Add credential
+							{newIsNoAuth ? (
+								<LockOpen className="h-4 w-4" />
+							) : (
+								<KeyRound className="h-4 w-4" />
+							)}
+							{newIsNoAuth ? 'Add without a secret' : 'Add credential'}
 						</Button>
 					) : (
 						// Nothing selected yet, which only happens among several: the

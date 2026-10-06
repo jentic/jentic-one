@@ -300,3 +300,41 @@ export function oauth2ScopesFromSchemes(schemes: RawSchemes): ScopeDef[] {
 	}
 	return Array.from(seen, ([name, description]) => ({ name, description }));
 }
+
+/**
+ * Whether an OpenAPI document requires security anywhere — a global
+ * `security` list or one on any operation — with at least one non-empty
+ * requirement (`{}` means "anonymous allowed", so it requires nothing).
+ */
+export function specRequiresSecurity(spec: Record<string, unknown>): boolean {
+	const requires = (security: unknown): boolean =>
+		Array.isArray(security) &&
+		security.some(
+			(req) => req != null && typeof req === 'object' && Object.keys(req).length > 0,
+		);
+	if (requires(spec.security)) return true;
+	const paths = spec.paths;
+	if (paths == null || typeof paths !== 'object') return false;
+	return Object.values(paths as Record<string, unknown>).some(
+		(item) =>
+			item != null &&
+			typeof item === 'object' &&
+			Object.values(item as Record<string, unknown>).some(
+				(op) =>
+					op != null &&
+					typeof op === 'object' &&
+					requires((op as { security?: unknown }).security),
+			),
+	);
+}
+
+/**
+ * Whether a read spec declares no authentication at all: no security scheme
+ * and no requirement. Only "the spec says none" — an API can still need a key
+ * its spec leaves out, so callers offer a way to set one up anyway.
+ */
+export function specDeclaresNoAuth(spec: Record<string, unknown>): boolean {
+	const schemes = (spec.components as { securitySchemes?: RawSchemes } | undefined)
+		?.securitySchemes;
+	return parseSchemeOptions(schemes ?? null).length === 0 && !specRequiresSecurity(spec);
+}

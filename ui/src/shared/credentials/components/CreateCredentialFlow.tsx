@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Download, Info, Loader2, LockOpen, Upload, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
@@ -58,6 +58,7 @@ import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
+	specDeclaresNoAuth,
 	type OAuth2FlowDef,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
@@ -215,6 +216,11 @@ export function CreateCredentialFlow({
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
+	/**
+	 * The operator chose to set up authentication although the spec declares
+	 * none — a spec can be wrong, so "no authentication" is a default, not a lock.
+	 */
+	const [authOverride, setAuthOverride] = useState(false);
 	const [state, setState] = useState<CredentialFormState>(seedForm);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
@@ -323,6 +329,27 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedApi, schemesResult.loading, schemesResult.options.length]);
 
+	// A spec that was read and declares no security scheme (and no global
+	// requirement) is an API called without authentication — not an unknown
+	// one. Offering a token for it would make the operator invent a secret the
+	// API never checks; an unreadable spec still falls back to free choice.
+	const declaresNoAuth =
+		!manualMode &&
+		!!selectedApi &&
+		!schemesResult.loading &&
+		!schemesResult.error &&
+		schemesResult.spec != null &&
+		specDeclaresNoAuth(schemesResult.spec);
+	const noAuthDetected = declaresNoAuth && !authOverride;
+
+	useEffect(() => {
+		if (noAuthDetected) setType(CredentialType.NO_AUTH);
+		else if (type === CredentialType.NO_AUTH)
+			setType(initialType ?? CredentialType.BEARER_TOKEN);
+		// `type` is read, not tracked: only a change in what the spec says moves it.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [noAuthDetected]);
+
 	const patch = (p: Partial<CredentialFormState>): void => {
 		setState((s) => ({ ...s, ...p }));
 	};
@@ -375,6 +402,7 @@ export function CreateCredentialFlow({
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
 		formTouched.current = false;
+		setAuthOverride(false);
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
@@ -405,6 +433,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(api);
 		setSelectedVendor(null);
 		setManualMode(false);
+		setAuthOverride(false);
 		setPinnableVersion(pinnableVersionOf(api));
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
@@ -607,13 +636,14 @@ export function CreateCredentialFlow({
 	//    deduped & in canonical order; we still render the single card so the
 	//    user sees what was detected and can confirm.
 	const typeOptions = useMemo<CredentialType[]>(() => {
+		if (noAuthDetected) return [CredentialType.NO_AUTH];
 		if (showManualType) return [...CREDENTIAL_TYPE_ORDER];
 		const fromSpec = schemesResult.options
 			.map((o) => schemeTypeToCredentialType(o.type))
 			.filter((t): t is CredentialType => t != null);
 		const deduped = CREDENTIAL_TYPE_ORDER.filter((t) => fromSpec.includes(t));
 		return deduped.length > 0 ? deduped : [type];
-	}, [showManualType, schemesResult.options, type]);
+	}, [noAuthDetected, showManualType, schemesResult.options, type]);
 
 	const detectedSingle = !showManualType && typeOptions.length === 1;
 
@@ -724,7 +754,7 @@ export function CreateCredentialFlow({
 					loading={createMutation.isPending || importMutation.isPending}
 					disabled={specPending}
 				>
-					Create credential
+					{noAuthDetected ? 'Add without a secret' : 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -952,12 +982,23 @@ export function CreateCredentialFlow({
 									</p>
 								)}
 
-								<AuthTypeCards
-									options={typeOptions}
-									value={type}
-									onChange={handleTypeChange}
-									detected={detectedSingle}
-								/>
+								{noAuthDetected ? (
+									<NoAuthNote
+										onSetUpAnyway={(): void => {
+											setAuthOverride(true);
+											handleTypeChange(
+												initialType ?? CredentialType.BEARER_TOKEN,
+											);
+										}}
+									/>
+								) : (
+									<AuthTypeCards
+										options={typeOptions}
+										value={type}
+										onChange={handleTypeChange}
+										detected={detectedSingle}
+									/>
+								)}
 
 								{serverVars.length > 0 && (
 									<ServerVariablesSection
@@ -1113,6 +1154,48 @@ function FormSectionLabel({ children }: { children: React.ReactNode }) {
 		<p className="text-foreground-faint px-0.5 text-[10.5px] font-bold tracking-[0.08em] uppercase">
 			{children}
 		</p>
+	);
+}
+
+/**
+ * The auth section for an API whose spec declares no authentication. States
+ * only what is known — the spec declares none, not that the API needs none —
+ * says what saving makes (a credential with no secret, for binding), that
+ * agents still need access granted, and offers the method picker for a spec
+ * that leaves its auth out.
+ */
+function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
+	return (
+		<div
+			className="bg-surface-tonal flex items-start gap-3 rounded-lg p-3.5"
+			data-testid="credential-no-auth-note"
+		>
+			<span
+				aria-hidden="true"
+				className="bg-surface-field text-foreground-sub grid h-8 w-8 shrink-0 place-items-center rounded-full"
+			>
+				<LockOpen className="h-4 w-4" />
+			</span>
+			<div className="min-w-0 flex-1">
+				<p className="text-foreground text-sm font-medium">No authentication declared</p>
+				<p className="text-muted-foreground mt-0.5 text-xs leading-snug">
+					This API&apos;s spec lists no way to sign in, so there&apos;s no secret to
+					enter. Saving adds a credential without one, which you can then bind to agents —
+					they still need access granted before they can call it.
+				</p>
+				<p className="text-muted-foreground mt-2.5 text-xs">
+					Does the API actually need a key or token?{' '}
+					<button
+						type="button"
+						onClick={onSetUpAnyway}
+						className="text-primary rounded-sm font-semibold underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+						data-testid="credential-no-auth-override"
+					>
+						Choose an authentication method
+					</button>
+				</p>
+			</div>
+		</div>
 	);
 }
 

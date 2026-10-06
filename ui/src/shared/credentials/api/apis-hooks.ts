@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	useInfiniteQuery,
 	useMutation,
+	useQueries,
 	useQuery,
 	useQueryClient,
 	type QueryClient,
@@ -41,6 +42,7 @@ import {
 } from './apis';
 import {
 	parseSchemeOptions,
+	specDeclaresNoAuth,
 	type RawSchemes,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
@@ -311,6 +313,48 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 				? publicSpecQuery.error
 				: null) as Error | null,
 	};
+}
+
+/**
+ * Which picks' specs declare no authentication, keyed by `apiRefKey`-style
+ * `vendor/name`. Reads each pick's spec through the same cached queries as
+ * {@link useApiSchemes}, so the credential form that follows opens on a warm
+ * cache. A pick whose spec isn't read yet (or can't be) is absent — unknown,
+ * never assumed open. A local draft has no served spec, so it is skipped.
+ */
+export function useNoAuthPicks(apis: SelectedApi[]): ReadonlySet<string> {
+	const results = useQueries({
+		queries: apis.map((api) =>
+			api.source === 'catalog'
+				? {
+						queryKey: apiPickerKeys.publicSpec(api.specUrl ?? ''),
+						queryFn: () => fetchPublicSpec(api.specUrl as string),
+						enabled: !!api.specUrl,
+						staleTime: 5 * 60 * 1000,
+						retry: false,
+					}
+				: {
+						queryKey: apiPickerKeys.apiSpec(api.vendor, api.name, api.version),
+						queryFn: () =>
+							getApiSpec(api.vendor, api.name, api.version) as Promise<
+								Record<string, unknown>
+							>,
+						enabled: api.hasLiveRevision !== false,
+						staleTime: 5 * 60 * 1000,
+					},
+		),
+	});
+	const flags = results.map(
+		(r) => r.data != null && specDeclaresNoAuth(r.data as Record<string, unknown>),
+	);
+	const signature = flags.map((f) => (f ? '1' : '0')).join('');
+	const keys = apis.map((a) => `${a.vendor}/${a.name}`).join('\u0000');
+	return useMemo(
+		() => new Set(apis.filter((_, i) => flags[i]).map((a) => `${a.vendor}/${a.name}`)),
+		// Recomputed only when a pick or its answer changes, so the Set keeps identity.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[keys, signature],
+	);
 }
 
 /**

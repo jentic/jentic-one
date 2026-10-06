@@ -21,6 +21,7 @@ import {
 	Check,
 	CircleDot,
 	CirclePlus,
+	LockOpen,
 	LogIn,
 	Plus,
 	Upload,
@@ -37,7 +38,7 @@ import {
 	SheetPrimitive,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import type { SelectedApi } from '@/shared/credentials/api';
+import { useNoAuthPicks, type SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
@@ -64,6 +65,7 @@ const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }
 	oauth: { icon: LogIn, tone: 'text-warning' },
 	choose: { icon: CircleDot, tone: 'text-caution' },
 	form: { icon: CirclePlus, tone: 'text-muted-foreground' },
+	'no-auth': { icon: LockOpen, tone: 'text-muted-foreground' },
 };
 
 /** The row's outcome as an icon and a short line — lighter than a pill, so the
@@ -149,7 +151,14 @@ export function AddApisTray({
 	}, [seed]);
 	const editingBatch = seed != null;
 
-	const { inputs: preflightInputs, credentialsSource } = usePreflightInputs(bindings);
+	const { inputs: baseInputs, credentialsSource } = usePreflightInputs(bindings);
+	// Each pick's spec is read as it's ticked, so a no-auth API says so here —
+	// before the setup queue — instead of reading "Needs a new credential".
+	const noAuthKeys = useNoAuthPicks(picks);
+	const preflightInputs = useMemo(
+		() => ({ ...baseInputs, noAuthKeys }),
+		[baseInputs, noAuthKeys],
+	);
 	const items = useMemo(() => preflightApis(picks, preflightInputs), [picks, preflightInputs]);
 	const tally = useMemo(() => preflightTally(items), [items]);
 
