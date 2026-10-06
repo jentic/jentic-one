@@ -64,6 +64,7 @@ import { useAgentStreamOptional } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
 import { CredentialType, useCreateCredential, type Credential } from '@/shared/credentials/api';
 import { initialApiFor } from '@/shared/credentials/lib/initialApiFor';
+import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
 import {
 	CreateCredentialFlow,
@@ -99,6 +100,14 @@ import {
 	useBindingAccessStates,
 	type BindingAccessState,
 } from '@/shared/credentials/api/vendors-hooks';
+
+/** "Bearer Token", "Bearer Token and API Key" — or "security schemes" when none are listed. */
+function schemeList(schemes: readonly string[]): string {
+	const labels = schemes.map(schemeTypeLabel);
+	if (labels.length === 0) return 'security schemes';
+	if (labels.length === 1) return labels[0];
+	return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
 
 function HubCard({
 	title,
@@ -370,11 +379,13 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 										className="text-muted-foreground h-3.5 w-3.5 shrink-0"
 										aria-hidden="true"
 									/>
-									No credential needed
+									{auth.requirement === 'optional'
+										? 'Credential optional'
+										: 'No credential needed'}
 								</p>
 								<p className="text-muted-foreground text-sm">
 									{auth.requirement === 'optional'
-										? 'It declares security schemes, but none of its operations require one.'
+										? `It declares ${schemeList(api.securitySchemes)}, but no operation requires it. No credential is bound yet, so no agent can call it.`
 										: 'It doesn’t use authentication.'}{' '}
 									{offerNoAuthAccess
 										? 'Give an agent access to let it call this API — no secret to set up.'

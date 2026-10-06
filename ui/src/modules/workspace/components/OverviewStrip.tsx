@@ -11,7 +11,11 @@
 import { useState } from 'react';
 import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
 import { Badge, Button, ConfirmDialog } from '@/shared/ui';
-import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
+import {
+	useApiAuthRequirement,
+	useReimportFromCatalog,
+	useSnoozeCatalogUpdate,
+} from '@/modules/workspace/api';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
 import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 
@@ -58,6 +62,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	const key: ApiKey = api.api;
 	const { reimport, isReimporting } = useReimportFromCatalog(key);
 	const { snooze, isSnoozing } = useSnoozeCatalogUpdate(key);
+	const auth = useApiAuthRequirement(api);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	// Re-import adopts the upstream spec. For a catalog-origin API it's a plain
@@ -145,12 +150,17 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 					label="Security"
 					// A draft declares no schemes until a revision is promoted, so an
 					// empty list there means "not known yet", not "none". Known
-					// schemes read as friendly names ("Bearer Token"), not raw ids.
+					// schemes read as friendly names ("Bearer Token"), not raw ids,
+					// marked optional when no operation requires one (the hub's
+					// reading). An empty live list says what the spec declares —
+					// "None declared" — rather than ruling out a credential.
 					value={
 						api.securitySchemes.length > 0
-							? api.securitySchemes.map(schemeTypeLabel).join(', ')
+							? `${api.securitySchemes.map(schemeTypeLabel).join(', ')}${
+									auth.requirement === 'optional' ? ' (optional)' : ''
+								}`
 							: hasLive
-								? 'None'
+								? 'None declared'
 								: 'Known once live'
 					}
 				/>

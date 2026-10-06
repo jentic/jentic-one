@@ -262,11 +262,11 @@ describe('OverviewStrip — Security stat', () => {
 		expect(screen.getByText('API Key, Basic Auth')).toBeInTheDocument();
 	});
 
-	it('reads "None" for a live API with no schemes', () => {
+	it('reads "None declared" for a live API with no schemes', () => {
 		renderWithProviders(
 			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: 'rev_1' })} />,
 		);
-		expect(screen.getByText('None')).toBeInTheDocument();
+		expect(screen.getByText('None declared')).toBeInTheDocument();
 	});
 
 	it('reads "Known once live" for a draft with no schemes yet', () => {
@@ -274,6 +274,6 @@ describe('OverviewStrip — Security stat', () => {
 			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: null })} />,
 		);
 		expect(screen.getByText('Known once live')).toBeInTheDocument();
-		expect(screen.queryByText('None')).not.toBeInTheDocument();
+		expect(screen.queryByText(/^None/)).not.toBeInTheDocument();
 	});
 });

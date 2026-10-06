@@ -323,7 +323,9 @@ export function useApiSpec(
  * whether any operation requires one, so the hub reads the resolved live spec
  * (the same `useApiSpec` cache the Operations tab and spec viewer share) and
  * asks it (`specAuthRequirement`). Until that read lands — or when it fails,
- * or the API has no live revision — declared schemes count as required.
+ * or the API has no live revision — declared schemes count as required. An
+ * API that declares schemes is never read as needing none: a spec that doesn't
+ * require them makes the credential `optional`.
  */
 export function useApiAuthRequirement(api: WorkspaceApi): {
 	requirement: SpecAuthRequirement;
@@ -335,7 +337,10 @@ export function useApiAuthRequirement(api: WorkspaceApi): {
 	const declared = api.securitySchemes.length > 0;
 	const spec = useApiSpec(api.api, declared && api.currentRevisionId !== null);
 	const fromSpec = spec.data !== undefined ? specAuthRequirement(spec.data) : null;
-	if (fromSpec != null) return { requirement: fromSpec, pending: false, source: 'spec' };
+	if (fromSpec != null) {
+		const requirement = fromSpec === 'none' && declared ? 'optional' : fromSpec;
+		return { requirement, pending: false, source: 'spec' };
+	}
 	return {
 		requirement: declared ? 'required' : 'none',
 		pending: spec.isLoading,

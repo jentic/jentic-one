@@ -564,7 +564,7 @@ describe('ApiDetailPage', () => {
 				expect(screen.getByTestId('hub-access-add-credential')).toBeInTheDocument();
 			});
 
-			it('says no credential is needed when schemes are declared but not required', async () => {
+			it('calls the credential optional when schemes are declared but not required', async () => {
 				resetCredentialsStore([]);
 				worker.use(
 					http.get(STRIPE_SPEC_URL, () =>
@@ -580,14 +580,39 @@ describe('ApiDetailPage', () => {
 				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
 
 				const state = await screen.findByTestId('hub-access-no-auth');
-				expect(state).toHaveTextContent('No credential needed');
-				expect(state).toHaveTextContent(/none of its operations require one/i);
+				// Declared schemes never read as "No credential needed".
+				expect(state).toHaveTextContent('Credential optional');
+				expect(state).not.toHaveTextContent('No credential needed');
+				expect(state).toHaveTextContent(
+					/declares Bearer Token, but no operation requires it/i,
+				);
+				// The strip agrees with the card.
+				expect(screen.getByText('Bearer Token (optional)')).toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-none')).not.toBeInTheDocument();
 				// A credential is optional here, so it can still be added — and
 				// an agent can be given access without one.
 				expect(screen.getByTestId('hub-access-add-credential')).toBeInTheDocument();
 				expect(screen.getByTestId('hub-access-give-agent-access')).toBeVisible();
 				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
+			});
+
+			it('calls a declared scheme optional even when the live spec carries none', async () => {
+				resetCredentialsStore([]);
+				worker.use(
+					http.get(STRIPE_SPEC_URL, () =>
+						HttpResponse.json({
+							openapi: '3.1.0',
+							info: { title: 'Stripe', version: '2024-01-01' },
+							paths: { '/v1/charges': { get: { operationId: 'GetCharges' } } },
+						}),
+					),
+				);
+				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+
+				const state = await screen.findByTestId('hub-access-no-auth');
+				expect(state).toHaveTextContent('Credential optional');
+				expect(state).not.toHaveTextContent(/doesn’t use authentication/i);
+				expect(screen.getByText('Bearer Token (optional)')).toBeInTheDocument();
 			});
 
 			it('says no credential is needed, and offers none, when nothing is declared', async () => {
