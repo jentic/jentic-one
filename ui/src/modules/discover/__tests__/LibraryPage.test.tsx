@@ -774,7 +774,7 @@ describe('LibraryPage', () => {
 		);
 		await screen.findByText('abc.com');
 
-		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 		fireEvent.click(within(rail).getByRole('button', { name: /^Z — / }));
 		fireEvent.click(await screen.findByRole('button', { name: 'View zoom.us' }));
 
@@ -987,7 +987,7 @@ describe('LibraryPage', () => {
 
 		renderWithProviders(<LibraryPage />);
 		await screen.findByTestId('catalog-ledger');
-		const rail = await screen.findByRole('navigation', { name: 'Jump to letter' });
+		const rail = await screen.findByRole('toolbar', { name: 'Jump to letter' });
 		const jumpTo = async (letter: string) => {
 			const btn = await within(rail).findByRole('button', {
 				name: new RegExp(`^${letter} — `),

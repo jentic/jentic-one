@@ -358,7 +358,7 @@ describe('CatalogLedger', () => {
 			scrollIntoView.mockRestore();
 		});
 		renderWithProviders(<Harness />);
-		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 		// # (0–9 & symbols) is the LAST rail entry, after Z.
 		const letters = [...rail.querySelectorAll('[data-letter]')].map((el) =>
 			el.getAttribute('data-letter'),
@@ -377,7 +377,7 @@ describe('CatalogLedger', () => {
 		onTestFinished(() => scrollTo.mockRestore());
 		const user = userEvent.setup();
 		renderWithProviders(<Harness />);
-		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 		const buttons = within(rail).getAllByRole('button');
 		// One tab stop for the whole rail.
 		expect(buttons.filter((b) => b.tabIndex === 0)).toHaveLength(1);
@@ -474,7 +474,7 @@ describe('CatalogLedger', () => {
 			[api('zoo.us'), api('{x}.example.com')],
 		];
 		renderWithProviders(<PagedHarness pages={pages} onLoadMore={(b) => loads.push(b)} />);
-		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 		fireEvent.click(within(rail).getByRole('button', { name: /^M — / }));
 		expect(await screen.findByTestId('catalog-seek-status')).toHaveTextContent(
 			'Loading APIs under M…',
@@ -502,6 +502,32 @@ describe('CatalogLedger', () => {
 		expect(all.slice(-2)).toEqual(['catalog-letter-Z', 'catalog-letter-num']);
 	});
 
+	it('a landing that arrives later leaves focus alone once the reader has moved on', async () => {
+		const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+		onTestFinished(() => scrollTo.mockRestore());
+		const pages = [
+			[api('abc.com'), api('acme.com')],
+			[api('box.com'), api('cat.com')],
+			[api('mapbox.com'), api('nyt.com')],
+		];
+		renderWithProviders(
+			<>
+				<input aria-label="Search" />
+				<PagedHarness pages={pages} onLoadMore={() => {}} />
+			</>,
+		);
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
+		expect(rail).toHaveAttribute('aria-orientation', 'vertical');
+		const m = within(rail).getByRole('button', { name: /^M — / });
+		m.focus();
+		fireEvent.click(m);
+		// While M loads, the reader starts typing a search.
+		screen.getByRole('textbox', { name: 'Search' }).focus();
+		await waitFor(() => expect(document.getElementById('catalog-letter-M')).not.toBeNull());
+		await waitFor(() => expect(screen.queryByTestId('catalog-seek-status')).toBeNull());
+		expect(screen.getByRole('textbox', { name: 'Search' })).toHaveFocus();
+	});
+
 	it('jumps by starting a range at the letter (one page), then fills back a letter at a time', async () => {
 		const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 		onTestFinished(() => scrollTo.mockRestore());
@@ -518,7 +544,7 @@ describe('CatalogLedger', () => {
 				onJump={(k) => jumps.push(k)}
 			/>,
 		);
-		const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+		const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 		fireEvent.click(within(rail).getByRole('button', { name: /^M — / }));
 		await waitFor(() => expect(document.getElementById('catalog-letter-M')).not.toBeNull());
 		// One jump, no paging through the head.
@@ -580,7 +606,7 @@ describe('CatalogLedger', () => {
 			});
 			renderWithProviders(<ScrollerHarness entities={lettered} />);
 			const scroller = document.getElementById('app-scroll')!;
-			const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+			const rail = screen.getByRole('toolbar', { name: 'Jump to letter' });
 			fireEvent.click(within(rail).getByRole('button', { name: /^C — / }));
 			expect(scroller.scrollTop).toBeGreaterThan(0);
 			return scroller;

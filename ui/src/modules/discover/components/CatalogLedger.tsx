@@ -493,10 +493,13 @@ export function CatalogLedger({
 		};
 	}, [model]);
 
+	const railRef = useRef<HTMLDivElement | null>(null);
 	/**
 	 * Scroll a letter's heading under the toolbar. A rail jump (`focus`) also
 	 * moves focus to that heading, so keyboard and screen-reader users land
-	 * on the list instead of staying on the rail.
+	 * on the list instead of staying on the rail — but only while focus is
+	 * still on the rail (or nowhere): a seek or jump can land seconds later,
+	 * and by then the reader may be typing a search or working in a sheet.
 	 */
 	const scrollToLetter = useCallback(
 		(letter: RailLetter, { focus = false }: { focus?: boolean } = {}) => {
@@ -519,7 +522,10 @@ export function CatalogLedger({
 				behavior: reduce ? 'auto' : 'smooth',
 			});
 			setCurrentLetter(letter);
-			if (focus) {
+			const active = document.activeElement;
+			const focusIsFree =
+				!active || active === document.body || !!railRef.current?.contains(active);
+			if (focus && focusIsFree) {
 				el.tabIndex = -1;
 				el.focus({ preventScroll: true });
 			}
@@ -811,6 +817,7 @@ export function CatalogLedger({
 	return (
 		<div className="grid grid-cols-[24px_minmax(0,1fr)] gap-2.5">
 			<AlphaRail
+				ref={railRef}
 				// On a short viewport the 27 letters scroll inside the rail rather
 				// than running under the fold.
 				className="sticky top-[68px] max-h-[calc(100dvh-8.5rem)] [scrollbar-width:none] self-start overflow-y-auto"

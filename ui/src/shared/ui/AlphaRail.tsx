@@ -7,12 +7,12 @@
  * and marked `aria-current`. A `busy` letter (the list is loading toward
  * it) pulses and is marked `aria-busy`. Stays sticky beside the list.
  *
- * Keyboard: the rail is ONE tab stop (roving tabindex — the last-focused
- * letter, else the current one, else the first enabled); Arrow Up/Down move
- * between enabled letters, Home/End jump to the ends, Enter/Space jump the
- * list. Each letter is a 24×24 target (WCAG 2.5.8).
+ * Keyboard: the rail is a vertical `toolbar` — ONE tab stop (roving
+ * tabindex — the last-focused letter, else the current one, else the first
+ * enabled); Arrow Up/Down move between enabled letters, Home/End jump to the
+ * ends, Enter/Space jump the list. Each letter is a 24×24 target (WCAG 2.5.8).
  */
-import { useState, type KeyboardEvent } from 'react';
+import { useState, type KeyboardEvent, type Ref } from 'react';
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/Button';
 import { Tooltip } from '@/shared/ui/Tooltip';
@@ -34,9 +34,10 @@ interface AlphaRailProps {
 	/** A letter the list is still loading toward (pulses, `aria-busy`). */
 	busy?: string | null;
 	onJump: (key: string) => void;
-	/** Accessible name for the nav. Default "Jump to letter". */
+	/** Accessible name for the toolbar. Default "Jump to letter". */
 	label?: string;
 	className?: string;
+	ref?: Ref<HTMLDivElement>;
 }
 
 export function AlphaRail({
@@ -46,6 +47,7 @@ export function AlphaRail({
 	onJump,
 	label = 'Jump to letter',
 	className,
+	ref,
 }: AlphaRailProps) {
 	const [focusKey, setFocusKey] = useState<string | null>(null);
 	const enabled = letters.filter((l) => l.enabled);
@@ -76,7 +78,10 @@ export function AlphaRail({
 	};
 
 	return (
-		<nav
+		<div
+			ref={ref}
+			role="toolbar"
+			aria-orientation="vertical"
 			aria-label={label}
 			data-testid="alpha-rail"
 			className={cn('flex flex-col items-center pt-1', className)}
@@ -134,6 +139,6 @@ export function AlphaRail({
 					</Tooltip>
 				);
 			})}
-		</nav>
+		</div>
 	);
 }
