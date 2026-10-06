@@ -236,10 +236,10 @@ func (RuleSetAttachRequest) RequiredFields() []string       { return []string{"r
 func (RuleSetCreateRequest) RequiredFields() []string       { return []string{"name"} }
 func (RuleSetListResponse) RequiredFields() []string        { return []string{"data", "has_more"} }
 func (RuleSetResponse) RequiredFields() []string {
-	return []string{"binding_count", "created_at", "name", "rule_set_id", "rules"}
+	return []string{"binding_count", "created_at", "curated", "name", "rule_set_id", "rules"}
 }
 func (RuleSetSummaryResponse) RequiredFields() []string {
-	return []string{"created_at", "name", "rule_count", "rule_set_id"}
+	return []string{"created_at", "curated", "name", "rule_count", "rule_set_id"}
 }
 func (SearchLinksResponse) RequiredFields() []string        { return []string{"inspect"} }
 func (SearchRequest) RequiredFields() []string              { return []string{"query"} }

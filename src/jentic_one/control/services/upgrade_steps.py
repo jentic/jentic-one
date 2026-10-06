@@ -7,11 +7,15 @@ runner means every install path that already migrates (the Helm pre-upgrade
 hook, ``jenticctl``, ``make migrate``, a hand-run upgrade) performs it before
 the new version serves traffic.
 
-**No steps are registered in this release.** The theme-5 steps
-(``theme5_retire_toolkit_keys``, ``theme5_flatten_toolkits``) were deleted
-with the toolkit tables they read (Phase 6b); the ledger (``upgrade_steps``)
-and this runner stay for the next release's data steps. Rows the theme-5 steps
-recorded remain in the ledger as history.
+Registered steps:
+
+- ``rule_sets_mark_curated`` marks the shared permission rule sets created by
+  a system actor or an ``org:admin`` as curated
+  (:class:`~jentic_one.control.services.rule_set_curation.RuleSetCurationService`).
+
+The theme-5 steps (``theme5_retire_toolkit_keys``,
+``theme5_flatten_toolkits``) no longer exist; rows they recorded remain in the
+ledger as history.
 
 A step is a coroutine taking the :class:`Context` and returning an
 :class:`UpgradeStepOutcome`. The service:
@@ -37,6 +41,7 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
+from jentic_one.control.services.rule_set_curation import RuleSetCurationService
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -76,8 +81,22 @@ class UpgradeStepSpec:
     run: StepFn
 
 
-#: Every step, in run order. Empty since theme-5 Phase 6b (see module docstring).
-STEPS: tuple[UpgradeStepSpec, ...] = ()
+RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
+
+
+async def _mark_curated_rule_sets(ctx: Context) -> UpgradeStepOutcome:
+    result = await RuleSetCurationService(ctx).mark_existing()
+    return UpgradeStepOutcome(
+        name=RULE_SETS_MARK_CURATED,
+        action="performed",
+        summary={"marked": result.marked, "admin_creators": result.admin_creators},
+    )
+
+
+#: Every step, in run order.
+STEPS: tuple[UpgradeStepSpec, ...] = (
+    UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets),
+)
 
 #: Names of deleted steps that ``--skip-upgrade-step`` still accepts (as a
 #: no-op) so a deployment that pinned one in its migrate arguments on 0.40

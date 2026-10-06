@@ -7732,6 +7732,11 @@
             ],
             "title": "Created By"
           },
+          "curated": {
+            "description": "True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.",
+            "title": "Curated",
+            "type": "boolean"
+          },
           "description": {
             "anyOf": [
               {
@@ -7764,6 +7769,7 @@
           "name",
           "rules",
           "binding_count",
+          "curated",
           "created_at"
         ],
         "title": "RuleSetResponse",
@@ -7787,6 +7793,11 @@
               }
             ],
             "title": "Created By"
+          },
+          "curated": {
+            "description": "True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.",
+            "title": "Curated",
+            "type": "boolean"
           },
           "description": {
             "anyOf": [
@@ -7816,6 +7827,7 @@
           "rule_set_id",
           "name",
           "rule_count",
+          "curated",
           "created_at"
         ],
         "title": "RuleSetSummaryResponse",
@@ -24586,7 +24598,7 @@
         ]
       },
       "put": {
-        "description": "Point the binding at a shared rule set (idempotent PUT).\n\nWhile attached, the set's ordered list is the binding's effective policy\nand its inline rules are dormant — `permissions:test` evaluates the set.\nThe set must exist (404 `rule_set_not_found`).",
+        "description": "Point the binding at a shared rule set (idempotent PUT).\n\nWhile attached, the set's ordered list is the binding's effective policy\nand its inline rules are dormant — `permissions:test` evaluates the set.\nThe set must exist (404 `rule_set_not_found`). The caller must be the\nset's creator or an org admin, unless the set is curated (created by an\norg admin), which any caller who may write the binding's rules can\nattach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the\nbinding already points at is a no-op.",
         "operationId": "attachAgentCredentialRuleSet",
         "parameters": [
           {
@@ -31783,7 +31795,7 @@
         ]
       },
       "patch": {
-        "description": "Rename or re-describe a rule set (creator or org admin).",
+        "description": "Rename or re-describe a rule set.\n\nA curated set is editable by an org admin; any other set by its creator\nor an org admin (403 `rule_set_access_denied` otherwise).",
         "operationId": "updatePermissionRuleSet",
         "parameters": [
           {

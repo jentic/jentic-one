@@ -5085,6 +5085,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5106,6 +5110,7 @@ components:
       - name
       - rules
       - binding_count
+      - curated
       - created_at
       title: RuleSetResponse
       type: object
@@ -5121,6 +5126,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5139,6 +5148,7 @@ components:
       - rule_set_id
       - name
       - rule_count
+      - curated
       - created_at
       title: RuleSetSummaryResponse
       type: object
@@ -13598,7 +13608,11 @@ paths:
 
         While attached, the set's ordered list is the binding's effective policy
         and its inline rules are dormant — `permissions:test` evaluates the set.
-        The set must exist (404 `rule_set_not_found`).
+        The set must exist (404 `rule_set_not_found`). The caller must be the
+        set's creator or an org admin, unless the set is curated (created by an
+        org admin), which any caller who may write the binding's rules can
+        attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+        binding already points at is a no-op.
       operationId: attachAgentCredentialRuleSet
       parameters:
       - in: path
@@ -17193,7 +17207,11 @@ paths:
       tags:
       - Permission Rule Sets
     patch:
-      description: Rename or re-describe a rule set (creator or org admin).
+      description: |-
+        Rename or re-describe a rule set.
+
+        A curated set is editable by an org admin; any other set by its creator
+        or an org admin (403 `rule_set_access_denied` otherwise).
       operationId: updatePermissionRuleSet
       parameters:
       - in: path

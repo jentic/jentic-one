@@ -2849,23 +2849,29 @@ type RuleSetListResponse struct {
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
-	BindingCount int                        `json:"binding_count"`
-	CreatedAt    time.Time                  `json:"created_at"`
-	CreatedBy    *string                    `json:"created_by,omitempty"`
-	Description  *string                    `json:"description,omitempty"`
-	Name         string                     `json:"name"`
-	RuleSetId    string                     `json:"rule_set_id"`
-	Rules        []PermissionRuleReadSchema `json:"rules"`
+	BindingCount int       `json:"binding_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    *string   `json:"created_by,omitempty"`
+
+	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	Curated     bool                       `json:"curated"`
+	Description *string                    `json:"description,omitempty"`
+	Name        string                     `json:"name"`
+	RuleSetId   string                     `json:"rule_set_id"`
+	Rules       []PermissionRuleReadSchema `json:"rules"`
 }
 
 // RuleSetSummaryResponse Rule set list entry.
 type RuleSetSummaryResponse struct {
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   *string   `json:"created_by,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Name        string    `json:"name"`
-	RuleCount   int       `json:"rule_count"`
-	RuleSetId   string    `json:"rule_set_id"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy *string   `json:"created_by,omitempty"`
+
+	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	Curated     bool    `json:"curated"`
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+	RuleCount   int     `json:"rule_count"`
+	RuleSetId   string  `json:"rule_set_id"`
 }
 
 // RuleSetUpdateRequest Rename or re-describe a rule set.
@@ -5711,7 +5717,11 @@ type ClientInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5724,7 +5734,11 @@ type ClientInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6684,7 +6698,10 @@ type ClientInterface interface {
 
 	// UpdatePermissionRuleSetWithBody Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6693,7 +6710,10 @@ type ClientInterface interface {
 
 	// UpdatePermissionRuleSet Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9471,7 +9491,11 @@ func (c *Client) DetachAgentCredentialRuleSet(ctx context.Context, credentialId 
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9494,7 +9518,11 @@ func (c *Client) AttachAgentCredentialRuleSetWithBody(ctx context.Context, crede
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11104,7 +11132,10 @@ func (c *Client) GetPermissionRuleSet(ctx context.Context, ruleSetId string, req
 
 // UpdatePermissionRuleSetWithBody Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes any type of body and a specified content type.
 //
@@ -11123,7 +11154,10 @@ func (c *Client) UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId 
 
 // UpdatePermissionRuleSet Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -21861,7 +21895,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21874,7 +21912,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22892,7 +22934,10 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22901,7 +22946,10 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePermissionRuleSetWithResponse Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -38776,7 +38824,11 @@ func (c *ClientWithResponses) DetachAgentCredentialRuleSetWithResponse(ctx conte
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38795,7 +38847,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithBodyWithResponse(c
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40203,7 +40259,10 @@ func (c *ClientWithResponses) GetPermissionRuleSetWithResponse(ctx context.Conte
 
 // UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40218,7 +40277,10 @@ func (c *ClientWithResponses) UpdatePermissionRuleSetWithBodyWithResponse(ctx co
 
 // UpdatePermissionRuleSetWithResponse Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

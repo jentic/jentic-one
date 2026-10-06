@@ -131,7 +131,10 @@ export class PermissionRuleSetsService {
     }
     /**
      * Update permission rule set
-     * Rename or re-describe a rule set (creator or org admin).
+     * Rename or re-describe a rule set.
+     *
+     * A curated set is editable by an org admin; any other set by its creator
+     * or an org admin (403 `rule_set_access_denied` otherwise).
      * @returns RuleSetResponse Successful Response
      * @throws ApiError
      */

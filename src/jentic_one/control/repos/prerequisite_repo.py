@@ -6,10 +6,11 @@ control module never imports admin ORM models.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import NamedTuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -49,6 +50,22 @@ class PrerequisiteRepository:
             {"user_id": user_id},
         )
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def filter_user_ids_with_permission(
+        session: AsyncSession, *, user_ids: Sequence[str], permission: str
+    ) -> set[str]:
+        """Return the subset of ``user_ids`` holding ``permission`` as a direct grant (admin DB)."""
+        if not user_ids:
+            return set()
+        result = await session.execute(
+            text(
+                "SELECT DISTINCT user_id FROM user_permission_grants "
+                "WHERE permission = :permission AND user_id IN :user_ids"
+            ).bindparams(bindparam("user_ids", expanding=True)),
+            {"permission": permission, "user_ids": list(user_ids)},
+        )
+        return {str(row[0]) for row in result.fetchall()}
 
     @staticmethod
     async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:

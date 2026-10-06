@@ -1,10 +1,9 @@
 """Integration tests for ``UpgradeStepService`` — the post-migration step ledger.
 
 Runs against real control databases on both dialects (Postgres takes the
-advisory-lock path; SQLite the serialised-writer path). No step is registered
-since theme-5 Phase 6b deleted the toolkit steps, so these tests drive the
+advisory-lock path; SQLite the serialised-writer path). These tests drive the
 mechanism with an injected step: the ledger, retry-after-failure, and
-concurrent runs converging.
+concurrent runs converging. The registered steps have their own tests.
 """
 
 from __future__ import annotations
@@ -17,10 +16,11 @@ from sqlalchemy import delete, text
 
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
 from jentic_one.control.services.upgrade_steps import (
-    STEPS,
+    RULE_SETS_MARK_CURATED,
     UpgradeStepOutcome,
     UpgradeStepService,
     UpgradeStepSpec,
+    step_names,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -58,15 +58,14 @@ def _counting_step(calls: list[int], *, fail_first: bool = False) -> UpgradeStep
     return UpgradeStepSpec(name=_STEP, run=_run)
 
 
-def test_no_steps_registered_after_phase_6b() -> None:
-    """The theme-5 steps died with the toolkit tables; the next release adds its own."""
-    assert STEPS == ()
+def test_registered_steps() -> None:
+    assert step_names() == (RULE_SETS_MARK_CURATED,)
 
 
 async def test_empty_registry_is_a_no_op(
     integration_context: Context, control_db: DatabaseSession, clean_ledger: None
 ) -> None:
-    assert await UpgradeStepService(integration_context).run() == []
+    assert await UpgradeStepService(integration_context, steps=[]).run() == []
     assert await _ledger(control_db) == []
 
 

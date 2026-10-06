@@ -409,9 +409,13 @@ async def test_flattening_creates_all_pairs_with_expected_semantics(
     inactive_set_id = bindings[(_AGENT_B, _CRED_TWO)].rule_set_id
     assert inactive_set_id is not None
     async with control_db.session() as session:
-        rule_set = await session.get(PermissionRuleSet, inactive_set_id)
-        assert rule_set is not None
-        assert rule_set.name == f"theme5-flattening:{_TK_INACTIVE}:{_CRED_TWO}"
+        # Column-scoped: the control schema here predates ``curated``.
+        rule_set_name = (
+            await session.execute(
+                select(PermissionRuleSet.name).where(PermissionRuleSet.id == inactive_set_id)
+            )
+        ).scalar_one_or_none()
+        assert rule_set_name == f"theme5-flattening:{_TK_INACTIVE}:{_CRED_TWO}"
         copied = (
             (
                 await session.execute(
@@ -511,7 +515,7 @@ async def test_second_run_and_diff_only_create_nothing(
         rule_sets = (
             (
                 await session.execute(
-                    select(PermissionRuleSet).where(
+                    select(PermissionRuleSet.id).where(
                         PermissionRuleSet.name.like("theme5-flattening:%")
                     )
                 )
@@ -543,7 +547,7 @@ async def test_diff_only_previews_without_writing(
         rule_sets = (
             (
                 await session.execute(
-                    select(PermissionRuleSet).where(
+                    select(PermissionRuleSet.id).where(
                         PermissionRuleSet.name.like("theme5-flattening:%")
                     )
                 )

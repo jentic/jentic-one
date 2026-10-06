@@ -5,15 +5,17 @@ Shared, reusable ordered rule lists. Flush-only, never commits.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.core.schema.permission_rule_sets import (
     PermissionRuleSet,
     PermissionRuleSetRule,
 )
+from jentic_one.shared.db.ids import generate_ksuid
 
 
 class PermissionRuleSetRepository:
@@ -26,11 +28,41 @@ class PermissionRuleSetRepository:
         name: str,
         description: str | None,
         created_by: str,
+        curated: bool = False,
     ) -> PermissionRuleSet:
-        rule_set = PermissionRuleSet(name=name, description=description, created_by=created_by)
+        rule_set = PermissionRuleSet(
+            name=name, description=description, created_by=created_by, curated=curated
+        )
         session.add(rule_set)
         await session.flush()
         return rule_set
+
+    @staticmethod
+    async def get_id_by_name(session: AsyncSession, name: str) -> str | None:
+        """Return the id of the set named ``name``, reading only ``id`` and ``name``."""
+        result = await session.execute(
+            select(PermissionRuleSet.id).where(PermissionRuleSet.name == name)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def insert_for_flattening(
+        session: AsyncSession, *, name: str, description: str | None, created_by: str
+    ) -> str:
+        """Insert a set naming only the columns that predate ``curated``; returns its id.
+
+        The toolkit flattening job runs against a control database that is
+        still before the toolkit-table drop, so ``permission_rule_sets`` has
+        no ``curated`` column yet. The ``rule_sets_mark_curated`` upgrade step
+        marks these sets once the column exists.
+        """
+        rule_set_id = generate_ksuid("prs")
+        await session.execute(
+            insert(PermissionRuleSet).values(
+                id=rule_set_id, name=name, description=description, created_by=created_by
+            )
+        )
+        return rule_set_id
 
     @staticmethod
     async def get_by_id(session: AsyncSession, rule_set_id: str) -> PermissionRuleSet | None:
@@ -62,6 +94,35 @@ class PermissionRuleSetRepository:
             )
         result = await session.execute(stmt.limit(limit))
         return list(result.scalars().all())
+
+    @staticmethod
+    async def list_uncurated_creators(session: AsyncSession) -> list[str]:
+        """Distinct non-null ``created_by`` values of the sets not marked curated."""
+        result = await session.execute(
+            select(PermissionRuleSet.created_by)
+            .where(PermissionRuleSet.curated.is_(False), PermissionRuleSet.created_by.is_not(None))
+            .distinct()
+        )
+        return [str(row) for row in result.scalars().all()]
+
+    @staticmethod
+    async def mark_curated(
+        session: AsyncSession, *, creators: Collection[str], creator_prefix: str
+    ) -> int:
+        """Mark curated every set created by one of ``creators`` or a ``creator_prefix`` id.
+
+        Returns the number of sets changed; sets already curated are left alone.
+        """
+        conditions = [PermissionRuleSet.created_by.startswith(creator_prefix, autoescape=True)]
+        if creators:
+            conditions.append(PermissionRuleSet.created_by.in_(list(creators)))
+        result = await session.execute(
+            update(PermissionRuleSet)
+            .where(PermissionRuleSet.curated.is_(False), or_(*conditions))
+            .values(curated=True)
+            .execution_options(synchronize_session=False)
+        )
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def delete_by_id(session: AsyncSession, rule_set_id: str) -> bool:
