@@ -162,7 +162,12 @@ export function AgentPermissionsSheet({
 							what remains below is history.
 						</p>
 					)}
-					<ScopesCard actorId={agent.id} actorName={agent.name} canEdit={!isArchived} />
+					<ScopesCard
+						actorId={agent.id}
+						actorName={agent.name}
+						canEdit={!isArchived}
+						pending={agent.status === 'pending'}
+					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>
 			</DockSheetFrame>

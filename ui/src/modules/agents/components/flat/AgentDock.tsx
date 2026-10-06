@@ -6,7 +6,7 @@
  * `pending` renders Approve in the toggle position, `rejected` has no serving
  * verb, and `archived` keeps only the read affordances.
  */
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
 import {
 	Activity as ActivityIcon,
@@ -20,6 +20,7 @@ import {
 import { Button, FooterActionBar, McpIcon, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
+import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
 
 /** The dock surfaces a verb can open (hosted by the flat surface's sheets).
  * All agent-scoped — the org-wide inventory is a page-level surface. */
@@ -149,6 +150,51 @@ function DockIconButton({
 	);
 }
 
+/** The dock's Approve, described (and tooltipped) by what approval grants. */
+function DockApprove({
+	agent,
+	onApprove,
+	approvePending,
+}: {
+	agent: AgentEntity;
+	onApprove: () => void;
+	approvePending: boolean;
+}) {
+	const grantId = useId();
+	const grant = useApprovalGrantCopy(agent.id);
+	const button = (
+		<Button
+			size="sm"
+			loading={approvePending}
+			onClick={onApprove}
+			// Named per-agent so it can't collide with the approval
+			// band's own Approve buttons in the accessibility tree.
+			aria-label={`Approve ${agent.name}`}
+			aria-describedby={grant ? grantId : undefined}
+			data-testid="dock-approve"
+			className="px-3 py-1.5 text-xs"
+		>
+			Approve
+		</Button>
+	);
+	return (
+		<>
+			{grant ? (
+				<Tooltip content={grant} interactiveChild>
+					{button}
+				</Tooltip>
+			) : (
+				button
+			)}
+			{grant && (
+				<span id={grantId} className="sr-only">
+					{grant}
+				</span>
+			)}
+		</>
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Serving verb — the toggle position, per lifecycle state
 // ---------------------------------------------------------------------------
@@ -170,18 +216,7 @@ function ServingVerb({
 			// A pending agent's lifecycle verb IS approval. Shares the mutation with the
 			// panel banner, so the two buttons load together.
 			return (
-				<Button
-					size="sm"
-					loading={approvePending}
-					onClick={onApprove}
-					// Named per-agent so it can't collide with the approval
-					// band's own Approve buttons in the accessibility tree.
-					aria-label={`Approve ${agent.name}`}
-					data-testid="dock-approve"
-					className="px-3 py-1.5 text-xs"
-				>
-					Approve
-				</Button>
+				<DockApprove agent={agent} onApprove={onApprove} approvePending={approvePending} />
 			);
 		case 'rejected':
 			// No serving verb: a rejected agent can never serve traffic.

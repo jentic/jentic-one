@@ -34,6 +34,7 @@ import {
 	useReplaceAgentScopes,
 	type PermissionCatalogEntry,
 } from '@/modules/agents/api';
+import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
 
 export interface ScopesCardProps {
 	actorId: string;
@@ -45,6 +46,12 @@ export interface ScopesCardProps {
 	 * defensively even when `canEdit` is true.
 	 */
 	canEdit?: boolean;
+	/**
+	 * The actor awaits approval: an empty list then isn't "no scopes" — it's
+	 * what approval fills in (the default agent scopes), so the card says what
+	 * Approve grants instead.
+	 */
+	pending?: boolean;
 }
 
 /**
@@ -70,7 +77,28 @@ export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): Enhanced
 	}));
 }
 
-export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardProps) {
+function ScopeChips({ scopes, label }: { scopes: readonly string[]; label: string }) {
+	return (
+		<ul className="flex flex-wrap gap-2" aria-label={label}>
+			{[...scopes]
+				.sort((a, b) => a.localeCompare(b))
+				.map((scope) => (
+					<li key={scope}>
+						<Badge variant="default" mono>
+							{scope}
+						</Badge>
+					</li>
+				))}
+		</ul>
+	);
+}
+
+export function ScopesCard({
+	actorId,
+	actorName,
+	canEdit = true,
+	pending = false,
+}: ScopesCardProps) {
 	const scopesQuery = useAgentScopes(actorId);
 	const replace = useReplaceAgentScopes();
 
@@ -78,6 +106,7 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 	const catalogue = usePermissionCatalogue();
 
 	const granted = scopesQuery.data ?? [];
+	const approvalCopy = useApprovalGrantCopy(pending ? actorId : null);
 
 	return (
 		<>
@@ -101,6 +130,15 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 					<LoadingState size="sm" />
 				) : scopesQuery.error ? (
 					<ErrorAlert message={scopesQuery.error as Error} />
+				) : pending ? (
+					<div className="space-y-2" data-testid="scopes-pending-approval">
+						<p className="text-muted-foreground text-sm">
+							{approvalCopy ?? 'Approving grants this agent its scopes.'}
+						</p>
+						{granted.length > 0 && (
+							<ScopeChips scopes={granted} label="Requested scopes" />
+						)}
+					</div>
 				) : granted.length === 0 ? (
 					<EmptyRow icon={<ShieldCheck />}>
 						No scopes granted.
@@ -108,17 +146,7 @@ export function ScopesCard({ actorId, actorName, canEdit = true }: ScopesCardPro
 							' This actor can’t perform privileged operations until you grant some.'}
 					</EmptyRow>
 				) : (
-					<ul className="flex flex-wrap gap-2" aria-label="Granted scopes">
-						{[...granted]
-							.sort((a, b) => a.localeCompare(b))
-							.map((scope) => (
-								<li key={scope}>
-									<Badge variant="default" mono>
-										{scope}
-									</Badge>
-								</li>
-							))}
-					</ul>
+					<ScopeChips scopes={granted} label="Granted scopes" />
 				)}
 			</DetailSection>
 

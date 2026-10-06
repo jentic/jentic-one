@@ -14,8 +14,14 @@ import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
 
-function renderCard(props: { actorId: string; actorName: string; canEdit?: boolean }) {
+function renderCard(props: {
+	actorId: string;
+	actorName: string;
+	canEdit?: boolean;
+	pending?: boolean;
+}) {
 	return renderWithProviders(
 		<>
 			<ScopesCard {...props} />
@@ -43,6 +49,31 @@ describe('ScopesCard', () => {
 			actorName: 'inbox-triage-bot',
 		});
 		expect(await screen.findByText('No scopes granted.', { exact: false })).toBeInTheDocument();
+	});
+
+	it('for a pending agent, says what approving grants instead of "No scopes granted"', async () => {
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('scopes-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent(
+				`Approving grants the default agent scopes (${DEFAULT_AGENT_SCOPES.length}).`,
+			),
+		);
+		expect(screen.queryByText('No scopes granted.', { exact: false })).not.toBeInTheDocument();
+	});
+
+	it('for a pending agent that requested scopes, lists them as requested', async () => {
+		worker.use(
+			http.get('/agents/:id/scopes', () =>
+				HttpResponse.json({ scopes: ['apis:read', 'capabilities:read'] }),
+			),
+		);
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('scopes-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent('Approving grants the 2 scopes it requests.'),
+		);
+		expect(within(note).getByRole('list', { name: 'Requested scopes' })).toBeInTheDocument();
 	});
 
 	it('hides the edit affordance when canEdit is false', async () => {
