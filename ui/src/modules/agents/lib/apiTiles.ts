@@ -9,9 +9,9 @@ import { apiRefDisplayName } from '@/shared/lib';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 import { apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import { credentialAwaitsConsent, idTail } from '@/shared/credentials/lib/credentialIdentity';
-import type { BindingRuleSummary } from '@/modules/agents/api';
+import type { BindingRulesState } from '@/modules/agents/api';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
-import { rulesBlock } from '@/modules/agents/lib/tileStatus';
+import { ruleSummaryOf, rulesBlock } from '@/modules/agents/lib/tileStatus';
 
 /** One tile on the grid: the API is the card, the credential is a line on it. */
 export interface ApiTileModel {
@@ -311,21 +311,29 @@ export interface ApiTileStats {
 	operations: number | null;
 	/** `operations` is a floor: some tiles withheld their count. Renders as `N+`. */
 	operationsAtLeast: boolean;
+	/** Some tile's rules are still being read, so the reachable figure may change. */
+	operationsChecking: boolean;
 	/** Tiles whose rules let no call through (`Blocked`) — 0 when rules are unknown. */
 	blocked: number;
 }
 
 export function tileStats(
 	tiles: ApiTileModel[],
-	/** Rule breakdown per tile, when loaded: a Blocked tile reaches nothing, so
-	 * its operations stay out of "reachable" (see `deriveTileStatus`). */
-	rulesFor?: (tile: ApiTileModel) => BindingRuleSummary | undefined,
+	/**
+	 * Where each tile's rules read stands (see `deriveTileStatus`). A Blocked
+	 * tile reaches nothing, so its operations stay out of "reachable"; a tile
+	 * whose rules are still loading or unreadable ("Checking access…" /
+	 * "Status unavailable") may be blocked, so its count is withheld rather
+	 * than claimed. Omitted → rules aren't considered.
+	 */
+	rulesFor?: (tile: ApiTileModel) => BindingRulesState | undefined,
 ): ApiTileStats {
 	const configured = new Set<string>();
 	// Per API: the largest count its reachable tiles prove (its credentials reach
 	// the same operations), or null while none of them proves one.
 	const operationsByApi = new Map<string, number | null>();
 	let blocked = 0;
+	let checking = false;
 	// Deduped: several tiles can share one sign-in.
 	const awaiting = new Set<string>();
 	for (const tile of tiles) {
@@ -337,15 +345,16 @@ export function tileStats(
 		configured.add(apiKey);
 		// A pause is a deliberate exclusion, not a missing fact.
 		if (tile.suspended) continue;
-		if (rulesBlock(rulesFor?.(tile))) {
+		const rules = rulesFor?.(tile);
+		if (rulesBlock(ruleSummaryOf(rules))) {
 			blocked += 1;
 			continue;
 		}
+		const rulesUnknown = rulesFor != null && typeof rules !== 'object';
+		if (rulesUnknown && rules !== 'error') checking = true;
+		const count = rulesUnknown ? null : tile.operationCount;
 		const known = operationsByApi.get(apiKey) ?? null;
-		operationsByApi.set(
-			apiKey,
-			tile.operationCount == null ? known : Math.max(known ?? 0, tile.operationCount),
-		);
+		operationsByApi.set(apiKey, count == null ? known : Math.max(known ?? 0, count));
 	}
 	let operations = 0;
 	let counted = false;
@@ -363,6 +372,7 @@ export function tileStats(
 		needsSetup: awaiting.size,
 		operations: withheld && !counted ? null : operations,
 		operationsAtLeast: withheld && counted,
+		operationsChecking: checking,
 		blocked,
 	};
 }

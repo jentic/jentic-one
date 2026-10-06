@@ -68,13 +68,16 @@ export function AgentStatStrip({
 		}
 		// "reachable" is load-bearing: the figure excludes paused bindings, so a bare
 		// `0 operations` beside a tile advertising 900 would read as a contradiction.
-		// A partly provable count takes the `+` that says the sum is only a floor.
-		if (access?.operations !== null) {
+		// A partly provable count takes the `+` that says the sum is only a floor;
+		// a tile still checking its rules holds the clause on a skeleton, and one
+		// that can't read them ("Status unavailable") claims nothing.
+		if (!access || access.operationsChecking || access.operations !== null) {
 			clauses.push({
 				key: 'operations',
 				text:
-					access &&
-					`${access.operations.toLocaleString()}${access.operationsAtLeast ? '+' : ''} operations reachable`,
+					access && !access.operationsChecking && access.operations !== null
+						? `${access.operations.toLocaleString()}${access.operationsAtLeast ? '+' : ''} operations reachable`
+						: undefined,
 			});
 		}
 	}

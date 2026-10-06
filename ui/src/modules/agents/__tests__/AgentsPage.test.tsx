@@ -533,7 +533,8 @@ describe('AgentsPage — flat agents surface', () => {
 		// Access clauses — the same tileStats math the grid draws from: 2 usable tiles,
 		// 181 ops (the suspended binding's 912 excluded), 2 bound credentials.
 		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2 configured'));
-		expect(stripFigure('operations')).toHaveTextContent('181 operations');
+		// Held on a skeleton until every tile's rules are read.
+		await waitFor(() => expect(stripFigure('operations')).toHaveTextContent('181 operations'));
 		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 
 		// Monitor clauses — the per-actor sources (7-day usage rollup

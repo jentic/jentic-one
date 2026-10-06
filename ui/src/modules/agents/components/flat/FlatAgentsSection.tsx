@@ -83,7 +83,6 @@ import {
 	stillOwedItems,
 	type PreflightItem,
 } from '@/modules/agents/lib/apiPreflight';
-import { ruleSummaryOf } from '@/modules/agents/lib/tileStatus';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
 import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
@@ -711,7 +710,7 @@ function SelectedAgentPanel({
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
 	const stats = useMemo(
-		() => tileStats(tiles, (tile) => ruleSummaryOf(ruleSummaries.get(tile.credentialId))),
+		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
 		[tiles, ruleSummaries],
 	);
 	// APIs reached through several credentials: each such tile names its credential

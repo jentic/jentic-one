@@ -16,7 +16,7 @@ import {
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
-import type { CredentialBindingEntity } from '@/modules/agents/api';
+import type { BindingRulesState, CredentialBindingEntity } from '@/modules/agents/api';
 import { CredentialType, type ApiResponse, type Credential } from '@/shared/credentials/api';
 
 function makeCredential(over: Partial<Credential> = {}): Credential {
@@ -248,6 +248,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 1,
 			operations: 100,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 		expect(agentSetupGapCount(bindings, credentials)).toBe(1);
@@ -264,6 +265,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 0,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 	});
@@ -286,6 +288,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: null,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 	});
@@ -307,6 +310,42 @@ describe('tileStats / agentSetupGapCount', () => {
 		expect(stats).toEqual({
 			configured: 2,
 			needsSetup: 0,
+			operations: 100,
+			operationsAtLeast: true,
+			operationsChecking: false,
+			blocked: 0,
+		});
+	});
+
+	it('withholds a tile whose rules are loading or unreadable from "reachable"', () => {
+		const apis = [
+			makeApi({ vendor: 'slack.com', display_name: 'Slack', operation_count: 100 }),
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 4 }),
+		];
+		const credentials = [
+			makeCredential({ credential_id: 'cred_a' }),
+			makeCredential({ credential_id: 'cred_b' }),
+		];
+		const bindings = [
+			makeBinding({ id: 'acb_a', credentialId: 'cred_a' }),
+			makeBinding({
+				id: 'acb_b',
+				credentialId: 'cred_b',
+				serves: [{ vendor: 'github.com', name: null, version: null }],
+			}),
+		];
+		const tiles = composeApiTiles(bindings, credentials, apis);
+		const github = tiles.filter((t) => t.credentialId === 'cred_b');
+		// Its only tile can't read its rules: no reachable claim at all.
+		for (const state of ['error', 'loading', undefined] as const) {
+			expect(tileStats(github, () => state).operations).toBeNull();
+		}
+		// Beside a Ready tile, the figure is only a floor.
+		const rules = new Map<string, BindingRulesState>([
+			['cred_a', { total: 1, allow: 1, deny: 0 }],
+			['cred_b', 'error'],
+		]);
+		expect(tileStats(tiles, (t) => rules.get(t.credentialId))).toMatchObject({
 			operations: 100,
 			operationsAtLeast: true,
 			blocked: 0,
@@ -340,6 +379,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 100,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 1,
 		});
 	});
@@ -367,6 +407,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 1121,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 	});
@@ -393,6 +434,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 2,
 			operations: 1021,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 	});
@@ -411,6 +453,7 @@ describe('tileStats / agentSetupGapCount', () => {
 			needsSetup: 0,
 			operations: 1021,
 			operationsAtLeast: false,
+			operationsChecking: false,
 			blocked: 0,
 		});
 	});
