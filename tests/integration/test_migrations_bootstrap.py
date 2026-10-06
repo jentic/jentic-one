@@ -164,3 +164,81 @@ def test_upgrade_over_preexisting_schema_supports_autocommit_block(
         assert len(tables) > 1, f"no control tables created in {schema}: {tables}"
     finally:
         asyncio.run(_drop_schema(integration_config, schema))
+
+
+async def _vector_extension_available(integration_config: AppConfig) -> bool:
+    engine = create_async_engine(_superuser_url(integration_config))
+    try:
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'")
+            )
+            return row.first() is not None
+    finally:
+        await engine.dispose()
+
+
+async def _vector_extension_installed(integration_config: AppConfig) -> bool:
+    engine = create_async_engine(_superuser_url(integration_config))
+    try:
+        async with engine.connect() as conn:
+            row = await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
+            return row.first() is not None
+    finally:
+        await engine.dispose()
+
+
+async def _create_vector_dependent_table(integration_config: AppConfig, schema: str) -> bool:
+    """Install ``vector`` if needed and add a table in ``schema`` that depends on it.
+
+    Returns whether this call installed the extension, so teardown only removes
+    what the test added.
+    """
+    installed_before = await _vector_extension_installed(integration_config)
+    engine = create_async_engine(_superuser_url(integration_config))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await conn.execute(
+                text(
+                    f'CREATE TABLE "{schema}".operation_embeddings '
+                    "(id text PRIMARY KEY, embedding vector(3))"
+                )
+            )
+    finally:
+        await engine.dispose()
+    return not installed_before
+
+
+async def _drop_vector_extension(integration_config: AppConfig) -> None:
+    engine = create_async_engine(_superuser_url(integration_config))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP EXTENSION IF EXISTS vector"))
+    finally:
+        await engine.dispose()
+
+
+def test_upgrade_keeps_vector_extension_and_its_dependents(integration_config: AppConfig) -> None:
+    """A registry upgrade leaves the ``vector`` extension and tables using it intact.
+
+    The extension is database-wide and a deployment may keep its own ``vector``
+    columns next to the registry tables. The registry migrations must neither
+    drop the extension nor fail because something else depends on it.
+    """
+    if not asyncio.run(_vector_extension_available(integration_config)):
+        pytest.skip("pgvector is not available on this Postgres server")
+    schema = f"bootstrap_vector_{uuid.uuid4().hex[:8]}"
+    installed_here = False
+    try:
+        installed_here = asyncio.run(_create_vector_dependent_table(integration_config, schema))
+        command.upgrade(_fresh_schema_config(integration_config, schema), "head")
+        tables = asyncio.run(_schema_tables(integration_config, schema))
+        assert "operation_embeddings" in tables, f"dependent table removed from {schema}: {tables}"
+        assert "operations" in tables, f"registry migrations did not run in {schema}: {tables}"
+        assert asyncio.run(_vector_extension_installed(integration_config))
+    finally:
+        asyncio.run(_drop_schema(integration_config, schema))
+        if installed_here:
+            asyncio.run(_drop_vector_extension(integration_config))
