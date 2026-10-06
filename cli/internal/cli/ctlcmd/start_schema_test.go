@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,6 +15,9 @@ import (
 // and exits with code, so ensureDockerSchema reads a chosen verdict.
 func stubCheck(t *testing.T, stdout, code string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the docker stub is a POSIX shell script")
+	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat <<'STUBEOF'\n" + stdout + "\nSTUBEOF\nexit " + code + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
