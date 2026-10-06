@@ -8,6 +8,8 @@
  * existing credentials cover says how many — counting only credentials the
  * operator may bind (`credentialsBindableBy`) — and the setup queue offers them
  * alongside "Add a new credential" — even a lone match is never reused silently.
+ * An API the agent already reaches stays pickable: an agent may hold several
+ * credentials for one API, so its row says which it has and the pick adds another.
  * The selection survives a dismissal and clears on commit or an agent change.
  *
  * The setup queue's Back re-opens the tray on its batch (`seed`): the APIs still
@@ -27,14 +29,15 @@ import {
 } from 'lucide-react';
 import { Button, ErrorAlert, LoadingState, SheetPrimitive } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { useAllCredentials, useProviders, type SelectedApi } from '@/shared/credentials/api';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import type { SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import {
 	PREFLIGHT_LABELS,
 	PREFLIGHT_TALLY_ORDER,
+	addedViaLabel,
+	anotherAccountTallyLabel,
 	coveringCountLabel,
 	preflightApis,
 	preflightTally,
@@ -44,6 +47,7 @@ import {
 } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 
 /** Glyph and colour per outcome — a choice still to make reads as amber, a
  * sign-in as orange, and a new credential as plain work still to do. */
@@ -51,7 +55,6 @@ const OUTCOME_STYLE: Record<PreflightOutcome, { icon: LucideIcon; tone: string }
 	oauth: { icon: LogIn, tone: 'text-accent-orange' },
 	choose: { icon: CircleDot, tone: 'text-warning' },
 	form: { icon: CirclePlus, tone: 'text-muted-foreground' },
-	attached: { icon: Check, tone: 'text-muted-foreground' },
 };
 
 /** The row's outcome as an icon and a short line — lighter than a pill, so the
@@ -61,9 +64,7 @@ function OutcomeLabel({ item }: { item: PreflightItem }) {
 	return (
 		<span className={cn('inline-flex shrink-0 items-center gap-1.5 text-xs font-medium', tone)}>
 			<Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-			{item.outcome === 'attached' && item.attachedVia
-				? `Already added via ${item.attachedVia}`
-				: PREFLIGHT_LABELS[item.outcome]}
+			{PREFLIGHT_LABELS[item.outcome]}
 		</span>
 	);
 }
@@ -76,7 +77,15 @@ export interface AddApisTrayProps {
 	agentName: string;
 	/** The agent's existing bindings — they say which APIs it already reaches. */
 	bindings: CredentialBindingEntity[];
-	/** Hand the preflighted batch on — actionable items only, in pick order. While
+	/** The bindings read failed. Without them every credential the agent holds
+	 * looks unbound and would be offered again (a 409 on bind), so the tray shows
+	 * the error with a retry and nothing continues until the read succeeds. */
+	bindingsError?: Error | null;
+	/** Re-read the bindings — the retry for {@link bindingsError}. */
+	onRetryBindings?: () => void;
+	/** A re-read of the bindings is in flight. */
+	bindingsRetrying?: boolean;
+	/** Hand the preflighted batch on, in pick order. While
 	 * editing a batch (`seed`), this may be empty: every owed API was unticked. */
 	onContinue: (items: PreflightItem[]) => void;
 	/** The setup queue's batch, when the operator went Back to edit it. A new seed
@@ -90,6 +99,9 @@ export function AddApisTray({
 	agentId,
 	agentName,
 	bindings,
+	bindingsError = null,
+	onRetryBindings,
+	bindingsRetrying = false,
 	onContinue,
 	seed = null,
 }: AddApisTrayProps) {
@@ -128,27 +140,8 @@ export function AddApisTray({
 	}, [seed]);
 	const editingBatch = seed != null;
 
-	// Preflight reads the WHOLE credential list: a first-page-only list would call
-	// an existing credential "needs a new credential" and hide it from the choice.
-	const credentialsSource = useAllCredentials();
-	// Narrows the choice to credentials this user may bind; unknown → no filter.
-	const viewer = useOptionalCurrentUser();
-	const providersQuery = useProviders();
-	const managedOAuthAvailable = useMemo(
-		() => (providersQuery.data?.providers ?? []).some((p) => p.managed && p.configured),
-		[providersQuery.data],
-	);
-
-	const items = useMemo(
-		() =>
-			preflightApis(picks, {
-				credentials: credentialsSource.items,
-				viewer,
-				bindings,
-				managedOAuthAvailable,
-			}),
-		[picks, credentialsSource.items, viewer, bindings, managedOAuthAvailable],
-	);
+	const { inputs: preflightInputs, credentialsSource } = usePreflightInputs(bindings);
+	const items = useMemo(() => preflightApis(picks, preflightInputs), [picks, preflightInputs]);
 	const tally = useMemo(() => preflightTally(items), [items]);
 
 	const lockedKeys = useMemo(() => new Set(locked.map(apiRefKey)), [locked]);
@@ -158,23 +151,25 @@ export function AddApisTray({
 		[picks, lockedKeys],
 	);
 
-	// Rows the agent already reaches, so they render as "Already added" instead of
-	// inviting a duplicate bind. Only bindings naming a concrete API are
-	// enumerable; a vendor wildcard is caught by the preflight's `attached`.
-	const attachedKeys = useMemo(() => {
-		const keys = new Set<string>();
+	// Rows the agent already reaches say through which credentials, and stay
+	// pickable to add another credential. Only bindings naming a concrete API are
+	// enumerable; a vendor wildcard is named by the preflight once picked.
+	const addedVia = useMemo(() => {
+		const names = new Map<string, string[]>();
 		for (const binding of bindings) {
 			for (const served of binding.serves) {
-				if (served.name != null)
-					keys.add(apiRefKey({ vendor: served.vendor, name: served.name }));
+				if (served.name == null) continue;
+				const key = apiRefKey({ vendor: served.vendor, name: served.name });
+				const label = binding.name || binding.credentialId;
+				names.set(key, [...(names.get(key) ?? []), label]);
 			}
 		}
-		return keys;
+		return names;
 	}, [bindings]);
-	const disabledKeys = useMemo(
-		() => new Set([...attachedKeys, ...lockedKeys]),
-		[attachedKeys, lockedKeys],
-	);
+	const rowHint = (key: string): string | undefined => {
+		const names = addedVia.get(key);
+		return names ? `Added via ${names.join(', ')} · add another credential` : undefined;
+	};
 
 	const remove = (key: string): void =>
 		setPicks((current) => current.filter((p) => apiRefKey(p) !== key));
@@ -192,14 +187,13 @@ export function AddApisTray({
 			return [...current, ...apis.filter((api) => !keys.has(apiRefKey(api)))];
 		});
 
-	const preflightReady = credentialsSource.complete && !credentialsSource.error;
+	const preflightReady = credentialsSource.complete && !credentialsSource.error && !bindingsError;
 	// Editing a batch may end with nothing left to set up — that is still an answer.
-	const canContinue = preflightReady && (tally.actionable > 0 || editingBatch);
+	const canContinue = preflightReady && (tally.total > 0 || editingBatch);
 
 	const handleContinue = (): void => {
-		const actionable = items.filter((item) => item.outcome !== 'attached');
-		if (actionable.length === 0 && !editingBatch) return;
-		onContinue(actionable);
+		if (items.length === 0 && !editingBatch) return;
+		onContinue(items);
 		// Reset on commit — the queue owns these picks now.
 		setPicks([]);
 		setLocked([]);
@@ -238,14 +232,21 @@ export function AddApisTray({
 				</header>
 
 				<div className="flex-1 overflow-y-auto px-5 py-4">
+					{bindingsError && (
+						<ErrorAlert
+							className="mb-4"
+							message={`Could not read which APIs ${agentName} already has, so nothing can be added yet.`}
+							onRetry={onRetryBindings}
+							retrying={bindingsRetrying}
+						/>
+					)}
 					<ApiPicker
 						searchInputRef={searchRef}
 						onSelect={toggle}
 						selectedKeys={selectedKeys}
-						disabledKeys={disabledKeys}
-						disabledLabel={(key): string =>
-							lockedKeys.has(key) ? 'Added' : 'Already added'
-						}
+						disabledKeys={lockedKeys}
+						disabledLabel="Added"
+						rowHint={rowHint}
 						emptyAction={
 							<Button
 								variant="secondary"
@@ -303,6 +304,15 @@ export function AddApisTray({
 											<X className="h-3.5 w-3.5" />
 										</Button>
 									</div>
+									{item.existing.length > 0 && (
+										<p
+											data-testid="tray-added-via"
+											className="text-muted-foreground mt-0.5 truncate text-xs"
+										>
+											{addedViaLabel(item.existing)} — this adds another
+											credential
+										</p>
+									)}
 									{item.outcome === 'choose' && (
 										<p
 											data-testid="tray-covering-count"
@@ -315,7 +325,7 @@ export function AddApisTray({
 							))}
 						</ul>
 
-						{credentialsSource.error ? (
+						{bindingsError ? null : credentialsSource.error ? (
 							<ErrorAlert
 								message="Could not read your credentials, so the cost of these picks is unknown."
 								onRetry={credentialsSource.retry}
@@ -335,7 +345,6 @@ export function AddApisTray({
 								? 'Nothing selected yet.'
 								: [
 										`${picks.length} selected`,
-										tally.attached > 0 && `${tally.attached} already added`,
 										locked.length > 0 && `${locked.length} added so far`,
 									]
 										.filter(Boolean)
@@ -362,7 +371,7 @@ export function AddApisTray({
 						<Button size="sm" disabled={!canContinue} onClick={handleContinue}>
 							<Plus className="h-4 w-4" />
 							{/* Editing a batch down to nothing left to set up just finishes. */}
-							{editingBatch && tally.actionable === 0 ? 'Done' : 'Continue'}
+							{editingBatch && tally.total === 0 ? 'Done' : 'Continue'}
 						</Button>
 					</div>
 				</footer>
@@ -393,6 +402,11 @@ function TallyLines({ tally }: { tally: ReturnType<typeof preflightTally> }) {
 					{preflightTallyLabel(outcome, tally[outcome])}
 				</p>
 			))}
+			{tally.another > 0 && (
+				<p data-testid="tray-tally-line" className="text-muted-foreground text-xs">
+					{anotherAccountTallyLabel(tally.another)}
+				</p>
+			)}
 			{tally.imports > 0 && (
 				<p className="text-muted-foreground/80 text-xs">
 					{tally.imports === 1

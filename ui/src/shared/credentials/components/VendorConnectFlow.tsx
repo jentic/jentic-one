@@ -94,7 +94,7 @@ export type VendorConnectFlowProps =
 			vendor: VendorSummary;
 			// When set, the flow opens with the given agent pre-selected and
 			// the picker rendered disabled. Used by the "Bind credential"
-			// entry from an agent's detail page so the user can't
+			// entry for a specific agent so the user can't
 			// accidentally re-target during binding.
 			preselectedAgentId?: string;
 			// Extra content rendered on the terminal step's success path
@@ -189,7 +189,7 @@ function VendorSelfConnectFlow({
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
-	// an agent's detail page), the picker starts locked to that id.
+	// a specific agent), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
 	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
 
@@ -547,7 +547,7 @@ const AGENT_FILTER_THRESHOLD = 6;
  * link to the Agents page for when they'd rather create one first.
  * ``disabled`` locks the field to its current value (only that agent's
  * card is shown, checked and inert) so the "Bind credential" entry from
- * an agent's detail page can pre-select without risk of accidental
+ * a specific agent can pre-select without risk of accidental
  * re-target.
  */
 function AgentPickerField({

@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router';
-import { render, type RenderOptions } from '@testing-library/react';
+import { render, waitFor, type RenderOptions } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 
 interface Options extends Omit<RenderOptions, 'wrapper'> {
@@ -50,6 +50,32 @@ export function renderWithProviders(ui: ReactElement, options: Options = {}) {
 
 export * from '@testing-library/react';
 export { default as userEvent } from '@testing-library/user-event';
+
+/**
+ * Wait until every finite animation and transition touching `root` has
+ * finished. axe reads colours from one frame, so a row still fading in from
+ * opacity 0 (a framer-motion entrance, a sheet sliding in, a tick's colour
+ * transition) reports a colour-contrast failure the settled UI doesn't have.
+ * Call it right before `checkA11y` on a surface that animates. Infinite loops
+ * (spinners, pulses) never end, so they are left out.
+ */
+export async function settleAnimations(root: Element = document.body): Promise<void> {
+	await waitFor(
+		() => {
+			const moving = document.getAnimations().filter((animation) => {
+				if (animation.playState !== 'running') return false;
+				const target =
+					animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+				if (!target || !root.contains(target)) return false;
+				return animation.effect?.getComputedTiming().endTime !== Infinity;
+			});
+			if (moving.length > 0) {
+				throw new Error(`${moving.length} animation(s) still running under the root`);
+			}
+		},
+		{ timeout: 3000 },
+	);
+}
 
 /**
  * Run axe against a rendered container and assert no critical/serious violations.

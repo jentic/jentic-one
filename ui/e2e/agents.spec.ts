@@ -44,99 +44,32 @@ test('approve a pending agent clears its pending state', async ({ page }) => {
 });
 
 /**
- * Detail-page flow: the per-agent console at `/agents/:id` is deep-link only — the
- * flat surface offers no jump-off to it (the dock's sheets carry every fact it
- * holds). Verifies its identity + KPI render, approves, and returns to the surface.
+ * An agent's path URL (`/agents/:id` — what the CLI prints and older links
+ * carry) survives sign-in and lands on the Agents page with that agent
+ * selected, where it can be decided on its own panel.
  */
-test('the agent console is deep-link reachable and can approve', async ({ page }) => {
+test('an agent path URL opens the agent selected on the Agents page', async ({ page }) => {
 	await page.goto('/app/agents/agnt_pending_2');
 
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
 
-	await expect(page).toHaveURL(/\/app\/agents\/agnt_pending_2$/);
-	await expect(page.getByRole('heading', { name: 'release-notes-bot' })).toBeVisible();
-	await expect(page.getByText('Bound credentials')).toBeVisible();
-
-	// Approve from the console → the identity header's badge flips to Active.
-	await page.getByRole('button', { name: 'Approve release-notes-bot' }).click();
-	await expect(page.getByTestId('detail-status-badge')).toHaveText('Active');
-
-	// Back lands on the flat surface, with this agent among its tabs.
-	await page.getByTestId('back-button').click();
+	await expect(page).toHaveURL(/\/app\/agents\?agent=agnt_pending_2$/);
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	await expect(page.getByRole('tab', { name: /release-notes-bot/ })).toBeVisible();
-});
+	await expect(page.getByRole('tab', { name: /release-notes-bot/ })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
 
-/**
- * Identity console: the detail page's Activity tab shows THIS agent's
- * execution feed and deep-links into Monitor pre-filtered by actor.
- */
-test('the Activity tab feeds per-agent executions and deep-links to Monitor', async ({ page }) => {
-	await page.goto('/app/agents/agnt_active_1');
-
-	await page.getByLabel('Email').fill('admin@local');
-	await page.getByRole('textbox', { name: 'Password' }).fill('password');
-	await page.getByRole('button', { name: 'Sign in' }).click();
-
-	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
-
-	// KPI strip reads the per-actor usage aggregate.
-	await expect(page.getByRole('group', { name: 'Key metrics' }).getByText('1,204')).toBeVisible();
-
-	await page.getByRole('tab', { name: 'Activity' }).click();
-	// The feed renders the human-readable operation identity (credential ·
-	// METHOD path-template) — never the opaque operation id.
-	await expect(page.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
-
-	// The Monitor deep-link carries the actor filter (Monitor's URL contract).
-	// Two links match (back row + feed card) — both share the same href.
-	const href = await page
-		.getByRole('link', { name: /Open Monitor/ })
-		.first()
-		.getAttribute('href');
-	expect(href).toContain('show=calls');
-	expect(href).toContain('actor_id=agnt_active_1');
-	expect(href).toContain('actor_type=agent');
-
-	// Tab state is deep-linkable (?tab=) and survives reload.
-	await expect(page).toHaveURL(/tab=activity/);
-	await page.reload();
-	await expect(page.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
-});
-
-/**
- * Editability: rename an agent from the Settings tab (PATCH
- * /agents/:id) and verify the round trip — header, toast, and the agent's tab
- * in the fleet strip all pick up the new name from the same session store.
- */
-test('rename an agent from the Settings tab round-trips to the list', async ({ page }) => {
-	await page.goto('/app/agents/agnt_active_1');
-
-	await page.getByLabel('Email').fill('admin@local');
-	await page.getByRole('textbox', { name: 'Password' }).fill('password');
-	await page.getByRole('button', { name: 'Sign in' }).click();
-
-	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
-
-	await page.getByRole('tab', { name: 'Settings' }).click();
-	const nameInput = page.getByLabel('Name');
-	await nameInput.fill('support-agent-renamed');
-	await page.getByRole('button', { name: 'Save changes' }).click();
-
-	// Toast + header re-render from the PATCH response.
-	await expect(page.getByText('Agent updated')).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'support-agent-renamed' })).toBeVisible();
-
-	// Destructive lifecycle lives in the danger zone, not the header.
-	await expect(page.getByText('Danger zone')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Archive support-agent-renamed' })).toBeVisible();
-
-	// The fleet strip reflects the rename (list invalidation → mock store).
-	await page.getByTestId('back-button').click();
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	await expect(page.getByRole('tab', { name: /support-agent-renamed/ })).toBeVisible();
+	// Not the banner's longest-waiting pick, so its own panel carries the decision.
+	const banner = page.getByTestId('agent-state-banner-pending');
+	await expect(banner.getByRole('button', { name: 'Deny' })).toBeVisible();
+	await banner.getByRole('button', { name: 'Approve' }).click();
+	await expect(banner).toBeHidden();
+	await expect(
+		page.getByRole('tab', { name: /release-notes-bot.*awaiting approval/i }),
+	).toHaveCount(0);
 });
 
 /**
@@ -158,6 +91,57 @@ async function openSelectedAgent(page: Page): Promise<void> {
 	await tab.click();
 	await expect(tab).toHaveAttribute('aria-selected', 'true');
 }
+
+/**
+ * The selected agent's vitals and activity: the stat strip reads the per-actor
+ * usage aggregate, and the dock's Activity sheet shows THIS agent's executions
+ * with a Monitor deep link pre-filtered by actor.
+ */
+test('the Activity sheet feeds per-agent executions and deep-links to Monitor', async ({
+	page,
+}) => {
+	await openSelectedAgent(page);
+
+	await expect(page.getByTestId('stat-executions')).toHaveText('1,204 calls in 7d');
+
+	await page.getByTestId('agent-dock').getByRole('button', { name: 'Activity' }).click();
+	const sheet = page.getByRole('dialog', { name: 'Activity' });
+	// The feed renders the human-readable operation identity (credential ·
+	// METHOD path-template) — never the opaque operation id.
+	await expect(sheet.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
+	await expect(sheet.getByText('Recent changes')).toBeVisible();
+
+	// The Monitor deep link carries the actor filter (Monitor's URL contract).
+	const href = await sheet.getByRole('link', { name: /Open Monitor/ }).getAttribute('href');
+	expect(href).toContain('show=calls');
+	expect(href).toContain('actor_id=agnt_active_1');
+	expect(href).toContain('actor_type=agent');
+});
+
+/**
+ * Editability: rename an agent from the dock's Settings sheet (PATCH
+ * /agents/:id) and verify the round trip — toast, and the agent's tab in the
+ * fleet strip picks up the new name from the same session store.
+ */
+test('rename an agent from the Settings sheet round-trips to the strip', async ({ page }) => {
+	await openSelectedAgent(page);
+
+	await page.getByTestId('agent-dock').getByRole('button', { name: 'Settings' }).click();
+	const sheet = page.getByRole('dialog', { name: 'Settings' });
+	// Provenance sits with the identity: when it registered and who approved it.
+	await expect(sheet.getByTestId('agent-provenance')).toContainText('Approved by');
+
+	await sheet.getByLabel('Name').fill('support-agent-renamed');
+	await sheet.getByRole('button', { name: 'Save changes' }).click();
+
+	await expect(page.getByText('Agent updated')).toBeVisible();
+	// Destructive lifecycle lives in the danger zone.
+	await expect(sheet.getByText('Danger zone')).toBeVisible();
+	await expect(
+		sheet.getByRole('button', { name: 'Archive support-agent-renamed' }),
+	).toBeVisible();
+	await expect(page.getByRole('tab', { name: /support-agent-renamed/ })).toBeVisible();
+});
 
 /**
  * Scopes flow (#615): grant a platform permission via the Scopes editor, save

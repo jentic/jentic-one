@@ -54,15 +54,6 @@ export const ROUTES = {
  */
 export const ROUTE_PATHS = {
 	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
-	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
-	/**
-	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
-	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
-	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
-	 * cross-module deep-links (agents console → Monitor) must agree on it, and
-	 * modules can't import from each other. Monitor's own richer builder is
-	 * `modules/monitor/lib/links`.
-	 */
 	/**
 	 * The org-wide credential inventory, which lives in a sheet on the Agents
 	 * page rather than at a route of its own. `credentials` is the Agents
@@ -75,11 +66,18 @@ export const ROUTE_PATHS = {
 	credentialInventory: (opts?: { create?: boolean }) =>
 		`${ROUTES.agents}?credentials=${opts?.create === true ? 'new' : '1'}`,
 	/**
-	 * One agent AS SELECTED on the flat Agents surface — the address of an agent for
-	 * any caller that wants to show one. `ROUTE_PATHS.agent` still addresses the
-	 * per-agent console for a direct URL.
+	 * One agent AS SELECTED on the Agents page — the one address of an agent for
+	 * any caller that wants to show one. `/agents/:agentId` redirects here.
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
+	/**
+	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
+	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
+	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
+	 * cross-module deep-links (Agents → Monitor) must agree on it, and modules
+	 * can't import from each other. Monitor's own richer builder is
+	 * `modules/monitor/lib/links`.
+	 */
 	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
 		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
