@@ -16,7 +16,7 @@
 import { useMemo } from 'react';
 import { ChevronRight, ListChecks, ShieldX } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert, SkeletonRows } from '@/shared/ui';
-import { JOBS_READ, useCanAccess } from '@/shared/auth';
+import { JOBS_READ, useCanAccess, usePermissionsKnown } from '@/shared/auth';
 import { isMonitorAccessDenied, toJobStatus, useJobs } from '@/modules/monitor/api';
 import { CursorPager } from '@/modules/monitor/components/CursorPager';
 import { groupByDay, LogDay, LogList, LogRow } from '@/modules/monitor/components/LogList';
@@ -60,10 +60,14 @@ export function JobsTab() {
 		{ status, from: filters.from, to: filters.to, cursor: pager.cursor },
 		{ pollWhileActive: pager.hasPrev ? false : ACTIVE_POLL_MS, enabled: canReadJobs },
 	);
-	const forbidden = !canReadJobs || isMonitorAccessDenied(query.error);
+	// Until `/users/me` answers the read is off but nothing is decided yet: the
+	// list holds its skeleton rather than flashing "No access" or "No jobs yet".
+	const permissionsKnown = usePermissionsKnown();
+	const forbidden = (permissionsKnown && !canReadJobs) || isMonitorAccessDenied(query.error);
+	const loading = query.isLoading || !permissionsKnown;
 	const rows = useMemo(() => query.data?.data ?? [], [query.data]);
 	const days = useMemo(() => groupByDay(rows, (r) => Date.parse(r.created_at)), [rows]);
-	const showEmpty = rows.length === 0 && !query.isLoading && !query.isFetching;
+	const showEmpty = rows.length === 0 && !loading && !query.isFetching;
 
 	return (
 		<LogLayout
@@ -114,7 +118,7 @@ export function JobsTab() {
 						ariaLabel="Jobs"
 						columns={{ actor: 'Last update', subject: 'Job', detail: 'Took' }}
 					>
-						{query.isLoading ? (
+						{loading ? (
 							<SkeletonRows rows={6} className="px-4" />
 						) : (
 							days.map((day) => (

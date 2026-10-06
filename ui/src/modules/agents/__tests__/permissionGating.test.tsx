@@ -3,8 +3,9 @@
  * sends no request the server would refuse them:
  *
  * - Approve / Deny (banner, the selected agent's state banner, the dock), the
- *   dock's serving toggle and Archive, and "Create here" need `agents:write`
- *   or `org:admin`.
+ *   dock's serving toggle and Archive, the dock sheets' writes (API key
+ *   generate/revoke, Settings rename/archive), Add APIs and "Create here" need
+ *   `agents:write` or `org:admin`.
  * - The usage aggregate (`/monitoring/usage`: stat strip, credential inventory)
  *   needs `org:admin`.
  * - "Recent changes" (`/audit`) needs `audit:read` or `org:admin`.
@@ -15,7 +16,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
-import { AuthProvider } from '@/shared/auth';
+import { AuthProvider, useOptionalCurrentUser } from '@/shared/auth';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { resetApisStore, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
@@ -71,9 +72,23 @@ function trackRequests(): string[] {
 	return paths;
 }
 
+/** Renders once `/users/me` has answered, so a spec never reads a gate that is
+ * still closed only because the viewer is loading. */
+function ViewerReady() {
+	return useOptionalCurrentUser() ? <span data-testid="viewer-ready" hidden /> : null;
+}
+
+/** Render the page and wait for the viewer's permissions to be known. */
+async function renderReady(route: string) {
+	const result = renderPage(route);
+	await screen.findByTestId('viewer-ready');
+	return result;
+}
+
 function renderPage(route: string) {
 	return renderWithProviders(
 		<AuthProvider>
+			<ViewerReady />
 			<AgentsPage />
 			<Toaster />
 		</AuthProvider>,
@@ -131,7 +146,7 @@ describe("the dock's serving toggle and Archive follow agents:write", () => {
 	it.each(Object.entries(VIEWERS))('%s', async (_label, permissions) => {
 		const canManage = permissions.includes('agents:write') || permissions.includes('org:admin');
 		seedViewer(permissions);
-		renderPage('/?agent=agnt_active_1');
+		await renderReady('/?agent=agnt_active_1');
 		const dock = await screen.findByTestId('agent-dock');
 		// The read affordances stay for everyone.
 		expect(within(dock).getByRole('button', { name: 'Activity' })).toBeInTheDocument();
@@ -163,12 +178,76 @@ describe("the dock's serving toggle and Archive follow agents:write", () => {
 	});
 });
 
+describe("the dock sheets' writes and Add APIs follow agents:write", () => {
+	async function openDockSheet(name: string) {
+		const user = userEvent.setup();
+		const dock = await screen.findByTestId('agent-dock');
+		await user.click(within(dock).getByRole('button', { name }));
+		return within(await screen.findByTestId('sheet-primitive'));
+	}
+
+	it.each(Object.entries(VIEWERS))('API key sheet — %s', async (_label, permissions) => {
+		const canManage = permissions.includes('agents:write') || permissions.includes('org:admin');
+		seedViewer(permissions);
+		await renderReady('/?agent=agnt_active_1');
+		const sheet = await openDockSheet('API key');
+
+		const generate = /^(Generate|Regenerate) API key for support-agent$/;
+		if (canManage) {
+			expect(await sheet.findByRole('button', { name: generate })).toBeInTheDocument();
+			expect(sheet.queryByTestId('keys-need-permission')).toBeNull();
+		} else {
+			expect(await sheet.findByTestId('keys-need-permission')).toBeInTheDocument();
+			expect(sheet.queryByRole('button', { name: generate })).toBeNull();
+			expect(
+				sheet.queryByRole('button', { name: 'Revoke API key for support-agent' }),
+			).toBeNull();
+		}
+	});
+
+	it.each(Object.entries(VIEWERS))('Settings sheet — %s', async (_label, permissions) => {
+		const canManage = permissions.includes('agents:write') || permissions.includes('org:admin');
+		seedViewer(permissions);
+		await renderReady('/?agent=agnt_active_1');
+		const sheet = await openDockSheet('Settings');
+
+		if (canManage) {
+			expect(await sheet.findByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+			expect(
+				sheet.getByRole('button', { name: 'Archive support-agent' }),
+			).toBeInTheDocument();
+		} else {
+			expect(
+				await sheet.findByText('Renaming this agent needs permission to manage agents.'),
+			).toBeInTheDocument();
+			expect(sheet.queryByRole('button', { name: 'Save changes' })).toBeNull();
+			expect(sheet.queryByRole('button', { name: 'Archive support-agent' })).toBeNull();
+		}
+	});
+
+	it.each(Object.entries(VIEWERS))('Add APIs — %s', async (_label, permissions) => {
+		const canManage = permissions.includes('agents:write') || permissions.includes('org:admin');
+		seedViewer(permissions);
+		await renderReady('/?agent=agnt_active_1');
+
+		const add = await screen.findByRole('button', { name: 'Add APIs' });
+		if (canManage) {
+			expect(add).toBeEnabled();
+		} else {
+			expect(add).toBeDisabled();
+			expect(
+				screen.getByText('Adding APIs needs permission to manage agents.'),
+			).toBeInTheDocument();
+		}
+	});
+});
+
 describe('"Create here" follows agents:write', () => {
 	it.each(Object.entries(VIEWERS))('%s', async (_label, permissions) => {
 		const canCreate = permissions.includes('agents:write') || permissions.includes('org:admin');
 		const user = userEvent.setup();
 		seedViewer(permissions);
-		renderPage('/?agent=agnt_active_1');
+		await renderReady('/?agent=agnt_active_1');
 		await screen.findByTestId('agent-dock');
 
 		await user.click(screen.getByRole('button', { name: 'New agent' }));

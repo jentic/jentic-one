@@ -28,6 +28,17 @@ export const CREDENTIALS_READ = 'credentials:read';
 /** Read the credentials the caller owns (`GET /credentials`, owner-scoped). */
 export const OWNER_CREDENTIALS_READ = 'owner:credentials:read';
 
+/**
+ * Whether the caller's permissions are known: the provider has loaded the user,
+ * or there is no provider (the viewer is unknown and {@link useCanAccess} lets
+ * the server decide). A surface uses it to tell "not allowed" apart from "not
+ * loaded yet", so it never flashes a no-access state before `/users/me` answers.
+ */
+export function usePermissionsKnown(): boolean {
+	const auth = useOptionalAuth();
+	return !auth || auth.user != null;
+}
+
 export function useCanAccess(...permissions: string[]): boolean {
 	const auth = useOptionalAuth();
 	if (!auth) return true;

@@ -6,6 +6,7 @@ export { usePermission, ORG_ADMIN } from '@/shared/auth/usePermission';
 export { useCanReadEvents, EVENTS_READ } from '@/shared/auth/useCanReadEvents';
 export {
 	useCanAccess,
+	usePermissionsKnown,
 	AGENTS_READ,
 	AGENTS_WRITE,
 	AUDIT_READ,

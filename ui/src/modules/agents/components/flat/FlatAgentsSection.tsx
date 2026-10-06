@@ -828,16 +828,21 @@ function SelectedAgentPanel({
 		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
 
 	const isArchived = agent.status === 'archived';
-	// Only pending (cannot authenticate yet), rejected and archived block binding.
-	const canBind = agent.status === 'active' || agent.status === 'disabled';
+	// Only pending (cannot authenticate yet), rejected and archived block binding,
+	// and binding needs `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
+	const statusAllowsBind = agent.status === 'active' || agent.status === 'disabled';
+	const canBind = statusAllowsBind && canManage;
 	const bindBlockedReason =
-		agent.status === 'pending'
-			? 'Approve this agent before giving it APIs.'
-			: agent.status === 'rejected'
-				? 'A rejected agent cannot be given APIs.'
-				: isArchived
-					? 'An archived agent cannot be given APIs.'
-					: null;
+		statusAllowsBind && !canManage
+			? 'Adding APIs needs permission to manage agents.'
+			: agent.status === 'pending'
+				? 'Approve this agent before giving it APIs.'
+				: agent.status === 'rejected'
+					? 'A rejected agent cannot be given APIs.'
+					: isArchived
+						? 'An archived agent cannot be given APIs.'
+						: null;
 
 	// Re-entry lands on the queue while a batch is owed — those picks are decided.
 	// "Owed" is judged against the live bindings whenever the queue is shut: an item

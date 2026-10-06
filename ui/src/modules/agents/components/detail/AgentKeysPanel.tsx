@@ -20,6 +20,7 @@ import { Ban, History, KeyRound } from 'lucide-react';
 import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { MIGRATED_SERVICE_ACCOUNT_KEY_WARNING, holdsMigratedServiceAccountKey } from '@/shared/lib';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
@@ -39,6 +40,8 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 	const [apiKey, setApiKey] = useState<string | null>(null);
 	const [confirmRevoke, setConfirmRevoke] = useState(false);
+	// Issuing and revoking keys need `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
 	const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
 	if (apiKeyInfo.isPending) {
@@ -108,7 +111,11 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					</p>
 				)}
 
-				{agent.status === 'active' ? (
+				{!canManage ? (
+					<p className="text-muted-foreground text-xs" data-testid="keys-need-permission">
+						Issuing or revoking keys needs permission to manage agents.
+					</p>
+				) : agent.status === 'active' ? (
 					<div className="flex flex-wrap justify-end gap-2">
 						{agent.hasApiKey && (
 							<Button
