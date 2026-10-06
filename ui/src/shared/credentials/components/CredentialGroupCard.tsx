@@ -24,6 +24,11 @@ interface CredentialGroupCardProps {
 	usageFor: (cred: Credential) => Usage;
 	/** Which rows are shared with the viewer rather than theirs to change. */
 	readOnlyFor?: (cred: Credential) => boolean;
+	/**
+	 * The API's title as the workspace names it (its display name, e.g.
+	 * "GitHub"), when it's imported — the header then matches the API's hub.
+	 */
+	workspaceTitle?: string | null;
 }
 
 /**
@@ -52,6 +57,7 @@ export function CredentialGroupCard({
 	onConnect,
 	usageFor,
 	readOnlyFor,
+	workspaceTitle,
 }: CredentialGroupCardProps) {
 	const [first] = credentials;
 	const vendor = first.api.vendor ?? first.name;
@@ -62,11 +68,13 @@ export function CredentialGroupCard({
 	const distinctApis = new Set(credentials.map(apiIdentityKey)).size;
 	const sameApi = distinctApis === 1;
 	const apiTitle = sameApi
-		? apiRefDisplayName({
+		? workspaceTitle ||
+			apiRefDisplayName({
 				catalogApiId: first.catalog_api_id,
 				vendor: first.api.vendor,
 				name: first.api.name,
-			}) || formatApiReference(unversioned(first.api))
+			}) ||
+			formatApiReference(unversioned(first.api))
 		: vendor;
 	const apiLine = sameApi
 		? credentialApiLine({ ...first, api: unversioned(first.api) }, apiTitle)

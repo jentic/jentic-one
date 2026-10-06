@@ -74,3 +74,32 @@ export function apiScopeReach(scope: ApiScope): 'vendor-wide' | 'any-version' | 
 	if (!scope.version?.trim()) return 'any-version';
 	return 'pinned';
 }
+
+/**
+ * The workspace API a credential is for, matched version-aside: by catalog id
+ * when both carry one, else by vendor + API name in slug form. Null for a
+ * vendor-wide credential (no API name) or one whose API isn't imported.
+ */
+export function workspaceApiForCredential<
+	T extends { catalog_api_id?: string | null; api: { vendor: string; name: string } },
+>(
+	cred: { catalog_api_id?: string | null; api: { vendor: string; name?: string | null } },
+	apis: readonly T[],
+): T | null {
+	const catalogId = cred.catalog_api_id?.trim().toLowerCase();
+	if (catalogId) {
+		const hit = apis.find((a) => a.catalog_api_id?.trim().toLowerCase() === catalogId);
+		if (hit) return hit;
+	}
+	const name = cred.api.name?.trim();
+	if (!name) return null;
+	const vendor = slugifyApiField(cred.api.vendor);
+	const nameSlug = slugifyApiField(name);
+	return (
+		apis.find(
+			(a) =>
+				slugifyApiField(a.api.vendor) === vendor &&
+				slugifyApiField(a.api.name) === nameSlug,
+		) ?? null
+	);
+}
