@@ -17,7 +17,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Card, CardBody, CardHeader, CardTitle, SegmentedToggle } from '@/shared/ui';
 import { LiveDot, type LiveDotTone } from '@/shared/app/rail/LiveDot';
-import { RailFeed, type RailFeedProps } from '@/shared/app/rail/RailFeed';
+import { RailFeed, RailForbidden, type RailFeedProps } from '@/shared/app/rail/RailFeed';
 import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
 import { useActorDirectory } from '@/shared/hooks';
 import { useAgentStreamOptional } from '@/shared/lib';
@@ -40,6 +40,7 @@ const STATUS_COPY: Record<Status, { label: string; tone: LiveDotTone }> = {
 	error: { label: 'Reconnecting…', tone: 'warning' },
 	// Not "Paused": that word is the rail's pause, a different thing.
 	idle: { label: 'Offline', tone: 'idle' },
+	forbidden: { label: 'No access', tone: 'idle' },
 };
 
 export interface ActivityStreamPanelProps {
@@ -120,7 +121,9 @@ export function ActivityStreamPanel({
 						aria-relevant="additions"
 						aria-label="Activity feed"
 					>
-						{stream ? (
+						{stream?.status === 'forbidden' ? (
+							<RailForbidden />
+						) : stream ? (
 							<RailFeed
 								events={events}
 								filters={filters}

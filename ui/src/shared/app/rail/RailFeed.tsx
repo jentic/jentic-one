@@ -12,6 +12,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import {
+	EVENTS_FORBIDDEN_COPY,
 	categoryForKind,
 	formatStreamDayLabel,
 	isFailureSeverity,
@@ -287,6 +288,19 @@ export function RailFeed({
 					</div>
 				);
 			})}
+		</div>
+	);
+}
+
+/** The rail body for a caller who cannot read events: one plain statement. */
+export function RailForbidden() {
+	return (
+		<div
+			data-testid="rail-forbidden"
+			className="text-muted-foreground border-border bg-background/40 rounded border border-dashed px-3 py-6 text-center text-[11px]"
+		>
+			<p className="text-foreground font-medium">{EVENTS_FORBIDDEN_COPY.title}</p>
+			<p className="mt-1">{EVENTS_FORBIDDEN_COPY.description}</p>
 		</div>
 	);
 }

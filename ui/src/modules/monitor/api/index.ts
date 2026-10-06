@@ -23,7 +23,7 @@ export {
 } from '@/modules/monitor/api/hooks';
 export type { LiveStreamStatus } from '@/modules/monitor/api/hooks';
 
-export { MonitorApiError } from '@/modules/monitor/api/client';
+export { MonitorApiError, isMonitorAccessDenied } from '@/modules/monitor/api/client';
 export type {
 	ListExecutionsParams,
 	ListJobsParams,

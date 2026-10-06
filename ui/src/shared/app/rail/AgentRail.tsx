@@ -42,6 +42,7 @@ function CollapsedStrip({ onExpand }: { onExpand: () => void }) {
 			? `${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`
 			: null,
 		status === 'error' ? 'reconnecting' : null,
+		status === 'forbidden' ? 'no access' : null,
 		paused ? 'paused' : null,
 	].filter(Boolean);
 	const label = `Show live activity${parts.length ? ` (${parts.join(', ')})` : ''}`;

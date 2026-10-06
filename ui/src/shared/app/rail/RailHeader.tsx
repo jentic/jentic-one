@@ -38,6 +38,7 @@ export type RailHeaderProps = {
 };
 
 function statusDot(status: StreamStatus, paused: boolean): { label: string; tone: LiveDotTone } {
+	if (status === 'forbidden') return { label: 'No access to activity', tone: 'idle' };
 	if (paused) return { label: 'Feed paused', tone: 'warning' };
 	if (status === 'live') return { label: 'Stream live', tone: 'live' };
 	if (status === 'error') return { label: 'Stream offline', tone: 'warning' };
@@ -74,7 +75,9 @@ export function RailHeader({
 			<div className="flex items-center gap-2 py-2 pr-2 pl-3">
 				<LiveDot tone={dot.tone} label={dot.label} />
 				<span className="text-foreground text-sm font-semibold">Activity</span>
-				{status === 'error' ? (
+				{status === 'forbidden' ? (
+					<span className="text-muted-foreground truncate text-[11px]">No access</span>
+				) : status === 'error' ? (
 					<span
 						className="text-warning truncate text-[11px]"
 						title="The live stream dropped. Retrying — showing what's already loaded."

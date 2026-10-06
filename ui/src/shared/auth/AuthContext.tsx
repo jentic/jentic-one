@@ -299,3 +299,9 @@ export function useAuth(): AuthContextValue {
 export function useOptionalCurrentUser(): CurrentUserResponse | null {
 	return useContext(AuthContext)?.user ?? null;
 }
+
+/** The auth context, or `null` outside an `AuthProvider` — for hooks that must
+ * tell "no provider" apart from "provider still loading the user". */
+export function useOptionalAuth(): AuthContextValue | null {
+	return useContext(AuthContext);
+}

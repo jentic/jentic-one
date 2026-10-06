@@ -71,6 +71,7 @@ export {
 	streamDayKey,
 	isFailureSeverity,
 	isRetiredEventType,
+	EVENTS_FORBIDDEN_COPY,
 } from '@/shared/lib/agentStream';
 export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agentStream';
 
