@@ -5,6 +5,8 @@ import { renderWithProviders, screen, userEvent, waitFor, within } from '@/__tes
 import { setToken } from '@/shared/api';
 import { makeMockCredential } from '@/shared/credentials/mocks/handlers';
 import { BindAgentDialog } from '@/modules/workspace/components/BindAgentDialog';
+import { Toaster } from '@/shared/ui/Toaster';
+import { clearAllToasts } from '@/shared/ui/toastStore';
 
 /**
  * "Already bound" must come from EVERY page of the credential's agents: an
@@ -279,5 +281,136 @@ describe('BindAgentDialog — what the agent may call', () => {
 		renderDialog();
 		expect(await screen.findByTestId('bind-agent-all-bound')).toBeInTheDocument();
 		expect(screen.queryByTestId('bind-agent-list')).not.toBeInTheDocument();
+	});
+
+	it('clears a rules-save failure banner when the dialog is reopened', async () => {
+		serveRules({ failFor: ['agent_1'] });
+		const user = userEvent.setup();
+		const ui = (open: boolean) => (
+			<BindAgentDialog
+				open={open}
+				onClose={() => {}}
+				credentials={[CRED]}
+				apiLabel="Stripe"
+			/>
+		);
+		const { rerender } = renderWithProviders(ui(true));
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Allow all/ }));
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		expect(await screen.findByTestId('bind-agent-rules-failed')).toBeInTheDocument();
+		rerender(ui(false));
+		rerender(ui(true));
+		await screen.findByTestId('bind-agent-list');
+		expect(screen.queryByTestId('bind-agent-rules-failed')).not.toBeInTheDocument();
+	});
+});
+
+describe('BindAgentDialog — what Allow all reaches, and naming the credential', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		posted = [];
+		clearAllToasts();
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({
+					data: [pickerAgent('agent_1')],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.get('/credentials/:cid/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+			http.post('/agents/:id/credentials', ({ params }) => {
+				posted.push(String(params.id));
+				return HttpResponse.json({}, { status: 201 });
+			}),
+			http.put('/credentials/:cid/agents/:aid/permissions', () =>
+				HttpResponse.json({ data: [] }),
+			),
+		);
+	});
+
+	const allowAll = () => screen.findByRole('radio', { name: /Allow all/ });
+
+	it('a pinned credential: every operation of this API, no coverage note', async () => {
+		const pinned = makeMockCredential({
+			credential_id: 'cred_pin',
+			name: 'Pinned',
+			api: { vendor: 'stripe', name: 'stripe-api', version: '2024-01-01' },
+		});
+		renderWithProviders(
+			<BindAgentDialog open onClose={() => {}} credentials={[pinned]} apiLabel="Stripe" />,
+		);
+		expect(await allowAll()).toHaveAccessibleDescription(
+			expect.stringContaining('Every operation of this API'),
+		);
+		expect(screen.queryByTestId('bind-agent-coverage-note')).not.toBeInTheDocument();
+	});
+
+	it('an any-version credential: reaches every version, including later ones', async () => {
+		renderWithProviders(
+			<BindAgentDialog open onClose={() => {}} credentials={[CRED]} apiLabel="Stripe" />,
+		);
+		const radio = await allowAll();
+		expect(radio).toHaveAccessibleDescription(
+			expect.stringContaining('including versions added later'),
+		);
+		expect(screen.getByTestId('bind-agent-coverage-note')).toHaveTextContent(
+			'covers every version of this API',
+		);
+	});
+
+	it('a vendor-wide credential: reaches every API and version of the vendor', async () => {
+		const wide = makeMockCredential({
+			credential_id: 'cred_wide',
+			name: 'Vendor key',
+			api: { vendor: 'stripe', name: '', version: '' },
+		});
+		renderWithProviders(
+			<BindAgentDialog open onClose={() => {}} credentials={[wide]} apiLabel="Stripe" />,
+		);
+		expect(await allowAll()).toHaveAccessibleDescription(
+			expect.stringContaining('every API and version this credential covers'),
+		);
+		expect(screen.getByTestId('bind-agent-coverage-note')).toHaveTextContent(
+			'every API of its vendor',
+		);
+	});
+
+	it('names a same-named credential in the toast the way the picker does', async () => {
+		const a = makeMockCredential({
+			credential_id: 'cred_aaaa1111',
+			name: 'Shared key',
+			api: { vendor: 'stripe', name: 'stripe-api', version: '' },
+		});
+		const b = makeMockCredential({
+			credential_id: 'cred_bbbb4b2b',
+			name: 'Shared key',
+			api: { vendor: 'stripe', name: 'stripe-api', version: '' },
+		});
+		const user = userEvent.setup();
+		renderWithProviders(
+			<>
+				<BindAgentDialog
+					open
+					onClose={() => {}}
+					credentials={[a, b]}
+					apiLabel="Stripe"
+					initialCredentialId="cred_bbbb4b2b"
+				/>
+				<Toaster />
+			</>,
+		);
+		const select = await screen.findByTestId('bind-agent-credential');
+		const picked = within(select).getByRole('option', { selected: true }).textContent!;
+		expect(picked).toMatch(/^Shared key · /);
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		await user.click(screen.getByRole('radio', { name: /Read-only/ }));
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		expect(
+			await screen.findByText(`Bound “${picked}” to agent_1, with access rules.`),
+		).toBeInTheDocument();
 	});
 });

@@ -62,3 +62,15 @@ export function apiScopeCovers(scope: ApiScope, ref: ConcreteApiRef): boolean {
 	if (version && version !== (ref.version?.trim() ?? '')) return false;
 	return true;
 }
+
+/**
+ * How far a credential's stored scope reaches, by the same wildcard rule as
+ * `apiScopeCovers`: `vendor-wide` (no API name — every API of the vendor, every
+ * version), `any-version` (an API, every version — including ones added
+ * later), or `pinned` (one API, one version).
+ */
+export function apiScopeReach(scope: ApiScope): 'vendor-wide' | 'any-version' | 'pinned' {
+	if (!scope.name?.trim()) return 'vendor-wide';
+	if (!scope.version?.trim()) return 'any-version';
+	return 'pinned';
+}

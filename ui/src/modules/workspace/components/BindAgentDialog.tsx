@@ -52,6 +52,7 @@ import {
 import { ROUTES } from '@/shared/app/routes';
 import { useOptionalCurrentUser } from '@/shared/auth';
 import { credentialsBindableBy } from '@/shared/credentials/lib/bindAuthority';
+import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 import { credentialSiblingHint } from '@/shared/credentials/lib/credentialIdentity';
 import { useAllCredentialAgents, type Credential } from '@/shared/credentials/api';
 import {
@@ -66,12 +67,24 @@ import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
 /** The rules choice; `null` until the user picks one. */
 type RulesPreset = 'all' | 'read' | 'custom';
 
-const PRESET_OPTIONS: { value: RulesPreset; label: string; description: string }[] = [
-	{
-		value: 'all',
-		label: 'Allow all operations',
-		description: 'Every operation of this API, any method.',
-	},
+type ScopeReach = ReturnType<typeof apiScopeReach>;
+
+/**
+ * What "Allow all operations" reaches: the rule is `path ".*"` on the whole
+ * credential, so it spans everything the credential's scope covers — an
+ * unpinned credential's future versions and, vendor-wide, every API of the
+ * vendor (the broker resolves a binding through `credential_covers`).
+ */
+const ALLOW_ALL_DESCRIPTION: Record<ScopeReach, string> = {
+	pinned: 'Every operation of this API, any method.',
+	'any-version':
+		'Every operation of every version this credential covers — including versions added later — any method.',
+	'vendor-wide':
+		'Every operation of every API and version this credential covers — including ones added later — any method.',
+};
+
+/** The presets after Allow all — the same whatever the credential covers. */
+const PRESET_REST: { value: RulesPreset; label: string; description: string }[] = [
 	{
 		value: 'read',
 		label: 'Read-only (GET only)',
@@ -83,6 +96,19 @@ const PRESET_OPTIONS: { value: RulesPreset; label: string; description: string }
 		description: 'Write your own allow / deny rules, evaluated in order.',
 	},
 ];
+
+function presetOptions(
+	reach: ScopeReach,
+): { value: RulesPreset; label: string; description: string }[] {
+	return [
+		{
+			value: 'all',
+			label: 'Allow all operations',
+			description: ALLOW_ALL_DESCRIPTION[reach],
+		},
+		...PRESET_REST,
+	];
+}
 
 /** The read-only preset: any path, GET only. */
 function readOnlyRule(): PermissionRuleInput {
@@ -179,7 +205,9 @@ export function BindAgentDialog({
 	const [createError, setCreateError] = useState<Error | null>(null);
 	const [creating, setCreating] = useState(false);
 
-	// Transient: clear the last errors on every (re)open. (`reset` is stable.)
+	// Transient: clear the last errors — and a rules-save failure's Retry banner,
+	// which belongs to the bind that raised it — on every (re)open. (`reset`
+	// is stable.)
 	const resetBind = bind.reset;
 	const resetApply = applyRules.reset;
 	useEffect(() => {
@@ -187,6 +215,7 @@ export function BindAgentDialog({
 			resetBind();
 			resetApply();
 			setCreateError(null);
+			setRulesFailure(null);
 		}
 	}, [open, resetBind, resetApply]);
 
@@ -194,6 +223,14 @@ export function BindAgentDialog({
 	const credential = usable.find((c) => c.credential_id === credentialId) ?? usable[0] ?? null;
 	// Bind through a credential made on confirm — only while none exists yet.
 	const pendingCreate = credential == null ? (createOnBind ?? null) : null;
+	// How far the chosen credential reaches; a credential made on Bind is
+	// unpinned (no version — the backend's wildcard).
+	const reach: ScopeReach = credential
+		? apiScopeReach(credential.api)
+		: pendingCreate
+			? 'any-version'
+			: 'pinned';
+	const options = useMemo(() => presetOptions(reach), [reach]);
 	// Every page: a partial list would offer already-bound agents as unbound.
 	const boundHere = useAllCredentialAgents(credential?.credential_id, {
 		enabled: open && credential != null,
@@ -246,10 +283,16 @@ export function BindAgentDialog({
 			return next;
 		});
 
-	const finish = (credentialName: string, names: string[]): void => {
+	/** The credential as the picker names it: a same-named sibling gets its hint. */
+	const pickerLabel = (cred: Credential): string => {
+		const hint = credentialSiblingHint(cred, usable);
+		return hint ? `${cred.name} · ${hint}` : cred.name;
+	};
+
+	const finish = (credentialLabel: string, names: string[]): void => {
 		toast({
 			title: 'Credential bound',
-			description: `Bound “${credentialName}” to ${agentList(names)}, with access rules.`,
+			description: `Bound “${credentialLabel}” to ${agentList(names)}, with access rules.`,
 			variant: 'success',
 		});
 		// Reset the draft only on a successful commit.
@@ -286,7 +329,7 @@ export function BindAgentDialog({
 				onSuccess: ({ rulesFailed }) => {
 					if (rulesFailed.length === 0) {
 						finish(
-							bound.name,
+							pickerLabel(bound),
 							agentsToBind.map((a) => a.name),
 						);
 						return;
@@ -318,11 +361,9 @@ export function BindAgentDialog({
 						setRulesFailure({ ...failure, agents: left });
 						return;
 					}
-					const name =
-						usable.find((c) => c.credential_id === failure.credentialId)?.name ??
-						'the credential';
+					const cred = usable.find((c) => c.credential_id === failure.credentialId);
 					finish(
-						name,
+						cred ? pickerLabel(cred) : 'the credential',
 						failure.agents.map((a) => a.name),
 					);
 				},
@@ -381,10 +422,9 @@ export function BindAgentDialog({
 							data-testid="bind-agent-credential"
 						>
 							{usable.map((c) => {
-								const hint = credentialSiblingHint(c, usable);
 								return (
 									<option key={c.credential_id} value={c.credential_id}>
-										{hint ? `${c.name} · ${hint}` : c.name}
+										{pickerLabel(c)}
 									</option>
 								);
 							})}
@@ -469,13 +509,23 @@ export function BindAgentDialog({
 							What can this agent call?
 						</p>
 						<RadioCardGroup
-							options={PRESET_OPTIONS}
+							options={options}
 							value={preset}
 							onChange={setPreset}
 							ariaLabelledBy={rulesId}
 							disabled={busy}
 							data-testid="bind-agent-rules-preset"
 						/>
+						{reach !== 'pinned' && (
+							<p
+								className="text-muted-foreground text-xs"
+								data-testid="bind-agent-coverage-note"
+							>
+								{reach === 'vendor-wide'
+									? 'This credential covers every API of its vendor, in every version — these rules apply to all of them, including ones added later.'
+									: 'This credential covers every version of this API — these rules apply to future versions too.'}
+							</p>
+						)}
 						{preset === 'custom' && (
 							<RuleListEditor
 								rules={customRules}
