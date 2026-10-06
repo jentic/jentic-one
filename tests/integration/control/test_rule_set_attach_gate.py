@@ -23,7 +23,15 @@ from jentic_one.control.services.credentials.errors import (
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
-from jentic_one.control.services.rule_set_curation import RuleSetCurationService
+from jentic_one.control.services.rule_set_curation import (
+    CrossOwnerAttachment,
+    RuleSetCurationService,
+)
+from jentic_one.control.services.upgrade_steps import (
+    RULE_SETS_MARK_CURATED,
+    STEPS,
+    UpgradeStepService,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
@@ -83,8 +91,13 @@ async def _cleanup(ctx: Context) -> None:
         await session.commit()
 
 
-async def _binding(ctx: Context, svc: CredentialService, owner: Identity, tag: str) -> _Binding:
-    """A credential owned by ``owner`` bound to an agent ``owner`` registered."""
+async def _binding(
+    ctx: Context, svc: CredentialService, owner: Identity, tag: str, *, owned: bool = False
+) -> _Binding:
+    """A credential owned by ``owner`` bound to an agent ``owner`` registered.
+
+    ``owned`` also records ``owner`` as the agent's owner (the user row must exist).
+    """
     created = await svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
@@ -98,10 +111,15 @@ async def _binding(ctx: Context, svc: CredentialService, owner: Identity, tag: s
     async with ctx.admin_db.transaction() as session:
         await session.execute(
             text(
-                "INSERT INTO agents (id, name, registered_by, status, created_by) "
-                "VALUES (:id, :name, :owner, 'approved', :owner)"
+                "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
+                "VALUES (:id, :name, :owner_id, :owner, 'approved', :owner)"
             ),
-            {"id": agent_id, "name": f"rsgate-{tag}", "owner": owner.sub},
+            {
+                "id": agent_id,
+                "name": f"rsgate-{tag}",
+                "owner_id": owner.sub if owned else None,
+                "owner": owner.sub,
+            },
         )
         await AgentCredentialBindingRepository.bind(
             session, agent_id=agent_id, credential_id=created.credential_id, created_by=owner.sub
@@ -219,11 +237,9 @@ async def test_curated_set_is_editable_only_by_admin(
     assert updated.description == "changed"
 
 
-async def test_curation_step_marks_admin_and_system_created_sets(
-    integration_context: Context, cleanup: None
-) -> None:
-    """The upgrade step marks sets whose creator holds org:admin or is a system actor."""
-    async with integration_context.admin_db.transaction() as session:
+async def _seed_users(ctx: Context) -> None:
+    """Admin-DB rows for the three users; only ``_ADMIN`` holds ``org:admin``."""
+    async with ctx.admin_db.transaction() as session:
         for user in _USERS:
             await session.execute(
                 text(
@@ -239,6 +255,94 @@ async def test_curation_step_marks_admin_and_system_created_sets(
             ),
             {"uid": _ADMIN.sub},
         )
+
+
+async def test_curation_lists_cross_owner_attachments_only(
+    integration_context: Context, svc: CredentialService, cleanup: None
+) -> None:
+    """A binding on another user's non-curated set is reported; own and curated sets are not."""
+    await _seed_users(integration_context)
+    cross = await _binding(integration_context, svc, _BOB, "cross", owned=True)
+    own = await _binding(integration_context, svc, _ALICE, "same", owned=True)
+    on_curated = await _binding(integration_context, svc, _BOB, "oncurated", owned=True)
+    alice_set, _ = await svc.create_rule_set(
+        name="alice-shared", description=None, rules=_RULES, identity=_ALICE
+    )
+    admin_set, _ = await svc.create_rule_set(
+        name="admin-curated", description=None, rules=_RULES, identity=_ADMIN
+    )
+    # Stands in for an attachment made before the attach gate existed.
+    await _attach(svc, cross, alice_set.id, _ADMIN)
+    await _attach(svc, own, alice_set.id, _ALICE)
+    await _attach(svc, on_curated, admin_set.id, _BOB)
+
+    result = await RuleSetCurationService(integration_context).mark_existing()
+
+    mine = {cross.agent_id, own.agent_id, on_curated.agent_id}
+    found = [a for a in result.cross_owner if a.agent_id in mine]
+    assert len(found) == 1
+    attachment = found[0]
+    assert attachment == CrossOwnerAttachment(
+        binding_id=attachment.binding_id,
+        agent_id=cross.agent_id,
+        agent_name="rsgate-cross",
+        owner_id=_BOB.sub,
+        credential_id=cross.credential_id,
+        rule_set_id=alice_set.id,
+        rule_set_name="alice-shared",
+        rule_set_creator=_ALICE.sub,
+    )
+    # Reported, never detached.
+    assert await _attached(svc, cross) == alice_set.id
+
+
+async def test_curation_step_reruns_and_warns(
+    integration_context: Context, svc: CredentialService, cleanup: None
+) -> None:
+    """Every run marks sets created since the last one and repeats the cross-owner warning."""
+    await _seed_users(integration_context)
+    cross = await _binding(integration_context, svc, _BOB, "rerun", owned=True)
+    alice_set, _ = await svc.create_rule_set(
+        name="alice-rerun", description=None, rules=_RULES, identity=_ALICE
+    )
+    await _attach(svc, cross, alice_set.id, _ADMIN)
+    steps = UpgradeStepService(integration_context, steps=STEPS)
+
+    (first,) = await steps.run()
+    # An older release redeployed on this schema creates an admin's set uncurated.
+    async with integration_context.control_db.transaction() as session:
+        later = await PermissionRuleSetRepository.create(
+            session, name="curation-later", description=None, created_by=_ADMIN.sub
+        )
+    (second,) = await steps.run()
+
+    async with integration_context.control_db.session() as session:
+        reread = await PermissionRuleSetRepository.get_by_id(session, later.id)
+    assert reread is not None and reread.curated is True
+    assert (first.name, first.action, second.action) == (
+        RULE_SETS_MARK_CURATED,
+        "performed",
+        "performed",
+    )
+    assert second.summary["marked"] >= 1
+    for outcome in (first, second):
+        assert outcome.warnings[0].startswith(
+            f"{outcome.summary['cross_owner_bindings']} agent credential binding(s)"
+        )
+        assert any(
+            line.startswith("binding ")
+            and f"agent {cross.agent_id} " in line
+            and f"rule set {alice_set.id} ('alice-rerun') created by {_ALICE.sub}" in line
+            for line in outcome.warnings[1:]
+        )
+    assert await steps.pending() == []
+
+
+async def test_curation_step_marks_admin_and_system_created_sets(
+    integration_context: Context, cleanup: None
+) -> None:
+    """The upgrade step marks sets whose creator holds org:admin or is a system actor."""
+    await _seed_users(integration_context)
     creators = {
         "by-admin": _ADMIN.sub,
         "by-alice": _ALICE.sub,

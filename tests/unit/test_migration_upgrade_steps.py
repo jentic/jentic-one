@@ -104,17 +104,209 @@ def test_no_registered_steps_is_a_clean_no_op(
     assert _ledger(sqlite_stack) == []
 
 
-def test_full_upgrade_runs_the_rule_set_curation_step(
+def test_full_upgrade_runs_the_rule_set_curation_step_every_time(
     sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The registered curation step runs once on a fresh install and is ledgered."""
+    """The curation step is repeatable: every full upgrade runs it; one ledger row."""
     assert run_mod.main([]) == 0
     assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in capsys.readouterr().out
     assert run_mod.main([]) == 0
-    assert (
-        f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: already_done" in capsys.readouterr().out
-    )
+    assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in capsys.readouterr().out
     assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
+
+
+# Control and admin heads of the 0.41.0 release (the registry head is unchanged).
+_CONTROL_041_HEAD = "f3c4d5e6a7b8"  # pragma: allowlist secret
+_ADMIN_041_HEAD = "e2f3a4b5c6d7"  # pragma: allowlist secret
+
+_ADMIN_USER = "usr_up_admin"
+_ALICE = "usr_up_alice"
+_BOB = "usr_up_bob"
+
+
+def _seed_041_data(stack: Path) -> dict[str, str]:
+    """Users, an org:admin grant, rule sets and bindings as a 0.41 install holds them.
+
+    Returns the rule set ids by label. Bob's agent is attached to Alice's set
+    (cross-owner) and to the admin's set; Alice's agent to her own set.
+    """
+    admin_db, control_db = stack / "admin.db", stack / "control.db"
+    for uid in (_ADMIN_USER, _ALICE, _BOB):
+        _execute(
+            admin_db,
+            "INSERT INTO users (id, email, first_name, last_name) VALUES (?, ?, 'U', 'P')",
+            (uid, f"{uid}@test.local"),
+        )
+    _execute(
+        admin_db,
+        "INSERT INTO user_permission_grants (id, user_id, permission) "
+        "VALUES ('perm_up_admin', ?, 'org:admin')",
+        (_ADMIN_USER,),
+    )
+    sets = {"admin": ("prs_up_admin", _ADMIN_USER), "alice": ("prs_up_alice", _ALICE)}
+    for label, (set_id, creator) in sets.items():
+        _execute(
+            control_db,
+            "INSERT INTO permission_rule_sets (id, name, created_by) VALUES (?, ?, ?)",
+            (set_id, f"up-{label}", creator),
+        )
+    for agent_id, owner in (("agnt_up_alice", _ALICE), ("agnt_up_bob", _BOB)):
+        _execute(
+            admin_db,
+            "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
+            "VALUES (?, ?, ?, ?, 'approved', ?)",
+            (agent_id, f"{agent_id}-name", owner, owner, owner),
+        )
+    for binding_id, agent_id, credential_id, set_id in (
+        ("acb_up_alice_own", "agnt_up_alice", "cred_up_a", "prs_up_alice"),
+        ("acb_up_bob_cross", "agnt_up_bob", "cred_up_b", "prs_up_alice"),
+        ("acb_up_bob_admin", "agnt_up_bob", "cred_up_c", "prs_up_admin"),
+    ):
+        _execute(
+            admin_db,
+            "INSERT INTO agent_credential_bindings (id, agent_id, credential_id, rule_set_id) "
+            "VALUES (?, ?, ?, ?)",
+            (binding_id, agent_id, credential_id, set_id),
+        )
+    return {label: set_id for label, (set_id, _) in sets.items()}
+
+
+def _migrate_to_041_heads() -> None:
+    run_mod.upgrade("registry")
+    run_mod.upgrade("control", _CONTROL_041_HEAD)
+    run_mod.upgrade("admin", _ADMIN_041_HEAD)
+
+
+def _curated(stack: Path) -> dict[str, bool]:
+    rows = _query(stack / "control.db", "SELECT id, curated FROM permission_rule_sets")
+    return {str(set_id): bool(curated) for set_id, curated in rows}
+
+
+def _step_warnings(err: str) -> list[str]:
+    prefix = f"==> WARNING ({steps_mod.RULE_SETS_MARK_CURATED}): "
+    return [line[len(prefix) :] for line in err.splitlines() if line.startswith(prefix)]
+
+
+def test_upgrade_from_041_curates_admin_sets_and_warns_on_cross_owner_bindings(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """From the 0.41.0 heads: admin sets marked, only the cross-owner binding listed."""
+    _migrate_to_041_heads()
+    ids = _seed_041_data(sqlite_stack)
+    capsys.readouterr()
+
+    assert run_mod.main([]) == 0
+
+    assert _curated(sqlite_stack) == {ids["admin"]: True, ids["alice"]: False}
+    captured = capsys.readouterr()
+    assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in captured.out
+    assert '"cross_owner_bindings": 1' in captured.out
+    header, *lines = _step_warnings(captured.err)
+    assert header.startswith("1 agent credential binding(s) use a non-curated shared rule set")
+    assert "UPDATE permission_rule_sets SET curated = true" in header
+    assert lines == [
+        "binding acb_up_bob_cross: agent agnt_up_bob ('agnt_up_bob-name') owned by "
+        f"{_BOB}, credential cred_up_b, rule set {ids['alice']} ('up-alice') created by {_ALICE}"
+    ]
+
+
+def test_curation_rerun_marks_a_set_created_after_the_first_run(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A set an older release created on the newer schema is curated by the next upgrade."""
+    _migrate_to_041_heads()
+    _seed_041_data(sqlite_stack)
+    assert run_mod.main([]) == 0
+    # An older release redeployed on this schema writes no ``curated`` value.
+    _execute(
+        sqlite_stack / "control.db",
+        "INSERT INTO permission_rule_sets (id, name, created_by) VALUES (?, ?, ?)",
+        ("prs_up_later", "up-later", _ADMIN_USER),
+    )
+    capsys.readouterr()
+
+    assert run_mod.main([]) == 0
+
+    assert _curated(sqlite_stack)["prs_up_later"] is True
+    out = capsys.readouterr().out
+    assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in out
+    assert '"marked": 1' in out
+    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
+
+
+def test_skipping_the_curation_step_leaves_it_pending(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _migrate_to_041_heads()
+    ids = _seed_041_data(sqlite_stack)
+
+    assert run_mod.main(["--skip-upgrade-step", steps_mod.RULE_SETS_MARK_CURATED]) == 0
+    assert _curated(sqlite_stack)[ids["admin"]] is False
+    assert _ledger(sqlite_stack) == []
+    capsys.readouterr()
+    assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
+    assert f"STATUS upgrade-step:{steps_mod.RULE_SETS_MARK_CURATED} pending" in (
+        capsys.readouterr().out
+    )
+
+    assert run_mod.main([]) == 0
+    assert _curated(sqlite_stack)[ids["admin"]] is True
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [[["--skip-upgrade-steps"]], [["--db", "admin"], ["--db", "control"]]],
+    ids=["steps-skipped", "one-database-at-a-time"],
+)
+def test_check_reports_a_pending_step_after_a_roll_forward_without_it(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str], runs: list[list[str]]
+) -> None:
+    """Schemas at head, step never run: --check says pending and exits 3."""
+    _migrate_to_041_heads()
+    for argv in runs:
+        assert run_mod.main(argv) == 0
+    capsys.readouterr()
+
+    assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
+    out = capsys.readouterr().out
+    for name in ("admin", "control", "registry"):
+        assert f"STATUS {name} current" in out
+    assert f"STATUS upgrade-step:{steps_mod.RULE_SETS_MARK_CURATED} pending" in out
+    assert out.splitlines()[-1] == "OVERALL pending"
+
+    # A subset that leaves out a database the steps touch judges the schema only.
+    assert run_mod.main(["--check", "--db", "control"]) == 0
+    assert "upgrade-step" not in capsys.readouterr().out
+
+    assert run_mod.main([]) == 0
+    capsys.readouterr()
+    assert run_mod.main(["--check"]) == 0
+    out = capsys.readouterr().out
+    assert "upgrade-step" not in out
+    assert "OVERALL current" in out
+
+
+def test_check_on_a_schema_behind_head_lists_no_steps(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only a current schema is probed for steps; the verdict stays the schema's."""
+    _migrate_to_041_heads()
+    capsys.readouterr()
+
+    assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
+    out = capsys.readouterr().out
+    assert "upgrade-step" not in out
+    assert "OVERALL pending" in out
+
+
+def test_fresh_check_stays_uninitialized(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No schema at all is still ``uninitialized`` (migrated unattended), not pending."""
+    assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_NEEDS_MIGRATION
+    out = capsys.readouterr().out
+    assert "upgrade-step" not in out
+    assert "OVERALL uninitialized" in out
 
 
 def test_full_upgrade_runs_a_registered_step_exactly_once(

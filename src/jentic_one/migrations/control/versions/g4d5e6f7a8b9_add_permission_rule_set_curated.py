@@ -37,7 +37,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Forget the backfill along with the column, so a later re-upgrade runs
-    # ``rule_sets_mark_curated`` again instead of reporting it already done.
+    # Forget the backfill along with the column, so ``migrations.run --check``
+    # reports ``rule_sets_mark_curated`` pending until a full upgrade reruns it
+    # on the re-added (all false) column.
     op.execute("DELETE FROM upgrade_steps WHERE name = 'rule_sets_mark_curated'")
     op.drop_column("permission_rule_sets", "curated")

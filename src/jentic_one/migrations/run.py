@@ -14,13 +14,16 @@ config (``JENTIC__DATABASES__*`` env vars), so there is a single source of
 truth for connection details.
 
 A full upgrade to head (every database, no ``--target``) then runs the
-one-shot **upgrade steps** — data steps that span databases and so cannot live
-in one Alembic tree (``control/services/upgrade_steps.py``). Running them here
-means every install path that migrates performs them before the new version
-serves traffic. ``--skip-upgrade-steps`` defers all of them (and
+**upgrade steps** — data steps that span databases and so cannot live in one
+Alembic tree (``control/services/upgrade_steps.py``). Running them here means
+every install path that migrates performs them before the new version serves
+traffic. A one-shot step runs once per install; a repeatable one on every full
+upgrade. ``--skip-upgrade-steps`` defers all of them (and
 ``--skip-upgrade-step NAME`` one of them) to the next full upgrade. A step
 that leaves blocking work undone exits ``4`` (``EXIT_UPGRADE_STEP_FAILED``);
-non-blocking follow-ups are printed as ``==> WARNING`` lines.
+non-blocking follow-ups are printed as ``==> WARNING`` lines. A ``--check``
+covering every database the steps touch also reports each step that has never
+run (after a partial upgrade, or one with the steps skipped) as pending.
 
 **Service-account retirement (theme-8 Phase 4).** On a full upgrade whose
 admin database has not yet applied the service-account drop
@@ -243,6 +246,13 @@ def _run_check(order: list[str]) -> int:
 
     The output is line-oriented and stable because `jenticctl` parses it to
     decide whether starting the stack is safe.
+
+    When ``order`` covers every database the upgrade steps touch and all of
+    them are at head, each registered step the ledger does not record adds a
+    ``STATUS upgrade-step:<name> pending`` line and makes the verdict
+    ``pending``: the schema is current, but the data step a full upgrade runs
+    has not. A schema that is not current already yields a non-current verdict,
+    and the full upgrade it calls for runs the steps too.
     """
     # The overall verdict is the state demanding the most caution, which is
     # ``pending`` — NOT the "worst-looking" one. The caller responds to these
@@ -265,8 +275,29 @@ def _run_check(order: list[str]) -> int:
         )
         if caution[state] > caution[verdict]:
             verdict = state
+    if verdict == STATE_CURRENT and _UPGRADE_STEP_DBS.issubset(order):
+        for name in pending_upgrade_steps():
+            print(f"STATUS upgrade-step:{name} {STATE_PENDING}", flush=True)
+            verdict = STATE_PENDING
     print(f"OVERALL {verdict}", flush=True)
     return 0 if verdict == STATE_CURRENT else CHECK_EXIT_NEEDS_MIGRATION
+
+
+async def _pending_upgrade_steps_async() -> list[str]:
+    config = load_config()
+    async with Context(config, allowed_dbs={"control"}, refresh_providers_on_boot=False) as ctx:
+        return await UpgradeStepService(ctx).pending()
+
+
+def pending_upgrade_steps() -> list[str]:
+    """Registered upgrade steps the control ledger does not record (read-only).
+
+    Needs the control schema at head (the ledger table). With no step
+    registered this never touches config or the databases.
+    """
+    if not step_names():
+        return []
+    return asyncio.run(_pending_upgrade_steps_async())
 
 
 async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
@@ -297,7 +328,7 @@ async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
 
 
 def run_upgrade_steps(skip: Collection[str] = ()) -> int:
-    """Run the one-shot post-migration data steps (see ``UpgradeStepService``).
+    """Run the post-migration data steps (see ``UpgradeStepService``).
 
     Any unexpected error (config, connectivity, a bug) is reported as an
     upgrade-step failure — the schema is already at head, so the exit code must
@@ -344,12 +375,13 @@ def main(argv: list[str] | None = None) -> int:
         "--check",
         action="store_true",
         help="Report each database's schema state and exit without changing "
-        f"anything. Exits {CHECK_EXIT_NEEDS_MIGRATION} if any database is not at head.",
+        f"anything. Exits {CHECK_EXIT_NEEDS_MIGRATION} if any database is not at head "
+        "or, when control and admin are both checked, if an upgrade step has never run.",
     )
     parser.add_argument(
         "--skip-upgrade-steps",
         action="store_true",
-        help="After a full upgrade to head, do not run any of the one-shot "
+        help="After a full upgrade to head, do not run any of the "
         "post-migration data steps. They then run on the next full upgrade instead.",
     )
     parser.add_argument(
