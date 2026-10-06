@@ -162,6 +162,37 @@ export function seedCredentialBindings(
 	for (const over of rows) credentialBindings.push(seedBinding(over));
 }
 
+/** One shared permission rule set (`RuleSetResponse` minus `binding_count`,
+ * which is derived from the binding store on read). */
+interface RuleSetRow {
+	rule_set_id: string;
+	name: string;
+	description: string | null;
+	curated: boolean;
+	created_by: string | null;
+	created_at: string;
+	rules: BindingRule[];
+}
+
+let ruleSets: RuleSetRow[] = [];
+
+/** Test-only: add shared rule sets a binding's `rule_set_id` can point at.
+ * Resets with `resetAgentsStore()`. */
+export function seedPermissionRuleSets(
+	rows: Array<Partial<RuleSetRow> & Pick<RuleSetRow, 'rule_set_id' | 'name'>>,
+): void {
+	for (const over of rows) {
+		ruleSets.push({
+			description: null,
+			curated: false,
+			created_by: null,
+			created_at: now(-60),
+			rules: [],
+			...over,
+		});
+	}
+}
+
 /** Wire projection of a binding row (strips the mock-internal rule list). */
 function bindingJson(row: CredentialBindingRow) {
 	const { permissions: _permissions, ...wire } = row;
@@ -370,6 +401,7 @@ export const agentsE2eHooks = {
 };
 
 export function resetAgentsStore(): void {
+	ruleSets = [];
 	agents = [
 		// Distinct registration times so the pending-approval banner's
 		// "longest waiting" pick is observable: the backend serves
@@ -1390,6 +1422,37 @@ export const agentsHandlers = [
 		row.permissions = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
 		return HttpResponse.json({ data: row.permissions });
 	}),
+	// Shared rule sets: the detail read and the binding attach/detach pointer.
+	http.get('/permission-rule-sets/:rsid', ({ params }) => {
+		const set = ruleSets.find((r) => r.rule_set_id === params.rsid);
+		if (!set) return HttpResponse.json({ detail: 'Rule set not found.' }, { status: 404 });
+		return HttpResponse.json({
+			...set,
+			binding_count: credentialBindings.filter((b) => b.rule_set_id === set.rule_set_id)
+				.length,
+		});
+	}),
+	http.put('/credentials/:cid/agents/:aid/rule-set', async ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json()) as { rule_set_id: string };
+		if (!ruleSets.some((r) => r.rule_set_id === body.rule_set_id)) {
+			return HttpResponse.json({ detail: 'Rule set not found.' }, { status: 404 });
+		}
+		row.rule_set_id = body.rule_set_id;
+		return new HttpResponse(null, { status: 204 });
+	}),
+	// Idempotent detach: the inline rules (left untouched) apply again.
+	http.delete('/credentials/:cid/agents/:aid/rule-set', ({ params }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		row.rule_set_id = null;
+		return new HttpResponse(null, { status: 204 });
+	}),
 	// Broker dry-run against ONE binding's rules (`POST …/permissions:test`).
 	// Unlike the toolkit-era mock there is NO vendor pooling — the direct
 	// binding's own ordered list is the whole policy. Same evaluation
@@ -1406,8 +1469,14 @@ export const agentsHandlers = [
 			operation_id?: string | null;
 		};
 		const method = body.method.toUpperCase();
-		for (let i = 0; i < row.permissions.length; i++) {
-			const rule = row.permissions[i];
+		// An attached rule set is the binding's effective policy; its inline rules
+		// are dormant (mirrors `test_agent_permissions`).
+		const policy =
+			row.rule_set_id != null
+				? (ruleSets.find((r) => r.rule_set_id === row.rule_set_id)?.rules ?? [])
+				: row.permissions;
+		for (let i = 0; i < policy.length; i++) {
+			const rule = policy[i];
 			if (
 				!rule.methods?.length &&
 				!rule.path &&
