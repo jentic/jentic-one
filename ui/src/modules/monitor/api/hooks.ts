@@ -38,6 +38,7 @@ import {
 } from '@/modules/monitor/api/client';
 import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
 import { useAgentStreamOptional } from '@/shared/lib';
+import { useCanListActors } from '@/shared/hooks';
 import { toJobStatus } from '@/modules/monitor/api/types';
 import type {
 	ActorListResponse,
@@ -416,12 +417,16 @@ export function useActorForJob(
 /**
  * Hydrate the actor directory for the global filter bar's actor picker.
  * Directory data is small and slow-changing, so we cache it aggressively and
- * pull a large page in one shot.
+ * pull a large page in one shot. The listing needs `users:read`; without it the
+ * query stays off (no 403 round trip) and the picker offers "All actors" only,
+ * while row labels still resolve through `<ActorLabel>`'s by-id lookup.
  */
 export function useActors(params: ListActorsParams = {}) {
+	const canList = useCanListActors();
 	return useQuery<ActorListResponse>({
 		queryKey: monitorKeys.actors(),
 		queryFn: () => listActors(params),
+		enabled: canList === true,
 		staleTime: 5 * 60 * 1000,
 	});
 }

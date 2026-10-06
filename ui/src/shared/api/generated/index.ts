@@ -8,6 +8,8 @@ export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
 export type { ActorListResponse } from './models/ActorListResponse';
+export type { ActorLookupEntryResponse } from './models/ActorLookupEntryResponse';
+export type { ActorLookupResponse } from './models/ActorLookupResponse';
 export type { ActorSummaryResponse } from './models/ActorSummaryResponse';
 export { ActorType } from './models/ActorType';
 export type { AgentCreateRequest } from './models/AgentCreateRequest';

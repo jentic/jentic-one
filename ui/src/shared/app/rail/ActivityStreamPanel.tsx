@@ -62,7 +62,8 @@ export function ActivityStreamPanel({
 }: ActivityStreamPanelProps) {
 	const stream = useAgentStreamOptional();
 	const navigate = useNavigate();
-	const directory = useActorDirectory();
+	const events = stream?.events ?? [];
+	const directory = useActorDirectory(events.map((ev) => ev.actorId));
 	// Failures only is the rail's own toggle (shared via the provider), so the
 	// stream keeps the same filter as it morphs between rail and panel.
 	const failuresOnly = stream?.failuresOnly ?? false;
@@ -70,7 +71,6 @@ export function ActivityStreamPanel({
 	const filters = useMemo(() => ({ failuresOnly }), [failuresOnly]);
 
 	const status = STATUS_COPY[stream?.status ?? 'idle'];
-	const events = stream?.events ?? [];
 
 	function resolveActor(ev: StreamEvent): string | undefined {
 		return ev.actorId ? directory.resolve(ev.actorId) : undefined;

@@ -148,6 +148,42 @@ describe('MonitorPage', () => {
 		expect(usageCalls).toBe(0);
 	});
 
+	it('resolves actor names for non-admins by id, without the full directory', async () => {
+		let listCalls = 0;
+		const lookedUp = new Set<string>();
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(MEMBER)),
+			http.get('/actors', () => {
+				listCalls += 1;
+				return new HttpResponse(null, { status: 403 });
+			}),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				ids.forEach((id) => lookedUp.add(id));
+				return HttpResponse.json({
+					data: ids.map((id) => ({
+						id,
+						actor_type: 'user',
+						name: `Name of ${id}`,
+						active: true,
+					})),
+				});
+			}),
+		);
+		renderMonitor();
+		await screen.findByText('GET /repos/{owner}/{repo}');
+		await waitFor(() => expect(lookedUp.size).toBeGreaterThan(0));
+		const [someId] = [...lookedUp];
+		expect((await screen.findAllByText(`Name of ${someId}`)).length).toBeGreaterThan(0);
+		expect(listCalls).toBe(0);
+		// The actor picker has nothing to list without the directory.
+		expect(
+			within(screen.getByRole('combobox', { name: 'Filter by actor' })).getAllByRole(
+				'option',
+			),
+		).toHaveLength(1);
+	});
+
 	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
 		worker.use(http.get('/users/me', () => HttpResponse.json(MEMBER)));
 		renderMonitor('/app/monitor?show=audit');
@@ -533,9 +569,10 @@ describe('MonitorPage', () => {
 		renderMonitor();
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
+		// The picker's options load once `/users/me` confirms the caller may list actors.
 		await user.selectOptions(
 			screen.getByRole('combobox', { name: 'Filter by actor' }),
-			screen.getByRole('option', { name: /Admin User/ }),
+			await screen.findByRole('option', { name: /Admin User/ }),
 		);
 		await waitFor(() => {
 			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
