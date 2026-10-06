@@ -37,4 +37,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Forget the backfill along with the column, so a later re-upgrade runs
+    # ``rule_sets_mark_curated`` again instead of reporting it already done.
+    op.execute("DELETE FROM upgrade_steps WHERE name = 'rule_sets_mark_curated'")
     op.drop_column("permission_rule_sets", "curated")

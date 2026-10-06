@@ -70,7 +70,13 @@ async def _cleanup(ctx: Context) -> None:
         await session.execute(text("DELETE FROM users WHERE id IN (:a, :b, :c)"), subs)
         await session.commit()
     async with ctx.control_db.session() as session:
-        await session.execute(text("DELETE FROM permission_rule_sets"))
+        await session.execute(
+            text(
+                "DELETE FROM permission_rule_sets "
+                "WHERE created_by IN (:a, :b, :c) OR name LIKE 'curation-%'"
+            ),
+            subs,
+        )
         await session.execute(
             text("DELETE FROM credentials WHERE created_by IN (:a, :b, :c)"), subs
         )
