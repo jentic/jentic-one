@@ -11,7 +11,7 @@ import structlog.testing
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
 from jentic_one.shared.models import ActorType
 
-Row = namedtuple("Row", ["scope"])
+Row = namedtuple("Row", ["permission"])
 AgentRow = namedtuple("AgentRow", ["agent_id", "status", "owner_id"])
 
 
@@ -28,7 +28,7 @@ def resolver(admin_db: MagicMock) -> ApiKeyResolver:
 @pytest.mark.asyncio
 async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: MagicMock) -> None:
     agent_row = AgentRow(agent_id="agnt_123", status="active", owner_id="usr_owner")
-    scope_rows = [Row(scope="broker:execute"), Row(scope="toolkit:read")]
+    permission_rows = [Row(permission="broker:execute"), Row(permission="toolkit:read")]
 
     session_mock = AsyncMock()
     call_count = 0
@@ -40,7 +40,7 @@ async def test_resolve_agent_key_active(resolver: ApiKeyResolver, admin_db: Magi
         if call_count == 1:
             result.one_or_none.return_value = agent_row
         else:
-            result.all.return_value = scope_rows
+            result.all.return_value = permission_rows
         return result
 
     session_mock.execute = _execute

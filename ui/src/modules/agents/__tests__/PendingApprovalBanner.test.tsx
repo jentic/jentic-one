@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { renderWithProviders, screen, act, waitFor, userEvent } from '@/__tests__/test-utils';
-import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 import type { AgentEntity } from '@/modules/agents/api';
 import {
 	PendingApprovalBanner,
@@ -234,7 +234,9 @@ describe('PendingApprovalBanner', () => {
 	});
 
 	it('orders the decision Approve (primary), Deny (tonal), then Review, and says what Approve grants', async () => {
-		worker.use(http.get('/agents/:id/scopes', () => HttpResponse.json({ scopes: [] })));
+		worker.use(
+			http.get('/agents/:id/permissions', () => HttpResponse.json({ permissions: [] })),
+		);
 		renderBanner([pendingRow('agnt_old', 'oldest-bot', 60)]);
 		const banner = screen.getByRole('region', { name: 'Awaiting approval' });
 		const names = [...banner.querySelectorAll('button')].map((b) =>
@@ -246,7 +248,7 @@ describe('PendingApprovalBanner', () => {
 		expect(approve.className).toContain('bg-primary');
 		expect(deny.className).toContain('bg-surface-tonal');
 		expect(deny.className).not.toContain('bg-danger');
-		const copy = `Approving grants the default agent scopes (${DEFAULT_AGENT_SCOPES.length}).`;
+		const copy = `Approving grants the default agent permissions (${DEFAULT_AGENT_PERMISSIONS.length}).`;
 		expect(await screen.findByText(copy)).toBeInTheDocument();
 		expect(approve).toHaveAccessibleDescription(copy);
 	});

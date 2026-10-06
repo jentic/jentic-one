@@ -17,7 +17,7 @@ const PILLARS = [
 	{
 		icon: ShieldCheck,
 		question: 'Are they allowed to?',
-		body: 'Coarse JWT scopes plus fine-grained per-binding permission rules decide what each identity may execute.',
+		body: 'Coarse token permissions plus fine-grained per-binding rules decide what each identity may execute.',
 	},
 	{
 		icon: ScrollText,

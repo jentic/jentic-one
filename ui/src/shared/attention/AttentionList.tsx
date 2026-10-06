@@ -10,7 +10,9 @@
  *   Setup      — credential sign-ins nobody finished
  *
  * The cheap, reversible verbs (approve an agent, acknowledge an alert) run
- * inline; anything that needs context links to where it is resolved.
+ * inline; anything that needs context links to where it is resolved. Approve
+ * shows only to a caller who may approve (`agents:write` or `org:admin`); the
+ * row still links to the agent for anyone else.
  */
 import { type ComponentType } from 'react';
 import { AlertTriangle, Bot, KeyRound, ShieldQuestion } from 'lucide-react';
@@ -19,6 +21,7 @@ import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useAcknowledgeAttention, useApproveAgent } from '@/shared/attention/actions';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
 import type { AttentionItem, AttentionKind } from '@/shared/attention/useAttentionItems';
 import { cn, timeAgo } from '@/shared/lib/utils';
 
@@ -231,26 +234,30 @@ function AgentActions({
 	onNavigate?: () => void;
 }) {
 	const approve = useApproveAgent();
+	const canApprove = useCanAccess(AGENTS_WRITE);
 	return (
 		<>
-			<Button
-				variant="primary"
-				size="xs"
-				loading={approve.isPending}
-				onClick={() =>
-					approve.mutate(agentId, {
-						onSuccess: () => toast({ title: `${name} approved`, variant: 'success' }),
-						onError: (error) =>
-							toast({
-								title: `Couldn't approve ${name}`,
-								description: error.message,
-								variant: 'error',
-							}),
-					})
-				}
-			>
-				Approve
-			</Button>
+			{canApprove && (
+				<Button
+					variant="primary"
+					size="xs"
+					loading={approve.isPending}
+					onClick={() =>
+						approve.mutate(agentId, {
+							onSuccess: () =>
+								toast({ title: `${name} approved`, variant: 'success' }),
+							onError: (error) =>
+								toast({
+									title: `Couldn't approve ${name}`,
+									description: error.message,
+									variant: 'error',
+								}),
+						})
+					}
+				>
+					Approve
+				</Button>
+			)}
 			<ReviewLink
 				href={ROUTE_PATHS.agentTab(agentId)}
 				label="Review"

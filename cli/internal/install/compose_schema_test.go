@@ -64,6 +64,20 @@ func TestComposeSchemaStateReadsVerdict(t *testing.T) {
 			want:   SchemaPending,
 		},
 		{
+			name: "steps pending when only an upgrade step is pending",
+			stdout: "STATUS admin current current=bbb head=bbb\n" +
+				"STATUS upgrade-step:rule_sets_mark_curated pending\nOVERALL pending",
+			exit: 3,
+			want: SchemaStepsPending,
+		},
+		{
+			name: "pending when a database and an upgrade step are pending",
+			stdout: "STATUS admin pending current=aaa head=bbb\n" +
+				"STATUS upgrade-step:rule_sets_mark_curated pending\nOVERALL pending",
+			exit: 3,
+			want: SchemaPending,
+		},
+		{
 			name:   "current when at head",
 			stdout: "STATUS admin current current=bbb head=bbb\nOVERALL current",
 			exit:   0,
@@ -95,6 +109,7 @@ func TestComposeSchemaStateUnknownWhenUndeterminable(t *testing.T) {
 		{"daemon unreachable", "Cannot connect to the Docker daemon", 1},
 		{"garbled output", "OVERALL", 0},
 		{"unrecognised verdict word", "OVERALL sideways", 0},
+		{"upgrade-step ledger unreadable", "STATUS admin current current=x head=x\nOVERALL unknown", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,5 +220,44 @@ func TestParseSchemaVerdictIgnoresStatusLines(t *testing.T) {
 
 	if _, ok := parseSchemaVerdict("STATUS admin current current=x head=x"); ok {
 		t.Error("STATUS lines alone must not yield a verdict")
+	}
+}
+
+// TestParseSchemaVerdictStepsPendingNeedsOnlyStepLines: SchemaStepsPending is
+// reported only when at least one upgrade step, and no database, is pending.
+// A bare `OVERALL pending` (a runner that prints no step lines) stays
+// SchemaPending, the cautious reading.
+func TestParseSchemaVerdictStepsPendingNeedsOnlyStepLines(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want SchemaState
+	}{
+		{
+			name: "only a step pending",
+			out:  "STATUS upgrade-step:a pending\nSTATUS upgrade-step:b pending\nOVERALL pending",
+			want: SchemaStepsPending,
+		},
+		{
+			name: "no STATUS lines",
+			out:  "OVERALL pending",
+			want: SchemaPending,
+		},
+		{
+			name: "a database pending after the step line",
+			out:  "STATUS upgrade-step:a pending\nSTATUS control pending current=a head=b\nOVERALL pending",
+			want: SchemaPending,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseSchemaVerdict(tc.out)
+			if !ok {
+				t.Fatal("expected a verdict")
+			}
+			if got != tc.want {
+				t.Errorf("state = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

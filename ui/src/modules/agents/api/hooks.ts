@@ -20,7 +20,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { AUDIT_READ, ORG_ADMIN, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	approveAgent,
@@ -34,10 +34,10 @@ import {
 	generateAgentApiKey,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
-	getAgentScopes,
+	getAgentPermissions,
 	listAgents,
 	listPermissions,
-	replaceAgentScopes,
+	replaceAgentPermissions,
 	revokeAgentApiKey,
 	listAgentCredentialBindings,
 	bindCredentialToAgent,
@@ -46,6 +46,8 @@ import {
 	listAgentBindingPermissions,
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
+	getBindingRuleSet,
+	detachAgentBindingRuleSet,
 	fetchActorUsageDetail,
 	fetchCredentialUsageTotals,
 	fetchActorExecutions,
@@ -69,6 +71,7 @@ import type {
 	ApiKeyResult,
 	BindingPermissionRule,
 	BindingPermissionTestResult,
+	BindingRuleSetEntity,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
 	McpSessionEntity,
@@ -91,7 +94,7 @@ const agentsKeys = {
 	list: (status: string) => [...agentsKeys.all, 'list', status] as const,
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
-	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
+	permissions: (id: string) => [...agentsKeys.all, 'permissions', id] as const,
 	/** Mutation key for API-key generation, so a surface can tell one is in flight. */
 	generateApiKey: () => [...agentsKeys.all, 'generate-api-key'] as const,
 	/** Direct credential bindings for one agent (`GET /agents/{id}/credentials`). */
@@ -104,6 +107,10 @@ const agentsKeys = {
 		[...agentsKeys.all, 'binding-permissions', agentId, credentialId] as const,
 	/** Prefix over every (agent, credential) rule slice. */
 	bindingPermissionsRoot: () => [...agentsKeys.all, 'binding-permissions'] as const,
+	/** One shared permission rule set a binding points at. */
+	ruleSet: (ruleSetId: string) => [...agentsKeys.all, 'rule-set', ruleSetId] as const,
+	/** Prefix over every rule-set read — a detach changes a set's binding count. */
+	ruleSetRoot: () => [...agentsKeys.all, 'rule-set'] as const,
 };
 
 /** Test-only handle on the agents key factory so the cross-module-key guard
@@ -250,11 +257,15 @@ export function useRefreshFleetCredentialBindings(): () => void {
 	}, [qc]);
 }
 
-/** Effect breakdown of one binding's OPERATOR rules; `_system` rules excluded. */
+/** Effect breakdown of one binding's EFFECTIVE operator rules; `_system` rules
+ * excluded. */
 export interface BindingRuleSummary {
 	total: number;
 	allow: number;
 	deny: number;
+	/** Set when a shared rule set governs the binding: the counts are the set's
+	 * rules, and the binding's inline rules are dormant. */
+	ruleSet?: { name: string; curated: boolean };
 }
 
 /** Summarise one binding's saved rules — the tile grid and the access sheet
@@ -273,40 +284,98 @@ export function summarizeBindingRules(rules: readonly BindingPermissionRule[]): 
  * so a tile can't read as Ready over rules it couldn't see. */
 export type BindingRulesState = BindingRuleSummary | 'loading' | 'error';
 
-/**
- * Rule states for one agent's bindings, keyed by credential id (one
- * `useAgentBindingPermissions` read per binding). `combine` is memoised on the
- * id list, so the Map keeps its identity until a read actually changes and the
- * tile grid doesn't re-render on every host render.
- */
-export function useAgentBindingRuleSummaries(
-	agentId: string | null,
-	credentialIds: string[],
-): ReadonlyMap<string, BindingRulesState> {
+type RuleSetRead = BindingRuleSetEntity | 'loading' | 'error';
+
+/** The shared rule sets behind `ruleSetIds`, keyed by id: the set once read,
+ * or where its read stands. */
+function useBindingRuleSets(ruleSetIds: string[]): ReadonlyMap<string, RuleSetRead> {
 	const combine = useCallback(
-		(results: { data?: BindingPermissionRule[]; isError: boolean }[]) => {
-			const map = new Map<string, BindingRulesState>();
+		(results: { data?: BindingRuleSetEntity; isError: boolean }[]) => {
+			const map = new Map<string, RuleSetRead>();
 			results.forEach((result, index) => {
-				const credentialId = credentialIds[index];
-				if (credentialId == null) return;
-				if (result.data) map.set(credentialId, summarizeBindingRules(result.data));
-				else map.set(credentialId, result.isError ? 'error' : 'loading');
+				const ruleSetId = ruleSetIds[index];
+				if (ruleSetId == null) return;
+				map.set(ruleSetId, result.data ?? (result.isError ? 'error' : 'loading'));
 			});
 			return map;
 		},
-		[credentialIds],
+		[ruleSetIds],
 	);
 	return useQueries({
-		queries: credentialIds.map((credentialId) => ({
-			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
-			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
-			enabled: agentId != null,
+		queries: ruleSetIds.map((ruleSetId) => ({
+			queryKey: agentsKeys.ruleSet(ruleSetId),
+			queryFn: () => getBindingRuleSet(ruleSetId),
 		})),
 		combine,
 	});
 }
 
-/** Re-read one binding's rules (the tile's "Status unavailable · Retry"). */
+function inlineRulesState(results: { data?: BindingPermissionRule[]; isError: boolean }[]) {
+	return results.map((result): BindingRulesState =>
+		result.data ? summarizeBindingRules(result.data) : result.isError ? 'error' : 'loading',
+	);
+}
+
+/**
+ * Rule states for one agent's bindings, keyed by credential id (one
+ * `useAgentBindingPermissions` read per binding). Every read's `combine` is
+ * stable, so the Map keeps its identity until a read actually changes and the
+ * tile grid doesn't re-render on every host render.
+ *
+ * A binding that points at a shared rule set is summarised from the SET's rules
+ * (what the broker evaluates), never its dormant inline list; until the set is
+ * read its state is the set read's, rather than guessed from the inline rules.
+ */
+export function useAgentBindingRuleSummaries(
+	agentId: string | null,
+	credentialIds: string[],
+): ReadonlyMap<string, BindingRulesState> {
+	const bindings = useAgentCredentialBindings(agentId).data;
+	const ruleSetIdByCredential = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const binding of bindings ?? []) {
+			if (binding.ruleSetId) map.set(binding.credentialId, binding.ruleSetId);
+		}
+		return map;
+	}, [bindings]);
+	const ruleSetIds = useMemo(
+		() => Array.from(new Set(ruleSetIdByCredential.values())).sort(),
+		[ruleSetIdByCredential],
+	);
+	const ruleSets = useBindingRuleSets(ruleSetIds);
+	const inline = useQueries({
+		queries: credentialIds.map((credentialId) => ({
+			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
+			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
+			enabled: agentId != null,
+		})),
+		combine: inlineRulesState,
+	});
+	return useMemo(() => {
+		const map = new Map<string, BindingRulesState>();
+		credentialIds.forEach((credentialId, index) => {
+			const ruleSetId = ruleSetIdByCredential.get(credentialId);
+			if (ruleSetId) {
+				const ruleSet = ruleSets.get(ruleSetId) ?? 'loading';
+				map.set(
+					credentialId,
+					typeof ruleSet === 'string'
+						? ruleSet
+						: {
+								...summarizeBindingRules(ruleSet.rules),
+								ruleSet: { name: ruleSet.name, curated: ruleSet.curated },
+							},
+				);
+				return;
+			}
+			map.set(credentialId, inline[index] ?? 'loading');
+		});
+		return map;
+	}, [credentialIds, ruleSetIdByCredential, ruleSets, inline]);
+}
+
+/** Re-read one binding's rules (the tile's "Status unavailable · Retry") — its
+ * inline list and any shared rule set read that failed. */
 export function useRetryBindingRules(agentId: string | null) {
 	const qc = useQueryClient();
 	return useCallback(
@@ -314,6 +383,10 @@ export function useRetryBindingRules(agentId: string | null) {
 			if (!agentId) return;
 			void qc.refetchQueries({
 				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+			void qc.refetchQueries({
+				queryKey: agentsKeys.ruleSetRoot(),
+				predicate: (query) => query.state.status === 'error',
 			});
 		},
 		[agentId, qc],
@@ -475,6 +548,95 @@ export function useAgentBindingPermissions(agentId: string | null, credentialId:
 		queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId ?? ''),
 		queryFn: () => listAgentBindingPermissions(agentId as string, credentialId as string),
 		enabled: agentId != null && credentialId != null,
+	});
+}
+
+/** What governs one direct binding, and the rules the broker evaluates for it. */
+export interface AgentBindingEffectiveRules {
+	/** The shared rule set the binding points at; null when its inline rules
+	 * apply; undefined until the binding row is read. */
+	ruleSetId: string | null | undefined;
+	/** The attached rule set, when there is one. */
+	ruleSet: BindingRuleSetEntity | undefined;
+	/** The effective ordered rules: the set's while one is attached, else the
+	 * binding's inline rules. Undefined while loading or after an error. */
+	rules: BindingPermissionRule[] | undefined;
+	isPending: boolean;
+	isError: boolean;
+	refetch: () => void;
+}
+
+/**
+ * The effective policy of one direct binding. While a shared rule set is
+ * attached the broker and `permissions:test` evaluate the SET, and the inline
+ * rules (still returned by `GET …/permissions`) are dormant — so a surface that
+ * shows "what this agent can reach" reads this, not the inline list.
+ */
+export function useAgentBindingEffectiveRules(
+	agentId: string | null,
+	credentialId: string | null,
+): AgentBindingEffectiveRules {
+	const bindings = useAgentCredentialBindings(agentId);
+	const ruleSetId =
+		credentialId == null || bindings.data === undefined
+			? undefined
+			: (bindings.data.find((b) => b.credentialId === credentialId)?.ruleSetId ?? null);
+	// Read either way: the inline list is what a detach would make effective.
+	const inline = useAgentBindingPermissions(agentId, credentialId);
+	const ruleSet = useQuery<BindingRuleSetEntity>({
+		queryKey: agentsKeys.ruleSet(ruleSetId ?? ''),
+		queryFn: () => getBindingRuleSet(ruleSetId as string),
+		enabled: typeof ruleSetId === 'string',
+	});
+	if (typeof ruleSetId === 'string') {
+		return {
+			ruleSetId,
+			ruleSet: ruleSet.data,
+			rules: ruleSet.data?.rules,
+			isPending: ruleSet.isPending,
+			isError: ruleSet.isError,
+			refetch: () => void ruleSet.refetch(),
+		};
+	}
+	if (ruleSetId === null) {
+		return {
+			ruleSetId,
+			ruleSet: undefined,
+			rules: inline.data,
+			isPending: inline.isPending,
+			isError: inline.isError,
+			refetch: () => void inline.refetch(),
+		};
+	}
+	return {
+		ruleSetId,
+		ruleSet: undefined,
+		rules: undefined,
+		isPending: !bindings.isError,
+		isError: bindings.isError,
+		refetch: () => void bindings.refetch(),
+	};
+}
+
+/**
+ * Detach a binding's shared rule set (idempotent `DELETE …/rule-set`). Its
+ * inline rules become the effective policy, so every surface reading the
+ * binding (its row, its rules, the credential's roster) is refreshed.
+ */
+export function useDetachAgentBindingRuleSet(agentId: string, credentialId: string) {
+	const qc = useQueryClient();
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<void, Error, void>({
+		mutationFn: () => detachAgentBindingRuleSet(agentId, credentialId),
+		onSuccess: async () => {
+			invalidate(credentialId);
+			qc.invalidateQueries({ queryKey: agentsKeys.ruleSetRoot() });
+			// Await the binding row: until it reads `ruleSetId: null` the host keeps
+			// rendering the attached set.
+			await qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+			toast({ title: 'Rule set detached', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to detach the rule set.'),
 	});
 }
 
@@ -648,8 +810,11 @@ export function useArchiveAgent() {
 export function useCreateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
-			createAgent(input),
+		mutationFn: (input: {
+			name: string;
+			description?: string | null;
+			permissions?: string[];
+		}) => createAgent(input),
 		onSuccess: (agent) => {
 			// Invalidate the whole agents root (not just lists()) so the
 			// persistent pending-agents nav badge — keyed under agentsRoot, not
@@ -738,13 +903,13 @@ export function useRevokeAgentApiKey() {
 }
 
 // ---------------------------------------------------------------------------
-// Scopes (#615)
+// Permissions (#615)
 // ---------------------------------------------------------------------------
 
 /**
  * The platform permission catalogue. Small + slow-changing, so it's cached
- * generously; the Scopes editor maps it into the picker's scope list and uses
- * `grantableByCaller` to disable scopes the operator can't grant.
+ * generously; the Permissions editor maps it into the picker's list and uses
+ * `grantableByCaller` to disable permissions the operator can't grant.
  */
 export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	return useQuery<PermissionCatalogEntry[]>({
@@ -755,35 +920,38 @@ export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	});
 }
 
-export function useAgentScopes(id: string | null) {
+export function useAgentPermissions(id: string | null) {
 	return useQuery<string[]>({
-		queryKey: agentsKeys.scopes(id ?? ''),
-		queryFn: () => getAgentScopes(id as string),
+		queryKey: agentsKeys.permissions(id ?? ''),
+		queryFn: () => getAgentPermissions(id as string),
 		enabled: id != null,
 	});
 }
 
-export function useReplaceAgentScopes() {
+export function useReplaceAgentPermissions() {
 	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceAgentScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(agentsKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
+	return useMutation<string[], Error, { id: string; permissions: string[] }>({
+		mutationFn: ({ id, permissions }) => replaceAgentPermissions(id, permissions),
+		onSuccess: (permissions, { id }) => {
+			qc.setQueryData(agentsKeys.permissions(id), permissions);
+			toast({ title: 'Permissions updated', variant: 'success' });
 		},
-		onError: (e) => notifyError(e, "Failed to update the agent's scopes."),
+		onError: (e) => notifyError(e, "Failed to update the agent's permissions."),
 	});
 }
 
 /**
  * One actor's usage stats + volume buckets (trailing 7 days) for the Agents
  * page's stat strip and the Activity sheet's chart. Under its own `agents-usage` root, so
- * agent lifecycle invalidations don't re-aggregate the window. `null` on 403.
+ * agent lifecycle invalidations don't re-aggregate the window. `null` on 403,
+ * and `null` without a request for a caller who isn't `org:admin` (the
+ * aggregate's only permission).
  */
 export function useActorUsageDetail(actorId: string | null) {
+	const allowed = useCanAccess(ORG_ADMIN);
 	return useQuery<ActorUsageDetail | null>({
-		queryKey: ['agents-usage', 'detail', actorId],
-		queryFn: () => fetchActorUsageDetail(actorId as string),
+		queryKey: ['agents-usage', 'detail', actorId, { allowed }],
+		queryFn: () => (allowed ? fetchActorUsageDetail(actorId as string) : null),
 		enabled: actorId != null,
 		// Matches useActorExecutions below: the volume chart and the
 		// recent-executions feed render side by side and must go stale
@@ -796,12 +964,14 @@ export function useActorUsageDetail(actorId: string | null) {
 
 /**
  * Call volume per credential over the trailing 7 days. Same `agents-usage` root
- * and `null`-on-403 contract as {@link useActorUsageDetail}.
+ * and `null` contract (403, or no request without `org:admin`) as
+ * {@link useActorUsageDetail}.
  */
 export function useCredentialUsageTotals(enabled: boolean) {
+	const allowed = useCanAccess(ORG_ADMIN);
 	return useQuery<CredentialUsageTotals | null>({
-		queryKey: ['agents-usage', 'credential-totals'],
-		queryFn: () => fetchCredentialUsageTotals(),
+		queryKey: ['agents-usage', 'credential-totals', { allowed }],
+		queryFn: () => (allowed ? fetchCredentialUsageTotals() : null),
 		enabled,
 		staleTime: 60 * 1000,
 		retry: false,
@@ -888,14 +1058,15 @@ export function useRevokeOauthGrant(agentId: string | null) {
 
 /**
  * Actor-scoped audit trail for the Activity sheet's "Recent changes" section —
- * the lifecycle events recorded against this agent as the TARGET. Non-admins resolve
- * to an empty list (the client maps 401/403), so the panel renders its
- * graceful "no entries" state instead of erroring.
+ * the lifecycle events recorded against this agent as the TARGET. A caller
+ * without `audit:read` (or `org:admin`) resolves to an empty list without a
+ * request, and a 401/403 maps to one too, so the panel never errors on access.
  */
 export function useActorAudit(actorId: string | null) {
+	const allowed = useCanAccess(AUDIT_READ);
 	return useQuery<ActorAuditEntry[]>({
-		queryKey: ['agents', 'audit', 'agent', actorId],
-		queryFn: () => listActorAudit(actorId as string),
+		queryKey: ['agents', 'audit', 'agent', actorId, { allowed }],
+		queryFn: () => (allowed ? listActorAudit(actorId as string) : []),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 	});

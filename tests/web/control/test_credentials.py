@@ -565,6 +565,49 @@ def test_agent_permissions_owner_gated(
     assert resp.json()["type"] == "credential_not_found"
 
 
+@pytest.fixture()
+def bound_agent_client(
+    web_context: Context, bound_agents: tuple[str, list[str]]
+) -> Iterator[TestClient]:
+    """The first agent of ``bound_agents`` itself, holding credentials:read."""
+    _, (agent_id, _) = bound_agents
+    identity = Identity(
+        sub=agent_id,
+        email=f"{agent_id}@test.local",
+        permissions=_effective("credentials:read"),
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_test",
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_agent_permissions_reads_limited_to_visible_agents(
+    bound_agent_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A bound agent reads its own binding's rules but not a sibling's.
+
+    The sibling's binding answers the same 404 ``agent_binding_not_found`` as
+    an agent that is not bound at all, on both the list and the dry-run read.
+    """
+    credential_id, (agent_id, sibling_id) = bound_agents
+    probe = {"method": "GET", "path": "/v1/things"}
+
+    own = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    assert bound_agent_client.get(own).status_code == 200
+    assert bound_agent_client.post(f"{own}:test", json=probe).status_code == 200
+
+    for target in (sibling_id, "agnt_never_bound"):
+        base = f"/credentials/{credential_id}/agents/{target}/permissions"
+        for resp in (
+            bound_agent_client.get(base),
+            bound_agent_client.post(f"{base}:test", json=probe),
+        ):
+            assert resp.status_code == 404, resp.text
+            assert resp.json()["type"] == "agent_binding_not_found"
+
+
 def test_agent_permissions_write_needs_write_scope(
     delegated_agent_client: TestClient, bound_agents: tuple[str, list[str]]
 ) -> None:
@@ -592,8 +635,8 @@ async def clean_rule_sets(web_context: Context) -> AsyncGenerator[None, None]:
 def plain_writer_client(web_context: Context) -> Iterator[TestClient]:
     """A credentials:write caller who is NOT org:admin and NOT the set creator.
 
-    Exists to pin the provisional creator-or-admin write gate (plan OQ-6):
-    holding the write scope alone must not admit edits to someone else's set.
+    Pins the rule-set write and attach gates: holding the write permission
+    alone admits neither edits to someone else's set nor attaching it.
     """
     identity = Identity(
         sub="usr_webtest_plain_writer",
@@ -737,8 +780,8 @@ def test_rule_set_mutations_gated_to_creator_or_admin(
     plain_writer_client: TestClient,
     clean_rule_sets: None,
 ) -> None:
-    """Provisional OQ-6 gate: a non-admin non-creator with credentials:write can
-    read a shared set but not mutate it; their own sets they can mutate."""
+    """A non-admin non-creator with credentials:write can read a shared set but
+    not mutate it; their own sets they can mutate."""
     set_id = cred_writer_client.post("/permission-rule-sets", json={"name": "admins-set"}).json()[
         "rule_set_id"
     ]
@@ -1031,6 +1074,54 @@ def test_binding_rule_writes_require_credential_owner_or_admin(
     assert resp.status_code == 200, resp.text
     assert plain_writer_client.delete(f"{base}/rule-set").status_code == 204
     assert cred_writer_client.put(f"{base}/permissions", json=[]).status_code == 200
+
+
+@pytest.fixture()
+def other_writer_client(web_context: Context) -> Iterator[TestClient]:
+    """A second non-admin credentials:write caller, for sets the plain writer did not create."""
+    identity = Identity(
+        sub="usr_webtest_other_writer",
+        email="otherwriter@test.local",
+        permissions=_effective("credentials:read", "credentials:write"),
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_rule_set_attach_requires_creator_admin_or_curated(
+    plain_writer_client: TestClient,
+    other_writer_client: TestClient,
+    cred_writer_client: TestClient,
+    owned_binding: tuple[str, str],
+    clean_rule_sets: None,
+) -> None:
+    """The binding owner attaches their own set or an admin-created (curated) set,
+    but gets 403 rule_set_attach_denied for another non-admin user's set."""
+    credential_id, agent_id = owned_binding
+    attach = f"/credentials/{credential_id}/agents/{agent_id}/rule-set"
+
+    others = other_writer_client.post("/permission-rule-sets", json={"name": "others-set"}).json()
+    curated = cred_writer_client.post("/permission-rule-sets", json={"name": "curated-set"}).json()
+    own = plain_writer_client.post("/permission-rule-sets", json={"name": "own-set"}).json()
+    assert (others["curated"], curated["curated"], own["curated"]) == (False, True, False)
+    listed = {
+        r["rule_set_id"]: r["curated"]
+        for r in plain_writer_client.get("/permission-rule-sets").json()["data"]
+    }
+    assert listed[curated["rule_set_id"]] is True
+    assert listed[others["rule_set_id"]] is False
+
+    resp = plain_writer_client.put(attach, json={"rule_set_id": others["rule_set_id"]})
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "rule_set_attach_denied"
+
+    for set_id in (curated["rule_set_id"], own["rule_set_id"]):
+        assert plain_writer_client.put(attach, json={"rule_set_id": set_id}).status_code == 204
+    # org:admin attaches any set, including another user's.
+    resp = cred_writer_client.put(attach, json={"rule_set_id": others["rule_set_id"]})
+    assert resp.status_code == 204
+    assert plain_writer_client.delete(attach).status_code == 204
 
 
 _SELF_CONNECTED_AGENT = "agnt_rulewrite_selfconn"

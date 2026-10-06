@@ -3,8 +3,9 @@
  *
  * Three same-origin sources, all served by the instance behind the SPA:
  *   - `GET /openapi.json`            — the standards-pure OpenAPI document
- *   - `GET /reference/endpoints.json` — the canonical scope/typical-caller join
- *     (also carries the conceptual scope catalogue in its `scopes` section)
+ *   - `GET /reference/endpoints.json` — the canonical permission/typical-caller
+ *     join (also carries the conceptual permission catalogue in its
+ *     `permissions` section)
  *   - `GET /instance`                 — the advertised broker URL, swapped into
  *     the Broker spec's placeholder `servers`
  *
@@ -23,7 +24,7 @@
  * endpoints (the dev server proxies both to the backend — see vite.config.ts).
  *
  * The two are kept independent on purpose: the API reference renders the spec
- * verbatim, and the scope/actor reference enriches each operation. They are
+ * verbatim, and the permission/actor reference enriches each operation. They are
  * never merged.
  */
 import { SystemService } from '@/shared/api';

@@ -21,7 +21,9 @@
  * the tab list, as the tabs pattern expects. Reduced motion swaps instantly.
  *
  * Each opening starts on "Create here", its name field focused, with a fresh
- * register flow behind the other tab.
+ * register flow behind the other tab. "Create here" needs `agents:write` (or
+ * `org:admin`); without it the panel offers only the register route, whose
+ * agent lands pending.
  */
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { motion, useReducedMotionConfig, type Transition } from 'framer-motion';
@@ -33,6 +35,7 @@ import {
 	type TabNavChangeSource,
 	type TabNavOption,
 } from '@/shared/ui';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import type { AgentEntity, useApproveAgent, useDenyAgent } from '@/modules/agents/api';
 import {
 	AgentCreateActions,
@@ -90,12 +93,15 @@ export function NewAgentPanel({
 	onExit,
 	onShowFleet,
 }: NewAgentPanelProps) {
-	const [tab, setTab] = useState<NewAgentTab>(INITIAL_TAB);
+	const canCreate = useCanAccess(AGENTS_WRITE);
+	const [chosenTab, setTab] = useState<NewAgentTab>(INITIAL_TAB);
 	const [wasOpen, setWasOpen] = useState(open);
 	if (open !== wasOpen) {
 		setWasOpen(open);
 		if (open) setTab(INITIAL_TAB);
 	}
+	const tab: NewAgentTab = canCreate ? chosenTab : 'register';
+	const tabOrder: NewAgentTab[] = canCreate ? TAB_ORDER : ['register'];
 
 	const form = useAgentCreateForm({ open, onClose, onCreated, initialName });
 	const register = useRegisterPanel({ open, active: tab === 'register', approve, deny });
@@ -140,9 +146,9 @@ export function NewAgentPanel({
 	const tabId = (value: NewAgentTab) => `${baseId}-tab-${value}`;
 	const panelId = (value: NewAgentTab) => `${baseId}-panel-${value}`;
 	const options: TabNavOption<NewAgentTab>[] = [
-		{ value: 'create', label: 'Create here' },
-		{ value: 'register', label: 'Register from the CLI' },
-	];
+		{ value: 'create' as const, label: 'Create here' },
+		{ value: 'register' as const, label: 'Register from the CLI' },
+	].filter((option) => tabOrder.includes(option.value));
 
 	const agent = register.agent;
 	/** Leave the panel first, so what the host opens next lands on a dismissed sheet. */
@@ -237,10 +243,10 @@ export function NewAgentPanel({
 			    moves them (no remount, and so no dropped frames), and the box's
 			    height never changes. */}
 			<div className="relative min-h-0 flex-1 overflow-hidden">
-				{TAB_ORDER.map((value, index) => {
+				{tabOrder.map((value, index) => {
 					const active = value === tab;
 					// An inactive pane waits on the side it sits in the bar.
-					const side = index < TAB_ORDER.indexOf(tab) ? -1 : 1;
+					const side = index < tabOrder.indexOf(tab) ? -1 : 1;
 					return (
 						<TabPane
 							key={value}

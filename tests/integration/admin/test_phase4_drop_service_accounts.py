@@ -96,8 +96,14 @@ async def _scalar(db: DatabaseSession, sql: str, params: dict[str, object] | Non
 async def _cleanup(admin_db: DatabaseSession, control_db: DatabaseSession) -> None:
     names = await _table_names(admin_db)
     successors = f"(SELECT id FROM agents WHERE registered_by = '{_SUCCESSOR_REGISTRAR}')"
+    # The grant table is ``actor_scope_grants`` while the admin chain sits below
+    # the tail rename (``e3f4a5b6c7d8``) and ``actor_permission_grants`` at head;
+    # pick whichever exists so cleanup works in both states.
+    grants_table = (
+        "actor_permission_grants" if "actor_permission_grants" in names else "actor_scope_grants"
+    )
     for table, column in (
-        ("actor_scope_grants", "actor_id"),
+        (grants_table, "actor_id"),
         ("agent_credential_bindings", "agent_id"),
         ("access_tokens", "actor_id"),
         ("refresh_tokens", "actor_id"),
@@ -350,7 +356,7 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     assert identity.permissions == ["capabilities:execute"]
     grants = await _scalar(
         admin_db,
-        "SELECT scope FROM actor_scope_grants WHERE actor_id = :a",
+        "SELECT permission FROM actor_permission_grants WHERE actor_id = :a",
         {"a": successor},
     )
     assert grants == "capabilities:execute"  # retired scope not carried
@@ -373,7 +379,7 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     )
     assert bindings == 1
     for table, column in (
-        ("actor_scope_grants", "actor_id"),
+        ("actor_permission_grants", "actor_id"),
         ("agent_credential_bindings", "agent_id"),
     ):
         left = await _scalar(
@@ -482,7 +488,7 @@ async def test_orphan_sva_rows_are_cleaned_on_both_databases(
 
     assert not set(_SA_TABLES) & await _table_names(admin_db)
     assert await _rule_holders(control_db) == {}
-    for table in ("actor_scope_grants", "agent_credential_bindings", "access_tokens"):
+    for table in ("actor_permission_grants", "agent_credential_bindings", "access_tokens"):
         left = await _scalar(
             admin_db,
             f"SELECT count(*) FROM {table} WHERE "
@@ -563,10 +569,11 @@ async def test_post_stamp_rows_are_healed_onto_the_earlier_successor(
     assert not set(_SA_TABLES) & await _table_names(admin_db)
     async with admin_db.session() as session:
         scopes = {
-            str(r.scope)
+            str(r.permission)
             for r in (
                 await session.execute(
-                    text("SELECT scope FROM actor_scope_grants WHERE actor_id = :a"), {"a": _AGENT}
+                    text("SELECT permission FROM actor_permission_grants WHERE actor_id = :a"),
+                    {"a": _AGENT},
                 )
             ).all()
         }
@@ -652,10 +659,10 @@ async def test_drop_sweeps_retired_scope_strings(
 
     async with admin_db.session() as session:
         grants = {
-            row.scope
+            row.permission
             for row in (
                 await session.execute(
-                    text("SELECT scope FROM actor_scope_grants WHERE actor_id = :a"),
+                    text("SELECT permission FROM actor_permission_grants WHERE actor_id = :a"),
                     {"a": _AGENT},
                 )
             ).all()

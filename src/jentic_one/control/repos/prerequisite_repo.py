@@ -6,6 +6,7 @@ control module never imports admin ORM models.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -43,6 +44,17 @@ class AgentCredentialBindingRow(NamedTuple):
     rule_set_id: str | None
 
 
+class RuleSetBindingRow(NamedTuple):
+    """A direct binding attached to a shared rule set, with its agent's owner."""
+
+    binding_id: str
+    agent_id: str
+    agent_name: str
+    owner_id: str | None
+    credential_id: str
+    rule_set_id: str
+
+
 class PrerequisiteRepository:
     """Cross-DB reads (existence checks + lookups) without admin imports."""
 
@@ -59,6 +71,22 @@ class PrerequisiteRepository:
             {"user_id": user_id},
         )
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def filter_user_ids_with_permission(
+        session: AsyncSession, *, user_ids: Sequence[str], permission: str
+    ) -> set[str]:
+        """Return the subset of ``user_ids`` holding ``permission`` as a direct grant (admin DB)."""
+        if not user_ids:
+            return set()
+        result = await session.execute(
+            text(
+                "SELECT DISTINCT user_id FROM user_permission_grants "
+                "WHERE permission = :permission AND user_id IN :user_ids"
+            ).bindparams(bindparam("user_ids", expanding=True)),
+            {"permission": permission, "user_ids": list(user_ids)},
+        )
+        return {str(row[0]) for row in result.fetchall()}
 
     @staticmethod
     async def list_credential_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
@@ -135,7 +163,11 @@ class PrerequisiteRepository:
 
     @staticmethod
     async def get_agent_credential_binding(
-        session: AsyncSession, *, agent_id: str, credential_id: str
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+        visible_to: AgentVisibility | None = None,
     ) -> AgentCredentialBindingRow | None:
         """Return the direct binding's (id, suspended, rule_set_id), or ``None``.
 
@@ -144,14 +176,26 @@ class PrerequisiteRepository:
         in the control DB, so the rules endpoints bridge the same seam the
         reverse lookup above does. ``rule_set_id`` rides along so the dry-run
         endpoint can evaluate an attached shared set instead of inline rules.
+
+        ``visible_to`` applies the same agent narrowing as
+        :meth:`list_agents_for_credential`: a binding whose agent the caller
+        may not see returns ``None``, exactly like a missing binding.
         """
-        result = await session.execute(
-            text(
-                "SELECT id, suspended, rule_set_id FROM agent_credential_bindings "
-                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
-            ),
-            {"agent_id": agent_id, "credential_id": credential_id},
-        )
+        params: dict[str, object] = {"agent_id": agent_id, "credential_id": credential_id}
+        where = "b.agent_id = :agent_id AND b.credential_id = :credential_id"
+        if visible_to is None:
+            stmt = text(
+                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                f"WHERE {where}"
+            )
+        else:
+            params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
+            stmt = text(
+                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                "JOIN agents a ON a.id = b.agent_id "
+                f"WHERE {where} AND (a.id = :self_id OR a.owner_id IN :owner_ids)"
+            ).bindparams(bindparam("owner_ids", expanding=True))
+        result = await session.execute(stmt, params)
         row = result.fetchone()
         if row is None:
             return None
@@ -198,3 +242,41 @@ class PrerequisiteRepository:
             {"rule_set_id": rule_set_id},
         )
         return int(result.scalar_one())
+
+    @staticmethod
+    async def list_rule_set_bindings_page(
+        session: AsyncSession, *, after_id: str | None = None, limit: int = 1000
+    ) -> list[RuleSetBindingRow]:
+        """One page of the direct bindings attached to a shared rule set (admin DB).
+
+        Keyset-paginated by binding id (pass the last row's ``binding_id`` as
+        ``after_id``), so a caller can walk every attached binding with
+        bounded memory and no parameter list sized by the data.
+        """
+        conditions = ["b.rule_set_id IS NOT NULL"]
+        params: dict[str, object] = {"limit": limit}
+        if after_id is not None:
+            conditions.append("b.id > :after_id")
+            params["after_id"] = after_id
+        result = await session.execute(
+            text(
+                "SELECT b.id, a.id, a.name, a.owner_id, b.credential_id, b.rule_set_id "
+                "FROM agent_credential_bindings b "
+                "JOIN agents a ON a.id = b.agent_id "
+                f"WHERE {' AND '.join(conditions)} "
+                "ORDER BY b.id "
+                "LIMIT :limit"
+            ),
+            params,
+        )
+        return [
+            RuleSetBindingRow(
+                binding_id=str(row[0]),
+                agent_id=str(row[1]),
+                agent_name=str(row[2]),
+                owner_id=str(row[3]) if row[3] is not None else None,
+                credential_id=str(row[4]),
+                rule_set_id=str(row[5]),
+            )
+            for row in result.fetchall()
+        ]

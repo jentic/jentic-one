@@ -157,7 +157,7 @@ async def _seed_agent_binding(
 
 
 def _agent_client(web_context: Context, sub: str) -> TestClient:
-    """A delegated agent holding only the owner-scoped leaf (DEFAULT_AGENT_SCOPES member)."""
+    """A delegated agent holding only the owner-scoped leaf (DEFAULT_AGENT_PERMISSIONS member)."""
     identity = Identity(sub=sub, actor_type=ActorType.AGENT, permissions=["owner:credentials:read"])
     return TestClient(
         _build_app_as(web_context, identity), headers={"Authorization": "Bearer test-token"}

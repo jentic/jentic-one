@@ -132,24 +132,24 @@ class InvalidOwnerError(AuthServiceError):
         self.owner_id = owner_id
 
 
-class UnknownScopeError(AuthServiceError):
-    """Raised when a scope to grant to an agent is not in the permission catalogue."""
+class UnknownPermissionError(AuthServiceError):
+    """Raised when a permission to grant to an agent is not in the permission catalogue."""
 
-    def __init__(self, scope: str) -> None:
-        super().__init__(f"Scope '{scope}' is not a known permission")
-        self.scope = scope
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' is not a known permission")
+        self.permission = permission
 
 
-class ScopeNotGrantableError(AuthServiceError):
-    """Raised when the caller may not grant a scope to an agent.
+class PermissionNotGrantableError(AuthServiceError):
+    """Raised when the caller may not grant a permission to an agent.
 
-    A caller without ``org:admin`` may only grant scopes it holds itself (plus
+    A caller without ``org:admin`` may only grant permissions it holds itself (plus
     the default agent baseline), and never ``org:admin`` or ``agents:write``.
     """
 
-    def __init__(self, scope: str) -> None:
-        super().__init__(f"Scope '{scope}' cannot be granted by the caller")
-        self.scope = scope
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' cannot be granted by the caller")
+        self.permission = permission
 
 
 class OwnerTransferForbiddenError(AuthServiceError):

@@ -21,6 +21,7 @@ import {
 	GroupBy,
 	MonitoringService,
 	OAuthService,
+	PermissionRuleSetsService,
 	PermissionsService,
 	SystemService,
 	type AgentResponse,
@@ -32,11 +33,13 @@ import {
 	type PermissionRuleSchema,
 	type PermissionTestRequest,
 	type PermissionTestResponse,
+	type RuleSetResponse,
 } from '@/shared/api';
 import {
 	agentToEntity,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
+	type BindingRuleSetEntity,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
 	type CredentialBindingEntity,
@@ -61,6 +64,17 @@ export class AgentsApiError extends Error {
 		this.status = status;
 		this.cause = cause;
 	}
+}
+
+/** A refused read (403): the caller lacks the permission, and retrying cannot
+ * change the answer. A 401 is a different state — the session itself ended. */
+export function isAgentsAccessDenied(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 403;
+}
+
+/** The session is no longer valid (401). */
+export function isAgentsSessionEnded(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 401;
 }
 
 function toAgentsError(error: unknown, fallback: string): AgentsApiError {
@@ -312,6 +326,39 @@ export async function replaceAgentBindingPermissions(
 	}
 }
 
+function ruleSetToEntity(r: RuleSetResponse): BindingRuleSetEntity {
+	return {
+		id: r.rule_set_id,
+		name: r.name,
+		description: r.description ?? null,
+		curated: r.curated,
+		bindingCount: r.binding_count,
+		rules: r.rules,
+	};
+}
+
+/** One shared rule set with its ordered rules (`GET /permission-rule-sets/{id}`). */
+export async function getBindingRuleSet(ruleSetId: string): Promise<BindingRuleSetEntity> {
+	try {
+		return ruleSetToEntity(await PermissionRuleSetsService.getPermissionRuleSet({ ruleSetId }));
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load the rule set.');
+	}
+}
+
+/** Detach a binding's shared rule set (`DELETE …/agents/{aid}/rule-set`) — its
+ * inline rules become the effective policy again. */
+export async function detachAgentBindingRuleSet(
+	agentId: string,
+	credentialId: string,
+): Promise<void> {
+	try {
+		await CredentialsService.detachAgentCredentialRuleSet({ credentialId, agentId });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to detach the rule set.');
+	}
+}
+
 /**
  * Broker dry-run against one direct binding's SAVED rules
  * (`POST …/permissions:test`). There is no vendor
@@ -336,17 +383,17 @@ export async function testAgentBindingPermissions(
 export async function createAgent(params: {
 	name: string;
 	description?: string | null;
-	scopes?: string[] | null;
+	permissions?: string[] | null;
 }): Promise<AgentEntity> {
 	try {
 		const res = await AgentsService.createAgent({
 			requestBody: {
 				name: params.name,
 				description: params.description ?? null,
-				// Optional initial grants — POST /agents accepts scopes[] so a
+				// Optional initial grants — POST /agents accepts permissions[] so a
 				// manually created agent can start with the permissions it needs
-				// instead of a follow-up PUT from the Permissions sheet.
-				scopes: params.scopes?.length ? params.scopes : null,
+				// instead of a follow-up PUT from the detail page.
+				permissions: params.permissions?.length ? params.permissions : null,
 			},
 		});
 		return agentToEntity(res);
@@ -432,12 +479,12 @@ export async function getAgentApiKeyHistory(agentId: string): Promise<ApiKeyHist
 }
 
 // ---------------------------------------------------------------------------
-// Scopes (#615) — platform permission catalogue + per-actor scope grants.
+// Permissions (#615) — platform permission catalogue + per-actor grants.
 //
-// Two scope vocabularies exist in this codebase; these are the PLATFORM
-// permission scopes (`org:admin`, `agents:write`, …) drawn from
-// `GET /permissions` — NOT the OAuth2 provider scopes the credentials picker
-// uses. `PUT .../scopes` replaces the entire set (no partial grant/revoke), so
+// These are internal-authorization PERMISSIONS (`org:admin`, `agents:write`, …)
+// drawn from `GET /permissions` — NOT the OAuth2 provider scopes the credentials
+// picker uses, which are a separate vocabulary. `PUT .../permissions` replaces
+// the entire set (no partial grant/revoke), so
 // callers read the full list, edit it, and write it back.
 // ---------------------------------------------------------------------------
 
@@ -455,24 +502,27 @@ export async function listPermissions(): Promise<PermissionCatalogEntry[]> {
 	}
 }
 
-export async function getAgentScopes(agentId: string): Promise<string[]> {
+export async function getAgentPermissions(agentId: string): Promise<string[]> {
 	try {
-		const res = await AgentsService.getAgentScopes({ agentId });
-		return res.scopes;
+		const res = await AgentsService.getAgentPermissions({ agentId });
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to load the agent's scopes.");
+		throw toAgentsError(error, "Failed to load the agent's permissions.");
 	}
 }
 
-export async function replaceAgentScopes(agentId: string, scopes: string[]): Promise<string[]> {
+export async function replaceAgentPermissions(
+	agentId: string,
+	permissions: string[],
+): Promise<string[]> {
 	try {
-		const res = await AgentsService.replaceAgentScopes({
+		const res = await AgentsService.replaceAgentPermissions({
 			agentId,
-			requestBody: { scopes },
+			requestBody: { permissions },
 		});
-		return res.scopes;
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to update the agent's scopes.");
+		throw toAgentsError(error, "Failed to update the agent's permissions.");
 	}
 }
 

@@ -13,7 +13,7 @@ from jentic_one.admin.core.permissions import ORG_ADMIN, compute_effective
 from jentic_one.admin.repos import UserRepository
 from jentic_one.admin.services.errors import LastActiveAdminError, UserManagementForbiddenError
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.scopes import RETIRED_SCOPES
+from jentic_one.shared.auth.permission_catalog import RETIRED_PERMISSIONS
 
 
 def ensure_can_manage(
@@ -38,7 +38,7 @@ def ensure_can_manage(
     if ORG_ADMIN in caller_effective:
         return
     target_assigned = permission_sets.get(target_user_id, set())
-    if not compute_effective(target_assigned - RETIRED_SCOPES) <= caller_effective:
+    if not compute_effective(target_assigned - RETIRED_PERMISSIONS) <= caller_effective:
         raise UserManagementForbiddenError(target_user_id)
 
 

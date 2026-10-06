@@ -586,6 +586,13 @@ class RuleSetSummaryResponse(BaseModel):
     name: str
     description: str | None = None
     rule_count: int
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
+    )
     created_by: str | None = None
     created_at: datetime
 
@@ -599,6 +606,13 @@ class RuleSetResponse(BaseModel):
     rules: list[PermissionRuleReadSchema]
     binding_count: int = Field(
         description="How many agent-credential bindings currently point at this set."
+    )
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
     )
     created_by: str | None = None
     created_at: datetime

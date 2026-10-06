@@ -199,6 +199,7 @@
         "type": "string"
       },
       "AgentCreateRequest": {
+        "additionalProperties": false,
         "description": "Request body for creating an agent manually.",
         "properties": {
           "description": {
@@ -219,7 +220,7 @@
             "title": "Name",
             "type": "string"
           },
-          "scopes": {
+          "permissions": {
             "anyOf": [
               {
                 "items": {
@@ -235,7 +236,7 @@
                 "type": "null"
               }
             ],
-            "title": "Scopes"
+            "title": "Permissions"
           }
         },
         "required": [
@@ -320,6 +321,45 @@
           }
         },
         "title": "AgentPatchRequest",
+        "type": "object"
+      },
+      "AgentPermissionsRequest": {
+        "additionalProperties": false,
+        "description": "Request body for replacing an agent's permissions.",
+        "properties": {
+          "permissions": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_:./-]+$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Permissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "title": "AgentPermissionsRequest",
+        "type": "object"
+      },
+      "AgentPermissionsResponse": {
+        "description": "Response containing an agent's current permissions.",
+        "properties": {
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "title": "AgentPermissionsResponse",
         "type": "object"
       },
       "AgentResponse": {
@@ -438,44 +478,6 @@
           "created_at"
         ],
         "title": "AgentResponse",
-        "type": "object"
-      },
-      "AgentScopesRequest": {
-        "description": "Request body for replacing an agent's scopes.",
-        "properties": {
-          "scopes": {
-            "items": {
-              "maxLength": 64,
-              "minLength": 1,
-              "pattern": "^[a-zA-Z0-9_:./-]+$",
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Scopes",
-            "type": "array"
-          }
-        },
-        "required": [
-          "scopes"
-        ],
-        "title": "AgentScopesRequest",
-        "type": "object"
-      },
-      "AgentScopesResponse": {
-        "description": "Response containing an agent's current scopes.",
-        "properties": {
-          "scopes": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Scopes",
-            "type": "array"
-          }
-        },
-        "required": [
-          "scopes"
-        ],
-        "title": "AgentScopesResponse",
         "type": "object"
       },
       "ApiImportLinksResponse": {
@@ -4252,22 +4254,22 @@
             ],
             "title": "Parent Agent Id"
           },
-          "scopes": {
+          "permissions": {
             "items": {
               "type": "string"
             },
-            "title": "Scopes",
+            "title": "Permissions",
             "type": "array"
           },
           "status": {
             "title": "Status",
             "type": "string"
           },
-          "token_scopes": {
+          "token_permissions": {
             "items": {
               "type": "string"
             },
-            "title": "Token Scopes",
+            "title": "Token Permissions",
             "type": "array"
           },
           "type": {
@@ -4281,8 +4283,8 @@
           "id",
           "name",
           "status",
-          "scopes",
-          "token_scopes"
+          "permissions",
+          "token_permissions"
         ],
         "title": "MeAgent",
         "type": "object"
@@ -4310,11 +4312,11 @@
             "title": "Name",
             "type": "string"
           },
-          "scopes": {
+          "permissions": {
             "items": {
               "type": "string"
             },
-            "title": "Scopes",
+            "title": "Permissions",
             "type": "array"
           },
           "status": {
@@ -4334,7 +4336,7 @@
           "email",
           "admin",
           "status",
-          "scopes",
+          "permissions",
           "must_change_password"
         ],
         "title": "MeUser",
@@ -7793,6 +7795,11 @@
             ],
             "title": "Created By"
           },
+          "curated": {
+            "description": "True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.",
+            "title": "Curated",
+            "type": "boolean"
+          },
           "description": {
             "anyOf": [
               {
@@ -7825,6 +7832,7 @@
           "name",
           "rules",
           "binding_count",
+          "curated",
           "created_at"
         ],
         "title": "RuleSetResponse",
@@ -7848,6 +7856,11 @@
               }
             ],
             "title": "Created By"
+          },
+          "curated": {
+            "description": "True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.",
+            "title": "Curated",
+            "type": "boolean"
           },
           "description": {
             "anyOf": [
@@ -7877,6 +7890,7 @@
           "rule_set_id",
           "name",
           "rule_count",
+          "curated",
           "created_at"
         ],
         "title": "RuleSetSummaryResponse",
@@ -9100,7 +9114,7 @@
     },
     "securitySchemes": {
       "BearerAuth": {
-        "description": "Opaque bearer access token (prefixed `at_`), sent as `Authorization: Bearer <token>`. It is **not** a JWT — it is a random string validated server-side by lookup, so it cannot be decoded by the client.\n\nObtain one from `POST /oauth/token` using the grant for your actor type:\n- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).\n- **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.\n\nPer-endpoint scope and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-scopes / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.",
+        "description": "Opaque bearer access token (prefixed `at_`), sent as `Authorization: Bearer <token>`. It is **not** a JWT — it is a random string validated server-side by lookup, so it cannot be decoded by the client.\n\nObtain one from `POST /oauth/token` using the grant for your actor type:\n- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).\n- **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.\n\nPer-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.",
         "scheme": "bearer",
         "type": "http"
       }
@@ -12520,7 +12534,7 @@
     },
     "/agents/{agent_id}": {
       "delete": {
-        "description": "Archive an agent — terminal-but-kept.\n\nThe row is retained for history, but the action is not reversible and\nthe agent's authority is swept: scope grants, credential bindings, and\nOAuth consent grants are revoked. For the reversible kill switch use\n``:disable`` / ``:enable`` instead.",
+        "description": "Archive an agent — terminal-but-kept.\n\nThe row is retained for history, but the action is not reversible and\nthe agent's authority is swept: permission grants, credential bindings, and\nOAuth consent grants are revoked. For the reversible kill switch use\n``:disable`` / ``:enable`` instead.",
         "operationId": "archiveAgent",
         "parameters": [
           {
@@ -14028,7 +14042,7 @@
     },
     "/agents/{agent_id}/oauth-grants": {
       "get": {
-        "description": "List OAuth consent grants binding clients to this agent.\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics.",
+        "description": "List OAuth consent grants binding clients to this agent.\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics. An agent the caller cannot see answers 404, the\nsame as an agent that does not exist.",
         "operationId": "listAgentOauthGrants",
         "parameters": [
           {
@@ -14239,10 +14253,10 @@
         ]
       }
     },
-    "/agents/{agent_id}/scopes": {
+    "/agents/{agent_id}/permissions": {
       "get": {
-        "description": "List scopes granted to an agent.",
-        "operationId": "getAgentScopes",
+        "description": "List permissions granted to an agent.",
+        "operationId": "getAgentPermissions",
         "parameters": [
           {
             "in": "path",
@@ -14259,7 +14273,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentScopesResponse"
+                  "$ref": "#/components/schemas/AgentPermissionsResponse"
                 }
               }
             },
@@ -14379,14 +14393,14 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Get Agent Scopes",
+        "summary": "Get Agent Permissions",
         "tags": [
           "Agents"
         ]
       },
       "put": {
-        "description": "Replace all scopes for an agent.",
-        "operationId": "replaceAgentScopes",
+        "description": "Replace all permissions for an agent.",
+        "operationId": "replaceAgentPermissions",
         "parameters": [
           {
             "in": "path",
@@ -14402,7 +14416,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentScopesRequest"
+                "$ref": "#/components/schemas/AgentPermissionsRequest"
               }
             }
           },
@@ -14413,7 +14427,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentScopesResponse"
+                  "$ref": "#/components/schemas/AgentPermissionsResponse"
                 }
               }
             },
@@ -14533,7 +14547,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Replace Agent Scopes",
+        "summary": "Replace Agent Permissions",
         "tags": [
           "Agents"
         ]
@@ -14687,7 +14701,7 @@
     },
     "/agents/{agent_id}:claim": {
       "post": {
-        "description": "Claim ownership of a self-registered agent using its claim token.\n\nAuthenticated by the platform bearer token but requires **no** agent\npermission — the single-use claim token minted at ``/register`` is the proof,\nso the registering human (even a plain member) can take ownership. Sets\n``owner_id`` to the caller; the existing scoping + approve paths then apply.\n\nRestricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so\nonly a human can own an agent. The ``require_actor_type`` gate rejects a\nnon-user actor (an agent) at the boundary with a 403;\n``AgentService.claim`` re-checks the same invariant as defense-in-depth.\n\n``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):\nclaiming is an onboarding step a brand-new user may hit before they have\nrotated a temporary password, so a must-change-password state must not block\nit. The claim only sets ownership — it grants no scopes and cannot act as the\nagent — so allowing it under an expired password is low-risk.",
+        "description": "Claim ownership of a self-registered agent using its claim token.\n\nAuthenticated by the platform bearer token but requires **no** agent\npermission — the single-use claim token minted at ``/register`` is the proof,\nso the registering human (even a plain member) can take ownership. Sets\n``owner_id`` to the caller; the existing scoping + approve paths then apply.\n\nRestricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so\nonly a human can own an agent. The ``require_actor_type`` gate rejects a\nnon-user actor (an agent) at the boundary with a 403;\n``AgentService.claim`` re-checks the same invariant as defense-in-depth.\n\n``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):\nclaiming is an onboarding step a brand-new user may hit before they have\nrotated a temporary password, so a must-change-password state must not block\nit. The claim only sets ownership — it grants no permissions and cannot act as the\nagent — so allowing it under an expired password is low-risk.",
         "operationId": "claimAgent",
         "parameters": [
           {
@@ -24801,7 +24815,7 @@
         ]
       },
       "put": {
-        "description": "Point the binding at a shared rule set (idempotent PUT).\n\nWhile attached, the set's ordered list is the binding's effective policy\nand its inline rules are dormant — `permissions:test` evaluates the set.\nThe set must exist (404 `rule_set_not_found`).",
+        "description": "Point the binding at a shared rule set (idempotent PUT).\n\nWhile attached, the set's ordered list is the binding's effective policy\nand its inline rules are dormant — `permissions:test` evaluates the set.\nThe set must exist (404 `rule_set_not_found`). The caller must be the\nset's creator or an org admin, unless the set is curated (created by an\norg admin), which any caller who may write the binding's rules can\nattach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the\nbinding already points at is a no-op.",
         "operationId": "attachAgentCredentialRuleSet",
         "parameters": [
           {
@@ -31998,7 +32012,7 @@
         ]
       },
       "patch": {
-        "description": "Rename or re-describe a rule set (creator or org admin).",
+        "description": "Rename or re-describe a rule set.\n\nA curated set is editable by an org admin; any other set by its creator\nor an org admin (403 `rule_set_access_denied` otherwise).",
         "operationId": "updatePermissionRuleSet",
         "parameters": [
           {
@@ -35590,7 +35604,7 @@
       "name": "Users"
     },
     {
-      "description": "Part of the **Admin / Audit** bounded context — the catalogue of grantable permission strings. Permissions are namespaced `resource:action` strings (`users:write`, `capabilities:execute`, `credentials:read`, …) gating every other surface in the API. The set is platform-defined and small; `GET /permissions` returns it in full, with each entry describing what it does, what it implies (the static implication map; e.g. `capabilities:execute` implies `apis:read` and `executions:read`), and whether the calling user is authorised to grant it.\n\nOne reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.\n\nThe same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.",
+      "description": "Part of the **Admin / Audit** bounded context — the catalogue of grantable permission strings. Permissions are namespaced `resource:action` strings (`users:write`, `capabilities:execute`, `credentials:read`, …) gating every other surface in the API. The set is platform-defined and small; `GET /permissions` returns it in full, with each entry describing what it does, what it implies (the static implication map; e.g. `capabilities:execute` implies `apis:read` and `executions:read`), and whether the calling user is authorised to grant it.\n\nOne reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.\n\nThe same vocabulary is used for `User.permissions` — the coarse set embedded in the JWT — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.",
       "name": "Permissions"
     },
     {
@@ -35598,7 +35612,7 @@
       "name": "System"
     },
     {
-      "description": "Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.",
+      "description": "Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject and its permissions behind the presented token.",
       "name": "Identity"
     },
     {

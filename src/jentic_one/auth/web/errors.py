@@ -27,10 +27,10 @@ from jentic_one.auth.services.errors import (
     OAuthGrantNotFoundError,
     OperationNotSupportedError,
     OwnerTransferForbiddenError,
+    PermissionNotGrantableError,
     RateLimitExceededError,
     RegistrationAccessDeniedError,
-    ScopeNotGrantableError,
-    UnknownScopeError,
+    UnknownPermissionError,
 )
 from jentic_one.shared.db.errors import DatabaseUnavailableError
 from jentic_one.shared.metrics import get_meter
@@ -65,8 +65,8 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
     OwnerTransferForbiddenError: (403, "owner_transfer_forbidden"),
-    ScopeNotGrantableError: (403, "scope_not_grantable"),
-    UnknownScopeError: (422, "unknown_scope"),
+    PermissionNotGrantableError: (403, "agent_permission_not_grantable"),
+    UnknownPermissionError: (422, "unknown_agent_permission"),
 }
 
 

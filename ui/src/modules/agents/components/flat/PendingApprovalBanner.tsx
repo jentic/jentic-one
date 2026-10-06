@@ -8,12 +8,15 @@
  *
  * The decision reads the same on every approval surface: Approve (primary,
  * described by what it grants), then Deny (tonal — its reason dialog carries
- * the destructive red), then Review as a quiet link-weight action.
+ * the destructive red), then Review as a quiet link-weight action. Approve and
+ * Deny show only to a caller who may decide (`agents:write` or `org:admin`);
+ * Review stays.
  */
 import { useEffect, useId, useReducer, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ActorStatusBadge, Button } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ACTION_LABEL, ACTION_VARIANT, type AgentEntity } from '@/modules/agents/api';
 import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 
@@ -53,6 +56,7 @@ export function PendingApprovalBanner({
 	approvePendingId,
 }: PendingApprovalBannerProps) {
 	const reducedMotion = useReducedMotion();
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	// Trust but verify: the query asks for `status=pending`, and the filter keeps a
 	// stale response from ever naming a non-pending agent.
@@ -146,26 +150,32 @@ export function PendingApprovalBanner({
 							/>
 						</p>
 						<span className="flex items-center gap-2">
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.approve}
-								disabled={busy}
-								loading={busy}
-								onClick={() => onApprove(longest.id)}
-								aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
-								aria-describedby={grantId}
-							>
-								{ACTION_LABEL.approve}
-							</Button>
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.deny}
-								disabled={busy}
-								onClick={() => onDeny({ id: longest.id, name: longest.name })}
-								aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
-							>
-								{ACTION_LABEL.deny}
-							</Button>
+							{canDecide && (
+								<>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.approve}
+										disabled={busy}
+										loading={busy}
+										onClick={() => onApprove(longest.id)}
+										aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
+										aria-describedby={grantId}
+									>
+										{ACTION_LABEL.approve}
+									</Button>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.deny}
+										disabled={busy}
+										onClick={() =>
+											onDeny({ id: longest.id, name: longest.name })
+										}
+										aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</>
+							)}
 							<Button
 								size="sm"
 								variant="ghost"

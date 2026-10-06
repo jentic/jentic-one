@@ -8,12 +8,15 @@
  * surface that shows an attention count or list now reads this hook, so the
  * numbers agree by construction.
  *
- * Sources, each its own query so one failing endpoint degrades only its rows:
- *   - agents awaiting approval      (`GET /agents?status=pending`, drained)
+ * Sources, each its own query so one failing endpoint degrades only its rows.
+ * A source the caller has no permission for is skipped (no request, not
+ * reported as failed); a source that is read and fails is always reported:
+ *   - agents awaiting approval      (`GET /agents?status=pending`, drained, `agents:read`)
  *   - OAuth clients awaiting review (`GET /admin/oauth-clients?approval_status=pending`, org:admin)
  *   - unacknowledged action events  (`GET /events?requires_action=true&acknowledged=false`,
- *                                    `events:read` — skipped, not failed, without it)
- *   - credentials whose OAuth sign-in never finished (joined from the credential list)
+ *                                    `events:read`)
+ *   - credentials whose OAuth sign-in never finished (joined from the credential list,
+ *                                    `credentials:read` or `owner:credentials:read`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
  * client's registration) are dropped — the queue row is the actionable one.
@@ -35,6 +38,7 @@ import { adaptEvent, primaryDestinationFor, severityForWire } from '@/shared/lib
 import { useOptionalCurrentUser } from '@/shared/auth/AuthContext';
 import { ORG_ADMIN } from '@/shared/auth/usePermission';
 import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
+import { CREDENTIALS_READ, OWNER_CREDENTIALS_READ, useCanAccess } from '@/shared/auth/useCanAccess';
 
 export type AttentionKind = 'agent' | 'oauth_client' | 'credential' | 'event';
 
@@ -103,7 +107,8 @@ export function useAttentionItems(): AttentionState {
 		refetchInterval: REFETCH_MS,
 	});
 
-	const credentials = useAllCredentials();
+	const canReadCredentials = useCanAccess(CREDENTIALS_READ, OWNER_CREDENTIALS_READ);
+	const credentials = useAllCredentials({ enabled: canReadCredentials });
 
 	const items = useMemo<AttentionItem[]>(() => {
 		const out: AttentionItem[] = [];
@@ -176,6 +181,7 @@ export function useAttentionItems(): AttentionState {
 	]);
 
 	const failedSources = [
+		pendingAgents.isError && 'agent approvals',
 		events.isError && 'alerts',
 		oauthClients.isError && 'OAuth client queue',
 		credentials.error != null && 'credentials',
@@ -184,7 +190,7 @@ export function useAttentionItems(): AttentionState {
 	return {
 		items,
 		count: items.length,
-		isLoading: events.isLoading || (isAdmin && oauthClients.isLoading),
+		isLoading: pendingAgents.isLoading || events.isLoading || oauthClients.isLoading,
 		failedSources,
 	};
 }

@@ -36,11 +36,12 @@ import {
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { ROUTES } from '@/shared/app/routes';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	useAgentApiKeyInfo,
-	useAgentScopes,
+	useAgentPermissions,
 	usePermissionCatalogue,
 	type AgentEntity,
 } from '@/modules/agents/api';
@@ -52,10 +53,10 @@ import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 import {
 	approvalGrant,
-	groupScopesByArea,
-	scopeRisk,
-	type ScopeRisk,
-} from '@/modules/agents/lib/requestedScopes';
+	groupPermissionsByArea,
+	permissionRisk,
+	type PermissionRisk,
+} from '@/modules/agents/lib/requestedPermissions';
 import {
 	commandText,
 	registerCommandTokens,
@@ -579,7 +580,7 @@ export function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'liste
 /**
  * The arrived agent, decision first: its name and status, then what it can't
  * do yet and Approve / Deny (or, once approved, its first API); below that
- * the quiet facts — where it came from, its id, the scopes approval grants.
+ * the quiet facts — where it came from, its id, the permissions approval grants.
  */
 export function AgentDetails({
 	titleId,
@@ -617,13 +618,15 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
-	// Approval makes the requested scopes live (or the defaults, when there are
-	// none), so Approve waits until what it grants is read and on screen — the
-	// catalogue included, since it tells which requested scopes count.
-	const scopes = useAgentScopes(agent.id);
+	// Approval makes the requested permissions live (or the defaults, when there
+	// are none), so Approve waits until what it grants is read and on screen — the
+	// catalogue included, since it tells which requested permissions count.
+	const permissions = useAgentPermissions(agent.id);
 	const catalogue = usePermissionCatalogue();
-	const scopesUnread =
-		scopes.isPending || scopes.isError || catalogue.isPending || catalogue.isError;
+	const permissionsUnread =
+		permissions.isPending || permissions.isError || catalogue.isPending || catalogue.isError;
+	// Approve and Deny need `agents:write` (or `org:admin`).
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div data-testid="arrival-card">
@@ -672,36 +675,41 @@ export function AgentDetails({
 								morePending={morePending}
 							/>
 							<p className="text-foreground text-sm">
-								It has its own key but can&apos;t make any calls until you approve.
+								{canDecide
+									? "It has its own key but can't make any calls until you approve."
+									: "It has its own key but can't make any calls until someone who can manage agents approves it."}
 							</p>
-							<div className="mt-3 flex flex-wrap items-center gap-2">
-								<Button
-									variant={ACTION_VARIANT.approve}
-									loading={approvePending}
-									disabled={scopesUnread}
-									onClick={onApprove}
-									aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
-								>
-									<CircleCheck className="h-4 w-4" />
-									{ACTION_LABEL.approve}
-								</Button>
-								{/* Tonal, not the red fill, as on every approval surface:
-								    the deny dialog carries the destructive red. */}
-								<Button
-									variant={ACTION_VARIANT.deny}
-									disabled={approvePending}
-									onClick={onDeny}
-									aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
-								>
-									{ACTION_LABEL.deny}
-								</Button>
-							</div>
-							{scopesUnread && (
+							{canDecide && (
+								<div className="mt-3 flex flex-wrap items-center gap-2">
+									<Button
+										variant={ACTION_VARIANT.approve}
+										loading={approvePending}
+										disabled={permissionsUnread}
+										onClick={onApprove}
+										aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
+									>
+										<CircleCheck className="h-4 w-4" />
+										{ACTION_LABEL.approve}
+									</Button>
+									{/* Tonal, not the red fill, as on every approval surface:
+									    the deny dialog carries the destructive red. */}
+									<Button
+										variant={ACTION_VARIANT.deny}
+										disabled={approvePending}
+										onClick={onDeny}
+										aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</div>
+							)}
+							{canDecide && permissionsUnread && (
 								<p
-									data-testid="approve-waits-for-scopes"
+									data-testid="approve-waits-for-permissions"
 									className="text-muted-foreground mt-2 text-xs"
 								>
-									Approve is available once the scopes it would grant are read.
+									Approve is available once the permissions it would grant are
+									read.
 								</p>
 							)}
 						</div>
@@ -715,7 +723,7 @@ export function AgentDetails({
 				agent={agent}
 				phase={phase}
 				selfRegistered={selfRegistered}
-				scopes={scopes}
+				permissions={permissions}
 				catalogue={catalogue}
 			/>
 			{morePending > 0 && (
@@ -796,20 +804,20 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 /**
  * What the API says about where the agent came from — only the facts it has,
  * quiet, under the decision. A self-registration carries no owner, no API key
- * and usually no scopes, so the extra pairs only show for an agent someone
+ * and usually no permissions, so the extra pairs only show for an agent someone
  * set up.
  */
 function AgentFacts({
 	agent,
 	phase,
 	selfRegistered,
-	scopes,
+	permissions,
 	catalogue,
 }: {
 	agent: AgentEntity;
 	phase: Exclude<FirstAgentPhase, 'listening'>;
 	selfRegistered: boolean;
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
@@ -874,50 +882,56 @@ function AgentFacts({
 				</dl>
 			)}
 			{/* Keyed by phase: an approval starts the review folded again. */}
-			<RequestedScopes key={phase} scopes={scopes} catalogue={catalogue} phase={phase} />
+			<RequestedPermissions
+				key={phase}
+				permissions={permissions}
+				catalogue={catalogue}
+				phase={phase}
+			/>
 		</div>
 	);
 }
 
 /** The flag's glyph tone: administering the org is the red one; a write or
  * an upstream call is a state to note, in the low-chroma caution. */
-const RISK_TINT: Record<ScopeRisk, string> = {
+const RISK_TINT: Record<PermissionRisk, string> = {
 	admin: 'text-danger',
 	write: 'text-caution',
 	execute: 'text-caution',
 };
 
-const RISK_LABEL: Record<ScopeRisk, string> = {
+const RISK_LABEL: Record<PermissionRisk, string> = {
 	admin: 'administers the organisation',
 	write: 'can change data',
 	execute: 'runs calls to connected APIs',
 };
 
-/** A scope chip: the neutral tag, mono, wrapping when a scope is long. */
-const SCOPE_CHIP = 'max-w-full font-mono font-medium whitespace-normal [overflow-wrap:anywhere]';
+/** A permission chip: the neutral tag, mono, wrapping when a permission is long. */
+const PERMISSION_CHIP =
+	'max-w-full font-mono font-medium whitespace-normal [overflow-wrap:anywhere]';
 
-/** A flagged scope as a quiet chip; only its glyph is tinted. */
-function RiskChip({ scope, risk }: { scope: string; risk: ScopeRisk }) {
+/** A flagged permission as a quiet chip; only its glyph is tinted. */
+function RiskChip({ permission, risk }: { permission: string; risk: PermissionRisk }) {
 	return (
-		<li className="max-w-full" data-scope={scope} data-risk={risk}>
-			<Tag className={SCOPE_CHIP}>
+		<li className="max-w-full" data-permission={permission} data-risk={risk}>
+			<Tag className={PERMISSION_CHIP}>
 				<TriangleAlert
 					className={cn('h-3 w-3 shrink-0', RISK_TINT[risk])}
 					aria-hidden="true"
 				/>
-				{scope}
+				{permission}
 				<span className="sr-only"> ({RISK_LABEL[risk]})</span>
 			</Tag>
 		</li>
 	);
 }
 
-/** One scope in the review: what it allows in words, its id in muted mono. */
-function ScopeRow({ scope, description }: { scope: string; description?: string }) {
-	const risk = scopeRisk(scope);
+/** One permission in the review: what it allows in words, its id in muted mono. */
+function PermissionRow({ permission, description }: { permission: string; description?: string }) {
+	const risk = permissionRisk(permission);
 	return (
 		<li
-			data-scope={scope}
+			data-permission={permission}
 			data-risk={risk ?? undefined}
 			className="flex min-w-0 items-start gap-2 py-0.5 leading-snug"
 		>
@@ -936,7 +950,7 @@ function ScopeRow({ scope, description }: { scope: string; description?: string 
 						description ? 'text-foreground-faint' : 'text-foreground-sub',
 					)}
 				>
-					{scope}
+					{permission}
 				</code>
 				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
 			</span>
@@ -947,41 +961,41 @@ function ScopeRow({ scope, description }: { scope: string; description?: string 
 /**
  * What approval grants, as a summary with the full list one click away.
  *
- * Approval makes the scopes live at once, so the approver must be able to see
+ * Approval makes the permissions live at once, so the approver must be able to see
  * exactly what they are granting before the click — never an unexplained
  * "and N more". The summary gives the count and the source (the default agent
- * scopes, or what the agent requested); any scope that can change data, run
- * upstream calls or administer the organisation (`scopeRisk`) is never folded
+ * permissions, or what the agent requested); any permission that can change data, run
+ * upstream calls or administer the organisation (`permissionRisk`) is never folded
  * away: it stays on the summary, flagged, and while approval is pending such a
  * request — the defaults among them, which include `capabilities:execute` —
- * opens the full review by default. A request of plain read scopes waits
- * behind "Review scopes", grouped by area with what each one allows.
+ * opens the full review by default. A request of plain read permissions waits
+ * behind "Review permissions", grouped by area with what each one allows.
  *
- * An agent that requests none gets the default agent scopes; requested
+ * An agent that requests none gets the default agent permissions; requested
  * strings outside the permission catalogue grant nothing and are listed
  * apart, always visible, and they don't bring the defaults back — so a
- * request made only of those approves an agent with no scopes, which the card
- * says. An unread list says so rather than reading as "no scopes".
+ * request made only of those approves an agent with no permissions, which the card
+ * says. An unread list says so rather than reading as "no permissions".
  */
-function RequestedScopes({
-	scopes,
+function RequestedPermissions({
+	permissions,
 	catalogue,
 	phase,
 }: {
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 	phase: Exclude<FirstAgentPhase, 'listening'>;
 }) {
-	// null: the default for the request (open when it holds a flagged scope
+	// null: the default for the request (open when it holds a flagged permission
 	// and is still pending); a click makes it the operator's choice.
 	const [expandedChoice, setExpanded] = useState<boolean | null>(null);
 	const reviewId = useId();
-	const failed = scopes.isError ? scopes : catalogue.isError ? catalogue : null;
+	const failed = permissions.isError ? permissions : catalogue.isError ? catalogue : null;
 	let body: ReactNode;
-	if (scopes.isPending || catalogue.isPending) {
+	if (permissions.isPending || catalogue.isPending) {
 		body = (
 			<span aria-busy="true" className="flex flex-wrap gap-1.5">
-				<span className="sr-only">Reading the scopes it requests…</span>
+				<span className="sr-only">Reading the permissions it requests…</span>
 				<Skeleton className="h-4 w-48 rounded-full" />
 			</span>
 		);
@@ -989,8 +1003,8 @@ function RequestedScopes({
 		body = (
 			<ErrorAlert
 				message={
-					failed === scopes
-						? 'Could not read the scopes this agent requests.'
+					failed === permissions
+						? 'Could not read the permissions this agent requests.'
 						: 'Could not read the permission catalogue.'
 				}
 				onRetry={() => void failed.refetch()}
@@ -999,29 +1013,29 @@ function RequestedScopes({
 		);
 	} else {
 		const grant = approvalGrant(
-			scopes.data ?? [],
+			permissions.data ?? [],
 			(catalogue.data ?? []).map((p) => p.name),
 		);
 		const descriptions = new Map((catalogue.data ?? []).map((p) => [p.name, p.description]));
-		const flagged = grant.granted.flatMap((scope) => {
-			const risk = scopeRisk(scope);
-			return risk ? [{ scope, risk }] : [];
+		const flagged = grant.granted.flatMap((permission) => {
+			const risk = permissionRisk(permission);
+			return risk ? [{ permission, risk }] : [];
 		});
 		const pending = phase === 'arrived';
 		const expanded = expandedChoice ?? (pending && flagged.length > 0);
 		const count = grant.granted.length;
 		const listLabel = !pending
-			? 'Granted scopes'
+			? 'Granted permissions'
 			: grant.kind === 'defaults'
-				? 'Default agent scopes'
-				: 'Requested scopes';
+				? 'Default agent permissions'
+				: 'Requested permissions';
 		const summary = !pending
 			? grant.kind === 'defaults'
-				? `Has the default agent scopes · ${count}`
-				: `Granted ${count === 1 ? '1 scope' : `${count} scopes`}`
+				? `Has the default agent permissions · ${count}`
+				: `Granted ${count === 1 ? '1 permission' : `${count} permissions`}`
 			: grant.kind === 'defaults'
-				? `Gets the default agent scopes · ${count}`
-				: `Gets the ${count === 1 ? 'scope' : `${count} scopes`} it requests`;
+				? `Gets the default agent permissions · ${count}`
+				: `Gets the ${count === 1 ? 'permission' : `${count} permissions`} it requests`;
 		const riskNote =
 			flagged.length === 0
 				? null
@@ -1031,7 +1045,10 @@ function RequestedScopes({
 		body = (
 			<>
 				{count > 0 && (
-					<p data-testid="scopes-summary" className="flex flex-wrap items-center gap-x-2">
+					<p
+						data-testid="permissions-summary"
+						className="flex flex-wrap items-center gap-x-2"
+					>
 						<span className="text-foreground-sub">{summary}</span>
 						<Button
 							variant="ghost"
@@ -1048,18 +1065,18 @@ function RequestedScopes({
 									expanded && 'rotate-90',
 								)}
 							/>
-							{expanded ? 'Hide scopes' : 'Review scopes'}
+							{expanded ? 'Hide permissions' : 'Review permissions'}
 						</Button>
 					</p>
 				)}
-				{/* Flagged scopes never fold away. */}
+				{/* Flagged permissions never fold away. */}
 				{flagged.length > 0 && !expanded && (
 					<ul
-						aria-label="Scopes that can change data, run calls or administer"
+						aria-label="Permissions that can change data, run calls or administer"
 						className="mt-2 flex flex-wrap gap-1.5"
 					>
-						{flagged.map(({ scope, risk }) => (
-							<RiskChip key={scope} scope={scope} risk={risk} />
+						{flagged.map(({ permission, risk }) => (
+							<RiskChip key={permission} permission={permission} risk={risk} />
 						))}
 					</ul>
 				)}
@@ -1069,45 +1086,50 @@ function RequestedScopes({
 					role="group"
 					aria-label={listLabel}
 					hidden={!expanded}
-					data-testid="scope-review"
+					data-testid="permission-review"
 					className="mt-2 space-y-2.5"
 				>
 					{expanded &&
-						groupScopesByArea(grant.granted).map(({ area, scopes: inArea }) => (
-							<div key={area}>
-								<p
-									aria-hidden="true"
-									className="text-foreground-faint text-[11px] font-semibold"
-								>
-									{area}
-								</p>
-								<ul aria-label={area}>
-									{inArea.map((scope) => (
-										<ScopeRow
-											key={scope}
-											scope={scope}
-											description={descriptions.get(scope)}
-										/>
-									))}
-								</ul>
-							</div>
-						))}
+						groupPermissionsByArea(grant.granted).map(
+							({ area, permissions: inArea }) => (
+								<div key={area}>
+									<p
+										aria-hidden="true"
+										className="text-foreground-faint text-[11px] font-semibold"
+									>
+										{area}
+									</p>
+									<ul aria-label={area}>
+										{inArea.map((permission) => (
+											<PermissionRow
+												key={permission}
+												permission={permission}
+												description={descriptions.get(permission)}
+											/>
+										))}
+									</ul>
+								</div>
+							),
+						)}
 					{expanded && pending && (
 						<p>
 							{grant.kind === 'defaults'
-								? 'Approving grants the default agent scopes.'
-								: 'Approving grants the recognised scopes listed.'}
+								? 'Approving grants the default agent permissions.'
+								: 'Approving grants the recognised permissions listed.'}
 						</p>
 					)}
 				</div>
 				{grant.unrecognised.length > 0 && (
-					<div data-testid="unrecognised-scopes" className="mt-2.5">
+					<div data-testid="unrecognised-permissions" className="mt-2.5">
 						<p className="mb-1.5">Not recognised — won&apos;t be granted:</p>
-						<ul aria-label="Unrecognised scopes" className="flex flex-wrap gap-1.5">
-							{grant.unrecognised.map((scope) => (
-								<li key={scope} className="max-w-full">
-									<Tag className={cn(SCOPE_CHIP, 'text-foreground-faint')}>
-										{scope}
+						<ul
+							aria-label="Unrecognised permissions"
+							className="flex flex-wrap gap-1.5"
+						>
+							{grant.unrecognised.map((permission) => (
+								<li key={permission} className="max-w-full">
+									<Tag className={cn(PERMISSION_CHIP, 'text-foreground-faint')}>
+										{permission}
 									</Tag>
 								</li>
 							))}
@@ -1116,13 +1138,13 @@ function RequestedScopes({
 				)}
 				{grant.kind === 'requested' && count === 0 && (
 					<p
-						data-testid="no-scopes-warning"
+						data-testid="no-permissions-warning"
 						className="text-foreground mt-2 flex items-start gap-2"
 					>
 						<TriangleAlert className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
 						<span>
-							None of these are recognised, so the agent will get no scopes. A request
-							that names any scope gets no defaults.
+							None of these are recognised, so the agent will get no permissions. A
+							request that names any permission gets no defaults.
 						</span>
 					</p>
 				)}
@@ -1130,7 +1152,7 @@ function RequestedScopes({
 		);
 	}
 	return (
-		<div data-testid="requested-scopes" className="min-w-0">
+		<div data-testid="requested-permissions" className="min-w-0">
 			{body}
 		</div>
 	);

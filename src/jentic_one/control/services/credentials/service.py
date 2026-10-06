@@ -40,6 +40,7 @@ from jentic_one.control.services.credentials.errors import (
     ImmutableFieldError,
     InvalidCredentialInputError,
     RuleSetAccessDeniedError,
+    RuleSetAttachDeniedError,
     RuleSetInUseError,
     RuleSetNameConflictError,
     RuleSetNotFoundError,
@@ -71,6 +72,7 @@ from jentic_one.control.services.credentials.schemas.permission_test import Perm
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -79,7 +81,6 @@ from jentic_one.shared.models.credentials import CredentialType, StoredCredentia
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.permissions.matching import compile_matcher
-from jentic_one.shared.scopes import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -515,9 +516,15 @@ class CredentialService:
         themselves live control-side, so this is the cross-DB seam). Returns
         the binding row so callers can see its attached ``rule_set_id``.
 
+        The bound agent must also be one the caller may see
+        (:meth:`_bound_agent_visibility`, the same rule as ``list_agents``):
+        a binding of an agent outside that set answers the same 404 as a
+        binding that does not exist.
+
         ``for_write`` additionally requires :meth:`_may_write_binding_rules`;
         a caller who can see the credential but not write its rules gets the
-        same 404 as one who cannot see it at all.
+        same 404 as one who cannot see it at all. Writes are therefore
+        owner-or-admin only, and both of those callers see every bound agent.
         """
         access_filters = build_access_filters(
             identity,
@@ -535,7 +542,10 @@ class CredentialService:
                 raise CredentialNotFoundError(credential_id)
         async with self._ctx.admin_db.session() as session:
             binding = await PrerequisiteRepository.get_agent_credential_binding(
-                session, agent_id=agent_id, credential_id=credential_id
+                session,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                visible_to=self._bound_agent_visibility(credential, identity),
             )
         if binding is None:
             raise AgentBindingNotFoundError(credential_id, agent_id)
@@ -713,13 +723,24 @@ class CredentialService:
         when the set is detached). The set must exist — the pointer is FK-less
         across the DB seam, so this check plus the delete-time
         ``rule_set_in_use`` refusal are the integrity guard.
+
+        The caller must also be allowed to attach the set
+        (:meth:`_may_attach_rule_set`), because whoever may edit the set then
+        decides what the agent may do. Re-attaching the set a binding already
+        points at is an idempotent no-op that skips that check, so an existing
+        attachment keeps working for the binding's owner.
         """
-        await self._require_visible_binding(
+        binding = await self._require_visible_binding(
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.session() as session:
-            if await PermissionRuleSetRepository.get_by_id(session, rule_set_id) is None:
-                raise RuleSetNotFoundError(rule_set_id)
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+        if rule_set is None:
+            raise RuleSetNotFoundError(rule_set_id)
+        if binding.rule_set_id == rule_set_id:
+            return
+        if not self._may_attach_rule_set(rule_set, identity):
+            raise RuleSetAttachDeniedError(rule_set_id)
         async with self._ctx.admin_db.transaction() as session:
             await PrerequisiteRepository.set_binding_rule_set(
                 session, agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
@@ -755,15 +776,33 @@ class CredentialService:
             reason=f"detach rule set {binding.rule_set_id}",
         )
 
-    def _may_mutate_rule_set(self, rule_set: PermissionRuleSet, identity: Identity) -> bool:
-        """Provisional creator-or-admin write gate (theme plan OQ-6 is open).
+    @staticmethod
+    def _may_mutate_rule_set(rule_set: PermissionRuleSet, identity: Identity) -> bool:
+        """Write gate for a shared rule set: ``org:admin``, or the creator of a non-curated set.
 
-        Everyone passing the route's read scope may *see* a shared set —
+        Everyone passing the route's read permission may *see* a shared set —
         it carries policy, not secrets, and a binding pointing at it makes
-        its contents the binding owner's business. Widening the write gate
-        later needs no schema change.
+        its contents the binding owner's business. Editing a set changes the
+        policy of every binding attached to it, so a curated set (which any
+        ``credentials:write`` holder may attach) is editable only by
+        ``org:admin``, including after its creator loses that permission.
         """
-        return ORG_ADMIN in identity.permissions or rule_set.created_by == identity.sub
+        if ORG_ADMIN in identity.permissions:
+            return True
+        return not rule_set.curated and rule_set.created_by == identity.sub
+
+    @staticmethod
+    def _may_attach_rule_set(rule_set: PermissionRuleSet, identity: Identity) -> bool:
+        """Attach gate for a shared rule set: ``org:admin``, the creator, or any caller if curated.
+
+        The caller already holds ``credentials:write`` (the route requires it)
+        and may write the binding's rules. Attaching another user's
+        non-curated set is refused: its creator could later rewrite the
+        attached agent's policy.
+        """
+        if ORG_ADMIN in identity.permissions or rule_set.curated:
+            return True
+        return rule_set.created_by is not None and rule_set.created_by == identity.sub
 
     async def create_rule_set(
         self,
@@ -773,12 +812,20 @@ class CredentialService:
         rules: list[dict[str, object]],
         identity: Identity,
     ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule]]:
-        """Create a named shared rule set, optionally with its initial ordered rules."""
+        """Create a named shared rule set, optionally with its initial ordered rules.
+
+        A set an ``org:admin`` creates is recorded as curated (see
+        :meth:`_may_attach_rule_set`).
+        """
         async with self._ctx.control_db.transaction() as session:
             if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
                 raise RuleSetNameConflictError(name)
             rule_set = await PermissionRuleSetRepository.create(
-                session, name=name, description=description, created_by=identity.sub
+                session,
+                name=name,
+                description=description,
+                created_by=identity.sub,
+                curated=ORG_ADMIN in identity.permissions,
             )
             set_rules = await PermissionRuleSetRepository.replace_user_rules(
                 session, rule_set.id, rules, created_by=identity.sub
@@ -831,13 +878,13 @@ class CredentialService:
         name: str | None = None,
         description: str | None = None,
     ) -> PermissionRuleSet:
-        """Rename or re-describe a rule set (creator or org admin)."""
+        """Rename or re-describe a rule set (see :meth:`_may_mutate_rule_set`)."""
         async with self._ctx.control_db.transaction() as session:
             rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
             if rule_set is None:
                 raise RuleSetNotFoundError(rule_set_id)
             if not self._may_mutate_rule_set(rule_set, identity):
-                raise RuleSetAccessDeniedError(rule_set_id)
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
             if name is not None and name != rule_set.name:
                 if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
                     raise RuleSetNameConflictError(name)
@@ -865,7 +912,7 @@ class CredentialService:
             if rule_set is None:
                 raise RuleSetNotFoundError(rule_set_id)
             if not self._may_mutate_rule_set(rule_set, identity):
-                raise RuleSetAccessDeniedError(rule_set_id)
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
             result = await PermissionRuleSetRepository.replace_user_rules(
                 session, rule_set_id, rules, created_by=identity.sub
             )
@@ -886,7 +933,7 @@ class CredentialService:
             if rule_set is None:
                 raise RuleSetNotFoundError(rule_set_id)
             if not self._may_mutate_rule_set(rule_set, identity):
-                raise RuleSetAccessDeniedError(rule_set_id)
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
         async with self._ctx.admin_db.session() as session:
             binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
                 session, rule_set_id

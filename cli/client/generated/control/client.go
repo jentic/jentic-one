@@ -934,7 +934,7 @@ type ActorType string
 type AgentCreateRequest struct {
 	Description *string   `json:"description,omitempty"`
 	Name        string    `json:"name"`
-	Scopes      *[]string `json:"scopes,omitempty"`
+	Permissions *[]string `json:"permissions,omitempty"`
 }
 
 // AgentListResponse List of agents.
@@ -949,6 +949,16 @@ type AgentPatchRequest struct {
 	Description *string `json:"description,omitempty"`
 	Name        *string `json:"name,omitempty"`
 	OwnerId     *string `json:"owner_id,omitempty"`
+}
+
+// AgentPermissionsRequest Request body for replacing an agent's permissions.
+type AgentPermissionsRequest struct {
+	Permissions []string `json:"permissions"`
+}
+
+// AgentPermissionsResponse Response containing an agent's current permissions.
+type AgentPermissionsResponse struct {
+	Permissions []string `json:"permissions"`
 }
 
 // AgentResponse Agent representation in API responses.
@@ -966,16 +976,6 @@ type AgentResponse struct {
 	ParentAgentId *string    `json:"parent_agent_id,omitempty"`
 	RegisteredBy  string     `json:"registered_by"`
 	Status        string     `json:"status"`
-}
-
-// AgentScopesRequest Request body for replacing an agent's scopes.
-type AgentScopesRequest struct {
-	Scopes []string `json:"scopes"`
-}
-
-// AgentScopesResponse Response containing an agent's current scopes.
-type AgentScopesResponse struct {
-	Scopes []string `json:"scopes"`
 }
 
 // ApiImportLinksResponse Hypermedia links for an import response.
@@ -1904,9 +1904,9 @@ type MeAgent struct {
 	Id                 string                    `json:"id"`
 	Name               string                    `json:"name"`
 	ParentAgentId      *string                   `json:"parent_agent_id,omitempty"`
-	Scopes             []string                  `json:"scopes"`
+	Permissions        []string                  `json:"permissions"`
 	Status             string                    `json:"status"`
-	TokenScopes        []string                  `json:"token_scopes"`
+	TokenPermissions   []string                  `json:"token_permissions"`
 	Type               *MeAgentType              `json:"type,omitempty"`
 }
 
@@ -1920,7 +1920,7 @@ type MeUser struct {
 	Id                 string      `json:"id"`
 	MustChangePassword bool        `json:"must_change_password"`
 	Name               string      `json:"name"`
-	Scopes             []string    `json:"scopes"`
+	Permissions        []string    `json:"permissions"`
 	Status             string      `json:"status"`
 	Type               *MeUserType `json:"type,omitempty"`
 }
@@ -2871,23 +2871,29 @@ type RuleSetListResponse struct {
 // RuleSetResponse Rule set detail — the ordered rules plus its referencing-binding count.
 type RuleSetResponse struct {
 	// BindingCount How many agent-credential bindings currently point at this set.
-	BindingCount int                        `json:"binding_count"`
-	CreatedAt    time.Time                  `json:"created_at"`
-	CreatedBy    *string                    `json:"created_by,omitempty"`
-	Description  *string                    `json:"description,omitempty"`
-	Name         string                     `json:"name"`
-	RuleSetId    string                     `json:"rule_set_id"`
-	Rules        []PermissionRuleReadSchema `json:"rules"`
+	BindingCount int       `json:"binding_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    *string   `json:"created_by,omitempty"`
+
+	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	Curated     bool                       `json:"curated"`
+	Description *string                    `json:"description,omitempty"`
+	Name        string                     `json:"name"`
+	RuleSetId   string                     `json:"rule_set_id"`
+	Rules       []PermissionRuleReadSchema `json:"rules"`
 }
 
 // RuleSetSummaryResponse Rule set list entry.
 type RuleSetSummaryResponse struct {
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   *string   `json:"created_by,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Name        string    `json:"name"`
-	RuleCount   int       `json:"rule_count"`
-	RuleSetId   string    `json:"rule_set_id"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatedBy *string   `json:"created_by,omitempty"`
+
+	// Curated True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+	Curated     bool    `json:"curated"`
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+	RuleCount   int     `json:"rule_count"`
+	RuleSetId   string  `json:"rule_set_id"`
 }
 
 // RuleSetUpdateRequest Rename or re-describe a rule set.
@@ -3621,8 +3627,8 @@ type BindAgentCredentialJSONRequestBody = CredentialBindRequest
 // UpdateAgentJwksJSONRequestBody defines body for UpdateAgentJwks for application/json ContentType.
 type UpdateAgentJwksJSONRequestBody = JwksUpdateRequest
 
-// ReplaceAgentScopesJSONRequestBody defines body for ReplaceAgentScopes for application/json ContentType.
-type ReplaceAgentScopesJSONRequestBody = AgentScopesRequest
+// ReplaceAgentPermissionsJSONRequestBody defines body for ReplaceAgentPermissions for application/json ContentType.
+type ReplaceAgentPermissionsJSONRequestBody = AgentPermissionsRequest
 
 // ClaimAgentJSONRequestBody defines body for ClaimAgent for application/json ContentType.
 type ClaimAgentJSONRequestBody = ClaimRequest
@@ -4792,7 +4798,7 @@ type ClientInterface interface {
 	// Archive an agent — terminal-but-kept.
 	//
 	// The row is retained for history, but the action is not reversible and
-	// the agent's authority is swept: scope grants, credential bindings, and
+	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
@@ -4917,35 +4923,36 @@ type ClientInterface interface {
 	// name and redirect-URI origin, the granted scopes, the consenting user,
 	// and created/last-used timestamps. Allowed for the agent's owner or an
 	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics.
+	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+	// same as an agent that does not exist.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAgentScopes Get Agent Scopes
+	// GetAgentPermissions Get Agent Permissions
 	//
-	// List scopes granted to an agent.
+	// List permissions granted to an agent.
 	//
-	// Corresponds with GET /agents/{agent_id}/scopes (the `GetAgentScopes` operationId).
-	GetAgentScopes(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
+	GetAgentPermissions(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplaceAgentScopesWithBody Replace Agent Scopes
+	// ReplaceAgentPermissionsWithBody Replace Agent Permissions
 	//
-	// Replace all scopes for an agent.
+	// Replace all permissions for an agent.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-	ReplaceAgentScopesWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+	ReplaceAgentPermissionsWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReplaceAgentScopes Replace Agent Scopes
+	// ReplaceAgentPermissions Replace Agent Permissions
 	//
-	// Replace all scopes for an agent.
+	// Replace all permissions for an agent.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-	ReplaceAgentScopes(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+	ReplaceAgentPermissions(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ApproveAgent Approve Agent
 	//
@@ -4977,7 +4984,7 @@ type ClientInterface interface {
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
 	// claiming is an onboarding step a brand-new user may hit before they have
 	// rotated a temporary password, so a must-change-password state must not block
-	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// it. The claim only sets ownership — it grants no permissions and cannot act as the
 	// agent — so allowing it under an expired password is low-risk.
 	//
 	// Takes any type of body and a specified content type.
@@ -5002,7 +5009,7 @@ type ClientInterface interface {
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
 	// claiming is an onboarding step a brand-new user may hit before they have
 	// rotated a temporary password, so a must-change-password state must not block
-	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// it. The claim only sets ownership — it grants no permissions and cannot act as the
 	// agent — so allowing it under an expired password is low-risk.
 	//
 	// Takes a body of the `application/json` content type.
@@ -5769,7 +5776,11 @@ type ClientInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5782,7 +5793,11 @@ type ClientInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6742,7 +6757,10 @@ type ClientInterface interface {
 
 	// UpdatePermissionRuleSetWithBody Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6751,7 +6769,10 @@ type ClientInterface interface {
 
 	// UpdatePermissionRuleSet Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7652,7 +7673,7 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 // Archive an agent — terminal-but-kept.
 //
 // The row is retained for history, but the action is not reversible and
-// the agent's authority is swept: scope grants, credential bindings, and
+// the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
@@ -7907,7 +7928,8 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 // name and redirect-URI origin, the granted scopes, the consenting user,
 // and created/last-used timestamps. Allowed for the agent's owner or an
 // admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics.
+// “:revoke“ semantics. An agent the caller cannot see answers 404, the
+// same as an agent that does not exist.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7922,13 +7944,13 @@ func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, param
 	return c.Client.Do(req)
 }
 
-// GetAgentScopes Get Agent Scopes
+// GetAgentPermissions Get Agent Permissions
 //
-// List scopes granted to an agent.
+// List permissions granted to an agent.
 //
-// Corresponds with GET /agents/{agent_id}/scopes (the `GetAgentScopes` operationId).
-func (c *Client) GetAgentScopes(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAgentScopesRequest(c.Server, agentId)
+// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
+func (c *Client) GetAgentPermissions(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentPermissionsRequest(c.Server, agentId)
 	if err != nil {
 		return nil, err
 	}
@@ -7939,15 +7961,15 @@ func (c *Client) GetAgentScopes(ctx context.Context, agentId string, reqEditors 
 	return c.Client.Do(req)
 }
 
-// ReplaceAgentScopesWithBody Replace Agent Scopes
+// ReplaceAgentPermissionsWithBody Replace Agent Permissions
 //
-// Replace all scopes for an agent.
+// Replace all permissions for an agent.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-func (c *Client) ReplaceAgentScopesWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplaceAgentScopesRequestWithBody(c.Server, agentId, contentType, body)
+// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+func (c *Client) ReplaceAgentPermissionsWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentPermissionsRequestWithBody(c.Server, agentId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7958,15 +7980,15 @@ func (c *Client) ReplaceAgentScopesWithBody(ctx context.Context, agentId string,
 	return c.Client.Do(req)
 }
 
-// ReplaceAgentScopes Replace Agent Scopes
+// ReplaceAgentPermissions Replace Agent Permissions
 //
-// Replace all scopes for an agent.
+// Replace all permissions for an agent.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-func (c *Client) ReplaceAgentScopes(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReplaceAgentScopesRequest(c.Server, agentId, body)
+// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+func (c *Client) ReplaceAgentPermissions(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReplaceAgentPermissionsRequest(c.Server, agentId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8017,7 +8039,7 @@ func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ..
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
 // claiming is an onboarding step a brand-new user may hit before they have
 // rotated a temporary password, so a must-change-password state must not block
-// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// it. The claim only sets ownership — it grants no permissions and cannot act as the
 // agent — so allowing it under an expired password is low-risk.
 //
 // Takes any type of body and a specified content type.
@@ -8052,7 +8074,7 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, content
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
 // claiming is an onboarding step a brand-new user may hit before they have
 // rotated a temporary password, so a must-change-password state must not block
-// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// it. The claim only sets ownership — it grants no permissions and cannot act as the
 // agent — so allowing it under an expired password is low-risk.
 //
 // Takes a body of the `application/json` content type.
@@ -9569,7 +9591,11 @@ func (c *Client) DetachAgentCredentialRuleSet(ctx context.Context, credentialId 
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9592,7 +9618,11 @@ func (c *Client) AttachAgentCredentialRuleSetWithBody(ctx context.Context, crede
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11202,7 +11232,10 @@ func (c *Client) GetPermissionRuleSet(ctx context.Context, ruleSetId string, req
 
 // UpdatePermissionRuleSetWithBody Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes any type of body and a specified content type.
 //
@@ -11221,7 +11254,10 @@ func (c *Client) UpdatePermissionRuleSetWithBody(ctx context.Context, ruleSetId 
 
 // UpdatePermissionRuleSet Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -13375,8 +13411,8 @@ func NewListAgentOauthGrantsRequest(server string, agentId string, params *ListA
 	return req, nil
 }
 
-// NewGetAgentScopesRequest constructs an http.Request for the GetAgentScopes method
-func NewGetAgentScopesRequest(server string, agentId string) (*http.Request, error) {
+// NewGetAgentPermissionsRequest constructs an http.Request for the GetAgentPermissions method
+func NewGetAgentPermissionsRequest(server string, agentId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13391,7 +13427,7 @@ func NewGetAgentScopesRequest(server string, agentId string) (*http.Request, err
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/agents/%s/scopes", pathParam0)
+	operationPath := fmt.Sprintf("/agents/%s/permissions", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13409,19 +13445,19 @@ func NewGetAgentScopesRequest(server string, agentId string) (*http.Request, err
 	return req, nil
 }
 
-// NewReplaceAgentScopesRequest calls the generic ReplaceAgentScopes builder with application/json body
-func NewReplaceAgentScopesRequest(server string, agentId string, body ReplaceAgentScopesJSONRequestBody) (*http.Request, error) {
+// NewReplaceAgentPermissionsRequest calls the generic ReplaceAgentPermissions builder with application/json body
+func NewReplaceAgentPermissionsRequest(server string, agentId string, body ReplaceAgentPermissionsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewReplaceAgentScopesRequestWithBody(server, agentId, "application/json", bodyReader)
+	return NewReplaceAgentPermissionsRequestWithBody(server, agentId, "application/json", bodyReader)
 }
 
-// NewReplaceAgentScopesRequestWithBody constructs an http.Request for the ReplaceAgentScopes method, with any body, and a specified content type
-func NewReplaceAgentScopesRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewReplaceAgentPermissionsRequestWithBody constructs an http.Request for the ReplaceAgentPermissions method, with any body, and a specified content type
+func NewReplaceAgentPermissionsRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13436,7 +13472,7 @@ func NewReplaceAgentScopesRequestWithBody(server string, agentId string, content
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/agents/%s/scopes", pathParam0)
+	operationPath := fmt.Sprintf("/agents/%s/permissions", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -20956,7 +20992,7 @@ type ClientWithResponsesInterface interface {
 	// Archive an agent — terminal-but-kept.
 	//
 	// The row is retained for history, but the action is not reversible and
-	// the agent's authority is swept: scope grants, credential bindings, and
+	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
@@ -21095,39 +21131,40 @@ type ClientWithResponsesInterface interface {
 	// name and redirect-URI origin, the granted scopes, the consenting user,
 	// and created/last-used timestamps. Allowed for the agent's owner or an
 	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics.
+	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+	// same as an agent that does not exist.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrantsWithResponse(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*ListAgentOauthGrantsHTTPResp, error)
 
-	// GetAgentScopesWithResponse Get Agent Scopes
+	// GetAgentPermissionsWithResponse Get Agent Permissions
 	//
-	// List scopes granted to an agent.
+	// List permissions granted to an agent.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /agents/{agent_id}/scopes (the `GetAgentScopes` operationId).
-	GetAgentScopesWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentScopesHTTPResp, error)
+	// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
+	GetAgentPermissionsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentPermissionsHTTPResp, error)
 
-	// ReplaceAgentScopesWithBodyWithResponse Replace Agent Scopes
+	// ReplaceAgentPermissionsWithBodyWithResponse Replace Agent Permissions
 	//
-	// Replace all scopes for an agent.
+	// Replace all permissions for an agent.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-	ReplaceAgentScopesWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentScopesHTTPResp, error)
+	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+	ReplaceAgentPermissionsWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error)
 
-	// ReplaceAgentScopesWithResponse Replace Agent Scopes
+	// ReplaceAgentPermissionsWithResponse Replace Agent Permissions
 	//
-	// Replace all scopes for an agent.
+	// Replace all permissions for an agent.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-	ReplaceAgentScopesWithResponse(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentScopesHTTPResp, error)
+	// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+	ReplaceAgentPermissionsWithResponse(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error)
 
 	// ApproveAgentWithResponse Approve Agent
 	//
@@ -21161,7 +21198,7 @@ type ClientWithResponsesInterface interface {
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
 	// claiming is an onboarding step a brand-new user may hit before they have
 	// rotated a temporary password, so a must-change-password state must not block
-	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// it. The claim only sets ownership — it grants no permissions and cannot act as the
 	// agent — so allowing it under an expired password is low-risk.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -21186,7 +21223,7 @@ type ClientWithResponsesInterface interface {
 	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
 	// claiming is an onboarding step a brand-new user may hit before they have
 	// rotated a temporary password, so a must-change-password state must not block
-	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// it. The claim only sets ownership — it grants no permissions and cannot act as the
 	// agent — so allowing it under an expired password is low-risk.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -22045,7 +22082,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22058,7 +22099,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// While attached, the set's ordered list is the binding's effective policy
 	// and its inline rules are dormant — `permissions:test` evaluates the set.
-	// The set must exist (404 `rule_set_not_found`).
+	// The set must exist (404 `rule_set_not_found`). The caller must be the
+	// set's creator or an org admin, unless the set is curated (created by an
+	// org admin), which any caller who may write the binding's rules can
+	// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+	// binding already points at is a no-op.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23076,7 +23121,10 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23085,7 +23133,10 @@ type ClientWithResponsesInterface interface {
 
 	// UpdatePermissionRuleSetWithResponse Update permission rule set
 	//
-	// Rename or re-describe a rule set (creator or org admin).
+	// Rename or re-describe a rule set.
+	//
+	// A curated set is editable by an org admin; any other set by its creator
+	// or an org admin (403 `rule_set_access_denied` otherwise).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26206,11 +26257,11 @@ func (r ListAgentOauthGrantsHTTPResp) ContentType() string {
 	return ""
 }
 
-type GetAgentScopesHTTPResp struct {
+type GetAgentPermissionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AgentScopesResponse
+	JSON200 *AgentPermissionsResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -26226,47 +26277,47 @@ type GetAgentScopesHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetAgentScopesHTTPResp) GetJSON200() *AgentScopesResponse {
+func (r GetAgentPermissionsHTTPResp) GetJSON200() *AgentPermissionsResponse {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r GetAgentScopesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r GetAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r GetAgentScopesHTTPResp) GetBody() []byte {
+func (r GetAgentPermissionsHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetAgentScopesHTTPResp) Status() string {
+func (r GetAgentPermissionsHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26274,7 +26325,7 @@ func (r GetAgentScopesHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetAgentScopesHTTPResp) StatusCode() int {
+func (r GetAgentPermissionsHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26282,18 +26333,18 @@ func (r GetAgentScopesHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetAgentScopesHTTPResp) ContentType() string {
+func (r GetAgentPermissionsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type ReplaceAgentScopesHTTPResp struct {
+type ReplaceAgentPermissionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AgentScopesResponse
+	JSON200 *AgentPermissionsResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -26309,47 +26360,47 @@ type ReplaceAgentScopesHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ReplaceAgentScopesHTTPResp) GetJSON200() *AgentScopesResponse {
+func (r ReplaceAgentPermissionsHTTPResp) GetJSON200() *AgentPermissionsResponse {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ReplaceAgentScopesHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r ReplaceAgentPermissionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r ReplaceAgentScopesHTTPResp) GetBody() []byte {
+func (r ReplaceAgentPermissionsHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ReplaceAgentScopesHTTPResp) Status() string {
+func (r ReplaceAgentPermissionsHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -26357,7 +26408,7 @@ func (r ReplaceAgentScopesHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ReplaceAgentScopesHTTPResp) StatusCode() int {
+func (r ReplaceAgentPermissionsHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -26365,7 +26416,7 @@ func (r ReplaceAgentScopesHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReplaceAgentScopesHTTPResp) ContentType() string {
+func (r ReplaceAgentPermissionsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -37428,7 +37479,7 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 // Archive an agent — terminal-but-kept.
 //
 // The row is retained for history, but the action is not reversible and
-// the agent's authority is swept: scope grants, credential bindings, and
+// the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
@@ -37645,7 +37696,8 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 // name and redirect-URI origin, the granted scopes, the consenting user,
 // and created/last-used timestamps. Allowed for the agent's owner or an
 // admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics.
+// “:revoke“ semantics. An agent the caller cannot see answers 404, the
+// same as an agent that does not exist.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -37658,49 +37710,49 @@ func (c *ClientWithResponses) ListAgentOauthGrantsWithResponse(ctx context.Conte
 	return ParseListAgentOauthGrantsHTTPResp(rsp)
 }
 
-// GetAgentScopesWithResponse Get Agent Scopes
+// GetAgentPermissionsWithResponse Get Agent Permissions
 //
-// List scopes granted to an agent.
+// List permissions granted to an agent.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /agents/{agent_id}/scopes (the `GetAgentScopes` operationId).
-func (c *ClientWithResponses) GetAgentScopesWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentScopesHTTPResp, error) {
-	rsp, err := c.GetAgentScopes(ctx, agentId, reqEditors...)
+// Corresponds with GET /agents/{agent_id}/permissions (the `GetAgentPermissions` operationId).
+func (c *ClientWithResponses) GetAgentPermissionsWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*GetAgentPermissionsHTTPResp, error) {
+	rsp, err := c.GetAgentPermissions(ctx, agentId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetAgentScopesHTTPResp(rsp)
+	return ParseGetAgentPermissionsHTTPResp(rsp)
 }
 
-// ReplaceAgentScopesWithBodyWithResponse Replace Agent Scopes
+// ReplaceAgentPermissionsWithBodyWithResponse Replace Agent Permissions
 //
-// Replace all scopes for an agent.
+// Replace all permissions for an agent.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-func (c *ClientWithResponses) ReplaceAgentScopesWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentScopesHTTPResp, error) {
-	rsp, err := c.ReplaceAgentScopesWithBody(ctx, agentId, contentType, body, reqEditors...)
+// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+func (c *ClientWithResponses) ReplaceAgentPermissionsWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error) {
+	rsp, err := c.ReplaceAgentPermissionsWithBody(ctx, agentId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseReplaceAgentScopesHTTPResp(rsp)
+	return ParseReplaceAgentPermissionsHTTPResp(rsp)
 }
 
-// ReplaceAgentScopesWithResponse Replace Agent Scopes
+// ReplaceAgentPermissionsWithResponse Replace Agent Permissions
 //
-// Replace all scopes for an agent.
+// Replace all permissions for an agent.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with PUT /agents/{agent_id}/scopes (the `ReplaceAgentScopes` operationId).
-func (c *ClientWithResponses) ReplaceAgentScopesWithResponse(ctx context.Context, agentId string, body ReplaceAgentScopesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentScopesHTTPResp, error) {
-	rsp, err := c.ReplaceAgentScopes(ctx, agentId, body, reqEditors...)
+// Corresponds with PUT /agents/{agent_id}/permissions (the `ReplaceAgentPermissions` operationId).
+func (c *ClientWithResponses) ReplaceAgentPermissionsWithResponse(ctx context.Context, agentId string, body ReplaceAgentPermissionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReplaceAgentPermissionsHTTPResp, error) {
+	rsp, err := c.ReplaceAgentPermissions(ctx, agentId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseReplaceAgentScopesHTTPResp(rsp)
+	return ParseReplaceAgentPermissionsHTTPResp(rsp)
 }
 
 // ApproveAgentWithResponse Approve Agent
@@ -37741,7 +37793,7 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
 // claiming is an onboarding step a brand-new user may hit before they have
 // rotated a temporary password, so a must-change-password state must not block
-// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// it. The claim only sets ownership — it grants no permissions and cannot act as the
 // agent — so allowing it under an expired password is low-risk.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -37772,7 +37824,7 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 // “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
 // claiming is an onboarding step a brand-new user may hit before they have
 // rotated a temporary password, so a must-change-password state must not block
-// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// it. The claim only sets ownership — it grants no permissions and cannot act as the
 // agent — so allowing it under an expired password is low-risk.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -39081,7 +39133,11 @@ func (c *ClientWithResponses) DetachAgentCredentialRuleSetWithResponse(ctx conte
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -39100,7 +39156,11 @@ func (c *ClientWithResponses) AttachAgentCredentialRuleSetWithBodyWithResponse(c
 //
 // While attached, the set's ordered list is the binding's effective policy
 // and its inline rules are dormant — `permissions:test` evaluates the set.
-// The set must exist (404 `rule_set_not_found`).
+// The set must exist (404 `rule_set_not_found`). The caller must be the
+// set's creator or an org admin, unless the set is curated (created by an
+// org admin), which any caller who may write the binding's rules can
+// attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+// binding already points at is a no-op.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40508,7 +40568,10 @@ func (c *ClientWithResponses) GetPermissionRuleSetWithResponse(ctx context.Conte
 
 // UpdatePermissionRuleSetWithBodyWithResponse Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40523,7 +40586,10 @@ func (c *ClientWithResponses) UpdatePermissionRuleSetWithBodyWithResponse(ctx co
 
 // UpdatePermissionRuleSetWithResponse Update permission rule set
 //
-// Rename or re-describe a rule set (creator or org admin).
+// Rename or re-describe a rule set.
+//
+// A curated set is editable by an org admin; any other set by its creator
+// or an org admin (403 `rule_set_access_denied` otherwise).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -43358,22 +43424,22 @@ func ParseListAgentOauthGrantsHTTPResp(rsp *http.Response) (*ListAgentOauthGrant
 	return response, nil
 }
 
-// ParseGetAgentScopesHTTPResp parses an HTTP response from a GetAgentScopesWithResponse call
-func ParseGetAgentScopesHTTPResp(rsp *http.Response) (*GetAgentScopesHTTPResp, error) {
+// ParseGetAgentPermissionsHTTPResp parses an HTTP response from a GetAgentPermissionsWithResponse call
+func ParseGetAgentPermissionsHTTPResp(rsp *http.Response) (*GetAgentPermissionsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetAgentScopesHTTPResp{
+	response := &GetAgentPermissionsHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentScopesResponse
+		var dest AgentPermissionsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -43426,22 +43492,22 @@ func ParseGetAgentScopesHTTPResp(rsp *http.Response) (*GetAgentScopesHTTPResp, e
 	return response, nil
 }
 
-// ParseReplaceAgentScopesHTTPResp parses an HTTP response from a ReplaceAgentScopesWithResponse call
-func ParseReplaceAgentScopesHTTPResp(rsp *http.Response) (*ReplaceAgentScopesHTTPResp, error) {
+// ParseReplaceAgentPermissionsHTTPResp parses an HTTP response from a ReplaceAgentPermissionsWithResponse call
+func ParseReplaceAgentPermissionsHTTPResp(rsp *http.Response) (*ReplaceAgentPermissionsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ReplaceAgentScopesHTTPResp{
+	response := &ReplaceAgentPermissionsHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentScopesResponse
+		var dest AgentPermissionsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

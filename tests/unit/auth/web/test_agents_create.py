@@ -108,3 +108,11 @@ def test_create_agent_requires_agents_write(readonly_client: TestClient) -> None
 def test_create_agent_description_optional(client: TestClient) -> None:
     resp = client.post("/agents", json={"name": "minimal-bot"})
     assert resp.status_code == 201
+
+
+def test_create_agent_rejects_unknown_field(client: TestClient, mock_agent_svc: MagicMock) -> None:
+    """A body naming its grants ``scopes`` (the pre-rename shape) is a 422, not
+    an ignored key that falls through to the default permission baseline."""
+    resp = client.post("/agents", json={"name": "my-bot", "scopes": ["capabilities:read"]})
+    assert resp.status_code == 422
+    mock_agent_svc.create.assert_not_called()

@@ -8,9 +8,13 @@ FK-less) ``rule_set_id`` column, NULL there meaning the binding's inline
 ``agent_permission_rules`` rows apply. ``permissions:test`` and "revoke this
 operation everywhere" stay single-place edits.
 
-Ownership of a shared set (creator-only vs dual-axis gate on every
-referencing binding) is an open question in the theme plan (OQ-6); the CRUD
-surface starts creator-or-admin and can widen without schema change.
+Every caller with a rule-set read permission can see every set: a set
+carries policy, not secrets. Who may attach a set to a binding and who may
+edit it is decided in ``CredentialService``; ``curated`` is the stable signal
+those gates read. A set is curated when an ``org:admin`` (or a system job)
+creates it. A curated set is attachable by any ``credentials:write`` holder
+and editable only by ``org:admin``; any other set is attachable and editable
+by its creator or ``org:admin``.
 """
 
 from __future__ import annotations
@@ -38,6 +42,10 @@ class PermissionRuleSet(AuditableMixin, ControlBase):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Server default only (no Python-side default), so a Core insert that
+    # names its columns works against a pre-curated schema; see
+    # ``PermissionRuleSetRepository.insert_for_flattening``.
+    curated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
 
 class PermissionRuleSetRule(AuditableMixin, ControlBase):

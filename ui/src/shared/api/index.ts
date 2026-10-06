@@ -111,11 +111,16 @@ export { HEALTH_QUERY_KEY } from '@/shared/api/health';
 // sibling's cache through this instead of a hand-synced raw key literal.
 export { sharedQueryKeys } from '@/shared/api/queryKeys';
 
-// Actor scopes (#615). The platform permission catalogue + the agent scope
-// grant endpoints (on `AgentsService`, exported above) the agents module wires
-// into the Scopes card.
+// Actor permissions (#615). The platform permission catalogue + the agent
+// permission grant endpoints. `AgentsService` is already exported above (agents
+// block); these add the permission catalogue service and the permission
+// request/response models the agents module wires into the Permissions card.
+// Append-only.
 export { PermissionsService } from '@/shared/api/generated/services/PermissionsService';
 export type { PermissionResponse } from '@/shared/api/generated/models/PermissionResponse';
+export type { PermissionListResponse } from '@/shared/api/generated/models/PermissionListResponse';
+export type { AgentPermissionsRequest } from '@/shared/api/generated/models/AgentPermissionsRequest';
+export type { AgentPermissionsResponse } from '@/shared/api/generated/models/AgentPermissionsResponse';
 
 // --- Monitor module (executions / jobs / events / audit) -------------------
 // Re-exported through the facade so the Monitor repository tier consumes typed
@@ -221,6 +226,13 @@ export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/
 export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
+
+// Shared permission rule sets a direct binding can point at (the binding's
+// `rule_set_id`). Read here so a governed binding shows the set's rules — the
+// ones the broker evaluates — instead of its dormant inline rules. Append-only,
+// like the rest.
+export { PermissionRuleSetsService } from '@/shared/api/generated/services/PermissionRuleSetsService';
+export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetResponse';
 
 // RFC 9457 problem bodies: the string `detail` callers surface over the
 // transport's status text. Append-only, like the rest.

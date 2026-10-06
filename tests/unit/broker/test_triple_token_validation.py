@@ -11,8 +11,8 @@ from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth.token_validation import CompositeTokenValidator
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 
 def _make_identity(
@@ -23,7 +23,7 @@ def _make_identity(
     return Identity(
         sub=sub,
         actor_type=actor_type,
-        permissions=[BROKER_EXECUTE_SCOPE],
+        permissions=[BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=True,
     )

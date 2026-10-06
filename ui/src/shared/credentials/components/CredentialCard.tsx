@@ -25,6 +25,9 @@ interface CredentialCardProps {
 	/** How many agents hold this credential: `undefined` still resolving
 	 * (skeleton), `null` unprovable (the clause is omitted), a number exact. */
 	usedByAgentCount?: number | null;
+	/** `usedByAgentCount` covers only the viewer's own agents, so it reads "of
+	 * your agents" (see `CredentialMetaLine`). */
+	usedByYoursOnly?: boolean;
 	/** Calls brokered with this credential over the last 7 days — same contract. */
 	callsLast7d?: number | null;
 	/** Shared with the viewer rather than theirs to change: the card carries a
@@ -57,6 +60,7 @@ export function CredentialCard({
 	onDelete,
 	onConnect,
 	usedByAgentCount,
+	usedByYoursOnly = false,
 	callsLast7d,
 	readOnly = false,
 }: CredentialCardProps) {
@@ -152,6 +156,7 @@ export function CredentialCard({
 				<CredentialMetaLine
 					cred={cred}
 					usedByAgentCount={usedByAgentCount}
+					yoursOnly={usedByYoursOnly}
 					callsLast7d={callsLast7d}
 					stacked
 					className="flex-1"
@@ -220,6 +225,9 @@ export function credentialIsPendingSignIn(cred: Credential): boolean {
 interface CredentialMetaLineProps {
 	cred: Credential;
 	usedByAgentCount?: number | null;
+	/** The count covers only the viewer's own agents — the host counts from a
+	 * roster that holds no other user's agents — so it reads "of your agents". */
+	yoursOnly?: boolean;
 	callsLast7d?: number | null;
 	/** Print the id tail — for siblings of one API that may share a name. */
 	showIdTail?: boolean;
@@ -240,6 +248,7 @@ type MetaClause = { key: string; node: ReactNode };
 export function CredentialMetaLine({
 	cred,
 	usedByAgentCount,
+	yoursOnly = false,
 	callsLast7d,
 	showIdTail = false,
 	stacked = false,
@@ -262,9 +271,13 @@ export function CredentialMetaLine({
 			key: 'used-by',
 			node: (
 				<span data-testid="cred-used-by">
-					{usedByAgentCount === 0
-						? 'used by no agents'
-						: `used by ${usedByAgentCount} agent${usedByAgentCount === 1 ? '' : 's'}`}
+					{yoursOnly
+						? usedByAgentCount === 0
+							? 'used by none of your agents'
+							: `used by ${usedByAgentCount} of your agents`
+						: usedByAgentCount === 0
+							? 'used by no agents'
+							: `used by ${usedByAgentCount} agent${usedByAgentCount === 1 ? '' : 's'}`}
 				</span>
 			),
 		});

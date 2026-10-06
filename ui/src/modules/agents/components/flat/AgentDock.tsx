@@ -4,7 +4,9 @@
  * inventory opens from the page header instead.
  *
  * `pending` renders Approve in the toggle position, `rejected` has no serving
- * verb, and `archived` keeps only the read affordances.
+ * verb, and `archived` keeps only the read affordances. The lifecycle verbs
+ * (Approve, the serving toggle, Archive) need `agents:write` or `org:admin`;
+ * anyone else reads the state as a note and keeps the read affordances.
  */
 import { useId, useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
@@ -19,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Button, FooterActionBar, McpIcon, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
 import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
 
@@ -52,6 +55,7 @@ export function AgentDock({
 }: AgentDockProps) {
 	const reducedMotion = useReducedMotion();
 	const isArchived = agent.status === 'archived';
+	const canManage = useCanAccess(AGENTS_WRITE);
 
 	return (
 		// Anchored to the page content column, not the viewport: the shell's collapsible
@@ -99,7 +103,7 @@ export function AgentDock({
 					onClick={() => onOpenSurface('settings')}
 				/>
 
-				{!isArchived && (
+				{!isArchived && canManage && (
 					<>
 						<DockDivider />
 						<Tooltip content="Archive this agent (irreversible)" interactiveChild>
@@ -208,11 +212,34 @@ function ServingVerb({
 	onApprove: () => void;
 	approvePending: boolean;
 }) {
+	const canManage = useCanAccess(AGENTS_WRITE);
 	switch (agent.status) {
 		case 'active':
 		case 'disabled':
+			if (!canManage) {
+				return (
+					<span
+						className="text-muted-foreground px-1 text-xs"
+						data-testid="dock-state-note"
+					>
+						{agent.status === 'active'
+							? 'Serving traffic'
+							: 'Disabled — not serving traffic'}
+					</span>
+				);
+			}
 			return <ServingToggle agent={agent} />;
 		case 'pending':
+			if (!canManage) {
+				return (
+					<span
+						className="text-muted-foreground px-1 text-xs"
+						data-testid="dock-state-note"
+					>
+						Waiting for approval
+					</span>
+				);
+			}
 			// A pending agent's lifecycle verb IS approval. Shares the mutation with the
 			// panel banner, so the two buttons load together.
 			return (

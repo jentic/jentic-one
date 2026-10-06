@@ -36,6 +36,7 @@ import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthori
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
 	summarizeBindingRules,
+	useAgentBindingEffectiveRules,
 	useAgentBindingPermissions,
 	useInvalidateCredentialBindingSurfaces,
 	useResumeAgentCredentialBinding,
@@ -45,6 +46,7 @@ import {
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { toEditorRule } from '@/modules/agents/components/detail/shared';
+import { BindingRuleSetPanel } from '@/modules/agents/components/detail/BindingRuleSetPanel';
 import {
 	MultiCredentialNote,
 	credentialIdHeader,
@@ -164,23 +166,32 @@ export function ApiAccessSidebar({
 		shown?.credentialCreatedBy !== undefined &&
 		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
+	// What the broker evaluates: an attached rule set's rules, else the inline ones.
+	const effective = useAgentBindingEffectiveRules(open ? agent.id : null, credentialId);
 
-	// The header's status: the SAME derivation as the tile, off the same rules read.
-	const savedRuleSummary = useMemo(
-		() => (permissions.data ? summarizeBindingRules(permissions.data) : undefined),
-		[permissions.data],
-	);
+	// The header's status: the SAME derivation as the tile, off the same
+	// effective rules — an attached rule set's, else the inline ones.
+	const savedRuleSummary = useMemo(() => {
+		if (!effective.rules) return undefined;
+		const summary = summarizeBindingRules(effective.rules);
+		return effective.ruleSet
+			? {
+					...summary,
+					ruleSet: { name: effective.ruleSet.name, curated: effective.ruleSet.curated },
+				}
+			: summary;
+	}, [effective.rules, effective.ruleSet]);
 	// The saved operator rules in the credentials kit's shape, for the preview.
 	const savedEditorRules = useMemo(
-		() => (permissions.data ?? []).filter((r) => !r._system).map(toEditorRule),
-		[permissions.data],
+		() => (effective.rules ?? []).filter((r) => !r._system).map(toEditorRule),
+		[effective.rules],
 	);
 	const status = shown
 		? deriveTileStatus({
 				suspended: shown.suspended,
 				agentServing,
 				awaitingConsent: shown.awaitingConsent,
-				rules: permissions.isError ? 'error' : (savedRuleSummary ?? 'loading'),
+				rules: effective.isError ? 'error' : (savedRuleSummary ?? 'loading'),
 			})
 		: 'ready';
 
@@ -273,9 +284,13 @@ export function ApiAccessSidebar({
 	};
 
 	// "1 agent" is this agent alone; anything more is the shared-secret warning
-	// the operator needs before editing or deleting.
-	const usedByLabel =
-		boundAgentRows.length === 1 ? 'this agent only' : `${boundAgentRows.length} agents`;
+	// the operator needs before editing or deleting. A viewer the credential is
+	// shared with sees only their own agents, so the count is "of your agents".
+	const usedByLabel = credentialReadOnly
+		? `${boundAgentRows.length} of your agents`
+		: boundAgentRows.length === 1
+			? 'this agent only'
+			: `${boundAgentRows.length} agents`;
 	const credentialAge = shown?.credentialUpdatedAt
 		? `updated ${timeAgo(shown.credentialUpdatedAt)}`
 		: shown?.credentialCreatedAt
@@ -488,7 +503,19 @@ export function ApiAccessSidebar({
 								aria-label="Permission rules"
 								className="scroll-mt-2 space-y-3"
 							>
-								{permissions.isPending ? (
+								{effective.ruleSetId ? (
+									<BindingRuleSetPanel
+										agentId={agent.id}
+										credentialId={shown.credentialId}
+										credentialLabel={shown.credentialName}
+										ruleSet={effective.ruleSet}
+										isPending={effective.isPending}
+										isError={effective.isError}
+										onRetry={effective.refetch}
+										inlineRules={permissions.data}
+										canDetach={!credentialReadOnly}
+									/>
+								) : permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
 										<span className="sr-only">Loading rules…</span>
 										<Skeleton className="h-32 rounded-lg" />
@@ -512,7 +539,7 @@ export function ApiAccessSidebar({
 								{/* What the SAVED rules let this agent reach, against the
 								    API's real operations — always visible, not gated on
 								    editing, so the binding's surface reads at a glance. */}
-								{apiReference && !permissions.isPending && !permissions.isError && (
+								{apiReference && !effective.isPending && !effective.isError && (
 									<OperationImpactPreview
 										api={apiReference}
 										rules={savedEditorRules}
@@ -530,7 +557,7 @@ export function ApiAccessSidebar({
 								<AgentBindingRuleTester
 									agentId={agent.id}
 									credentialId={shown.credentialId}
-									savedRules={permissions.data ?? []}
+									savedRules={effective.rules ?? []}
 									disabled={rulesDirty}
 									apiReference={apiReference}
 								/>

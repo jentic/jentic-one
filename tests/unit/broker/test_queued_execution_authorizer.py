@@ -32,8 +32,8 @@ class _FakeActorStatus:
         self.calls.append((actor_id, actor_type))
         return self._active
 
-    async def holds_scope(self, *, actor_id: str, actor_type: str, scope: str) -> bool:
-        self.scope_calls.append((actor_id, actor_type, scope))
+    async def holds_permission(self, *, actor_id: str, actor_type: str, permission: str) -> bool:
+        self.scope_calls.append((actor_id, actor_type, permission))
         return self._scoped
 
 

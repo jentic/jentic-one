@@ -5,10 +5,11 @@
  * trail recorded against this actor as the TARGET (register, approve/deny,
  * disable/enable, key rotation, binding grant/revoke).
  *
- * Requires `org:admin` — the repository maps 401/403 to an empty list, so
- * non-admins see the graceful "no entries" state rather than an error.
+ * Requires `audit:read` (or `org:admin`): anyone else gets no request and a
+ * quiet note that the history is not visible to them, never an error.
  */
 import { AuditTrailCard } from '@/shared/ui';
+import { AUDIT_READ, useCanAccess, usePermissionsKnown } from '@/shared/auth';
 import { useActorAudit } from '@/modules/agents/api';
 
 export interface ActorAuditPanelProps {
@@ -16,6 +17,8 @@ export interface ActorAuditPanelProps {
 }
 
 export function ActorAuditPanel({ actorId }: ActorAuditPanelProps) {
+	const canReadAudit = useCanAccess(AUDIT_READ);
+	const permissionsKnown = usePermissionsKnown();
 	const { data: entries = [], isLoading, isError } = useActorAudit(actorId);
 
 	return (
@@ -28,11 +31,15 @@ export function ActorAuditPanel({ actorId }: ActorAuditPanelProps) {
 				reason: entry.reason,
 				occurredAt: entry.occurred_at,
 			}))}
-			isLoading={isLoading}
+			isLoading={isLoading || !permissionsKnown}
 			isError={isError}
 			caption="Lifecycle events · admin only"
 			errorMessage="Failed to load the audit log."
-			emptyMessage="No recorded changes for this agent yet. The full audit trail lives in Monitor → Audit."
+			emptyMessage={
+				canReadAudit
+					? 'No recorded changes for this agent yet. The full audit trail lives in Monitor → Audit.'
+					: "This agent's change history needs audit access."
+			}
 		/>
 	);
 }

@@ -1,60 +1,69 @@
+/**
+ * The app QueryClient never retries a 4xx, including one wrapped in a module's
+ * sentinel error that carries the HTTP status.
+ */
 import { describe, it, expect } from 'vitest';
 import { ApiError } from '@/shared/api';
-import { createQueryClient, isClientErrorStatus } from '@/shared/app/query-client';
+import { createQueryClient, isClientErrorLike } from '@/shared/app/query-client';
 
+/** A generated `ApiError` as the client throws it for `status`. */
 function apiError(status: number): ApiError {
 	return new ApiError(
 		{ method: 'GET', url: '/x' },
-		{ url: '/x', ok: false, status, statusText: '', body: undefined },
-		`HTTP ${status}`,
+		{ url: '/x', ok: false, status, statusText: '', body: null },
+		'failed',
 	);
 }
 
-/** Same shape as the module repository errors (WorkspaceApiError & co). */
-class WrappedApiError extends Error {
-	readonly status: number | null;
-	constructor(status: number | null) {
+class WrappedError extends Error {
+	constructor(readonly status: number | null) {
 		super('wrapped');
-		this.status = status;
 	}
 }
 
-type RetryFn = (failureCount: number, error: unknown) => boolean;
-const retry = createQueryClient().getDefaultOptions().queries?.retry as RetryFn;
-
-describe('isClientErrorStatus', () => {
-	it('recognises raw and wrapped 4xx errors', () => {
-		expect(isClientErrorStatus(apiError(404))).toBe(true);
-		expect(isClientErrorStatus(new WrappedApiError(404))).toBe(true);
-		expect(isClientErrorStatus(new WrappedApiError(403))).toBe(true);
-	});
-
-	it('rejects 5xx, network (null status) and status-less errors', () => {
-		expect(isClientErrorStatus(apiError(500))).toBe(false);
-		expect(isClientErrorStatus(new WrappedApiError(502))).toBe(false);
-		expect(isClientErrorStatus(new WrappedApiError(null))).toBe(false);
-		expect(isClientErrorStatus(new Error('boom'))).toBe(false);
-		expect(isClientErrorStatus({ status: 404 })).toBe(false);
-		expect(isClientErrorStatus(undefined)).toBe(false);
+describe('isClientErrorLike', () => {
+	it.each([
+		[new WrappedError(403), true],
+		[new WrappedError(404), true],
+		[new WrappedError(408), false],
+		[new WrappedError(429), false],
+		[apiError(403), true],
+		[apiError(408), false],
+		[apiError(429), false],
+		[apiError(503), false],
+		[new WrappedError(500), false],
+		[new WrappedError(null), false],
+		[new Error('network'), false],
+		['not an error', false],
+	])('%o → %s', (error, expected) => {
+		expect(isClientErrorLike(error)).toBe(expected);
 	});
 });
 
-describe('createQueryClient default retry', () => {
-	it('never retries a 4xx, raw or wrapped by a module repository', () => {
-		expect(retry(0, apiError(404))).toBe(false);
-		expect(retry(0, new WrappedApiError(404))).toBe(false);
+describe('createQueryClient retry policy', () => {
+	const retry = createQueryClient().getDefaultOptions().queries?.retry as (
+		failureCount: number,
+		error: unknown,
+	) => boolean;
+
+	it('does not retry a wrapped 4xx', () => {
+		expect(retry(0, new WrappedError(403))).toBe(false);
+		expect(retry(0, new WrappedError(404))).toBe(false);
 	});
 
-	it('retries 5xx and network errors twice', () => {
-		for (const error of [
-			apiError(503),
-			new WrappedApiError(500),
-			new WrappedApiError(null),
-			new Error('x'),
-		]) {
-			expect(retry(0, error)).toBe(true);
-			expect(retry(1, error)).toBe(true);
-			expect(retry(2, error)).toBe(false);
-		}
+	it.each([408, 429])('retries a %i, raw or wrapped', (status) => {
+		expect(retry(0, apiError(status))).toBe(true);
+		expect(retry(1, new WrappedError(status))).toBe(true);
+		expect(retry(2, apiError(status))).toBe(false);
+	});
+
+	it('does not retry a raw 4xx ApiError', () => {
+		expect(retry(0, apiError(403))).toBe(false);
+	});
+
+	it('retries a 5xx or network failure twice', () => {
+		expect(retry(0, new WrappedError(503))).toBe(true);
+		expect(retry(1, new Error('network'))).toBe(true);
+		expect(retry(2, new Error('network'))).toBe(false);
 	});
 });

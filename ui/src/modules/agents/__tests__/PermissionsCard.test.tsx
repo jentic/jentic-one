@@ -1,0 +1,503 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { worker } from '@/mocks/browser';
+import {
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+	userEvent,
+	checkA11y,
+	createErrorHandler,
+} from '@/__tests__/test-utils';
+import { setToken } from '@/shared/api';
+import { Toaster } from '@/shared/ui';
+import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
+
+function renderCard(props: {
+	actorId: string;
+	actorName: string;
+	canEdit?: boolean;
+	pending?: boolean;
+}) {
+	return renderWithProviders(
+		<>
+			<PermissionsCard {...props} />
+			<Toaster />
+		</>,
+	);
+}
+
+describe('PermissionsCard', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		resetAgentsStore();
+	});
+
+	it('renders the granted permissions as chips for an agent', async () => {
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		const list = await screen.findByRole('list', { name: 'Granted permissions' });
+		expect(within(list).getByText('capabilities:execute')).toBeInTheDocument();
+		expect(within(list).getByText('executions:read')).toBeInTheDocument();
+	});
+
+	it('shows an honest empty state when no permissions are granted', async () => {
+		renderCard({
+			actorId: 'agnt_pending_1',
+			actorName: 'inbox-triage-bot',
+		});
+		expect(
+			await screen.findByText('No permissions granted.', { exact: false }),
+		).toBeInTheDocument();
+	});
+
+	it('approving a grant-less agent in the mock grants the real default baseline', async () => {
+		// The mock must grant exactly what the approval card promises
+		// (DEFAULT_AGENT_PERMISSIONS), or the card and the Permissions card disagree.
+		const approve = await fetch('/agents/agnt_pending_1:approve', { method: 'POST' });
+		expect(approve.ok).toBe(true);
+		const res = await fetch('/agents/agnt_pending_1/permissions');
+		const body = (await res.json()) as { permissions: string[] };
+		expect(body.permissions).toEqual([...DEFAULT_AGENT_PERMISSIONS]);
+	});
+
+	it('for a pending agent, says what approving grants instead of "No permissions granted"', async () => {
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('permissions-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent(
+				`Approving grants the default agent permissions (${DEFAULT_AGENT_PERMISSIONS.length}).`,
+			),
+		);
+		expect(
+			screen.queryByText('No permissions granted.', { exact: false }),
+		).not.toBeInTheDocument();
+	});
+
+	it('for a pending agent that requested permissions, lists them as requested', async () => {
+		worker.use(
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: ['apis:read', 'capabilities:read'] }),
+			),
+		);
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('permissions-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent('Approving grants the 2 permissions it requests.'),
+		);
+		expect(
+			within(note).getByRole('list', { name: 'Requested permissions' }),
+		).toBeInTheDocument();
+	});
+
+	it('hides the edit affordance when canEdit is false', async () => {
+		renderCard({
+			actorId: 'agnt_active_1',
+			actorName: 'support-agent',
+			canEdit: false,
+		});
+		await screen.findByRole('list', { name: 'Granted permissions' });
+		expect(
+			screen.queryByRole('button', { name: 'Edit permissions for support-agent' }),
+		).not.toBeInTheDocument();
+	});
+
+	it('grants a new permission and reflects it back as a chip', async () => {
+		const user = userEvent.setup();
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+
+		// Search narrows + auto-expands the group, so the permission row is reachable.
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		expect(await screen.findByText('Permissions updated')).toBeInTheDocument();
+		await waitFor(() => {
+			const list = screen.getByRole('list', { name: 'Granted permissions' });
+			expect(within(list).getByText('credentials:read')).toBeInTheDocument();
+		});
+	});
+
+	it('revokes a granted permission by deselecting it and omits it from the PUT', async () => {
+		const user = userEvent.setup();
+		let putBody: { permissions?: string[] } | undefined;
+		worker.use(
+			http.put('/agents/:id/permissions', async ({ request }) => {
+				putBody = (await request.json()) as { permissions?: string[] };
+				return HttpResponse.json({ permissions: putBody.permissions });
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		const list = await screen.findByRole('list', { name: 'Granted permissions' });
+		expect(within(list).getByText('executions:read')).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'executions:read');
+		// Already granted → reads back checked; deselect it to revoke. (A string
+		// role name matches the full accessible name, so `owner:executions:read`
+		// can't collide.)
+		const checkbox = await within(dialog).findByRole('checkbox', {
+			name: 'executions:read',
+		});
+		expect(checkbox).toBeChecked();
+		await user.click(checkbox);
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		// The full-list PUT drops the revoked permission but keeps the others.
+		await waitFor(() => expect(putBody).toBeDefined());
+		expect(putBody?.permissions).not.toContain('executions:read');
+		expect(putBody?.permissions).toContain('capabilities:execute');
+
+		// The chip disappears from the card (cache seeded from the PUT response).
+		await waitFor(() => {
+			const updated = screen.getByRole('list', { name: 'Granted permissions' });
+			expect(within(updated).queryByText('executions:read')).not.toBeInTheDocument();
+		});
+	});
+
+	it('keeps Save disabled until the selection differs from the current grants', async () => {
+		const user = userEvent.setup();
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		const save = within(dialog).getByRole('button', { name: 'Save permissions' });
+
+		// No change yet → Save is a no-op and stays disabled.
+		expect(save).toBeDisabled();
+
+		// Toggle a permission on → selection now differs → Save enables.
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		const checkbox = await within(dialog).findByRole('checkbox', { name: 'credentials:read' });
+		await user.click(checkbox);
+		expect(save).toBeEnabled();
+
+		// Toggle it back off → selection matches the original grants → disabled again.
+		await user.click(checkbox);
+		expect(save).toBeDisabled();
+	});
+
+	it.each(['org:admin', 'agents:write'])(
+		'disables permissions the caller cannot grant (%s)',
+		async (scope) => {
+			const user = userEvent.setup();
+			renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+			await screen.findByRole('list', { name: 'Granted permissions' });
+
+			await user.click(
+				screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+			);
+			const dialog = await screen.findByRole('dialog');
+			// `org:admin` and `agents:write` are never grantable to an agent by a
+			// non-admin operator (agent scope ceiling; grantable_by_caller: false)
+			// → their rows must be disabled.
+			await user.type(within(dialog).getByLabelText('Search permissions'), scope);
+
+			const row = await within(dialog).findByRole('checkbox', { name: scope });
+			expect(row).toBeDisabled();
+		},
+	);
+
+	it('surfaces a clear message if the backend rejects a grant with 403', async () => {
+		// The actor-permission PUT 403s (`agent_permission_not_grantable`) a permission above
+		// the caller's ceiling — normally pre-empted by the disabled rows, but it
+		// can still happen (e.g. a perms change mid-session). Inject one to cover it.
+		const user = userEvent.setup();
+		worker.use(
+			createErrorHandler('put', '/agents/:id/permissions', {
+				status: 403,
+				body: { detail: 'forbidden' },
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		expect(
+			await within(dialog).findByText(
+				'You don’t have permission to grant one or more of these permissions.',
+			),
+		).toBeInTheDocument();
+		// Dialog stays open so the operator can adjust the selection.
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('renders a default-granted owner permission as an editable catalogue chip', async () => {
+		// `owner:resources:read` is granted to `agnt_active_1` by default and is
+		// catalogued, so it must render as a normal editable picker row (a
+		// checkbox), not as a preserved non-catalogue permission.
+		const user = userEvent.setup();
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		const list = await screen.findByRole('list', { name: 'Granted permissions' });
+		expect(within(list).getByText('owner:resources:read')).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(
+			within(dialog).getByLabelText('Search permissions'),
+			'owner:resources:read',
+		);
+		const checkbox = await within(dialog).findByRole('checkbox', {
+			name: 'owner:resources:read',
+		});
+		// Catalogue-backed and already granted → checked and editable (not disabled).
+		expect(checkbox).toBeChecked();
+		expect(checkbox).toBeEnabled();
+	});
+
+	it('preserves a granted permission that is absent from the catalogue when saving', async () => {
+		// `agnt_active_1` holds `legacy:orphaned:read`, a synthetic permission that is NOT
+		// in the permission catalogue (a legacy grant the backend never lists). The
+		// save must include it untouched — dropping it would silently revoke it.
+		const user = userEvent.setup();
+		let putBody: { permissions?: string[] } | undefined;
+		worker.use(
+			http.put('/agents/:id/permissions', async ({ request }) => {
+				putBody = (await request.json()) as { permissions?: string[] };
+				return HttpResponse.json({ permissions: putBody.permissions });
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		// The "preserved" hint should tell the operator the non-catalogue permission is kept.
+		expect(
+			await within(dialog).findByText('not editable here will be preserved', {
+				exact: false,
+			}),
+		).toBeInTheDocument();
+
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		await waitFor(() => {
+			expect(putBody?.permissions).toContain('legacy:orphaned:read');
+		});
+		expect(putBody?.permissions).toEqual(
+			expect.arrayContaining(['capabilities:execute', 'credentials:read']),
+		);
+	});
+
+	it('does not count preserved non-catalogue permissions in the picker total', async () => {
+		// Regression: `agnt_active_1` holds `legacy:orphaned:read`, absent from the
+		// catalogue. It used to leak into the picker's `selectedScopes`, inflating
+		// "X of Y selected" so X > Y and "Select all" could never flip.
+		const user = userEvent.setup();
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+
+		const count = await within(dialog).findByText(/\d+ of \d+ selected/);
+		const [, selectedStr, totalStr] = /(\d+) of (\d+) selected/.exec(count.textContent ?? '')!;
+		const selectedCount = Number(selectedStr);
+		const selectableTotal = Number(totalStr);
+		// The selected count must never exceed the selectable rows the picker shows.
+		expect(selectedCount).toBeLessThanOrEqual(selectableTotal);
+		// Selecting every selectable row must flip the toggle to "Deselect all".
+		await user.click(within(dialog).getByRole('button', { name: 'Select all' }));
+		expect(
+			await within(dialog).findByRole('button', { name: 'Deselect all' }),
+		).toBeInTheDocument();
+	});
+
+	it('confirms before removing a held high-privilege permission (org:admin)', async () => {
+		// Simulate an admin operator: the catalogue marks org:admin grantable, and
+		// the actor already holds it. A routine "Deselect all" + Save would silently
+		// revoke it — the card must require explicit confirmation first.
+		const user = userEvent.setup();
+		let putBody: { permissions?: string[] } | undefined;
+		worker.use(
+			http.get('/permissions', () =>
+				HttpResponse.json({
+					data: [
+						{
+							name: 'org:admin',
+							description: 'Org-wide superuser',
+							implies: [],
+							grantable_by_caller: true,
+						},
+						{
+							name: 'agents:read',
+							description: 'Read agents',
+							implies: [],
+							grantable_by_caller: true,
+						},
+					],
+				}),
+			),
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: ['org:admin', 'agents:read'] }),
+			),
+			http.put('/agents/:id/permissions', async ({ request }) => {
+				putBody = (await request.json()) as { permissions?: string[] };
+				return HttpResponse.json({ permissions: putBody.permissions });
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+
+		// Deselect everything (drops the grantable org:admin) then save.
+		await user.click(within(dialog).getByRole('button', { name: 'Deselect all' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		// A confirmation dialog appears; the PUT has NOT fired yet.
+		expect(
+			await screen.findByRole('dialog', { name: 'Remove high-privilege permission?' }),
+		).toBeInTheDocument();
+		expect(putBody).toBeUndefined();
+
+		await user.click(screen.getByRole('button', { name: 'Remove and save' }));
+		await waitFor(() => expect(putBody).toBeDefined());
+		expect(putBody?.permissions).not.toContain('org:admin');
+	});
+
+	it('keeps the dialog open and shows the error when a permission is malformed (422)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			createErrorHandler('put', '/agents/:id/permissions', {
+				status: 422,
+				body: { detail: 'Invalid permission: bad value' },
+			}),
+		);
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		expect(
+			await within(dialog).findByText('Invalid permission: bad value'),
+		).toBeInTheDocument();
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('keeps the dialog open and surfaces a network error on save', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('put', '/agents/:id/permissions', { networkError: true }));
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
+		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
+
+		// The hook toasts a generic failure; the dialog stays open for a retry.
+		// (The same copy appears both in the toast and inline, so match all.)
+		expect(
+			(await screen.findAllByText("Failed to update the agent's permissions.")).length,
+		).toBeGreaterThan(0);
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('shows an error (and hides Edit) when the actor permissions fail to load', async () => {
+		worker.use(createErrorHandler('get', '/agents/:id/permissions', { status: 500 }));
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+
+		expect(await screen.findByRole('alert')).toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: 'Edit permissions for support-agent' }),
+		).not.toBeInTheDocument();
+	});
+
+	it('disables Save when the permission catalogue fails to load', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('get', '/permissions', { status: 500 }));
+
+		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });
+		await screen.findByRole('list', { name: 'Granted permissions' });
+
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		const dialog = await screen.findByRole('dialog');
+		expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+		expect(within(dialog).getByRole('button', { name: 'Save permissions' })).toBeDisabled();
+	});
+
+	it('omits the grant prompt in the empty state when read-only', async () => {
+		renderCard({
+			actorId: 'agnt_pending_1',
+			actorName: 'inbox-triage-bot',
+			canEdit: false,
+		});
+		expect(
+			await screen.findByText('No permissions granted.', { exact: false }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText('can’t perform privileged operations', { exact: false }),
+		).not.toBeInTheDocument();
+	});
+
+	it('has no critical a11y violations', async () => {
+		const user = userEvent.setup();
+		const { container } = renderCard({
+			actorId: 'agnt_active_1',
+			actorName: 'support-agent',
+		});
+		await screen.findByRole('list', { name: 'Granted permissions' });
+		await checkA11y(container);
+
+		// Also check the editor dialog (picker + checkboxes) once it's open — the
+		// second audit is scoped to the dialog, since its backdrop makes the card
+		// behind it indeterminate to axe (the card got its own audit above).
+		await user.click(
+			screen.getByRole('button', { name: 'Edit permissions for support-agent' }),
+		);
+		await screen.findByRole('dialog');
+		await within(await screen.findByRole('dialog')).findByLabelText('Search permissions');
+		await checkA11y(document.body, { modal: true });
+	});
+});

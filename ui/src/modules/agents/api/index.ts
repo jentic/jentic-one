@@ -19,6 +19,8 @@ export {
 	useResumeAgentCredentialBinding,
 	useInvalidateCredentialBindingSurfaces,
 	useAgentBindingPermissions,
+	useAgentBindingEffectiveRules,
+	useDetachAgentBindingRuleSet,
 	useReplaceAgentBindingPermissions,
 	useTestAgentBindingPermissions,
 	useAgentApiKeyInfo,
@@ -33,8 +35,8 @@ export {
 	useIsGeneratingAgentApiKey,
 	useRevokeAgentApiKey,
 	usePermissionCatalogue,
-	useAgentScopes,
-	useReplaceAgentScopes,
+	useAgentPermissions,
+	useReplaceAgentPermissions,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
 	useActorUsageDetail,
@@ -47,9 +49,17 @@ export {
 	useInstanceIdentity,
 	ServingRefreshError,
 } from '@/modules/agents/api/hooks';
-export type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api/hooks';
+export type {
+	BindingRuleSummary,
+	BindingRulesState,
+	AgentBindingEffectiveRules,
+} from '@/modules/agents/api/hooks';
 
-export { AgentsApiError } from '@/modules/agents/api/client';
+export {
+	AgentsApiError,
+	isAgentsAccessDenied,
+	isAgentsSessionEnded,
+} from '@/modules/agents/api/client';
 export type { ActorUsageDetail, AgentPatch } from '@/modules/agents/api/client';
 
 export {
@@ -65,6 +75,7 @@ export type {
 	AgentEntity,
 	BindingPermissionRule,
 	BindingPermissionTestResult,
+	BindingRuleSetEntity,
 	CredentialBindingEntity,
 	McpSessionEntity,
 	OAuthGrantEntity,

@@ -26,6 +26,24 @@ export interface EnhancedScope {
 	isRecommended: boolean;
 }
 
+/**
+ * Which noun the picker chrome uses for the things being selected. The two
+ * sources are different vocabularies — OAuth2 *scopes* on the wire vs.
+ * internal-authorization *permissions* — and the caller knows which it is
+ * feeding in. The item `origin` can't drive it: it lives on the items, which are
+ * empty in the empty state.
+ */
+export type ScopeVocabulary = 'scope' | 'permission';
+
+/** Chrome nouns for each vocabulary (lower-case plural + heading form). */
+export const VOCABULARY_NOUNS: Record<
+	ScopeVocabulary,
+	{ singular: string; plural: string; heading: string }
+> = {
+	scope: { singular: 'scope', plural: 'scopes', heading: 'Scopes' },
+	permission: { singular: 'permission', plural: 'permissions', heading: 'Permissions' },
+};
+
 /** A resource-grouped bundle of scopes (e.g. all `read:jira` / `write:jira`). */
 export interface ScopeGroup {
 	id: string;

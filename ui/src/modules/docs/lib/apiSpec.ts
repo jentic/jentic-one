@@ -2,8 +2,9 @@
  * apiSpec — parse an OpenAPI document into the structured model our native API
  * reference renders. The spec is the source of truth: we render *everything*
  * that's in it (tags, tag groups, every operation, request/response bodies, and
- * the component schemas / "Models"), then enrich each operation with our scope
- * reference (the one thing the spec doesn't carry) by joining on `(method,path)`.
+ * the component schemas / "Models"), then enrich each operation with our
+ * permission reference (the one thing the spec doesn't carry) by joining on
+ * `(method,path)`.
  *
  * Ordering is the standard OpenAPI/Redoc convention:
  *   x-tagGroups (top-level groups) → tags (in each group's declared order) →

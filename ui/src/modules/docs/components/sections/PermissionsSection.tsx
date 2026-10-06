@@ -1,21 +1,22 @@
 /**
  * PermissionsSection — the conceptual authorization model, then the visual
- * scope tree, then the ownership-gated endpoints.
+ * permission tree, then the ownership-gated endpoints.
  *
  * The explainer up top resolves the most common confusion: many endpoints
- * require *no* scope. That is not a gap — they are authorized by **ownership /
- * binding** checks (you can only touch resources you created, unless you hold
- * `org:admin`). Scopes are the *other* model: a coarse capability grant that a
- * subset of operator/agent endpoints require. Showing both side-by-side, with
- * live counts, is what makes the empty-scope endpoints make sense.
+ * require *no* permission. That is not a gap — they are authorized by
+ * **ownership / binding** checks (you can only touch resources you created,
+ * unless you hold `org:admin`). Permissions are the *other* model: a coarse
+ * capability grant that a subset of operator/agent endpoints require. Showing
+ * both side-by-side, with live counts, is what makes the endpoints that require
+ * no permission make sense.
  */
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ShieldCheck, KeySquare, UserCircle, ChevronRight } from 'lucide-react';
 import type { ReferencePayload } from '@/modules/docs/api/types';
-import { authModelCounts, ownershipEndpoints } from '@/modules/docs/lib/scopeTree';
+import { authModelCounts, ownershipEndpoints } from '@/modules/docs/lib/permissionTree';
 import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
-import { ScopeTree } from '@/modules/docs/components/ScopeTree';
+import { PermissionTree } from '@/modules/docs/components/PermissionTree';
 import { TierLadder } from '@/modules/docs/components/TierLadder';
 import { ActorExplorer } from '@/modules/docs/components/ActorsTree';
 import { MethodBadge } from '@/shared/ui';
@@ -63,8 +64,8 @@ function OwnershipEndpoints({ payload }: { payload: ReferencePayload }) {
 						Ownership-gated endpoints
 					</span>
 					<span className="text-foreground/60 mt-0.5 block text-sm">
-						Authenticated, but require <em>no</em> scope — you may act on resources you
-						own (or any, with <code className="font-mono">org:admin</code>).
+						Authenticated, but require <em>no</em> permission — you may act on resources
+						you own (or any, with <code className="font-mono">org:admin</code>).
 					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
@@ -107,25 +108,25 @@ export function PermissionsSection({ payload }: { payload: ReferencePayload }) {
 	return (
 		<DocsSectionBlock
 			id="permissions"
-			title="Permissions & scopes"
+			title="Permissions"
 			icon={ShieldCheck}
-			intro="Authorization works two ways. Knowing which applies to an endpoint explains why some require a scope and many don't."
+			intro="Authorization works two ways. Knowing which applies to an endpoint explains why some require a permission and many don't."
 		>
 			<div className="grid gap-3 sm:grid-cols-2">
-				<ModelCard icon={KeySquare} title="Scopes" count={counts.scopeGated}>
+				<ModelCard icon={KeySquare} title="Permissions" count={counts.permissionGated}>
 					Coarse capability grants on the token (e.g.{' '}
 					<code className="font-mono">agents:write</code>). Operator and agent operations
-					check these. Scopes form an implication tree — a broader scope grants narrower
-					ones.
+					check these. Permissions form an implication tree — a broader permission grants
+					narrower ones.
 				</ModelCard>
 				<ModelCard
 					icon={UserCircle}
 					title="Ownership & binding"
 					count={counts.ownershipGated}
 				>
-					No scope needed. You may read or modify resources you created (and credentials
-					bound to your agents). <code className="font-mono">org:admin</code> sees
-					everything.
+					No permission needed. You may read or modify resources you created (and
+					credentials bound to your agents). <code className="font-mono">org:admin</code>{' '}
+					sees everything.
 				</ModelCard>
 			</div>
 
@@ -143,17 +144,17 @@ export function PermissionsSection({ payload }: { payload: ReferencePayload }) {
 
 			<div>
 				<h3 className="font-heading text-foreground mb-2 text-base font-semibold">
-					The scope tree
+					The permission tree
 				</h3>
 				<div className="space-y-4">
 					<TierLadder />
-					<ScopeTree payload={payload} />
+					<PermissionTree payload={payload} />
 				</div>
 			</div>
 
 			<div>
 				<h3 className="font-heading text-foreground mb-2 text-base font-semibold">
-					Endpoints without a scope
+					Endpoints without a permission
 				</h3>
 				<OwnershipEndpoints payload={payload} />
 			</div>

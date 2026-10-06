@@ -31,7 +31,10 @@ import {
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import { FIRST_AGENT_POLL_MS } from '@/modules/agents/lib/useFirstAgentLanding';
-import { DEFAULT_AGENT_SCOPES, groupScopesByArea } from '@/modules/agents/lib/requestedScopes';
+import {
+	DEFAULT_AGENT_PERMISSIONS,
+	groupPermissionsByArea,
+} from '@/modules/agents/lib/requestedPermissions';
 import {
 	catalogPage,
 	liveGithubCatalog,
@@ -271,21 +274,21 @@ describe('Agents page — zero agents', () => {
 	});
 
 	/** Registers `name` the way `jentic register` does and waits for the arrival
-	 * card — and, unless told otherwise, for its requested scopes, which Approve
+	 * card — and, unless told otherwise, for its requested permissions, which Approve
 	 * waits on. */
 	async function arrive(
 		name: string,
 		queryClient: { invalidateQueries: () => Promise<void> },
 		over: Parameters<typeof selfRegisterAgent>[1] = {},
-		{ scopesRead = true }: { scopesRead?: boolean } = {},
+		{ permissionsRead = true }: { permissionsRead?: boolean } = {},
 	) {
 		const id = selfRegisterAgent(name, over);
 		// The fallback poll would find it; invalidating is what the stream does.
 		await queryClient.invalidateQueries();
 		await screen.findByTestId('arrival-card', {}, { timeout: 6000 });
-		if (scopesRead)
+		if (permissionsRead)
 			await waitFor(() =>
-				expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull(),
+				expect(screen.queryByTestId('approve-waits-for-permissions')).toBeNull(),
 			);
 		return id;
 	}
@@ -296,14 +299,14 @@ describe('Agents page — zero agents', () => {
 			.map((li) => li.getAttribute('data-state'));
 	const progress = () => screen.getByTestId('register-progress');
 
-	/** The scope ids the review lists under `label`, opening it if folded. */
-	async function reviewedScopes(label: string): Promise<(string | null)[]> {
-		const summary = await screen.findByTestId('scopes-summary');
-		const toggle = within(summary).getByRole('button', { name: /scopes$/ });
+	/** The permission ids the review lists under `label`, opening it if folded. */
+	async function reviewedPermissions(label: string): Promise<(string | null)[]> {
+		const summary = await screen.findByTestId('permissions-summary');
+		const toggle = within(summary).getByRole('button', { name: /permissions$/ });
 		if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
 		const group = screen.getByRole('group', { name: label });
-		return [...group.querySelectorAll('[data-scope]')].map((el) =>
-			el.getAttribute('data-scope'),
+		return [...group.querySelectorAll('[data-permission]')].map((el) =>
+			el.getAttribute('data-permission'),
 		);
 	}
 
@@ -351,26 +354,26 @@ describe('Agents page — zero agents', () => {
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
-		// No scopes requested: approval grants the default agent scopes. Two of
+		// No permissions requested: approval grants the default agent permissions. Two of
 		// them act (capabilities:execute runs upstream calls,
 		// credentials:connect stores a credential), so the review opens before
 		// approval and lists them all.
-		const summary = await screen.findByTestId('scopes-summary');
+		const summary = await screen.findByTestId('permissions-summary');
 		expect(summary).toHaveTextContent(
-			`Gets the default agent scopes · ${DEFAULT_AGENT_SCOPES.length}`,
+			`Gets the default agent permissions · ${DEFAULT_AGENT_PERMISSIONS.length}`,
 		);
-		expect(within(summary).getByRole('button', { name: 'Hide scopes' })).toHaveAttribute(
+		expect(within(summary).getByRole('button', { name: 'Hide permissions' })).toHaveAttribute(
 			'aria-expanded',
 			'true',
 		);
-		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
 			'2 of these can change data, run upstream calls or administer your organisation.',
 		);
-		expect(await reviewedScopes('Default agent scopes')).toEqual(
-			groupScopesByArea(DEFAULT_AGENT_SCOPES).flatMap((g) => g.scopes),
+		expect(await reviewedPermissions('Default agent permissions')).toEqual(
+			groupPermissionsByArea(DEFAULT_AGENT_PERMISSIONS).flatMap((g) => g.permissions),
 		);
-		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'Approving grants the default agent scopes.',
+		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
+			'Approving grants the default agent permissions.',
 		);
 
 		// The page stays the landing; the manual card has left.
@@ -458,8 +461,8 @@ describe('Agents page — zero agents', () => {
 		const { queryClient } = renderPage();
 		await landing();
 		worker.use(
-			http.get('/agents/:id/scopes', () =>
-				HttpResponse.json({ scopes: ['apis:read', 'agents:write'] }),
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: ['apis:read', 'agents:write'] }),
 			),
 		);
 		await arrive('owned-bot', queryClient, {
@@ -475,13 +478,16 @@ describe('Agents page — zero agents', () => {
 			'signs in with an API key',
 		);
 		expect(await facts.findByText('Key ID')).toBeInTheDocument();
-		expect(await reviewedScopes('Requested scopes')).toEqual(['apis:read', 'agents:write']);
+		expect(await reviewedPermissions('Requested permissions')).toEqual([
+			'apis:read',
+			'agents:write',
+		]);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
 		expect(screen.getByTestId('agent-provenance')).not.toHaveTextContent('Self-registered');
 		expect(facts.queryByText('Parent agent')).toBeNull();
 	});
 
-	it('a request with flagged scopes opens its full review before approval, and never folds them away', async () => {
+	it('a request with flagged permissions opens its full review before approval, and never folds them away', async () => {
 		const requested = [
 			'apis:read',
 			'agents:write',
@@ -500,151 +506,167 @@ describe('Agents page — zero agents', () => {
 			'owner:credentials:read',
 			'owner:agents:read',
 		];
-		worker.use(http.get('/agents/:id/scopes', () => HttpResponse.json({ scopes: requested })));
+		worker.use(
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: requested }),
+			),
+		);
 		const { container, queryClient } = renderPage();
 		await landing();
-		await arrive('scoped-bot', queryClient);
+		await arrive('risky-bot', queryClient);
 
-		// Flagged scopes in the request: the review is open before approval, so
-		// every scope approval grants is on screen, grouped by area.
-		const group = await screen.findByRole('group', { name: 'Requested scopes' });
-		const items = [...group.querySelectorAll<HTMLElement>('[data-scope]')];
-		expect(items.map((el) => el.dataset.scope).sort()).toEqual([...requested].sort());
+		// Flagged permissions in the request: the review is open before approval, so
+		// every permission approval grants is on screen, grouped by area.
+		const group = await screen.findByRole('group', { name: 'Requested permissions' });
+		const items = [...group.querySelectorAll<HTMLElement>('[data-permission]')];
+		expect(items.map((el) => el.dataset.permission).sort()).toEqual([...requested].sort());
 		await waitFor(() => {
 			for (const item of items) expect(item).toBeVisible();
 		});
-		const risk = (scope: string) =>
-			group.querySelector(`[data-scope="${scope}"]`)?.getAttribute('data-risk') ?? null;
+		const risk = (permission: string) =>
+			group.querySelector(`[data-permission="${permission}"]`)?.getAttribute('data-risk') ??
+			null;
 		expect(risk('agents:write')).toBe('write');
 		expect(risk('credentials:write')).toBe('write');
 		expect(risk('org:admin')).toBe('admin');
 		expect(risk('capabilities:execute')).toBe('execute');
 		expect(risk('apis:read')).toBeNull();
-		const scopes = screen.getByTestId('requested-scopes');
-		expect(scopes).toHaveTextContent(
+		const permissions = screen.getByTestId('requested-permissions');
+		expect(permissions).toHaveTextContent(
 			'4 of these can change data, run upstream calls or administer your organisation.',
 		);
-		expect(scopes).toHaveTextContent('Approving grants the recognised scopes listed.');
-		expect(screen.getByRole('button', { name: 'Approve scoped-bot' })).toBeEnabled();
+		expect(permissions).toHaveTextContent(
+			'Approving grants the recognised permissions listed.',
+		);
+		expect(screen.getByRole('button', { name: 'Approve risky-bot' })).toBeEnabled();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 
 		// Hiding the review keeps the flagged ones on the summary.
-		await userEvent.click(screen.getByRole('button', { name: 'Hide scopes' }));
+		await userEvent.click(screen.getByRole('button', { name: 'Hide permissions' }));
 		const pinned = screen.getByRole('list', {
-			name: 'Scopes that can change data, run calls or administer',
+			name: 'Permissions that can change data, run calls or administer',
 		});
 		expect(
-			[...pinned.querySelectorAll('[data-scope]')].map((el) => el.getAttribute('data-scope')),
+			[...pinned.querySelectorAll('[data-permission]')].map((el) =>
+				el.getAttribute('data-permission'),
+			),
 		).toEqual(['agents:write', 'credentials:write', 'org:admin', 'capabilities:execute']);
-		expect(screen.queryByRole('group', { name: 'Requested scopes' })).toBeNull();
+		expect(screen.queryByRole('group', { name: 'Requested permissions' })).toBeNull();
 	});
 
-	it('holds Approve while the requested scopes are still being read', async () => {
+	it('holds Approve while the requested permissions are still being read', async () => {
 		let release!: () => void;
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		worker.use(
-			http.get('/agents/:id/scopes', async () => {
+			http.get('/agents/:id/permissions', async () => {
 				await gate;
-				return HttpResponse.json({ scopes: ['agents:write'] });
+				return HttpResponse.json({ permissions: ['agents:write'] });
 			}),
 		);
 		const { queryClient } = renderPage();
 		await landing();
-		await arrive('slow-bot', queryClient, {}, { scopesRead: false });
+		await arrive('slow-bot', queryClient, {}, { permissionsRead: false });
 
 		const approve = screen.getByRole('button', { name: 'Approve slow-bot' });
 		expect(approve).toBeDisabled();
-		expect(screen.getByText('Reading the scopes it requests…')).toBeInTheDocument();
-		expect(screen.getByTestId('approve-waits-for-scopes')).toBeInTheDocument();
-		// Deny needs no scopes read: refusing grants nothing.
+		expect(screen.getByText('Reading the permissions it requests…')).toBeInTheDocument();
+		expect(screen.getByTestId('approve-waits-for-permissions')).toBeInTheDocument();
+		// Deny needs no permissions read: refusing grants nothing.
 		expect(screen.getByRole('button', { name: 'Deny slow-bot' })).toBeEnabled();
 
 		release();
 		expect(await screen.findByText('agents:write')).toBeInTheDocument();
 		await waitFor(() => expect(approve).toBeEnabled());
-		expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull();
+		expect(screen.queryByTestId('approve-waits-for-permissions')).toBeNull();
 	});
 
-	it('a failed scopes read keeps Approve off and retries in place', async () => {
+	it('a failed permissions read keeps Approve off and retries in place', async () => {
 		let healthy = false;
 		worker.use(
-			http.get('/agents/:id/scopes', () =>
+			http.get('/agents/:id/permissions', () =>
 				healthy
-					? HttpResponse.json({ scopes: [] })
+					? HttpResponse.json({ permissions: [] })
 					: HttpResponse.json({ detail: 'Server error' }, { status: 500 }),
 			),
 		);
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		await landing();
-		await arrive('flaky-bot', queryClient, {}, { scopesRead: false });
+		await arrive('flaky-bot', queryClient, {}, { permissionsRead: false });
 
-		const scopes = screen.getByTestId('requested-scopes');
+		const permissions = screen.getByTestId('requested-permissions');
 		expect(
-			await within(scopes).findByText('Could not read the scopes this agent requests.'),
+			await within(permissions).findByText(
+				'Could not read the permissions this agent requests.',
+			),
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeDisabled();
 
 		healthy = true;
-		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
-		expect(await within(scopes).findByTestId('scopes-summary')).toHaveTextContent(
-			'Gets the default agent scopes',
+		await user.click(within(permissions).getByRole('button', { name: /Try again/ }));
+		expect(await within(permissions).findByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the default agent permissions',
 		);
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeEnabled(),
 		);
 	});
 
-	it('lists requested scopes outside the catalogue apart, as not granted', async () => {
+	it('lists requested permissions outside the catalogue apart, as not granted', async () => {
 		worker.use(
-			http.get('/agents/:id/scopes', () =>
-				HttpResponse.json({ scopes: ['apis:read', 'workflows:write', 'agents:write'] }),
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({
+					permissions: ['apis:read', 'workflows:write', 'agents:write'],
+				}),
 			),
 		);
 		const { queryClient } = renderPage();
 		await landing();
 		await arrive('mixed-bot', queryClient);
 
-		expect(await reviewedScopes('Requested scopes')).toEqual(['apis:read', 'agents:write']);
-		const unrecognised = screen.getByRole('list', { name: 'Unrecognised scopes' });
+		expect(await reviewedPermissions('Requested permissions')).toEqual([
+			'apis:read',
+			'agents:write',
+		]);
+		const unrecognised = screen.getByRole('list', { name: 'Unrecognised permissions' });
 		expect(
 			within(unrecognised)
 				.getAllByRole('listitem')
 				.map((li) => li.textContent),
 		).toEqual(['workflows:write']);
-		expect(screen.getByTestId('unrecognised-scopes')).toHaveTextContent(
+		expect(screen.getByTestId('unrecognised-permissions')).toHaveTextContent(
 			"Not recognised — won't be granted:",
 		);
 		// A non-empty request brings no defaults, and only the recognised count.
-		expect(screen.queryByRole('group', { name: 'Default agent scopes' })).toBeNull();
-		expect(screen.queryByTestId('no-scopes-warning')).toBeNull();
-		expect(screen.getByTestId('scopes-summary')).toHaveTextContent(
-			'Gets the 2 scopes it requests',
+		expect(screen.queryByRole('group', { name: 'Default agent permissions' })).toBeNull();
+		expect(screen.queryByTestId('no-permissions-warning')).toBeNull();
+		expect(screen.getByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the 2 permissions it requests',
 		);
-		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
 			'1 of these can change data, run upstream calls or administer your organisation.',
 		);
 	});
 
-	it('warns that an agent requesting only unrecognised scopes gets none', async () => {
+	it('warns that an agent requesting only unrecognised permissions gets none', async () => {
 		worker.use(
-			http.get('/agents/:id/scopes', () =>
-				HttpResponse.json({ scopes: ['workflows:write', 'toolkits:read'] }),
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: ['workflows:write', 'toolkits:read'] }),
 			),
 		);
 		const { queryClient } = renderPage();
 		await landing();
 		await arrive('odd-bot', queryClient);
 
-		expect(await screen.findByTestId('no-scopes-warning')).toHaveTextContent(
-			'None of these are recognised, so the agent will get no scopes.',
+		expect(await screen.findByTestId('no-permissions-warning')).toHaveTextContent(
+			'None of these are recognised, so the agent will get no permissions.',
 		);
-		expect(screen.queryByRole('list', { name: 'Requested scopes' })).toBeNull();
-		expect(screen.queryByRole('list', { name: 'Default agent scopes' })).toBeNull();
+		expect(screen.queryByRole('list', { name: 'Requested permissions' })).toBeNull();
+		expect(screen.queryByRole('list', { name: 'Default agent permissions' })).toBeNull();
 		expect(
-			within(screen.getByRole('list', { name: 'Unrecognised scopes' })).getAllByRole(
+			within(screen.getByRole('list', { name: 'Unrecognised permissions' })).getAllByRole(
 				'listitem',
 			),
 		).toHaveLength(2);
@@ -664,16 +686,16 @@ describe('Agents page — zero agents', () => {
 		);
 		const { queryClient } = renderPage();
 		await landing();
-		await arrive('slow-catalogue-bot', queryClient, {}, { scopesRead: false });
+		await arrive('slow-catalogue-bot', queryClient, {}, { permissionsRead: false });
 
 		const approve = screen.getByRole('button', { name: 'Approve slow-catalogue-bot' });
 		expect(approve).toBeDisabled();
-		expect(screen.getByText('Reading the scopes it requests…')).toBeInTheDocument();
-		expect(screen.getByTestId('approve-waits-for-scopes')).toBeInTheDocument();
+		expect(screen.getByText('Reading the permissions it requests…')).toBeInTheDocument();
+		expect(screen.getByTestId('approve-waits-for-permissions')).toBeInTheDocument();
 
 		release();
 		await waitFor(() => expect(approve).toBeEnabled());
-		expect(screen.queryByTestId('approve-waits-for-scopes')).toBeNull();
+		expect(screen.queryByTestId('approve-waits-for-permissions')).toBeNull();
 	});
 
 	it('a failed catalogue read keeps Approve off and retries in place', async () => {
@@ -688,18 +710,18 @@ describe('Agents page — zero agents', () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		await landing();
-		await arrive('flaky-catalogue-bot', queryClient, {}, { scopesRead: false });
+		await arrive('flaky-catalogue-bot', queryClient, {}, { permissionsRead: false });
 
-		const scopes = screen.getByTestId('requested-scopes');
+		const permissions = screen.getByTestId('requested-permissions');
 		expect(
-			await within(scopes).findByText('Could not read the permission catalogue.'),
+			await within(permissions).findByText('Could not read the permission catalogue.'),
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Approve flaky-catalogue-bot' })).toBeDisabled();
 
 		healthy = true;
-		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
-		expect(await within(scopes).findByTestId('scopes-summary')).toHaveTextContent(
-			'Gets the default agent scopes',
+		await user.click(within(permissions).getByRole('button', { name: /Try again/ }));
+		expect(await within(permissions).findByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the default agent permissions',
 		);
 		await waitFor(() =>
 			expect(
@@ -742,7 +764,7 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
-	it('once approved, the granted scopes are a summary that opens on demand', async () => {
+	it('once approved, the granted permissions are a summary that opens on demand', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		await landing();
@@ -750,19 +772,23 @@ describe('Agents page — zero agents', () => {
 		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
 		await screen.findByTestId('first-api-panel');
 
-		const summary = await screen.findByTestId('scopes-summary');
-		expect(summary).toHaveTextContent(`Granted ${DEFAULT_AGENT_SCOPES.length} scopes`);
-		expect(screen.queryByRole('group', { name: 'Granted scopes' })).toBeNull();
-		const toggle = within(summary).getByRole('button', { name: 'Review scopes' });
+		const summary = await screen.findByTestId('permissions-summary');
+		expect(summary).toHaveTextContent(
+			`Granted ${DEFAULT_AGENT_PERMISSIONS.length} permissions`,
+		);
+		expect(screen.queryByRole('group', { name: 'Granted permissions' })).toBeNull();
+		const toggle = within(summary).getByRole('button', { name: 'Review permissions' });
 		expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
 		await user.click(toggle);
-		const group = screen.getByRole('group', { name: 'Granted scopes' });
-		expect(group.querySelectorAll('[data-scope]')).toHaveLength(DEFAULT_AGENT_SCOPES.length);
+		const group = screen.getByRole('group', { name: 'Granted permissions' });
+		expect(group.querySelectorAll('[data-permission]')).toHaveLength(
+			DEFAULT_AGENT_PERMISSIONS.length,
+		);
 		// Grouped by area, each with what it allows in words.
 		expect(within(group).getByRole('list', { name: 'Capabilities' })).toBeInTheDocument();
 		expect(group).toHaveTextContent('Execute capabilities via the broker');
-		const hide = within(summary).getByRole('button', { name: 'Hide scopes' });
+		const hide = within(summary).getByRole('button', { name: 'Hide permissions' });
 		expect(hide).toHaveAttribute('aria-expanded', 'true');
 		expect(hide).toHaveAttribute('aria-controls', group.id);
 	});

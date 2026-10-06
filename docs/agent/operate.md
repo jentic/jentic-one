@@ -106,8 +106,12 @@ second, so a same-day retry can never overwrite the snapshot you would roll
 back to.
 
 Check the schema state without modifying anything by appending `--check` to
-the migration command (it prints an `OVERALL current|uninitialized|pending`
-verdict and exits non-zero unless `OVERALL current`, by design).
+the migration command (it prints an
+`OVERALL current|uninitialized|pending|unknown` verdict and exits non-zero
+unless `OVERALL current`, by design: `3` for `uninitialized`/`pending`, `5`
+for `unknown`). `pending` with only `STATUS upgrade-step:<name> pending`
+lines means the schema is at head but an upgrade step has not run; re-run
+the migration command to perform it.
 Migrations are forward-only: the snapshot *is* the rollback.
 
 ## Reinstall / reconfigure

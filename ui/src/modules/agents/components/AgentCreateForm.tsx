@@ -12,7 +12,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea } from '@/shared/ui';
 import { useCreateAgent, type AgentEntity } from '@/modules/agents/api';
 import { DuplicateNameHint } from '@/modules/agents/components/DuplicateNameHint';
-import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
+import { InitialPermissionsField } from '@/modules/agents/components/InitialPermissionsField';
 import {
 	AGENT_NAME_MAX_LENGTH,
 	agentNameError,
@@ -44,7 +44,7 @@ export function useAgentCreateForm({
 }: AgentCreateFormOptions) {
 	const [name, setName] = useState(initialName);
 	const [description, setDescription] = useState('');
-	const [scopes, setScopes] = useState<string[]>([]);
+	const [permissions, setPermissions] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const [intent, setIntent] = useState<Intent | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
@@ -76,11 +76,11 @@ export function useAgentCreateForm({
 			const agent = await create.mutateAsync({
 				name: trimmed,
 				description: description.trim() || null,
-				scopes,
+				permissions,
 			});
 			setName('');
 			setDescription('');
-			setScopes([]);
+			setPermissions([]);
 			setError(null);
 			onClose();
 			// After the close, so the host's tray opens onto a dismissed surface
@@ -98,8 +98,8 @@ export function useAgentCreateForm({
 		setName,
 		description,
 		setDescription,
-		scopes,
-		setScopes,
+		permissions,
+		setPermissions,
 		error,
 		intent,
 		pending: create.isPending,
@@ -153,9 +153,9 @@ export function AgentCreateFields({
 					maxLength={1024}
 				/>
 			</div>
-			<InitialScopesField
-				selected={form.scopes}
-				onChange={form.setScopes}
+			<InitialPermissionsField
+				selected={form.permissions}
+				onChange={form.setPermissions}
 				idPrefix="agent-create"
 			/>
 		</div>
