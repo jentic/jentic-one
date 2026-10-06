@@ -56,6 +56,17 @@ export function schemeTypeFromRaw(s: { type?: string; scheme?: string }): Scheme
 }
 
 /**
+ * Friendly label for a scheme-type string as it arrives on `GET /apis`'
+ * `security_schemes` (`bearer` / `apiKey` / `basic` / `oauth2`). An unknown
+ * value keeps its raw text so a backend addition still reads as something,
+ * rather than a blank or a misleading "Credential".
+ */
+export function schemeTypeLabel(scheme: string): string {
+	const key = scheme as SchemeType;
+	return key in SCHEME_TYPE_LABELS && key !== 'unknown' ? SCHEME_TYPE_LABELS[key] : scheme;
+}
+
+/**
  * Returns one option per distinct scheme TYPE (deduped), ordered by canonical
  * priority. We dedupe by type — not by name — because a spec that defines
  * `bearerAuth` AND `JWTAuth` both as bearer schemes shouldn't present the user

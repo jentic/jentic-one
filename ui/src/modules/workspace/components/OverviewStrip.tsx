@@ -13,6 +13,7 @@ import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucid
 import { Badge, Button, ConfirmDialog } from '@/shared/ui';
 import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
+import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 
 function relativeTime(iso: string): string | null {
 	const ts = Date.parse(iso);
@@ -143,10 +144,11 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 					icon={<ShieldCheck size={13} aria-hidden="true" />}
 					label="Security"
 					// A draft declares no schemes until a revision is promoted, so an
-					// empty list there means "not known yet", not "none".
+					// empty list there means "not known yet", not "none". Known
+					// schemes read as friendly names ("Bearer Token"), not raw ids.
 					value={
 						api.securitySchemes.length > 0
-							? api.securitySchemes.join(', ')
+							? api.securitySchemes.map(schemeTypeLabel).join(', ')
 							: hasLive
 								? 'None'
 								: 'Known once live'

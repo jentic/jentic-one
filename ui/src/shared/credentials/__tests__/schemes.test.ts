@@ -6,6 +6,7 @@ import {
 	oauth2ScopesFromSchemes,
 	parseSchemeOptions,
 	schemeTypeFromRaw,
+	schemeTypeLabel,
 	schemeTypeToCredentialType,
 } from '@/shared/credentials/lib/schemes';
 
@@ -26,6 +27,20 @@ describe('credentials/lib/schemes', () => {
 		it('collapses anything else to unknown', () => {
 			expect(schemeTypeFromRaw({ type: 'mutualTLS' })).toBe('unknown');
 			expect(schemeTypeFromRaw({})).toBe('unknown');
+		});
+	});
+
+	describe('schemeTypeLabel', () => {
+		it('maps each known scheme-type string to its friendly label', () => {
+			expect(schemeTypeLabel('bearer')).toBe('Bearer Token');
+			expect(schemeTypeLabel('apiKey')).toBe('API Key');
+			expect(schemeTypeLabel('basic')).toBe('Basic Auth');
+			expect(schemeTypeLabel('oauth2')).toBe('OAuth 2.0');
+		});
+		it('keeps an unrecognised scheme as its raw text', () => {
+			expect(schemeTypeLabel('mutualTLS')).toBe('mutualTLS');
+			// `unknown` is a sentinel, not a real scheme name — keep it verbatim.
+			expect(schemeTypeLabel('unknown')).toBe('unknown');
 		});
 	});
 

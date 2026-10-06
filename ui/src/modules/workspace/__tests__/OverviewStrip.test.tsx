@@ -247,3 +247,33 @@ describe('OverviewStrip — update-available re-import', () => {
 		expect(jobPolled).toBe(true);
 	});
 });
+
+describe('OverviewStrip — Security stat', () => {
+	it('names a declared scheme with its friendly label, not the raw id', () => {
+		renderWithProviders(<OverviewStrip api={makeApi({ securitySchemes: ['bearer'] })} />);
+		expect(screen.getByText('Bearer Token')).toBeInTheDocument();
+		expect(screen.queryByText('bearer')).not.toBeInTheDocument();
+	});
+
+	it('joins multiple schemes with friendly labels', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: ['apiKey', 'basic'] })} />,
+		);
+		expect(screen.getByText('API Key, Basic Auth')).toBeInTheDocument();
+	});
+
+	it('reads "None" for a live API with no schemes', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: 'rev_1' })} />,
+		);
+		expect(screen.getByText('None')).toBeInTheDocument();
+	});
+
+	it('reads "Known once live" for a draft with no schemes yet', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: null })} />,
+		);
+		expect(screen.getByText('Known once live')).toBeInTheDocument();
+		expect(screen.queryByText('None')).not.toBeInTheDocument();
+	});
+});
