@@ -176,6 +176,31 @@ async def test_emit_credential_access_persists_audit_event(
         }
 
 
+async def test_emit_credential_access_names_the_credential_owner(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """``created_by`` names the credential owner; ``actor_id`` stays the user of it."""
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            credential_owner="usr_cred_owner",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.actor_id == "agent_42"
+        assert event.created_by == "usr_cred_owner"
+
+
 async def test_emit_credential_access_never_records_secret(
     admin_db: DatabaseSession, clean_events: None
 ) -> None:

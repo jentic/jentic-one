@@ -58,6 +58,14 @@ export class MonitorApiError extends Error {
 	}
 }
 
+/**
+ * A refused read: 401 (no valid session) or 403 (missing permission). Retrying
+ * cannot change the answer, so callers stop and show an access state instead.
+ */
+export function isMonitorAccessDenied(error: unknown): boolean {
+	return error instanceof MonitorApiError && (error.status === 401 || error.status === 403);
+}
+
 function toMonitorError(error: unknown, fallback: string): MonitorApiError {
 	if (error instanceof ApiError) {
 		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;

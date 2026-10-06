@@ -252,6 +252,7 @@ async def emit_credential_access(
     api_vendor: str,
     api_name: str,
     api_version: str,
+    credential_owner: str | None = None,
     trace_id: str | None = None,
 ) -> str:
     """Emit a credential-access audit event and return its ID.
@@ -261,6 +262,11 @@ async def emit_credential_access(
     credential use produces exactly one event regardless of call-site (sync
     router or async worker). Carries only **non-secret** identifiers — never the
     decrypted material.
+
+    ``actor_id`` is the identity that used the credential; ``created_by`` names
+    the credential's owner (``credential_owner``, falling back to the actor when
+    the owner is unknown), so under owner-scoped event reads both the owner and
+    the actor's owner see the use.
     """
     api = "/".join(part for part in (api_vendor, api_name, api_version) if part)
     return await emit_event(
@@ -268,7 +274,7 @@ async def emit_credential_access(
         type=EventType.CREDENTIAL_ACCESSED,
         severity=EventSeverity.INFO,
         summary=f"Credential {credential_id} accessed by {actor_id} for {api or api_vendor}",
-        created_by=actor_id,
+        created_by=credential_owner or actor_id,
         trace_id=trace_id,
         actor_id=actor_id,
         actor_type=actor_type,

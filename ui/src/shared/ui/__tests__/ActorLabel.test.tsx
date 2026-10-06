@@ -115,4 +115,41 @@ describe('ActorLabel', () => {
 		expect(container.textContent).toBe('sva_x (retired service account)');
 		expect(container.querySelector('a')).toBeNull();
 	});
+
+	it('resolves names through the by-id lookup when the listing is refused', async () => {
+		const requested: string[][] = [];
+		worker.use(
+			http.get('/actors', () => HttpResponse.json({ detail: 'forbidden' }, { status: 403 })),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				requested.push(ids);
+				return HttpResponse.json({
+					data: [
+						{ id: 'usr_owner', name: 'Ada Lovelace', actor_type: 'user', active: true },
+						{
+							id: 'agnt_known',
+							name: 'Inbox Triage',
+							actor_type: 'agent',
+							active: true,
+						},
+					].filter((a) => ids.includes(a.id)),
+				});
+			}),
+		);
+		render(
+			<>
+				<ActorLabel actorId="usr_owner" />
+				<ActorLabel actorId="agnt_known" />
+				<ActorLabel actorId="self" />
+			</>,
+			{ wrapper },
+		);
+
+		expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+		expect(await screen.findByText('Inbox Triage')).toBeInTheDocument();
+		expect(screen.getByText('Self')).toBeInTheDocument();
+		// Both labels share one batched call; the sentinel is never looked up.
+		expect(requested).toHaveLength(1);
+		expect([...requested[0]].sort()).toEqual(['agnt_known', 'usr_owner']);
+	});
 });

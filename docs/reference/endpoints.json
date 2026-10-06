@@ -106,6 +106,24 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "lookupActors",
+      "path": "/actors/lookup",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Resolve actor names by id",
+      "surface": "actors",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_scopes": {
         "config:read": []
       },
@@ -4608,5 +4626,5 @@
     ],
     "total": 27
   },
-  "total": 174
+  "total": 175
 }

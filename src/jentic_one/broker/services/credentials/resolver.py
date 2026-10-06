@@ -42,6 +42,10 @@ class ResolvedCredential(BaseModel):
     # material back to the stored credential without a second DB round-trip
     # (#740). Always populated by the resolver; never a secret.
     name: str
+    # Owner of the stored credential (`Credential.created_by`). Credential use
+    # and health events name it as their subject so the owner sees another
+    # actor's use of the credential under owner-scoped event reads.
+    created_by: str | None = None
     wire_type: CredentialType
     stored_type: StoredCredentialType
     provider: str
@@ -248,6 +252,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -260,6 +265,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -274,6 +280,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -287,6 +294,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -304,6 +312,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -315,6 +324,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,

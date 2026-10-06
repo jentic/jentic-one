@@ -12,6 +12,10 @@ package control
 func (APIReference) RequiredFields() []string        { return []string{"name", "vendor", "version"} }
 func (APIReferenceRequest) RequiredFields() []string { return []string{"vendor"} }
 func (ActorListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
+func (ActorLookupEntryResponse) RequiredFields() []string {
+	return []string{"active", "actor_type", "id", "name"}
+}
+func (ActorLookupResponse) RequiredFields() []string { return []string{"data"} }
 func (ActorSummaryResponse) RequiredFields() []string {
 	return []string{"active", "actor_type", "created_at", "id", "name"}
 }

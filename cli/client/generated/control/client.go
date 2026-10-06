@@ -888,6 +888,28 @@ type ActorListResponse struct {
 	NextCursor *string                `json:"next_cursor,omitempty"`
 }
 
+// ActorLookupEntryResponse Display fields of one actor resolved by id.
+type ActorLookupEntryResponse struct {
+	// Active False for a disabled user or a non-active agent.
+	Active bool `json:"active"`
+
+	// ActorType Whether the actor is a user or an agent.
+	ActorType ActorType `json:"actor_type"`
+
+	// Id Actor id (`usr_…` or `agnt_…`).
+	Id string `json:"id"`
+
+	// Name Display name: a user's full name or an agent's name.
+	Name string `json:"name"`
+}
+
+// ActorLookupResponse Actors resolved by id; ids that match no actor are omitted.
+//
+// Examples: {"data":[{"active":true,"actor_type":"user","id":"usr_2abc","name":"Ada Lovelace"}]}
+type ActorLookupResponse struct {
+	Data []ActorLookupEntryResponse `json:"data"`
+}
+
 // ActorSummaryResponse Single actor entry in the actors list.
 type ActorSummaryResponse struct {
 	Active bool `json:"active"`
@@ -3153,6 +3175,12 @@ type ListActorsParams struct {
 	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// LookupActorsParams defines parameters for LookupActors.
+type LookupActorsParams struct {
+	// Id Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+	Id []string `form:"id" json:"id"`
+}
+
 // ListOauthClientsParams defines parameters for ListOauthClients.
 type ListOauthClientsParams struct {
 	IncludeInactive *bool `form:"include_inactive,omitempty" json:"include_inactive,omitempty"`
@@ -4539,6 +4567,22 @@ type ClientInterface interface {
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// LookupActors Resolve actor names by id
+	//
+	// Resolve user and agent ids to display names for any signed-in caller.
+	//
+	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
+	// asked for, so a caller without ``users:read`` can label the owners,
+	// approvers and actors it already sees by id. Users resolve for any caller;
+	// agents only when the caller may see them (its own agents, itself, or with
+	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+	// Ids that match no visible user or agent are left out of the response
+	// rather than reported as errors. Listing the whole directory stays behind
+	// ``users:read`` on ``GET /actors``.
+	//
+	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
+	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListProviderConfigs List credential provider configs
 	//
 	// List all stored provider configs, with secret fields redacted.
@@ -4913,6 +4957,12 @@ type ClientInterface interface {
 	//
 	// Approve a pending agent.
 	//
+	// Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
+	// who becomes its owner. Any other caller gets a 404, whatever the agent's
+	// status, so the response does not reveal agents outside the caller's
+	// ownership.
+	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4970,6 +5020,10 @@ type ClientInterface interface {
 	//
 	// Deny a pending agent.
 	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -4978,6 +5032,10 @@ type ClientInterface interface {
 	// DenyAgent Deny Agent
 	//
 	// Deny a pending agent.
+	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7163,6 +7221,32 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 	return c.Client.Do(req)
 }
 
+// LookupActors Resolve actor names by id
+//
+// Resolve user and agent ids to display names for any signed-in caller.
+//
+// Returns only “id“, “actor_type“, “name“ and “active“ for the ids
+// asked for, so a caller without “users:read“ can label the owners,
+// approvers and actors it already sees by id. Users resolve for any caller;
+// agents only when the caller may see them (its own agents, itself, or with
+// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
+// Ids that match no visible user or agent are left out of the response
+// rather than reported as errors. Listing the whole directory stays behind
+// “users:read“ on “GET /actors“.
+//
+// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
+func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLookupActorsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListProviderConfigs List credential provider configs
 //
 // List all stored provider configs, with secret fields redacted.
@@ -7917,6 +8001,12 @@ func (c *Client) ReplaceAgentScopes(ctx context.Context, agentId string, body Re
 //
 // Approve a pending agent.
 //
+// Allowed for the agent's owner or an “org:admin“. An agent with no owner
+// (an unclaimed self-registration) can be approved only by an “org:admin“,
+// who becomes its owner. Any other caller gets a 404, whatever the agent's
+// status, so the response does not reveal agents outside the caller's
+// ownership.
+//
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApproveAgentRequest(c.Server, agentId)
@@ -8004,6 +8094,10 @@ func (c *Client) ClaimAgent(ctx context.Context, agentId string, body ClaimAgent
 //
 // Deny a pending agent.
 //
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -8022,6 +8116,10 @@ func (c *Client) DenyAgentWithBody(ctx context.Context, agentId string, contentT
 // DenyAgent Deny Agent
 //
 // Deny a pending agent.
+//
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11992,6 +12090,60 @@ func NewListActorsRequest(server string, params *ListActorsParams) (*http.Reques
 		if params.Limit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLookupActorsRequest constructs an http.Request for the LookupActors method
+func NewLookupActorsRequest(server string, params *LookupActorsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/actors/lookup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Id != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -20583,6 +20735,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActorsWithResponse(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*ListActorsHTTPResp, error)
 
+	// LookupActorsWithResponse Resolve actor names by id
+	//
+	// Resolve user and agent ids to display names for any signed-in caller.
+	//
+	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
+	// asked for, so a caller without ``users:read`` can label the owners,
+	// approvers and actors it already sees by id. Users resolve for any caller;
+	// agents only when the caller may see them (its own agents, itself, or with
+	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+	// Ids that match no visible user or agent are left out of the response
+	// rather than reported as errors. Listing the whole directory stays behind
+	// ``users:read`` on ``GET /actors``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
+	LookupActorsWithResponse(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*LookupActorsHTTPResp, error)
+
 	// ListProviderConfigsWithResponse List credential provider configs
 	//
 	// List all stored provider configs, with secret fields redacted.
@@ -20997,6 +21167,12 @@ type ClientWithResponsesInterface interface {
 	//
 	// Approve a pending agent.
 	//
+	// Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
+	// who becomes its owner. Any other caller gets a 404, whatever the agent's
+	// status, so the response does not reveal agents outside the caller's
+	// ownership.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
@@ -21056,6 +21232,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deny a pending agent.
 	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -21064,6 +21244,10 @@ type ClientWithResponsesInterface interface {
 	// DenyAgentWithResponse Deny Agent
 	//
 	// Deny a pending agent.
+	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -23719,6 +23903,89 @@ func (r ListActorsHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListActorsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type LookupActorsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ActorLookupResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LookupActorsHTTPResp) GetJSON200() *ActorLookupResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LookupActorsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LookupActorsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LookupActorsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LookupActorsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LookupActorsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -36822,6 +37089,30 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 	return ParseListActorsHTTPResp(rsp)
 }
 
+// LookupActorsWithResponse Resolve actor names by id
+//
+// Resolve user and agent ids to display names for any signed-in caller.
+//
+// Returns only “id“, “actor_type“, “name“ and “active“ for the ids
+// asked for, so a caller without “users:read“ can label the owners,
+// approvers and actors it already sees by id. Users resolve for any caller;
+// agents only when the caller may see them (its own agents, itself, or with
+// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
+// Ids that match no visible user or agent are left out of the response
+// rather than reported as errors. Listing the whole directory stays behind
+// “users:read“ on “GET /actors“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
+func (c *ClientWithResponses) LookupActorsWithResponse(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*LookupActorsHTTPResp, error) {
+	rsp, err := c.LookupActors(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLookupActorsHTTPResp(rsp)
+}
+
 // ListProviderConfigsWithResponse List credential provider configs
 //
 // List all stored provider configs, with secret fields redacted.
@@ -37464,6 +37755,12 @@ func (c *ClientWithResponses) ReplaceAgentScopesWithResponse(ctx context.Context
 //
 // Approve a pending agent.
 //
+// Allowed for the agent's owner or an “org:admin“. An agent with no owner
+// (an unclaimed self-registration) can be approved only by an “org:admin“,
+// who becomes its owner. Any other caller gets a 404, whatever the agent's
+// status, so the response does not reveal agents outside the caller's
+// ownership.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
@@ -37541,6 +37838,10 @@ func (c *ClientWithResponses) ClaimAgentWithResponse(ctx context.Context, agentI
 //
 // Deny a pending agent.
 //
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -37555,6 +37856,10 @@ func (c *ClientWithResponses) DenyAgentWithBodyWithResponse(ctx context.Context,
 // DenyAgentWithResponse Deny Agent
 //
 // Deny a pending agent.
+//
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -41126,6 +41431,74 @@ func ParseListActorsHTTPResp(rsp *http.Response) (*ListActorsHTTPResp, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActorListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLookupActorsHTTPResp parses an HTTP response from a LookupActorsWithResponse call
+func ParseLookupActorsHTTPResp(rsp *http.Response) (*LookupActorsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LookupActorsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActorLookupResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

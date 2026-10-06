@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowUp } from 'lucide-react';
 import { toast } from '@/shared/ui';
-import { RailFeed, passesFeedFilters } from '@/shared/app/rail/RailFeed';
+import { RailFeed, RailForbidden, passesFeedFilters } from '@/shared/app/rail/RailFeed';
 import { RailFilter, type ActorOption } from '@/shared/app/rail/RailFilter';
 import { RailFooter } from '@/shared/app/rail/RailFooter';
 import { RailHeader } from '@/shared/app/rail/RailHeader';
@@ -104,9 +104,13 @@ export function ActivityRailBody({
 		loadingOlder,
 	} = useScopedActivity();
 	const navigate = useNavigate();
-	const directory = useActorDirectory();
 	const reduce = useReducedMotion();
 	const routeAgent = useRouteAgentId();
+	const directory = useActorDirectory([
+		routeAgent,
+		scope?.actorId,
+		...events.map((ev) => ev.actorId),
+	]);
 	const routeAgentName = routeAgent ? directory.resolve(routeAgent) : undefined;
 	const suggestion =
 		routeAgent && routeAgentName && scope?.actorId !== routeAgent
@@ -274,24 +278,28 @@ export function ActivityRailBody({
 					aria-relevant="additions"
 					aria-label="Activity feed"
 				>
-					<RailFeed
-						events={visible}
-						filters={filters}
-						resolveActor={resolveActor}
-						onAction={handleAction}
-						onNavigate={go}
-						scopedTo={
-							scope
-								? {
-										label:
-											actorOptions.find(
-												(o) => o.value === scopeToValue(scope),
-											)?.label ?? scope.actorId,
-										onClear: () => setScope(null),
-									}
-								: undefined
-						}
-					/>
+					{status === 'forbidden' ? (
+						<RailForbidden />
+					) : (
+						<RailFeed
+							events={visible}
+							filters={filters}
+							resolveActor={resolveActor}
+							onAction={handleAction}
+							onNavigate={go}
+							scopedTo={
+								scope
+									? {
+											label:
+												actorOptions.find(
+													(o) => o.value === scopeToValue(scope),
+												)?.label ?? scope.actorId,
+											onClear: () => setScope(null),
+										}
+									: undefined
+							}
+						/>
+					)}
 				</div>
 			</div>
 			<RailFooter scope={scope} onNavigate={onNavigated} />

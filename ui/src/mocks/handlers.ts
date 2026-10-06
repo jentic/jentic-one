@@ -153,6 +153,16 @@ export const handlers = [
 			next_cursor: null,
 		}),
 	),
+	// By-id lookup (GET /actors/lookup?id=…) over the same seed — the directory's
+	// path for callers without `users:read`.
+	http.get('/actors/lookup', ({ request }) => {
+		const ids = new Set(new URL(request.url).searchParams.getAll('id'));
+		return HttpResponse.json({
+			data: actorDirectorySeed
+				.filter((a) => ids.has(a.id))
+				.map(({ id, actor_type, name, active }) => ({ id, actor_type, name, active })),
+		});
+	}),
 	// Running/latest app version (GET /system/version) — cross-cutting shell
 	// endpoint powering the update banner + UserMenu version line. Default: no
 	// newer release (banner hidden); tests override via worker.use(...).
