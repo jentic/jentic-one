@@ -260,14 +260,19 @@ export function CatalogLedger({
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
 	const gapRef = useRef<HTMLDivElement | null>(null);
 	const headingRefs = useRef(new Map<string, HTMLDivElement>());
-	// The letter a rail jump/seek is landing on, held through the range's
-	// reflow so the final layout re-pins it to the landing line (a jump's rows
-	// arrive a frame late and shorten the content above, which would otherwise
-	// clamp the smooth scroll a letter short). Cleared by a genuine user scroll.
-	const landing = useRef<RailLetter | null>(null);
-	// Set around programmatic scrolls so their scroll events aren't read as the
-	// reader taking over (which clears `landing`).
-	const programmaticScroll = useRef(false);
+	// A rail jump/seek lands by smooth-scrolling the letter's heading to the
+	// landing line. The range's rows arrive a frame or two late and shorten the
+	// content above, which clamps the in-flight smooth scroll a letter short
+	// (landing on the one before the target). After landing we therefore re-pin
+	// the target to the line across the next few reflows. Bounded (not held
+	// indefinitely) so a later background poll or the reader's own scroll is
+	// never yanked back; reset on each new jump.
+	const landing = useRef<{ letter: RailLetter; left: number } | null>(null);
+	/** How many post-landing reflows to re-pin the target through. */
+	const LANDING_CORRECTIONS = 4;
+	const landOn = useCallback((letter: RailLetter) => {
+		landing.current = { letter, left: LANDING_CORRECTIONS };
+	}, []);
 
 	const model = useMemo(
 		() =>
@@ -484,14 +489,13 @@ export function CatalogLedger({
 	// A jump lands by scrolling the letter's heading to the landing line. Its
 	// range's rows arrive and reflow a frame or two later, which shortens the
 	// content above the smooth-scroll's clamp — so the animation would stop a
-	// letter short (landing on the one before the target). Hold the target
-	// until the layout settles and re-pin it to the line each commit, so the
-	// jump always lands squarely on its own letter regardless of the reflow.
-	const landing = useRef<RailLetter | null>(null);
+	// letter short (landing on the one before the target). Re-pin the target to
+	// the line on each commit for a few reflows, so the jump always lands
+	// squarely on its own letter regardless of the reflow.
 	useLayoutEffect(() => {
-		const letter = landing.current;
-		if (!letter) return;
-		const entry = model.rail.find((r) => r.letter === letter);
+		const pending = landing.current;
+		if (!pending) return;
+		const entry = model.rail.find((r) => r.letter === pending.letter);
 		const el = entry?.anchorKey ? headingRefs.current.get(entry.anchorKey) : undefined;
 		if (!el) return;
 		const scroller = shellScroller();
@@ -506,6 +510,7 @@ export function CatalogLedger({
 			if (scroller instanceof Window) window.scrollTo(0, target);
 			else scroller.scrollTo({ top: target, behavior: 'auto' });
 		}
+		landing.current = pending.left > 1 ? { ...pending, left: pending.left - 1 } : null;
 	}, [model]);
 
 	// A letter that isn't loaded yet: page forward (big pages) until it
@@ -521,13 +526,13 @@ export function CatalogLedger({
 		}
 		setSeekLetter(null);
 		if (status === 'ready') {
-			if (scrollToLetter(seekLetter, { focus: true })) landing.current = seekLetter;
+			if (scrollToLetter(seekLetter, { focus: true })) landOn(seekLetter);
 			return;
 		}
 		const after = model.rail.slice(model.rail.findIndex((r) => r.letter === seekLetter) + 1);
 		const next = after.find((r) => r.anchorKey);
-		if (next && scrollToLetter(next.letter, { focus: true })) landing.current = next.letter;
-	}, [seekLetter, model, scrollToLetter, hasNextPage, isFetchingNextPage, onLoadMore]);
+		if (next && scrollToLetter(next.letter, { focus: true })) landOn(next.letter);
+	}, [seekLetter, model, scrollToLetter, hasNextPage, isFetchingNextPage, onLoadMore, landOn]);
 
 	// A jump: once its range's first page is in, land on the letter — or, if
 	// the catalog has nothing under it, on the next letter that has rows.
@@ -541,8 +546,8 @@ export function CatalogLedger({
 		}
 		if (scrollToLetter(jumpLetter, { focus: true })) {
 			// Hold the target through the range's reflow so the landing snaps to
-			// the letter even after the rows above settle (see `landing`).
-			landing.current = jumpLetter;
+			// the letter even after the rows above settle (see `landOn`).
+			landOn(jumpLetter);
 			setJumpLetter(null);
 			return;
 		}
@@ -552,13 +557,13 @@ export function CatalogLedger({
 		const next = after.find((r) => r.anchorKey);
 		if (next) {
 			setJumpLetter(null);
-			if (scrollToLetter(next.letter, { focus: true })) landing.current = next.letter;
+			if (scrollToLetter(next.letter, { focus: true })) landOn(next.letter);
 		} else if (jump.hasNextPage) {
 			jump.onLoadMore();
 		} else {
 			setJumpLetter(null);
 		}
-	}, [jumpLetter, jump, jumpProp?.error, model, scrollToLetter]);
+	}, [jumpLetter, jump, jumpProp?.error, model, scrollToLetter, landOn]);
 
 	const railLetters: AlphaRailLetter[] = useMemo(
 		() =>
@@ -765,8 +770,8 @@ export function CatalogLedger({
 					const letter = key as RailLetter;
 					if (scrollToLetter(letter, { focus: true })) {
 						// Hold the target through any reflow so a loaded letter
-						// also lands squarely (see `landing`).
-						landing.current = letter;
+						// also lands squarely (see `landOn`).
+						landOn(letter);
 						return;
 					}
 					landing.current = null;

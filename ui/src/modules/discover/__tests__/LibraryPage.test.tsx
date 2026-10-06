@@ -910,4 +910,118 @@ describe('LibraryPage', () => {
 		await waitFor(() => expect(status).toHaveTextContent(/from 3\+ vendors so far/));
 		expect(status).not.toHaveTextContent('4,870');
 	});
+
+	it('lands a backward rail jump on the clicked letter after earlier jumps (Y→G→A→A)', async () => {
+		// A sequence of rail jumps to letters that aren't in the head feed each
+		// start a fresh keyset range AT the letter (`catalogCursorAfter`). The
+		// cursor for a letter is absolute — derived only from the letter, never
+		// from the currently loaded range. Jumping *back* to an earlier letter
+		// inserts that letter's range ABOVE the current scroll position, which
+		// shifts the content down a frame after the single landing scroll was
+		// aimed — enough to clamp a smooth scroll a letter short, on the one
+		// just before the previous jump's range. The landing must re-pin to the
+		// clicked letter through that reflow. Guards the Y→G→A overshoot.
+		const row = (apiId: string) => ({
+			api_id: apiId,
+			vendor: apiId,
+			path: `apis/${apiId}`,
+			spec_url: `https://example.com/${apiId}.json`,
+			registered: false,
+			_links: {
+				self: `/catalog/${apiId}`,
+				operations: `/catalog/${apiId}/operations`,
+				import: `/catalog/${apiId}:import`,
+				github: null,
+			},
+		});
+		const cursorId = (cursor: string | null) =>
+			cursor ? (JSON.parse(atob(cursor)) as { id: string }).id : null;
+		const page = (data: ReturnType<typeof row>[], more = false) =>
+			HttpResponse.json({
+				data,
+				catalog_total: 999,
+				registered_count: 0,
+				outdated_count: 0,
+				manifest_age_seconds: 5,
+				has_more: more,
+				next_cursor: more
+					? btoa(JSON.stringify({ id: data[data.length - 1]!.api_id }))
+					: null,
+			});
+		// Each letter's jump range is keyed by the keyset start the rail builds
+		// for it (`jumpStartKey`: the lowercased letter). Each range is a tall
+		// block of single-API vendors, so jumping back to A inserts enough rows
+		// above the (scrolled-to-G) viewport to shift it — the condition that
+		// clamps a landing a letter short.
+		const block = (c: string) =>
+			Array.from({ length: 14 }, (_, i) =>
+				row(`${c}${String(i).padStart(2, '0')}vendor.com`),
+			);
+		const RANGES: Record<string, ReturnType<typeof row>[]> = {
+			a: block('a'),
+			g: block('g'),
+			y: block('y'),
+		};
+		worker.use(
+			http.get('/catalog', async ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('registered_only') === 'true') return page([]);
+				const after = cursorId(url.searchParams.get('cursor'));
+				// A jump cursor starts exactly at a letter boundary. A short delay
+				// keeps the range's rows arriving a frame after the landing scroll,
+				// which is when the content above reflows.
+				if (after != null && RANGES[after]) {
+					await delay(40);
+					return page(RANGES[after]!);
+				}
+				// The head feed: one vendor that establishes no A–Z frontier (a
+				// digit-prefixed id stays under #, held until fully loaded), and
+				// its own next page never answers — so A/G/Y are only ever
+				// reachable through their own jump ranges, and no letter between
+				// them is marked "passed".
+				if (after == null) return page([row('0mid.com/a'), row('0mid.com/b')], true);
+				await delay('infinite');
+				return page([]);
+			}),
+		);
+
+		renderWithProviders(<LibraryPage />);
+		await screen.findByTestId('catalog-ledger');
+		const rail = await screen.findByRole('navigation', { name: 'Jump to letter' });
+		const jumpTo = async (letter: string) => {
+			const btn = await within(rail).findByRole('button', {
+				name: new RegExp(`^${letter} — `),
+			});
+			fireEvent.click(btn);
+		};
+		// The letter whose heading currently sits at the landing line — i.e.
+		// where the last jump actually landed the viewport.
+		const landedLetter = () => {
+			let best: string | null = null;
+			let bestDist = Infinity;
+			for (const el of document.querySelectorAll('[id^="catalog-letter-"]')) {
+				const letter = el.id.replace('catalog-letter-', '').replace('num', '#');
+				const dist = Math.abs(el.getBoundingClientRect().top);
+				if (dist < bestDist) {
+					bestDist = dist;
+					best = letter;
+				}
+			}
+			return best;
+		};
+
+		// Forward (Y, G), each landing on its own letter.
+		await jumpTo('Y');
+		await waitFor(() => expect(landedLetter()).toBe('Y'));
+		await jumpTo('G');
+		await waitFor(() => expect(landedLetter()).toBe('G'));
+
+		// Back to A. The regression this guards: A lands on the heading just
+		// before the previous (G) range instead of on A. Focus follows the
+		// landing, so both the viewport and focus must end on A.
+		await jumpTo('A');
+		await waitFor(() => expect(document.getElementById('catalog-letter-A')).not.toBeNull());
+		await waitFor(() => expect(landedLetter()).toBe('A'));
+		expect(document.activeElement).toBe(document.getElementById('catalog-letter-A'));
+	});
 });
