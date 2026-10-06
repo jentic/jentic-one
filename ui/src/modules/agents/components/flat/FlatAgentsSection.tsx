@@ -68,7 +68,7 @@ import {
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
@@ -578,6 +578,13 @@ function StateBanner({
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
+	// Approving or denying needs `agents:write` (or `org:admin`); anyone else
+	// reads the state without the verbs.
+	const canDecide = useCanAccess(AGENTS_WRITE);
+	const detail =
+		status === 'pending' && !canDecide
+			? 'Not serving traffic. Someone who can manage agents needs to approve it.'
+			: NON_ACTIVE_COPY[status].detail;
 	return (
 		<div
 			role="status"
@@ -598,7 +605,7 @@ function StateBanner({
 					{NON_ACTIVE_COPY[status].title}
 				</p>
 				<p className="text-muted-foreground text-xs leading-snug">
-					{NON_ACTIVE_COPY[status].detail}
+					{detail}
 					{status === 'rejected' && denialReason && <> Reason: {denialReason}</>}
 					{status === 'rejected' && deniedBy && (
 						<>
@@ -608,7 +615,7 @@ function StateBanner({
 					)}
 				</p>
 			</div>
-			{status === 'pending' && (
+			{status === 'pending' && canDecide && (
 				// The banner pins the longest-waiting agent only; any OTHER pending
 				// agent is decided here, so both verbs sit on its own panel.
 				<span className="flex shrink-0 items-center gap-2">
@@ -821,16 +828,21 @@ function SelectedAgentPanel({
 		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
 
 	const isArchived = agent.status === 'archived';
-	// Only pending (cannot authenticate yet), rejected and archived block binding.
-	const canBind = agent.status === 'active' || agent.status === 'disabled';
+	// Only pending (cannot authenticate yet), rejected and archived block binding,
+	// and binding needs `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
+	const statusAllowsBind = agent.status === 'active' || agent.status === 'disabled';
+	const canBind = statusAllowsBind && canManage;
 	const bindBlockedReason =
-		agent.status === 'pending'
-			? 'Approve this agent before giving it APIs.'
-			: agent.status === 'rejected'
-				? 'A rejected agent cannot be given APIs.'
-				: isArchived
-					? 'An archived agent cannot be given APIs.'
-					: null;
+		statusAllowsBind && !canManage
+			? 'Adding APIs needs permission to manage agents.'
+			: agent.status === 'pending'
+				? 'Approve this agent before giving it APIs.'
+				: agent.status === 'rejected'
+					? 'A rejected agent cannot be given APIs.'
+					: isArchived
+						? 'An archived agent cannot be given APIs.'
+						: null;
 
 	// Re-entry lands on the queue while a batch is owed — those picks are decided.
 	// "Owed" is judged against the live bindings whenever the queue is shut: an item

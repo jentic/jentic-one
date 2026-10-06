@@ -35,6 +35,7 @@ import {
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { ROUTES } from '@/shared/app/routes';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
@@ -569,6 +570,8 @@ export function AgentDetails({
 	const catalogue = usePermissionCatalogue();
 	const scopesUnread =
 		scopes.isPending || scopes.isError || catalogue.isPending || catalogue.isError;
+	// Approve and Deny need `agents:write` (or `org:admin`).
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div data-testid="arrival-card">
@@ -620,29 +623,33 @@ export function AgentDetails({
 								morePending={morePending}
 							/>
 							<p className="text-foreground/90 text-sm">
-								It has its own key but can&apos;t make calls until you approve it.
+								{canDecide
+									? "It has its own key but can't make calls until you approve it."
+									: "It has its own key but can't make calls until someone who can manage agents approves it."}
 							</p>
-							<div className="mt-3 flex flex-wrap items-center gap-2">
-								<Button
-									variant={ACTION_VARIANT.approve}
-									loading={approvePending}
-									disabled={scopesUnread}
-									onClick={onApprove}
-									aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
-								>
-									<CircleCheck className="h-4 w-4" />
-									{ACTION_LABEL.approve}
-								</Button>
-								<Button
-									variant={ACTION_VARIANT.deny}
-									disabled={approvePending}
-									onClick={onDeny}
-									aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
-								>
-									{ACTION_LABEL.deny}
-								</Button>
-							</div>
-							{scopesUnread && (
+							{canDecide && (
+								<div className="mt-3 flex flex-wrap items-center gap-2">
+									<Button
+										variant={ACTION_VARIANT.approve}
+										loading={approvePending}
+										disabled={scopesUnread}
+										onClick={onApprove}
+										aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
+									>
+										<CircleCheck className="h-4 w-4" />
+										{ACTION_LABEL.approve}
+									</Button>
+									<Button
+										variant={ACTION_VARIANT.deny}
+										disabled={approvePending}
+										onClick={onDeny}
+										aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</div>
+							)}
+							{canDecide && scopesUnread && (
 								<p
 									data-testid="approve-waits-for-scopes"
 									className="text-muted-foreground mt-2 text-xs"

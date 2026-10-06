@@ -3,6 +3,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { AgentsService, sharedQueryKeys } from '@/shared/api';
 import type { AgentResponse } from '@/shared/api';
 import { useEagerCursorDrain } from '@/shared/hooks/useEagerCursorDrain';
+import { AGENTS_READ, useCanAccess } from '@/shared/auth/useCanAccess';
 
 /** Stable key so the nav badge + any other consumer share one cache slice.
  * Derived from the shared agents root so a prefix invalidation of `agentsRoot`
@@ -22,6 +23,9 @@ export const pendingAgentsCountKey = [...sharedQueryKeys.agentsRoot, 'pending', 
  * shares this one cache slice — names the LONGEST-waiting agent, and that agent
  * lives on the LAST page. `count` is exact once `complete`, a floor until then
  * ("N+"); a first-page failure resolves to `count: 0, atLeast: false`.
+ *
+ * Off for a caller without `agents:read` (or `org:admin`): the roster is
+ * refused to them, so there is nothing to count and no request goes out.
  */
 export function usePendingAgentsCount(): {
 	count: number;
@@ -29,8 +33,14 @@ export function usePendingAgentsCount(): {
 	agents: AgentResponse[];
 	/** True only when every pending page loaded — the list (and count) is whole. */
 	complete: boolean;
+	/** True while the first page is still loading (false when the read is off). */
+	isLoading: boolean;
+	/** The read failed (any page). */
+	isError: boolean;
 } {
+	const canReadAgents = useCanAccess(AGENTS_READ);
 	const query = useInfiniteQuery({
+		enabled: canReadAgents,
 		queryKey: pendingAgentsCountKey,
 		queryFn: ({ pageParam }) =>
 			AgentsService.listAgents({ status: 'pending', limit: 50, cursor: pageParam }),
@@ -51,5 +61,7 @@ export function usePendingAgentsCount(): {
 		atLeast: agents.length > 0 && !complete,
 		agents,
 		complete,
+		isLoading: query.isLoading,
+		isError: query.isError,
 	};
 }

@@ -146,12 +146,17 @@ export function useUsageStats(
 /**
  * `pollWhileActive` (ms) re-polls only while the loaded page still holds a
  * queued/running job, so a settled queue stops hitting the backend.
+ * `enabled: false` (a caller without `jobs:read`) sends nothing.
  */
 export function useJobs(
 	params: ListJobsParams = {},
-	{ pollWhileActive = false }: { pollWhileActive?: number | false } = {},
+	{
+		pollWhileActive = false,
+		enabled = true,
+	}: { pollWhileActive?: number | false; enabled?: boolean } = {},
 ) {
 	return useQuery<JobListResponse>({
+		enabled,
 		queryKey: monitorKeys.jobs(params),
 		queryFn: () => listJobs(params),
 		placeholderData: keepPreviousData,

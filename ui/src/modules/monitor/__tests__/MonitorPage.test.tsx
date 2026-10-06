@@ -62,6 +62,14 @@ function toggle(group: string, name: string) {
 	return within(screen.getByRole('group', { name: group })).getByRole('button', { name });
 }
 
+/** Like {@link toggle}, but waits for the option: a permission-gated source (the
+ * Audit log) is offered only once `/users/me` has resolved. */
+async function findToggle(group: string, name: string) {
+	return within(await screen.findByRole('group', { name: group })).findByRole('button', {
+		name,
+	});
+}
+
 const MEMBER = {
 	id: '00000000-0000-0000-0000-000000000002',
 	email: 'member@local',
@@ -115,7 +123,7 @@ describe('MonitorPage', () => {
 		await user.click(toggle('Activity source', 'Everything'));
 		await screen.findByRole('link', { name: 'Execution failed: github-api' });
 
-		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		await user.click(await screen.findByRole('button', { name: 'Overview' }));
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
 		const params = currentParams();
 		expect(params.get('view')).toBeNull();
@@ -501,7 +509,7 @@ describe('MonitorPage', () => {
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		await user.click(toggle('Activity source', 'Audit log'));
+		await user.click(await findToggle('Activity source', 'Audit log'));
 
 		// Audit entries read as sentences, not raw action codes.
 		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
@@ -616,7 +624,7 @@ describe('MonitorPage', () => {
 		renderMonitor('/app/monitor?show=calls&status=failed&days=30&actor_id=user_admin');
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
-		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		await user.click(await screen.findByRole('button', { name: 'Overview' }));
 		await screen.findByText(/Last 30 days/);
 
 		const params = currentParams();
@@ -811,7 +819,7 @@ describe('Monitor inter-linking', () => {
 			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
 		});
 
-		await user.click(toggle('Activity source', 'Audit log'));
+		await user.click(await findToggle('Activity source', 'Audit log'));
 		await user.click(await screen.findByRole('link', { name: /Open job .* in Jobs/ }));
 		await waitFor(() => {
 			const params = currentParams();
