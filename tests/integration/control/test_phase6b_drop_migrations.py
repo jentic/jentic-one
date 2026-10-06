@@ -35,6 +35,9 @@ pytestmark = pytest.mark.integration
 #: already carries the ack evidence columns (``f2b3c4d5e6a7``).
 _CONTROL_PRE_DROP = "f2b3c4d5e6a7"  # pragma: allowlist secret
 _ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
+#: The admin drop itself. A superuser-run chain stops here and the app role
+#: takes it on to head, so later revisions' objects stay owned by that role.
+_ADMIN_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 
 _CONTROL_LEGACY_TABLES = (
     "toolkit_permission_rules",
@@ -382,7 +385,7 @@ async def test_admin_drop_uses_the_control_ack_when_readable(
             control_digest="x",
             admin_digest=legacy_state_digest({"agent_toolkit_bindings": ["atb_6btest_1"]}),
         )
-        await asyncio.to_thread(command.upgrade, cfg, "head")
+        await asyncio.to_thread(command.upgrade, cfg, _ADMIN_DROP)
         assert "agent_toolkit_bindings" not in await _table_names(admin_db)
     finally:
         async with control_db.session() as session:
@@ -396,4 +399,5 @@ async def test_admin_drop_uses_the_control_ack_when_readable(
                 text("DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_6btest%'")
             )
             await session.commit()
-        await asyncio.to_thread(command.upgrade, cfg, "head")
+        await asyncio.to_thread(command.upgrade, cfg, _ADMIN_DROP)
+        await asyncio.to_thread(command.upgrade, _admin_cfg(integration_config), "head")
