@@ -397,7 +397,8 @@ export class AgentsService {
      * name and redirect-URI origin, the granted scopes, the consenting user,
      * and created/last-used timestamps. Allowed for the agent's owner or an
      * admin — authorization is enforced in the service layer, mirroring the
-     * ``:revoke`` semantics.
+     * ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+     * same as an agent that does not exist.
      * @returns OAuthGrantListResponse Successful Response
      * @throws ApiError
      */
