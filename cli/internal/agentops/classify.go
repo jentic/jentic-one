@@ -171,12 +171,12 @@ func BrokerError(r *ExecuteResult) *ux.CodedError {
 type BrokerErrorRecovery string
 
 const (
-	// RecoverOperation: no registered operation serves the call — rediscover it.
+	// RecoverOperation means no registered operation serves the call — rediscover it.
 	RecoverOperation BrokerErrorRecovery = "operation"
-	// RecoverCredential: a Jentic-Credential-Id/Name header named a credential
+	// RecoverCredential means a Jentic-Credential-Id/Name header named a credential
 	// the broker could not resolve — pick a valid one.
 	RecoverCredential BrokerErrorRecovery = "credential"
-	// RecoverContract: any other broker 4xx (method, revision pin, payload size,
+	// RecoverContract means any other broker 4xx (method, revision pin, payload size,
 	// idempotency key, egress-blocked URL, request validation) — fix the request
 	// against the operation's contract.
 	RecoverContract BrokerErrorRecovery = "contract"
