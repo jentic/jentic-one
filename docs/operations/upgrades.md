@@ -15,8 +15,9 @@ The contract is the same on every install shape; only the commands differ.
    `docker run --rm --env-file … <image> python -m jentic_one.migrations.run`,
    or the compose file's `migrate` service. Appending `--check` inspects
    without modifying: it prints an
-   `OVERALL current|uninitialized|pending` verdict and exits non-zero (`3`)
-   unless `OVERALL current`, so scripts can branch on it. A full run (all
+   `OVERALL current|uninitialized|pending|unknown` verdict and exits `0` for
+   `current`, `3` for `uninitialized` or `pending`, and `5` for `unknown`
+   (the step ledger could not be read), so scripts can branch on it. A full run (all
    databases, no `--target`) also performs the release's **upgrade steps** —
    data changes that span databases — and prints an
    `==> upgrade step <name>: <action>` line for each. Most steps run once per
@@ -37,7 +38,9 @@ The contract is the same on every install shape; only the commands differ.
    `STATUS upgrade-step:<name> pending` line and `OVERALL pending` (exit
    `3`), once every database is at head; a full run clears it. If the
    schemas are at head but the step ledger cannot be read, `--check` prints
-   `OVERALL unknown` and exits `5`. The run
+   `OVERALL unknown` and exits `5`. `jenticctl start` refuses to start
+   while a step is pending, naming `jenticctl update --stack-only`, and
+   carries on when the verdict is `unknown`. The run
    lock these steps take is a Postgres session-level advisory lock, so point
    the migration at the database directly, not through a transaction-mode
    pooler (pgbouncer `pool_mode=transaction`).
