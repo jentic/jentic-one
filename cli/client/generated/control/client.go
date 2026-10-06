@@ -6328,10 +6328,10 @@ type ClientInterface interface {
 
 	// CancelJob Cancel Job
 	//
-	// Cancel a queued or running job; an already-terminal job is returned unchanged.
+	// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
 	//
-	// A ``held`` execution answers ``409``: it settles only through its approval
-	// (a reviewer's decision, the filing agent's withdrawal, or expiry).
+	// A held execution answers ``409``: it awaits its approval and settles only through
+	// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10472,10 +10472,10 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 
 // CancelJob Cancel Job
 //
-// Cancel a queued or running job; an already-terminal job is returned unchanged.
+// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
 //
-// A “held“ execution answers “409“: it settles only through its approval
-// (a reviewer's decision, the filing agent's withdrawal, or expiry).
+// A held execution answers “409“: it awaits its approval and settles only through
+// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
 //
 // Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -23059,10 +23059,10 @@ type ClientWithResponsesInterface interface {
 
 	// CancelJobWithResponse Cancel Job
 	//
-	// Cancel a queued or running job; an already-terminal job is returned unchanged.
+	// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
 	//
-	// A ``held`` execution answers ``409``: it settles only through its approval
-	// (a reviewer's decision, the filing agent's withdrawal, or expiry).
+	// A held execution answers ``409``: it awaits its approval and settles only through
+	// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -40722,10 +40722,10 @@ func (c *ClientWithResponses) GetJobResultWithResponse(ctx context.Context, jobI
 
 // CancelJobWithResponse Cancel Job
 //
-// Cancel a queued or running job; an already-terminal job is returned unchanged.
+// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
 //
-// A “held“ execution answers “409“: it settles only through its approval
-// (a reviewer's decision, the filing agent's withdrawal, or expiry).
+// A held execution answers “409“: it awaits its approval and settles only through
+// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
 //
 // Returns a wrapper object for the known response body format(s).
 //
