@@ -141,6 +141,38 @@ function PagedHarness({
 	);
 }
 
+/**
+ * The ledger inside a shell-like scroller (`#app-scroll`), with a button that
+ * appends an entity (a later commit, like an import landing).
+ */
+function ScrollerHarness({ entities }: { entities: DiscoveryEntity[] }) {
+	const [rows, setRows] = useState(entities);
+	return (
+		<div id="app-scroll" style={{ height: 400, overflowY: 'auto', width: 760 }}>
+			<button
+				type="button"
+				onClick={() => setRows((r) => [...r, api(`zz${r.length}.example.com`)])}
+			>
+				Append
+			</button>
+			<CatalogLedger
+				entities={rows}
+				loading={false}
+				error={null}
+				activeId={null}
+				onOpen={() => {}}
+				onImport={() => {}}
+				pendingApiIds={new Set()}
+				query=""
+				hasNextPage={false}
+				isFetchingNextPage={false}
+				onLoadMore={() => {}}
+				onImportOwn={() => {}}
+			/>
+		</div>
+	);
+}
+
 /** A head feed plus rail-jump ranges keyed by start key (`m` → M…). */
 function JumpHarness({
 	head,
@@ -529,5 +561,62 @@ describe('CatalogLedger', () => {
 		expect(getComputedStyle(announcer).position).toBe('absolute');
 		const doc = document.scrollingElement!;
 		expect(doc.scrollHeight).toBeLessThanOrEqual(window.innerHeight + 1);
+	});
+
+	describe('a rail landing never pulls the reader back later', () => {
+		const LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('');
+		const lettered = LETTERS.flatMap((l) => [1, 2, 3, 4].map((i) => api(`${l}${l}${i}.com`)));
+
+		function jumpToC() {
+			// Reduced motion: the landing is an instant scroll, so the test runs
+			// well inside the landing window.
+			const real = window.matchMedia;
+			window.matchMedia = ((q: string) =>
+				q.includes('prefers-reduced-motion')
+					? ({ matches: true } as MediaQueryList)
+					: real.call(window, q)) as typeof window.matchMedia;
+			onTestFinished(() => {
+				window.matchMedia = real;
+			});
+			renderWithProviders(<ScrollerHarness entities={lettered} />);
+			const scroller = document.getElementById('app-scroll')!;
+			const rail = screen.getByRole('navigation', { name: 'Jump to letter' });
+			fireEvent.click(within(rail).getByRole('button', { name: /^C — / }));
+			expect(scroller.scrollTop).toBeGreaterThan(0);
+			return scroller;
+		}
+
+		it('stops re-pinning once the reader scrolls (wheel)', async () => {
+			const scroller = jumpToC();
+			const landed = scroller.scrollTop;
+			// The reader scrolls on by hand, further down the list.
+			scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true }));
+			scroller.scrollTop = landed + 600;
+			const read = scroller.scrollTop;
+			// A later commit (an import landing) must leave the position alone.
+			fireEvent.click(screen.getByRole('button', { name: 'Append' }));
+			await new Promise((r) => requestAnimationFrame(() => r(null)));
+			expect(scroller.scrollTop).toBe(read);
+		});
+
+		it('stops re-pinning once the reader scrolls (a scroll key)', async () => {
+			const scroller = jumpToC();
+			fireEvent.keyDown(document.body, { key: 'PageDown' });
+			scroller.scrollTop += 400;
+			const read = scroller.scrollTop;
+			fireEvent.click(screen.getByRole('button', { name: 'Append' }));
+			await new Promise((r) => requestAnimationFrame(() => r(null)));
+			expect(scroller.scrollTop).toBe(read);
+		});
+
+		it('stops re-pinning a second after landing, even with no input', async () => {
+			const scroller = jumpToC();
+			await new Promise((r) => setTimeout(r, 1100));
+			scroller.scrollTop += 500;
+			const read = scroller.scrollTop;
+			fireEvent.click(screen.getByRole('button', { name: 'Append' }));
+			await new Promise((r) => requestAnimationFrame(() => r(null)));
+			expect(scroller.scrollTop).toBe(read);
+		});
 	});
 });

@@ -86,6 +86,8 @@ const SM_QUERY = '(min-width: 640px)';
 const SPY_OFFSET_PX = 84;
 /** Where a jumped-to letter heading lands (under the sticky toolbar). */
 const HEADING_SCROLL_MARGIN_PX = 76;
+/** Keys that scroll the page — the reader taking over from a rail landing. */
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' ']);
 
 /**
  * A rail jump's range (see `useCatalogJump`): the feed started at a letter,
@@ -264,14 +266,54 @@ export function CatalogLedger({
 	// landing line. The range's rows arrive a frame or two late and shorten the
 	// content above, which clamps the in-flight smooth scroll a letter short
 	// (landing on the one before the target). After landing we therefore re-pin
-	// the target to the line across the next few reflows. Bounded (not held
-	// indefinitely) so a later background poll or the reader's own scroll is
-	// never yanked back; reset on each new jump.
-	const landing = useRef<{ letter: RailLetter; left: number } | null>(null);
+	// the target to the line across the next few reflows — but only briefly
+	// (`LANDING_WINDOW_MS`) and only until the reader scrolls themselves
+	// (wheel, touch, a scroll key, or a press on the scrollbar), so a later
+	// commit (an import landing, a background poll) never pulls them back.
+	const landing = useRef<{ letter: RailLetter; left: number; until: number } | null>(null);
 	/** How many post-landing reflows to re-pin the target through. */
 	const LANDING_CORRECTIONS = 4;
+	/** How long after a landing a reflow may still re-pin the target. */
+	const LANDING_WINDOW_MS = 1000;
 	const landOn = useCallback((letter: RailLetter) => {
-		landing.current = { letter, left: LANDING_CORRECTIONS };
+		landing.current = {
+			letter,
+			left: LANDING_CORRECTIONS,
+			until: performance.now() + LANDING_WINDOW_MS,
+		};
+	}, []);
+	// The reader taking over the scroll ends any pending re-pin.
+	useEffect(() => {
+		const scroller = shellScroller();
+		const cancel = () => {
+			landing.current = null;
+		};
+		const onKey = (e: KeyboardEvent) => {
+			// A key a widget handled (the rail's arrows, a listbox) doesn't scroll.
+			if (!SCROLL_KEYS.has(e.key) || e.defaultPrevented) return;
+			const t = e.target;
+			if (
+				t instanceof HTMLElement &&
+				(t.isContentEditable || t.closest('input,textarea,select'))
+			)
+				return;
+			cancel();
+		};
+		// A press on the scroller itself (not on its content) is its scrollbar.
+		const onPointerDown = (e: PointerEvent) => {
+			if (e.target === scroller) cancel();
+		};
+		const opts = { passive: true, capture: true } as const;
+		scroller.addEventListener('wheel', cancel, opts);
+		scroller.addEventListener('touchstart', cancel, opts);
+		scroller.addEventListener('pointerdown', onPointerDown as EventListener, opts);
+		window.addEventListener('keydown', onKey);
+		return () => {
+			scroller.removeEventListener('wheel', cancel, opts);
+			scroller.removeEventListener('touchstart', cancel, opts);
+			scroller.removeEventListener('pointerdown', onPointerDown as EventListener, opts);
+			window.removeEventListener('keydown', onKey);
+		};
 	}, []);
 
 	const model = useMemo(
@@ -490,11 +532,16 @@ export function CatalogLedger({
 	// range's rows arrive and reflow a frame or two later, which shortens the
 	// content above the smooth-scroll's clamp — so the animation would stop a
 	// letter short (landing on the one before the target). Re-pin the target to
-	// the line on each commit for a few reflows, so the jump always lands
-	// squarely on its own letter regardless of the reflow.
+	// the line on each commit for a few reflows within the landing window (see
+	// `landOn`), so the jump lands squarely on its own letter; past the window,
+	// or once the reader scrolls, commits leave the scroll position alone.
 	useLayoutEffect(() => {
 		const pending = landing.current;
 		if (!pending) return;
+		if (performance.now() > pending.until) {
+			landing.current = null;
+			return;
+		}
 		const entry = model.rail.find((r) => r.letter === pending.letter);
 		const el = entry?.anchorKey ? headingRefs.current.get(entry.anchorKey) : undefined;
 		if (!el) return;
