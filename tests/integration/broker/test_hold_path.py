@@ -163,6 +163,37 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     assert "amount" not in json.dumps(event.data)
 
 
+async def test_held_links_root_on_the_admin_api_origin(
+    integration_context: Context, clean: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``broker.jobs_api_base_url`` set (a standalone broker), the review
+    link and both ``_links`` point at the admin API + UI origin, never the
+    broker's own request origin."""
+    ctx = integration_context
+    broker = ctx.config.broker.model_copy(update={"jobs_api_base_url": "http://ui.local:8000"})
+    monkeypatch.setattr(ctx, "_config", ctx.config.model_copy(update={"broker": broker}))
+    envelope = await _hold(ctx)
+
+    approval_id = envelope["approval"]["id"]
+    assert envelope["approval"]["review_url"] == f"http://ui.local:8000/app/approvals/{approval_id}"
+    assert envelope["_links"] == {
+        "self": f"http://ui.local:8000/jobs/{envelope['job_id']}",
+        "withdraw": f"http://ui.local:8000/executions/approvals/{approval_id}:withdraw",
+    }
+    async with ctx.admin_db.session() as session:
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert event.data["review_url"] == envelope["approval"]["review_url"]
+    assert "broker.local" not in json.dumps(envelope)
+
+
 async def test_identical_retry_joins_without_a_second_event(
     integration_context: Context, clean: None
 ) -> None:

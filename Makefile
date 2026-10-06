@@ -152,14 +152,21 @@ start-admin: ## Start admin surface standalone
 start-control: ## Start control surface standalone
 	JENTIC__APPS=control uv run python -m jentic_one
 
+# The standalone broker answers on :8100, but the admin API (jobs, approvals)
+# and the web UI live on the combined app at :8000. Point the broker's
+# absolute links (async-job and held-call `_links`, the approval `review_url`)
+# there; its own request origin would name the broker instead.
+LOCAL_BROKER_ENV := JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 \
+	JENTIC__BROKER__JOBS_API_BASE_URL=http://127.0.0.1:8000
+
 start-broker: ## Start broker surface standalone on :8100 (runs alongside start-app on :8000)
-	JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 uv run python -m jentic_one
+	$(LOCAL_BROKER_ENV) uv run python -m jentic_one
 
 start-local: ## Start the combined app (:8000) and the broker (:8100) together for local testing
 	@echo "==> combined app → http://127.0.0.1:8000   broker → http://127.0.0.1:8100 (Ctrl-C stops both)"
 	@trap 'kill 0' INT TERM EXIT; \
 		$(MAKE) start-app & \
-		JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 uv run python -m jentic_one & \
+		$(LOCAL_BROKER_ENV) uv run python -m jentic_one & \
 		wait
 
 migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/local-sqlite.yaml)
