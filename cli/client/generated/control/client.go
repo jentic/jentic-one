@@ -4923,7 +4923,8 @@ type ClientInterface interface {
 	// name and redirect-URI origin, the granted scopes, the consenting user,
 	// and created/last-used timestamps. Allowed for the agent's owner or an
 	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics.
+	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+	// same as an agent that does not exist.
 	//
 	// Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 	ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7927,7 +7928,8 @@ func (c *Client) UpdateAgentJwks(ctx context.Context, agentId string, body Updat
 // name and redirect-URI origin, the granted scopes, the consenting user,
 // and created/last-used timestamps. Allowed for the agent's owner or an
 // admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics.
+// “:revoke“ semantics. An agent the caller cannot see answers 404, the
+// same as an agent that does not exist.
 //
 // Corresponds with GET /agents/{agent_id}/oauth-grants (the `ListAgentOauthGrants` operationId).
 func (c *Client) ListAgentOauthGrants(ctx context.Context, agentId string, params *ListAgentOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -21129,7 +21131,8 @@ type ClientWithResponsesInterface interface {
 	// name and redirect-URI origin, the granted scopes, the consenting user,
 	// and created/last-used timestamps. Allowed for the agent's owner or an
 	// admin — authorization is enforced in the service layer, mirroring the
-	// ``:revoke`` semantics.
+	// ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+	// same as an agent that does not exist.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -37693,7 +37696,8 @@ func (c *ClientWithResponses) UpdateAgentJwksWithResponse(ctx context.Context, a
 // name and redirect-URI origin, the granted scopes, the consenting user,
 // and created/last-used timestamps. Allowed for the agent's owner or an
 // admin — authorization is enforced in the service layer, mirroring the
-// “:revoke“ semantics.
+// “:revoke“ semantics. An agent the caller cannot see answers 404, the
+// same as an agent that does not exist.
 //
 // Returns a wrapper object for the known response body format(s).
 //

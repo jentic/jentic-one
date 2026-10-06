@@ -152,7 +152,11 @@ class PrerequisiteRepository:
 
     @staticmethod
     async def get_agent_credential_binding(
-        session: AsyncSession, *, agent_id: str, credential_id: str
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+        visible_to: AgentVisibility | None = None,
     ) -> AgentCredentialBindingRow | None:
         """Return the direct binding's (id, suspended, rule_set_id), or ``None``.
 
@@ -161,14 +165,26 @@ class PrerequisiteRepository:
         in the control DB, so the rules endpoints bridge the same seam the
         reverse lookup above does. ``rule_set_id`` rides along so the dry-run
         endpoint can evaluate an attached shared set instead of inline rules.
+
+        ``visible_to`` applies the same agent narrowing as
+        :meth:`list_agents_for_credential`: a binding whose agent the caller
+        may not see returns ``None``, exactly like a missing binding.
         """
-        result = await session.execute(
-            text(
-                "SELECT id, suspended, rule_set_id FROM agent_credential_bindings "
-                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
-            ),
-            {"agent_id": agent_id, "credential_id": credential_id},
-        )
+        params: dict[str, object] = {"agent_id": agent_id, "credential_id": credential_id}
+        where = "b.agent_id = :agent_id AND b.credential_id = :credential_id"
+        if visible_to is None:
+            stmt = text(
+                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                f"WHERE {where}"
+            )
+        else:
+            params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
+            stmt = text(
+                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                "JOIN agents a ON a.id = b.agent_id "
+                f"WHERE {where} AND (a.id = :self_id OR a.owner_id IN :owner_ids)"
+            ).bindparams(bindparam("owner_ids", expanding=True))
+        result = await session.execute(stmt, params)
         row = result.fetchone()
         if row is None:
             return None

@@ -565,6 +565,49 @@ def test_agent_permissions_owner_gated(
     assert resp.json()["type"] == "credential_not_found"
 
 
+@pytest.fixture()
+def bound_agent_client(
+    web_context: Context, bound_agents: tuple[str, list[str]]
+) -> Iterator[TestClient]:
+    """The first agent of ``bound_agents`` itself, holding credentials:read."""
+    _, (agent_id, _) = bound_agents
+    identity = Identity(
+        sub=agent_id,
+        email=f"{agent_id}@test.local",
+        permissions=_effective("credentials:read"),
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_test",
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_agent_permissions_reads_limited_to_visible_agents(
+    bound_agent_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A bound agent reads its own binding's rules but not a sibling's.
+
+    The sibling's binding answers the same 404 ``agent_binding_not_found`` as
+    an agent that is not bound at all, on both the list and the dry-run read.
+    """
+    credential_id, (agent_id, sibling_id) = bound_agents
+    probe = {"method": "GET", "path": "/v1/things"}
+
+    own = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    assert bound_agent_client.get(own).status_code == 200
+    assert bound_agent_client.post(f"{own}:test", json=probe).status_code == 200
+
+    for target in (sibling_id, "agnt_never_bound"):
+        base = f"/credentials/{credential_id}/agents/{target}/permissions"
+        for resp in (
+            bound_agent_client.get(base),
+            bound_agent_client.post(f"{base}:test", json=probe),
+        ):
+            assert resp.status_code == 404, resp.text
+            assert resp.json()["type"] == "agent_binding_not_found"
+
+
 def test_agent_permissions_write_needs_write_scope(
     delegated_agent_client: TestClient, bound_agents: tuple[str, list[str]]
 ) -> None:
