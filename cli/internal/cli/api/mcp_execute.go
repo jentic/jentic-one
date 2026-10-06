@@ -866,10 +866,10 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"Returns {status, headers, body, execution_id}: any HTTP status, including upstream " +
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
 					"error result with recovery directions instead. A 202 response with status \"held\" means " +
-					"the call is HELD for human approval: show the user its approval.review_url (a reviewer " +
-					"signs in there to approve or deny it), then call get_execution_result once with the job_id " +
-					"it carries and wait_seconds: 30; if it is still held, tell the user and end your turn " +
-					"(call it again when they return) — never re-send the execute. Large bodies are truncated " +
+					"the call is HELD for human approval: above all, show the user its approval.review_url (a reviewer " +
+					"signs in there to approve or deny it) and end your turn so they see it; once the user " +
+					"replies, call get_execution_result once with the job_id it carries and wait_seconds: 30 " +
+					"— never re-send the execute. Large bodies are truncated " +
 					"({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see " +
 					"the rest. Prefer execute_read for pure reads — it is approved more readily.",
 				InputSchema: executeInputSchema(true),
@@ -898,11 +898,11 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 				Description: "Poll a job by id: returns {job_id, kind, status, ...} and, once terminal, the " +
 					"result document — the upstream response when \"completed\", the problem when a held call " +
 					"\"failed\" (denied or expired approval, or a failed run). Use it when execute returns a " +
-					"202 HELD response (human approval required): show the user the review_url from that " +
-					"response, then call this once with the job id it carries and wait_seconds: 30 (it returns " +
-					"early once the status is terminal: completed, failed, cancelled, dead_letter). If it is " +
-					"still held, tell the user it is waiting for approval and end your turn; call it again when " +
-					"they return. NEVER re-send the execute while a job is pending; approval happens " +
+					"202 HELD response (human approval required): above all, show the user the review_url from that " +
+					"response and end your turn so they see it. Only after the user replies, call this once " +
+					"with the job id it carries and wait_seconds: 30 (it returns early once the status is " +
+					"terminal: completed, failed, cancelled, dead_letter). If it is still held, tell the user " +
+					"it is waiting for approval and end your turn again. NEVER re-send the execute while a job is pending; approval happens " +
 					"out-of-band and re-sending duplicates the call. " +
 					`Example: {"job_id": "job_abc123", "wait_seconds": 30}. Omit wait_seconds to read the ` +
 					"current status at once.",

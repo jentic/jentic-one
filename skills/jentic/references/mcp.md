@@ -159,13 +159,13 @@ execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets
 
 **The job-poll idiom.** A held or async execution does not answer inline: a
 202 HELD response (human approval required) or a tracked import returns a
-**job envelope** (`{job_id, status, …}`). For a held call, **show the user
-its `approval.review_url`** — a reviewer signs in there to approve or deny
-it. Then call `get_execution_result` **once** with the job id and
-`wait_seconds: 30`; it returns early once the status is terminal
-(`completed`, `failed`, `cancelled`, `dead_letter`). If it is still held,
-tell the user it is waiting for approval and end your turn; call it again
-when they return. A `failed` held call carries the permission-denied problem
+**job envelope** (`{job_id, status, …}`). For a held call, the most important step is to
+**show the user its `approval.review_url`** — a reviewer signs in there to approve or deny
+it — and end your turn so the user sees the link. **Do not call
+`get_execution_result` until the user replies**; then call it **once** with
+the job id and `wait_seconds: 30`; it returns early once the status is
+terminal (`completed`, `failed`, `cancelled`, `dead_letter`). If it is still
+held, tell the user it is waiting for approval and end your turn again. A `failed` held call carries the permission-denied problem
 (denied or expired) as its result. A tracked import is polled the same way:
 
 ```

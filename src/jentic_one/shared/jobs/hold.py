@@ -48,10 +48,11 @@ ENCRYPTED_PAYLOAD_KEY = "_enc"
 
 #: What the agent is told to do with a held 202.
 HELD_AGENT_DIRECTIVE = (
-    "This call needs human approval. Show the user the review_url, then call "
-    "get_execution_result once with job_id and wait_seconds: 30. If it is still held, "
-    "tell the user it is waiting for approval and end your turn; call "
-    "get_execution_result again when they return. Do not re-send the call."
+    "This call needs human approval. Most important: show the user the review_url, "
+    "since they cannot approve it without that link, and end your turn so they see it. "
+    "Do not call get_execution_result until the user replies; then call it once with "
+    "job_id and wait_seconds: 30. If it is still held, tell the user it is waiting for "
+    "approval and end your turn again. Do not re-send the call."
 )
 
 
