@@ -361,7 +361,9 @@ describe('MonitorPage', () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getByTestId('location-path')).toHaveTextContent('/approvals/exap_held_1'),
+			expect(screen.getByTestId('location-path')).toHaveTextContent(
+				'/agents/approvals/exap_held_1',
+			),
 		);
 		expect(currentParams().get('execution_id')).toBeNull();
 		expect(currentParams().get('trace_id')).toBeNull();

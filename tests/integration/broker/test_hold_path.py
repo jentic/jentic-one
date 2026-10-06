@@ -129,7 +129,7 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
         f"/executions/approvals/{approval['id']}:withdraw"
     )
     assert set(approval) == {"id", "review_url", "expires_at"}
-    assert approval["review_url"].endswith(f"/app/approvals/{approval['id']}")
+    assert approval["review_url"].endswith(f"/app/agents/approvals/{approval['id']}")
 
     async with ctx.admin_db.session() as session:
         job = await session.get(Job, envelope["job_id"])
@@ -175,7 +175,10 @@ async def test_held_links_root_on_the_admin_api_origin(
     envelope = await _hold(ctx)
 
     approval_id = envelope["approval"]["id"]
-    assert envelope["approval"]["review_url"] == f"http://ui.local:8000/app/approvals/{approval_id}"
+    assert (
+        envelope["approval"]["review_url"]
+        == f"http://ui.local:8000/app/agents/approvals/{approval_id}"
+    )
     assert envelope["_links"] == {
         "self": f"http://ui.local:8000/jobs/{envelope['job_id']}",
         "withdraw": f"http://ui.local:8000/executions/approvals/{approval_id}:withdraw",

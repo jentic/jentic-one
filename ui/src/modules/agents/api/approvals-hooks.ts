@@ -13,11 +13,11 @@ import {
 	getApproval,
 	listApprovals,
 	type ListApprovalsParams,
-} from '@/modules/approvals/api/client';
+} from '@/modules/agents/api/approvals-client';
 import type { DecideRequest, ExecutionApprovalResponse } from '@/shared/api';
 
 export { ApprovalDecision, ExecutionApprovalState } from '@/shared/api';
-export { ApprovalsApiError } from '@/modules/approvals/api/client';
+export { ApprovalsApiError } from '@/modules/agents/api/approvals-client';
 
 /** Stable query-key roots for precise cache invalidation. */
 export const approvalsKeys = {

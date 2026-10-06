@@ -80,11 +80,10 @@ const MODULE_QUERY_KEY_ROOTS = {
 	discover: ['discover'],
 	credentials: ['credentials'],
 	dashboard: ['dashboard'],
-	agents: ['agents'],
+	agents: ['agents', 'approvals'],
 	monitor: ['monitor'],
 	docs: ['docs'],
 	settings: ['settings', 'oauth-clients'],
-	approvals: ['approvals'],
 };
 
 // Guard: every module dir under src/modules MUST appear in the map above, so a

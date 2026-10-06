@@ -14,7 +14,7 @@ import (
 )
 
 const heldBrokerBody = `{"job_id":"job_9","status":"held","approval":{"id":"exap_9",` +
-	`"review_url":"https://jentic.example/app/approvals/exap_9","expires_at":"2026-10-07T00:00:00Z"},` +
+	`"review_url":"https://jentic.example/app/agents/approvals/exap_9","expires_at":"2026-10-07T00:00:00Z"},` +
 	`"agent_directive":"` + heldAgentDirective + `","_links":{"self":"https://jentic.example/jobs/job_9"}}`
 
 // heldServers starts one httptest server answering as both the broker (any
@@ -114,7 +114,7 @@ func TestMCPExecuteHeld_URLElicitationRoundTrip(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	ir, ok := res.InputRequests[reviewInputKey].(*mcp.ElicitParams)
-	if !ok || ir.Mode != "url" || ir.URL != "https://jentic.example/app/approvals/exap_9" {
+	if !ok || ir.Mode != "url" || ir.URL != "https://jentic.example/app/agents/approvals/exap_9" {
 		t.Fatalf("input requests = %#v, want one URL elicitation of the review page", res.InputRequests)
 	}
 	if !strings.Contains(ir.Message, "POST /v1/charges") || res.RequestState == "" {

@@ -6,7 +6,7 @@ import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/m
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 import { settingsHandlers } from '@/modules/settings/mocks/handlers';
-import { approvalsHandlers } from '@/modules/approvals/mocks/handlers';
+import { approvalsHandlers } from '@/modules/agents/mocks/approvalsHandlers';
 
 /**
  * Root MSW handler table.

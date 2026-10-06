@@ -3,7 +3,7 @@ import {
 	APPROVAL_STATE_LABELS,
 	APPROVAL_STATE_VARIANT,
 	type ApprovalStateValue,
-} from '@/modules/approvals/lib/approvalState';
+} from '@/modules/agents/lib/approvalState';
 
 /** The approval state as a badge, from the module's single state vocabulary. */
 export function ApprovalStateBadge({ state }: { state: string }) {

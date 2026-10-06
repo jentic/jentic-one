@@ -40,7 +40,12 @@ import { resetOrphanPurgeAttemptsForTest } from '@/modules/agents/api/hooks';
 /** Surfaces the router's current search string so specs can assert `?agent=`. */
 function LocationProbe() {
 	const location = useLocation();
-	return <div data-testid="location-search">{location.search}</div>;
+	return (
+		<>
+			<div data-testid="location-search">{location.search}</div>
+			<div data-testid="location-path">{location.pathname}</div>
+		</>
+	);
 }
 
 /** Serve `GET /users/me` for the test token, so an `AuthProvider` resolves a
@@ -200,6 +205,16 @@ describe('AgentsPage — flat agents surface', () => {
 			screen.queryByRole('button', { name: 'New service account' }),
 		).not.toBeInTheDocument();
 		expect(screen.getByRole('tablist', { name: 'Agents' })).toBeInTheDocument();
+	});
+
+	it('opens the Approvals subsection from the page header', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+		await user.click(screen.getByRole('button', { name: 'Approvals' }));
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents/approvals'),
+		);
 	});
 
 	it('renders every agent as a strip pill and names the longest-waiting in the banner', async () => {

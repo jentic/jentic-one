@@ -1,12 +1,12 @@
 /**
- * Approvals list page — `/app/approvals`.
+ * Approvals list page — `/app/agents/approvals`, a subsection of Agents.
  *
  * Lists the execution approvals the signed-in reviewer may see (the agent's
  * owner, or an org admin), pending first by default. A row opens the detail.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { CheckSquare } from 'lucide-react';
+import { ArrowLeft, CheckSquare } from 'lucide-react';
 import {
 	Button,
 	DataTable,
@@ -17,15 +17,15 @@ import {
 	SkeletonRows,
 	type Column,
 } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
-import { useApprovals } from '@/modules/approvals/api/hooks';
-import { ApprovalStateBadge } from '@/modules/approvals/components/ApprovalStateBadge';
-import { ApprovalsHelp } from '@/modules/approvals/components/ApprovalsHelp';
-import { APPROVAL_STATE_OPTIONS } from '@/modules/approvals/lib/approvalState';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
+import { useApprovals } from '@/modules/agents/api/approvals-hooks';
+import { ApprovalStateBadge } from '@/modules/agents/components/approvals/ApprovalStateBadge';
+import { ApprovalsHelp } from '@/modules/agents/components/approvals/ApprovalsHelp';
+import { APPROVAL_STATE_OPTIONS } from '@/modules/agents/lib/approvalState';
 import type {
 	ExecutionApprovalResponse,
 	ListApprovalsParams,
-} from '@/modules/approvals/api/client';
+} from '@/modules/agents/api/approvals-client';
 
 const COLUMNS: Column<ExecutionApprovalResponse>[] = [
 	{
@@ -97,6 +97,10 @@ export default function ApprovalsPage() {
 				subtitle="Agent calls held by a require-approval rule, waiting for a reviewer."
 				actions={
 					<>
+						<Button variant="ghost" size="sm" onClick={() => navigate(ROUTES.agents)}>
+							<ArrowLeft className="mr-1 h-4 w-4" />
+							Agents
+						</Button>
 						<Button variant="outline" size="sm" onClick={() => refetch()}>
 							Refresh
 						</Button>
@@ -141,9 +145,7 @@ export default function ApprovalsPage() {
 							? 'No pending approvals.'
 							: 'No approvals match this filter.'
 					}
-					onRowClick={(row) =>
-						navigate(`${ROUTES.approvals}/${encodeURIComponent(row.id)}`)
-					}
+					onRowClick={(row) => navigate(ROUTE_PATHS.approval(row.id))}
 					getRowLabel={(row) =>
 						`View approval for ${row.method} ${row.path} (${row.state})`
 					}

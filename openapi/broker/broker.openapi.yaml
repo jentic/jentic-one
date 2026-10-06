@@ -820,7 +820,7 @@ components:
               format: uri
               description: Review page; the reviewer signs in to decide. Carries no credential.
               examples:
-                - https://your-instance.example/app/approvals/exap_abc123
+                - https://your-instance.example/app/agents/approvals/exap_abc123
             expires_at:
               type: string
               format: date-time
@@ -1034,7 +1034,7 @@ components:
                 status: held
                 approval:
                   id: exap_abc123
-                  review_url: https://your-instance.example/app/approvals/exap_abc123
+                  review_url: https://your-instance.example/app/agents/approvals/exap_abc123
                   expires_at: "2026-10-06T12:00:00Z"
                 agent_directive: >-
                   This call needs human approval. Show the user the review_url, then poll

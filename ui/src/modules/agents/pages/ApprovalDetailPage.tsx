@@ -1,5 +1,5 @@
 /**
- * Approval detail page — `/app/approvals/:id`.
+ * Approval detail page — `/app/agents/approvals/:id`, a subsection of Agents.
  *
  * The review page an agent's held call links to. Shows who filed it (agent and
  * owner), the matched rule, and the exact request that runs if approved
@@ -29,10 +29,10 @@ import {
 	ApprovalsApiError,
 	useApproval,
 	useDecideApproval,
-} from '@/modules/approvals/api/hooks';
-import { ApprovalStateBadge } from '@/modules/approvals/components/ApprovalStateBadge';
-import { ApprovalsHelp } from '@/modules/approvals/components/ApprovalsHelp';
-import { isDecidable } from '@/modules/approvals/lib/approvalState';
+} from '@/modules/agents/api/approvals-hooks';
+import { ApprovalStateBadge } from '@/modules/agents/components/approvals/ApprovalStateBadge';
+import { ApprovalsHelp } from '@/modules/agents/components/approvals/ApprovalsHelp';
+import { isDecidable } from '@/modules/agents/lib/approvalState';
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
 	return (

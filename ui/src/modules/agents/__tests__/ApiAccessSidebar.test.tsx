@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { page } from 'vitest/browser';
-import { http, HttpResponse } from 'msw';
 import {
 	renderWithProviders,
 	screen,

@@ -44,7 +44,7 @@ export const ROUTES = {
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
-	approvals: '/approvals',
+	approvals: '/agents/approvals',
 } as const;
 
 /**
@@ -71,6 +71,11 @@ export const ROUTE_PATHS = {
 	 * any caller that wants to show one. `/agents/:agentId` redirects here.
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
+	/**
+	 * One execution approval's review page, a subsection of Agents. The broker
+	 * builds the same path into a held call's `review_url`.
+	 */
+	approval: (approvalId: string) => `${ROUTES.approvals}/${encodeURIComponent(approvalId)}`,
 	/**
 	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
@@ -105,7 +110,6 @@ import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
 import { settingsRoutes } from '@/modules/settings/routes';
-import { approvalsRoutes } from '@/modules/approvals/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
@@ -114,5 +118,4 @@ export const moduleRoutes: RouteObject[] = [
 	...workspaceRoutes,
 	...monitorRoutes,
 	...settingsRoutes,
-	...approvalsRoutes,
 ];

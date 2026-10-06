@@ -10,10 +10,10 @@ import {
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import ApprovalsPage from '@/modules/approvals/pages/ApprovalsPage';
-import ApprovalDetailPage from '@/modules/approvals/pages/ApprovalDetailPage';
-import { resetApprovalsStore } from '@/modules/approvals/mocks/handlers';
-import { isDecidable } from '@/modules/approvals/lib/approvalState';
+import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
+import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
+import { resetApprovalsStore } from '@/modules/agents/mocks/approvalsHandlers';
+import { isDecidable } from '@/modules/agents/lib/approvalState';
 
 function renderDetail(id: string) {
 	return renderWithProviders(
@@ -21,7 +21,7 @@ function renderDetail(id: string) {
 			<ApprovalDetailPage />
 			<Toaster />
 		</>,
-		{ route: `/approvals/${id}`, path: '/approvals/:id' },
+		{ route: `/agents/approvals/${id}`, path: '/agents/approvals/:id' },
 	);
 }
 
@@ -32,7 +32,9 @@ describe('Approvals pages', () => {
 	});
 
 	it('lists pending approvals by default and filters by state', async () => {
-		const { container } = renderWithProviders(<ApprovalsPage />, { route: '/approvals' });
+		const { container } = renderWithProviders(<ApprovalsPage />, {
+			route: '/agents/approvals',
+		});
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.queryByText('POST /v1/refunds')).not.toBeInTheDocument();
 		expect(screen.getByRole('heading', { level: 1, name: 'Approvals' })).toBeInTheDocument();

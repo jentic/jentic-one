@@ -451,7 +451,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			wireEvent({
 				event_id: 'evt_held2',
 				type: 'execution.approval_requested',
-				data: { review_url: 'http://127.0.0.1:8000/app/approvals/exap_2' },
+				data: { review_url: 'http://127.0.0.1:8000/app/agents/approvals/exap_2' },
 			}),
 		);
 		expect(fromUrl.tokens.approval_id).toBe('exap_2');
@@ -473,12 +473,12 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const actions = inlineActionsFor(ev);
 		expect(actions.map((a) => a.kind)).toEqual(['view_approval', 'acknowledge']);
 		expect(actions[0]?.label).toBe('Review');
-		expect(actions[0]?.href?.(ev)).toBe('/approvals/exap_1');
+		expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/exap_1');
 		// Once settled the row keeps a passive link to the approval only.
 		const acked = inlineActionsFor({ ...ev, acknowledged: true });
 		expect(acked.map((a) => a.kind)).toEqual(['view_approval']);
 		expect(acked[0]?.label).toBe('View approval');
-		expect(primaryDestinationFor(ev)).toBe('/approvals/exap_1');
+		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
 	});
 
 	it('routes decided/withdrawn approval events to the approval, keeping View job', () => {
@@ -491,7 +491,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			const kinds = inlineActionsFor(ev).map((a) => a.kind);
 			expect(kinds).toEqual(['view_job']);
 			expect(kinds).not.toContain('view_execution');
-			expect(primaryDestinationFor(ev)).toBe('/approvals/exap_1');
+			expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
 		}
 	});
 
@@ -782,7 +782,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 							data: {
 								approval_id: 'exap_1',
 								agent_id: 'agnt_1',
-								review_url: 'http://127.0.0.1:8000/app/approvals/exap_1',
+								review_url: 'http://127.0.0.1:8000/app/agents/approvals/exap_1',
 							},
 						}),
 					],
@@ -796,7 +796,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(screen.queryByRole('button', { name: 'View execution' })).not.toBeInTheDocument();
 		await user.click(review);
 		await waitFor(() =>
-			expect(screen.getByTestId('location')).toHaveTextContent('/approvals/exap_1'),
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/exap_1'),
 		);
 	});
 

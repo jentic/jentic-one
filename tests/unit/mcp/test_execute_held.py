@@ -36,7 +36,7 @@ _ENVELOPE = {
     "status": "held",
     "approval": {
         "id": "exap_1",
-        "review_url": "https://jentic.example/app/approvals/exap_1",
+        "review_url": "https://jentic.example/app/agents/approvals/exap_1",
         "expires_at": "2026-10-07T00:00:00Z",
     },
     "agent_directive": HELD_AGENT_DIRECTIVE,
@@ -175,7 +175,7 @@ async def test_url_elicitation_client_gets_an_input_required_result(
     request = result.input_requests[approvals.REVIEW_INPUT_KEY]
     assert isinstance(request, mcp_types.ElicitRequest)
     assert isinstance(request.params, mcp_types.ElicitRequestURLParams)
-    assert request.params.url == "https://jentic.example/app/approvals/exap_1"
+    assert request.params.url == "https://jentic.example/app/agents/approvals/exap_1"
     assert "POST /v1/charges" in request.params.message
     assert result.request_state
     assert "job_held1" not in result.request_state

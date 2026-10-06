@@ -165,7 +165,7 @@ type HeldExecutionResponse struct {
 
 		// ReviewUrl Review page; the reviewer signs in to decide. Carries no credential.
 		//
-		// Examples: https://your-instance.example/app/approvals/exap_abc123
+		// Examples: https://your-instance.example/app/agents/approvals/exap_abc123
 		ReviewUrl string `json:"review_url"`
 	} `json:"approval"`
 

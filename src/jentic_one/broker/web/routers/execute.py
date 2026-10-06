@@ -916,7 +916,7 @@ def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
     ``server.public_base_url``, then the request's own origin (combined
     deployment). The URL carries no credential: the reviewer signs in.
     """
-    path = f"/app/approvals/{approval_id}"
+    path = f"/app/agents/approvals/{approval_id}"
     base = ctx.config.broker.jobs_api_base_url or ctx.config.server.public_base_url
     if base:
         return f"{base.rstrip('/')}{path}"
