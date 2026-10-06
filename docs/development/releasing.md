@@ -150,7 +150,7 @@ the Deprecations table.
   unaffected.
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
-  `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
+  `toolkits:write`, and `owner:toolkits:read` permissions are retired: no route
   requires them and they grant nothing, but they are **tolerated in stored
   grants** — re-submitting a permission row that predates
   the retirement never fails validation. Access is managed on the
@@ -360,7 +360,7 @@ acknowledged. Read this **before** running migrations.
   the `deprecated_toolkit_key_used` WARNING log to a `jak_` key minted for
   their successor agent. The service-account → agent migration no longer
   copies toolkit bindings or re-stamps `toolkit_keys` (both tables are gone);
-  it still copies scope grants, credential bindings and their inline rules.
+  it still copies permission grants, credential bindings and their inline rules.
 - **The `Jentic-Toolkit-Id` header is gone**, on both sides: it is no longer
   read on requests (it was already ignored on the default path) and no
   longer emitted on responses. A request that still sends it is served

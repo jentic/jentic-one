@@ -125,7 +125,7 @@ recovery — follow its instruction instead of retrying the same call.
   Executions, which carries no session column); pass `--idempotency-key
   <uuid>` when retrying mutating calls.
 - `jentic api <METHOD> <path>` is an authenticated passthrough to any
-  control-plane endpoint (`jentic api ops` lists them); full route/scope
+  control-plane endpoint (`jentic api ops` lists them); full route/permission
   reference: [endpoints.md](../reference/endpoints.md).
 
 ## What stays human

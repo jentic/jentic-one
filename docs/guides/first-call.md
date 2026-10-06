@@ -122,7 +122,7 @@ for control-plane mutations, so your call appears in Executions, not Audit).
   [`cli/README.md`](../../cli/README.md).
 - **In-app API reference.** A running deployment serves its own interactive
   API reference at `/docs`, generated from code.
-- **Endpoint & scope reference.** Every HTTP route and the scope it requires:
+- **Endpoint & permission reference.** Every HTTP route and the permission it requires:
   [endpoint reference](../reference/endpoints.md).
 - **Run it somewhere real.** The [installation guides](../installation/README.md),
   then the [security hardening guide](../security/README.md).
