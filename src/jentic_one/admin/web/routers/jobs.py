@@ -116,10 +116,10 @@ async def cancel_job(
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
-    """Cancel a queued or running job; an already-terminal job is returned unchanged.
+    """Cancel a queued, running or held job; an already-terminal job is returned unchanged.
 
-    A ``held`` execution answers ``409``: it settles only through its approval
-    (a reviewer's decision, the filing agent's withdrawal, or expiry).
+    A job held by an execution approval answers ``409``: it settles only through
+    that approval (a reviewer's decision, the filing agent's withdrawal, or expiry).
     """
     view = await job_svc.cancel(job_id, identity=identity)
     return _job_response(view, request)

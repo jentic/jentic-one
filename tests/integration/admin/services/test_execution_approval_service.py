@@ -33,7 +33,7 @@ from jentic_one.admin.services.errors import (
     ExecutionApprovalAlreadyDecidedError,
     ExecutionApprovalForbiddenError,
     ExecutionApprovalNotFoundError,
-    JobHeldError,
+    JobAwaitingApprovalError,
 )
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
 from jentic_one.admin.services.job_result_service import JobResultService
@@ -420,10 +420,31 @@ async def test_jobs_cancel_refuses_a_held_job_and_leaves_its_approval_pending(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     for caller in (actors.agent, actors.admin):
-        with pytest.raises(JobHeldError):
+        with pytest.raises(JobAwaitingApprovalError):
             await JobService(ctx).cancel(hold.job_id, identity=caller)
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
+
+
+async def test_jobs_cancel_cancels_a_held_job_with_no_execution_approval(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """Only approval-backed holds are refused; any other held job cancels normally."""
+    ctx = integration_context
+    async with ctx.admin_db.transaction() as session:
+        job = Job(
+            kind="execution",
+            status=JobStatus.HELD,
+            payload={},
+            created_by=actors.agent.sub,
+            actor_type=actors.agent.actor_type.value,
+        )
+        session.add(job)
+        await session.flush()
+        job_id = job.id
+    view = await JobService(ctx).cancel(job_id, identity=actors.admin)
+    assert view.status == JobStatus.CANCELLED
+    assert (await _job(ctx, job_id)).status == JobStatus.CANCELLED
 
 
 async def _job_result_count(ctx: Context, job_id: str) -> int:
@@ -567,7 +588,7 @@ async def test_jobs_cancel_route_answers_409_for_a_held_job(
         resp = await client.post(f"/jobs/{hold.job_id}:cancel")
     assert resp.status_code == 409
     assert resp.headers["content-type"].startswith("application/problem+json")
-    assert resp.json()["type"].endswith("job_held")
+    assert resp.json()["type"].endswith("job_awaiting_approval")
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
 
 

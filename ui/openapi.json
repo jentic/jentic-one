@@ -28992,7 +28992,7 @@
     },
     "/jobs/{job_id}:cancel": {
       "post": {
-        "description": "Cancel a queued or running job; an already-terminal job is returned unchanged.\n\nA ``held`` execution answers ``409``: it settles only through its approval\n(a reviewer's decision, the filing agent's withdrawal, or expiry).",
+        "description": "Cancel a queued, running or held job; an already-terminal job is returned unchanged.\n\nA job held by an execution approval answers ``409``: it settles only through\nthat approval (a reviewer's decision, the filing agent's withdrawal, or expiry).",
         "operationId": "cancelJob",
         "parameters": [
           {

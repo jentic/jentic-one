@@ -203,11 +203,14 @@ class JobNotCancellableError(AdminServiceError):
         self.job_id = job_id
 
 
-class JobHeldError(JobNotCancellableError):
-    """Raised when ``:cancel`` targets a held job, which settles only through its approval."""
+class JobAwaitingApprovalError(JobNotCancellableError):
+    """Raised when ``:cancel`` targets a job held by a pending execution approval.
+
+    Such a job settles only through its approval (decide, withdraw or expiry).
+    """
 
     def __init__(self, job_id: str) -> None:
-        AdminServiceError.__init__(self, f"Job '{job_id}' is held for approval")
+        AdminServiceError.__init__(self, f"Job '{job_id}' is awaiting execution approval")
         self.job_id = job_id
 
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
-from jentic_one.admin.repos import AuditRepository, JobRepository
+from jentic_one.admin.repos import AuditRepository, ExecutionApprovalRepository, JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
-from jentic_one.admin.services.errors import JobHeldError, JobNotFoundError
+from jentic_one.admin.services.errors import JobAwaitingApprovalError, JobNotFoundError
 from jentic_one.admin.services.metrics import audit_events_counter
 from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
 from jentic_one.shared.auth.identity import Identity
@@ -80,10 +80,13 @@ class JobService:
             job = await JobRepository.get_by_id(session, job_id, filters=access_filters)
             if job is None:
                 raise JobNotFoundError(job_id)
-            if job.status == JobStatus.HELD:
-                # A held execution settles only through its approval (decide,
-                # withdraw or expiry), never through the generic jobs surface.
-                raise JobHeldError(job_id)
+            if job.status == JobStatus.HELD and await ExecutionApprovalRepository.exists_for_job(
+                session, job_id
+            ):
+                # A job held by an execution approval settles only through that
+                # approval (decide, withdraw or expiry), never through the
+                # generic jobs surface. Other held jobs cancel normally.
+                raise JobAwaitingApprovalError(job_id)
 
             cancelled = await JobRepository.cancel_if_active(
                 session, job_id, filters=access_filters
