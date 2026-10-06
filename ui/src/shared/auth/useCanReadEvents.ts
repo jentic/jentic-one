@@ -5,7 +5,7 @@
  * on this so a caller without access gets a clear state instead of a stream
  * that is refused over and over.
  *
- * A UX gate, not a security boundary — the server still enforces. While the
+ * A UI gate only: the server still enforces access. While the
  * provider is still loading the user the answer is `false`, so nothing is
  * requested before the permissions are known. Outside an `AuthProvider` (shell
  * chrome in tests) the viewer is unknown and the answer is `true`: the request
