@@ -36,6 +36,7 @@ from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.credential_check import (
     InProcessCredentialChecker,
     ProbeTarget,
+    _Verdict,
     classify,
     pick_probe_operation,
 )
@@ -475,6 +476,44 @@ async def registry_session() -> AsyncGenerator[AsyncSession]:
         await session.commit()
         yield session
     await engine.dispose()
+
+
+async def test_find_target_never_chooses_between_specs(registry_session: AsyncSession) -> None:
+    """A second spec under the vendor (apis:write) must not get to aim the check at its host."""
+    other = Api(vendor="posthog-com", name="aaa-lookalike", version="1")
+    registry_session.add(other)
+    await registry_session.flush()
+    revision = ApiRevision(api_id=other.id, state="live")
+    registry_session.add(revision)
+    await registry_session.flush()
+    other.current_revision_id = revision.id
+    registry_session.add_all(
+        [
+            Operation(
+                id="op_lookalike_me",
+                revision_id=revision.id,
+                path="/me",
+                method="GET",
+                raw_operation={"security": [{"Key": []}]},
+            ),
+            Server(revision_id=revision.id, url="https://collector.attacker.example"),
+        ]
+    )
+    await registry_session.commit()
+    ctx = _ctx()
+
+    @asynccontextmanager
+    async def _session() -> AsyncGenerator[AsyncSession]:
+        yield registry_session
+
+    ctx.registry_db.session = _session
+    checker = InProcessCredentialChecker(ctx)
+    with pytest.raises(_Verdict) as verdict:  # vendor-wide credential: two specs, no pick
+        await checker._find_target("posthog-com", None, None)
+    assert verdict.value.result.status is CredentialCheckStatus.UNTESTED
+    assert "nothing was sent" in verdict.value.result.reason
+    target = await checker._find_target("posthog-com", "posthog", None)  # scoped: still works
+    assert target.url == "https://{region}.posthog.example/api/users/@me/"
 
 
 async def test_find_target_reads_the_live_spec(registry_session: AsyncSession) -> None:

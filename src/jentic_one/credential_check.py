@@ -429,6 +429,15 @@ class InProcessCredentialChecker:
                     f"No registered API matches the credential ({vendor}); import the API, "
                     "then check again.",
                 )
+            if len(covered) > 1:
+                # Never choose between specs: importing an API (apis:write) is a different
+                # permission from using this credential, so a second spec under the same
+                # vendor could otherwise point the check, and the secret, at its own host.
+                raise _Verdict(
+                    Status.UNTESTED,
+                    f"The credential covers {len(covered)} registered {vendor} APIs; a check "
+                    "only calls the one API a credential is scoped to, so nothing was sent.",
+                )
             for api in covered:
                 rows = await session.execute(
                     select(Operation.id, Operation.path, Operation.raw_operation).where(
