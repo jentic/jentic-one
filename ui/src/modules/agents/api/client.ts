@@ -65,6 +65,17 @@ export class AgentsApiError extends Error {
 	}
 }
 
+/** A refused read (403): the caller lacks the permission, and retrying cannot
+ * change the answer. A 401 is a different state — the session itself ended. */
+export function isAgentsAccessDenied(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 403;
+}
+
+/** The session is no longer valid (401). */
+export function isAgentsSessionEnded(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 401;
+}
+
 function toAgentsError(error: unknown, fallback: string): AgentsApiError {
 	if (error instanceof ApiError) {
 		const body = error.body as { detail?: unknown } | undefined;

@@ -52,6 +52,8 @@ interface CredentialsListProps {
 
 interface CredentialUsage {
 	usedByAgentCount?: number | null;
+	/** The count covers only the viewer's own agents (see `CredentialMetaLine`). */
+	usedByYoursOnly?: boolean;
 	callsLast7d?: number | null;
 }
 

@@ -13,7 +13,11 @@ import {
 	credentialIsPendingSignIn,
 } from './CredentialCard';
 
-type Usage = { usedByAgentCount?: number | null; callsLast7d?: number | null };
+type Usage = {
+	usedByAgentCount?: number | null;
+	usedByYoursOnly?: boolean;
+	callsLast7d?: number | null;
+};
 
 interface CredentialGroupCardProps {
 	/** Two or more credentials for one API, in list order. */
@@ -232,7 +236,7 @@ function CredentialRow({
 				<CredentialMetaLine
 					cred={cred}
 					usedByAgentCount={usage.usedByAgentCount}
-					yoursOnly={readOnly}
+					yoursOnly={usage.usedByYoursOnly}
 					callsLast7d={usage.callsLast7d}
 					showIdTail={showIdTail}
 					className="mt-0.5"
