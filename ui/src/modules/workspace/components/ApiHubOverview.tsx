@@ -218,6 +218,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 				catalogApiId: api.catalogApiId,
 				securitySchemes: api.securitySchemes,
 				label: workspaceApiDisplayTitle(api),
+				hasLiveRevision: api.currentRevisionId != null,
 			}),
 		[api],
 	);

@@ -83,6 +83,11 @@ export interface SelectedApi {
 	securitySchemeTypes?: string[];
 	/** Human display name (falls back to vendor/name). */
 	label: string;
+	/**
+	 * Local-only: `false` for a draft (no live revision), which has no served
+	 * spec to read schemes from — so none is requested. Unset reads as live.
+	 */
+	hasLiveRevision?: boolean;
 }
 
 /** A public-catalog entry as a pick. */
@@ -131,6 +136,7 @@ export function apiRowToSelected(row: ApiResponse): SelectedApi {
 		apiId: row.catalog_api_id ?? undefined,
 		securitySchemeTypes: row.security_schemes ?? [],
 		label,
+		hasLiveRevision: row.current_revision_id != null,
 	};
 }
 
@@ -254,7 +260,8 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 			getApiSpec(selectedApi!.vendor, selectedApi!.name, selectedApi!.version) as Promise<
 				Record<string, unknown>
 			>,
-		enabled: !!selectedApi && isLocal,
+		// A draft has no live spec (`GET …/openapi` would 404): nothing to read.
+		enabled: !!selectedApi && isLocal && selectedApi.hasLiveRevision !== false,
 		staleTime: 5 * 60 * 1000,
 	});
 

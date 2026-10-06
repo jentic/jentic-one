@@ -728,6 +728,23 @@ describe('ApiDetailPage', () => {
 				expect(screen.queryByTestId('hub-access-give-agent-access')).toBeNull();
 			});
 
+			it('never requests the live spec of a draft API, which has none', async () => {
+				const specReads: string[] = [];
+				worker.use(
+					http.get('/apis/:vendor/:name/:version/openapi', ({ request }) => {
+						specReads.push(request.url);
+						return HttpResponse.json({ detail: 'no live revision' }, { status: 404 });
+					}),
+				);
+				resetCredentialsStore([]);
+				renderAt('/library/workspace/adyen/pos-terminal-management-api/1');
+				expect(await screen.findByTestId('hub-access-draft')).toBeInTheDocument();
+				// The hub's add-credential flow stays mounted (closed); it mustn't
+				// read a spec the draft doesn't serve.
+				await new Promise((r) => setTimeout(r, 300));
+				expect(specReads).toEqual([]);
+			});
+
 			it("reuses the API's existing no-auth credential instead of creating another", async () => {
 				const user = userEvent.setup();
 				resetCredentialsStore([

@@ -58,6 +58,7 @@ export function usePanelCredentialFlow({
 						catalogApiId: target.catalogApiId,
 						securitySchemes: target.securitySchemes,
 						label: target.title,
+						hasLiveRevision: target.currentRevisionId != null,
 					})
 				: undefined,
 		[target],

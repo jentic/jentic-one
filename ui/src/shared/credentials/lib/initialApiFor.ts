@@ -19,6 +19,8 @@ export interface WorkspaceApiSeed {
 	securitySchemes: readonly string[];
 	/** Human display title — the one the host already shows for this API. */
 	label: string;
+	/** Whether it has a live revision (`current_revision_id`); a draft has no served spec. */
+	hasLiveRevision?: boolean;
 }
 
 export function initialApiFor(api: WorkspaceApiSeed): SelectedApi {
@@ -31,5 +33,6 @@ export function initialApiFor(api: WorkspaceApiSeed): SelectedApi {
 		registered: true,
 		securitySchemeTypes: [...api.securitySchemes],
 		label: api.label,
+		hasLiveRevision: api.hasLiveRevision,
 	};
 }
