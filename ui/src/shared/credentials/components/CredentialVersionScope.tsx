@@ -6,7 +6,9 @@
  * "Any version" sends none — the backend stores an empty version as the
  * wildcard (`canonical_credential_scope` → NULL), covering every revision of the
  * API. "Any version" is the default everywhere, so a re-ingested spec keeps its
- * credential. Renders nothing without a version to pin.
+ * credential. On "Any version" a calm note spells out that the credential —
+ * and so any access rules on it — reaches future versions of the API too.
+ * Renders nothing without a version to pin.
  */
 import { SegmentedToggle } from '@/shared/ui';
 
@@ -33,21 +35,32 @@ export function CredentialVersionScope({
 }) {
 	if (!version) return null;
 	return (
-		<div className="flex flex-wrap items-center gap-2" data-testid="credential-version-scope">
-			{/* The group's own name carries the label for assistive tech. */}
-			<span aria-hidden="true" className="text-muted-foreground text-xs">
-				Use for
-			</span>
-			<SegmentedToggle<CredentialVersionScopeValue>
-				ariaLabel="Use this credential for"
-				field
-				options={[
-					{ value: 'pinned', label: `Version ${version}` },
-					{ value: 'any', label: 'Any version' },
-				]}
-				value={value}
-				onChange={onChange}
-			/>
+		<div className="space-y-1.5" data-testid="credential-version-scope">
+			<div className="flex flex-wrap items-center gap-2">
+				{/* The group's own name carries the label for assistive tech. */}
+				<span aria-hidden="true" className="text-muted-foreground text-xs">
+					Use for
+				</span>
+				<SegmentedToggle<CredentialVersionScopeValue>
+					ariaLabel="Use this credential for"
+					field
+					options={[
+						{ value: 'pinned', label: `Version ${version}` },
+						{ value: 'any', label: 'Any version' },
+					]}
+					value={value}
+					onChange={onChange}
+				/>
+			</div>
+			{value === 'any' && (
+				<p
+					className="text-muted-foreground text-xs"
+					data-testid="credential-version-any-note"
+				>
+					Covers every version of this API — any access rules you add apply to future
+					versions too.
+				</p>
+			)}
 		</div>
 	);
 }

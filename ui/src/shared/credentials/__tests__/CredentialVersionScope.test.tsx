@@ -35,6 +35,20 @@ describe('CredentialVersionScope', () => {
 		expect(onChange).toHaveBeenCalledWith('pinned');
 	});
 
+	it('notes that an unpinned credential reaches future versions', () => {
+		renderWithProviders(<CredentialVersionScope version="v1" value="any" onChange={vi.fn()} />);
+		expect(screen.getByTestId('credential-version-any-note')).toHaveTextContent(
+			/apply to future\s+versions/i,
+		);
+	});
+
+	it('drops the note once a version is pinned', () => {
+		renderWithProviders(
+			<CredentialVersionScope version="v1" value="pinned" onChange={vi.fn()} />,
+		);
+		expect(screen.queryByTestId('credential-version-any-note')).not.toBeInTheDocument();
+	});
+
 	it('renders nothing without a version to pin', () => {
 		renderWithProviders(<CredentialVersionScope version="" value="any" onChange={vi.fn()} />);
 		expect(
