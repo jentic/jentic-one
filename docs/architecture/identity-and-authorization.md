@@ -97,8 +97,9 @@ sequenceDiagram
    else, including any private-key material).
 2. **Wait for approval**: registration lands as a `PENDING` agent; a human
    approves or denies it (`agent_service.py`). Once the agent has an owner
-   (claimed), its owner or an `org:admin` decides; an unclaimed agent only an
-   `org:admin`, who becomes its owner on approval. Anyone else gets a 404.
+   (claimed), its owner (holding `agents:write`) or an `org:admin` decides.
+   Only an `org:admin` can decide an unclaimed agent, and becomes its owner on
+   approval. Anyone else gets a 404.
    Until approval, token exchange answers "pending", distinct from a rejected
    assertion.
 3. **Exchange** (RFC 7523 JWT-bearer grant, `assertion_service.py`): the
