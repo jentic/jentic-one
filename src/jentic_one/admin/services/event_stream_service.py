@@ -6,8 +6,11 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services.schemas.events import EventView, Heartbeat
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventSeverity
 
@@ -24,6 +27,8 @@ class EventStreamService:
 
     async def stream(
         self,
+        *,
+        identity: Identity,
         since: datetime | None = None,
         last_event_id: str | None = None,
         poll_interval_seconds: float = 5.0,
@@ -64,7 +69,11 @@ class EventStreamService:
         commits are rescued for up to ``overlap_seconds`` of lag + skew; beyond
         that they are lost to the live stream (the durable backlog fetch still
         shows them).
+
+        The stream carries only events visible to ``identity`` (see
+        ``EventService``); a ``Last-Event-ID`` the caller cannot see is ignored.
         """
+        access_filters = build_access_filters(identity, Event)
         overlap = timedelta(seconds=overlap_seconds)
         # FastAPI parses an offset-less ``?since=`` as a NAIVE datetime; the ORM
         # returns aware-UTC rows, and naive-vs-aware comparison raises TypeError
@@ -86,7 +95,9 @@ class EventStreamService:
         resume_id: str | None = None
         if last_event_id is not None:
             async with self._ctx.admin_db.session() as session:
-                event = await EventRepository.get_by_id(session, last_event_id)
+                event = await EventRepository.get_by_id(
+                    session, last_event_id, filters=access_filters
+                )
             if event is not None:
                 # Same future-clamp as ``since``: a future-stamped resume row
                 # must not black-hole the stream. When clamped, the id
@@ -115,6 +126,7 @@ class EventStreamService:
                     trace_id=trace_id,
                     actor_id=actor_id,
                     actor_type=actor_type,
+                    filters=access_filters,
                 )
             for event in batch:
                 # ``since``/fresh connects resume EXCLUSIVELY after the
@@ -160,6 +172,7 @@ class EventStreamService:
                         trace_id=trace_id,
                         actor_id=actor_id,
                         actor_type=actor_type,
+                        filters=access_filters,
                     )
                 for event in batch:
                     if event.id in seen:

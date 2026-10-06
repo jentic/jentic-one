@@ -6,36 +6,19 @@ import {
 	userEvent,
 	checkA11y,
 	createErrorHandler,
+	settleAnimations,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { setToken } from '@/shared/api';
 import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
 
-/**
- * PageHeader animates in from opacity:0 via framer-motion. axe runs
- * synchronously, so without settling it sees the button mid-fade and reports a
- * false color-contrast failure. Wait until the entrance animation reaches full
- * opacity before auditing.
- */
-async function settleAnimations(container: HTMLElement): Promise<void> {
-	await waitFor(() => {
-		const faded = Array.from(container.querySelectorAll<HTMLElement>('*')).find((el) => {
-			if (el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true')
-				return false;
-			const opacity = Number.parseFloat(getComputedStyle(el).opacity);
-			return !Number.isNaN(opacity) && opacity > 0 && opacity < 1;
-		});
-		expect(faded).toBeUndefined();
-	});
-}
-
 describe('WorkspacePage', () => {
 	beforeEach(() => {
 		setToken('test-token');
-		// A sibling module (dashboard) also registers `GET /apis` in the global
-		// table; MSW resolves first-match, so prepend the workspace handlers to
-		// guarantee these tests see the workspace fixture regardless of order.
+		// Sibling modules also register `GET /apis` in the global table and MSW
+		// resolves first-match, so prepend the workspace handlers rather than
+		// depend on the root table's order for these assertions.
 		worker.use(...workspaceHandlers);
 	});
 
@@ -57,6 +40,7 @@ describe('WorkspacePage', () => {
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<WorkspacePage />);
 		await screen.findByText('Stripe');
+		// PageHeader fades in; audit the settled frame, not a half-faded button.
 		await settleAnimations(container);
 		await checkA11y(container);
 	});

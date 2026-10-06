@@ -170,6 +170,26 @@ class EffectsRepository:
         return [str(row[0]) for row in result.fetchall()]
 
     @staticmethod
+    async def get_agent_owner(session: AsyncSession, agent_id: str) -> tuple[bool, str | None]:
+        """Return ``(exists, owner_id)`` for an agent via raw SQL (admin DB).
+
+        Cross-DB seam for the connect flow's agent-binding validation: the
+        control-side ``:confirm`` must verify the target agent exists and is
+        owned by the confirming caller before writing the binding, and the
+        broker/control modules may not import admin ORM models. The two
+        axes are separate because ``agents.owner_id`` is nullable — an
+        existing but ownerless agent is ``(True, None)``, not "missing".
+        """
+        result = await session.execute(
+            text("SELECT owner_id FROM agents WHERE id = :agent_id"),
+            {"agent_id": agent_id},
+        )
+        row = result.first()
+        if row is None:
+            return False, None
+        return True, (str(row[0]) if row[0] is not None else None)
+
+    @staticmethod
     async def bind_agent_to_credential(
         session: AsyncSession,
         *,
@@ -217,33 +237,59 @@ class EffectsRepository:
         return existing.scalar_one(), True
 
     @staticmethod
-    async def grant_scope_to_actor(
+    async def unbind_agent_from_credential(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        credential_id: str,
+    ) -> bool:
+        """Delete a direct agent↔credential binding via raw SQL (admin DB).
+
+        Mirror of ``bind_agent_to_credential`` for the connect flow's
+        unhappy-terminal sweep: the pending credential is deleted
+        control-side (its ``agent_permission_rules`` rows cascade with it),
+        but the admin-DB binding row is cross-DB (no FK), so it must be
+        removed explicitly or a ghost binding outlives the credential.
+        Idempotent — returns True when a row was deleted.
+        """
+        result = await session.execute(
+            text(
+                "DELETE FROM agent_credential_bindings "
+                "WHERE agent_id = :agent_id AND credential_id = :credential_id"
+            ),
+            {"agent_id": agent_id, "credential_id": credential_id},
+        )
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def grant_permission_to_actor(
         session: AsyncSession,
         *,
         actor_id: str,
         actor_type: str,
-        scope: str,
+        permission: str,
         granted_by: str,
         created_by: str,
     ) -> bool:
-        """Grant a scope to an actor idempotently via raw SQL.
+        """Grant a permission to an actor idempotently via raw SQL.
 
         Returns True if created, False if already existed.
         """
         grant_id = generate_ksuid("asg")
         result = await session.execute(
             text(
-                "INSERT INTO actor_scope_grants "
-                "(id, actor_id, actor_type, scope, granted_by, created_by) "
-                "VALUES (:id, :actor_id, :actor_type, :scope, :granted_by, :created_by) "
-                "ON CONFLICT (actor_id, scope) DO NOTHING "
+                "INSERT INTO actor_permission_grants "
+                "(id, actor_id, actor_type, permission, granted_by, created_by) "
+                "VALUES (:id, :actor_id, :actor_type, :permission, :granted_by, :created_by) "
+                "ON CONFLICT (actor_id, permission) DO NOTHING "
                 "RETURNING id"
             ),
             {
                 "id": grant_id,
                 "actor_id": actor_id,
                 "actor_type": actor_type,
-                "scope": scope,
+                "permission": permission,
                 "granted_by": granted_by,
                 "created_by": created_by,
             },

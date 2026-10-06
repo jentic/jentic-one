@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,16 +12,14 @@ from sqlalchemy import delete
 from sqlalchemy.exc import OperationalError
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AccessTokenRepository,
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
-    ServiceAccountRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
@@ -45,11 +44,8 @@ async def clean_tokens(integration_context: Context) -> AsyncGenerator[None, Non
         async with integration_context.admin_db.session() as session:
             await session.execute(delete(AccessToken))
             await session.execute(delete(RefreshToken))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
-            await session.execute(
-                delete(ServiceAccount).where(ServiceAccount.created_by == _SEED_MARKER)
-            )
             await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
             await session.commit()
 
@@ -87,22 +83,6 @@ async def _seed_agent(
         )
         await session.commit()
         return agent.id
-
-
-async def _seed_service_account(
-    ctx: Context, *, owner_id: str, status: ActorStatus = ActorStatus.ACTIVE
-) -> str:
-    async with ctx.admin_db.session() as session:
-        sa = await ServiceAccountRepository.create(
-            session,
-            name="token-test-sa",
-            owner_id=owner_id,
-            registered_by=owner_id,
-            created_by=_SEED_MARKER,
-        )
-        await ServiceAccountRepository.update_status(session, sa.id, status)
-        await session.commit()
-        return sa.id
 
 
 @pytest.fixture()
@@ -208,6 +188,24 @@ async def test_token_endpoint_unsupported_grant_type(
         await token_endpoint(request=request, response=response, body=body, token_svc=token_service)
 
 
+async def test_token_endpoint_client_credentials_grant_is_unsupported(
+    token_service: TokenService, clean_tokens: None
+) -> None:
+    """Theme-8 Phase 2 (D3): the service-account client-credentials arm is gone,
+    so ``grant_type=client_credentials`` answers ``unsupported_grant_type``."""
+    request = MagicMock()
+    request.headers = {}
+    response = MagicMock()
+    response.headers = {}
+
+    body = TokenRequest(
+        grant_type="client_credentials", client_id="sva_whatever", client_secret="jcs_x"
+    )
+    with pytest.raises(InvalidGrantError, match="unsupported grant_type") as exc_info:
+        await token_endpoint(request=request, response=response, body=body, token_svc=token_service)
+    assert exc_info.value.oauth_error_code == "unsupported_grant_type"
+
+
 async def test_invalid_refresh_token(token_service: TokenService, clean_tokens: None) -> None:
     """Attempting to refresh with an invalid token raises InvalidGrantError."""
     with pytest.raises(InvalidGrantError, match="not found"):
@@ -220,18 +218,18 @@ async def test_resolve_access_token(
     """resolve_access_token returns an Identity whose scopes reflect *live* grants.
 
     Long-lived agent tokens (an access+refresh pair) resolve scopes from the
-    actor's current ``ActorScopeGrant`` rows, so a scope change is reflected
+    actor's current ``ActorPermissionGrant`` rows, so a scope change is reflected
     immediately. Seed the grant that a real ``issue_pair`` would have derived
     from.
     """
     owner_id = await _seed_user(integration_context, "usr_resolve_owner")
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="execute",
+            permission="execute",
             granted_by="usr_test",
             created_by="usr_test",
         )
@@ -256,11 +254,11 @@ async def test_resolve_reflects_scope_grant_without_remint(
     owner_id = await _seed_user(integration_context, "usr_scope_owner")
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="apis:read",
+            permission="apis:read",
             granted_by="usr_owner",
             created_by="usr_owner",
         )
@@ -273,11 +271,11 @@ async def test_resolve_reflects_scope_grant_without_remint(
 
     # Owner grants apis:write after the token was minted.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="apis:write",
+            permission="apis:write",
             granted_by="usr_owner",
             created_by="usr_owner",
         )
@@ -297,11 +295,11 @@ async def test_resolve_reflects_scope_revocation_without_remint(
     agent_id = await _seed_agent(integration_context, owner_id=owner_id)
     async with integration_context.admin_db.session() as session:
         for scope in ("apis:read", "apis:write"):
-            await ActorScopeGrantRepository.grant(
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id=agent_id,
                 actor_type=ActorType.AGENT,
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -312,7 +310,9 @@ async def test_resolve_reflects_scope_revocation_without_remint(
     )
 
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await ActorPermissionGrantRepository.revoke(
+            session, actor_id=agent_id, permission="apis:write"
+        )
         await session.commit()
 
     resolved = await token_service.resolve_access_token(access)
@@ -460,23 +460,19 @@ async def test_disabled_agent_cannot_refresh_to_fresh_tokens(
     assert refresh2.startswith("rt_")
 
 
-async def test_disabled_service_account_token_is_inactive(
-    token_service: TokenService, integration_context: Context, clean_tokens: None
+async def test_residual_service_account_token_is_refused(
+    token_service: TokenService, clean_tokens: None
 ) -> None:
-    owner_id = await _seed_user(integration_context, "usr_sa_owner")
-    sa_id = await _seed_service_account(integration_context, owner_id=owner_id)
-    access, refresh = await token_service.issue_pair(sa_id, ActorType.SERVICE_ACCOUNT, [])
+    """Theme-8 Phase 4: ``service_account`` is no longer an actor type, and the
+    drop migration leaves residual SA token rows in place. Such a row fails
+    CLOSED on every path (resolve, introspect, refresh) and never raises."""
+    # A raw string, not an ActorType member: the enum value was deleted.
+    retired = cast(ActorType, "service_account")
+    access, refresh = await token_service.issue_pair("sva_residual", retired, [])
 
-    resolved = await token_service.resolve_access_token(access)
-    assert resolved is not None and resolved.active is True
-
-    async with integration_context.admin_db.session() as session:
-        await ServiceAccountRepository.update_status(session, sa_id, ActorStatus.DISABLED)
-        await session.commit()
-
-    resolved = await token_service.resolve_access_token(access)
-    assert resolved is not None
-    assert resolved.active is False
+    assert await token_service.resolve_access_token(access) is None
+    assert (await token_service.introspect(access))["active"] is False
+    assert (await token_service.introspect(refresh))["active"] is False
     with pytest.raises(InvalidGrantError, match="not active"):
         await token_service.refresh(refresh)
 

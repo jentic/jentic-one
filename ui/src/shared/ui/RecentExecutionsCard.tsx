@@ -1,6 +1,6 @@
 /**
  * RecentExecutionsCard — the console-standard "Recent executions" feed used
- * by the agent and service-account detail pages. One visual grammar: a status-dot row with the mono operation
+ * by an agent's Activity sheet. One visual grammar: a status-dot row with the mono operation
  * label, inline HTTP status, optional error line, optional attribution slot,
  * duration, and relative time — ending in a pre-filtered "Open Monitor"
  * deep-link. Monitor owns the full history (paging, filters, trace sheets);
@@ -26,7 +26,7 @@ export interface RecentExecutionItem {
 	status: string;
 	/** HTTP status of the upstream call, shown inline after the label. */
 	httpStatus?: number | null;
-	/** Mono operation label (e.g. `github.create_issue`). */
+	/** Mono operation label (e.g. `github · POST /repos/{owner}/{repo}/issues`). */
 	label: string;
 	/** Error detail rendered under the label for failures/denials. */
 	error?: string | null;

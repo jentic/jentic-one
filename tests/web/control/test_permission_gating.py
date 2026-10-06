@@ -6,7 +6,7 @@ pass — both directions:
 * An *under-scoped* caller (holds a real but unrelated scope) is **denied** 403
   on the newly gated reads, proving the gate is not a no-op.
 * A *delegated agent* (minted ``owner:credentials:read`` via
-  ``DEFAULT_AGENT_SCOPES``, never the bare ``credentials:read``) is **admitted**
+  ``DEFAULT_AGENT_PERMISSIONS``, never the bare ``credentials:read``) is **admitted**
   past the guard so the service-layer delegation filter
   (``control/scoping/filters.py``) can scope its owner's rows. Without the
   OR-listed owner scope on the guard the agent would be 403'd before that

@@ -24,7 +24,7 @@ from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
@@ -259,7 +259,9 @@ async def test_resolution_honors_quadruple_scope_intersection(
 
     # Narrow the agent's live grants: apis:write revoked → drops immediately.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await ActorPermissionGrantRepository.revoke(
+            session, actor_id=agent_id, permission="apis:write"
+        )
         await session.commit()
 
     for resolver in (token_svc, broker):
@@ -284,11 +286,11 @@ async def test_grant_scopes_cap_agent_live_scopes(
 
     # Agent gains apis:write post-consent — the grant must still cap it out.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.grant(
+        await ActorPermissionGrantRepository.grant(
             session,
             actor_id=agent_id,
             actor_type=ActorType.AGENT,
-            scope="apis:write",
+            permission="apis:write",
             granted_by=user_id,
             created_by=_SEED_MARKER,
         )
@@ -328,7 +330,9 @@ async def test_refresh_reports_live_narrowed_scope_not_snapshot(
 
     # apis:write revoked between mint and rotation.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await ActorPermissionGrantRepository.revoke(
+            session, actor_id=agent_id, permission="apis:write"
+        )
         await session.commit()
 
     token_svc = TokenService(integration_context)
@@ -374,7 +378,9 @@ async def test_exchange_reports_live_narrowed_scope_not_consent_snapshot(
 
     # apis:write revoked inside the code TTL, before the exchange.
     async with integration_context.admin_db.session() as session:
-        await ActorScopeGrantRepository.revoke(session, actor_id=agent_id, scope="apis:write")
+        await ActorPermissionGrantRepository.revoke(
+            session, actor_id=agent_id, permission="apis:write"
+        )
         await session.commit()
 
     access, _refresh, id_token, reported = await authorize_svc.exchange_code(

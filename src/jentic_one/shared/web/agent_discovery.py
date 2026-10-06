@@ -33,7 +33,8 @@ are tooling/onboarding documents, not a product API.
 
 Split deployments: the router is mounted on every surface app, but the links
 in ``llms.txt`` span surfaces (auth, registry, control), so standalone
-surfaces should set ``auth.canonical_base_url`` to the gateway URL — otherwise
+surfaces should set ``server.public_base_url`` (or ``auth.canonical_base_url``)
+to the gateway URL — otherwise
 the rendered links point at the single surface's own host and may 404 there.
 """
 
@@ -327,7 +328,7 @@ forward proxy, not a hidden MCP server."""
 > it.
 
 Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
-canonical guide to the identity → discover → request access → execute loop —
+canonical guide to the identity → discover → check access → execute loop —
 the same canonical guide the `jentic` CLI renders into agent runtimes — and
 its `references/` files (listed in the skills index) carry the per-surface
 detail.
@@ -335,7 +336,7 @@ detail.
 {mcp_paragraph}
 
 If your session has `jentic` MCP tools, prefer them; use the `jentic` CLI for
-`setup`/`access` recovery and anything not exposed over MCP. Both surfaces
+`setup`/`doctor` recovery and anything not exposed over MCP. Both surfaces
 talk to the same instance — check `backend`/`host` in the identity stamp on
 MCP tool results (or `GET {base}/instance`) if in doubt.
 
@@ -363,9 +364,10 @@ sequence is:
    (required — replayed or missing `jti` values are rejected).
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
-   `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
-5. Request access: `POST {base}/access-requests` for the API you need,
-   then wait for a human to approve.
+   `GET {base}/reference/endpoints.json` for the full endpoint + permission map.
+5. Check access: `GET {base}/me` lists the credentials you are bound to. If
+   the API you need isn't covered, report the gap to your human operator —
+   they connect the credential and bind it to you in the dashboard.
 6. Execute by sending the request through the broker's forward proxy with the
    full upstream URL (the broker runs on its own host/port — see the skill's
    execute section). The CLI's `jentic execute` is the equivalent audited
@@ -376,8 +378,8 @@ sequence is:
 - [Agent onboarding skill]({base}{SKILL_PATH}): canonical "how to use Jentic"
   guide for agents; same canonical content as the CLI-installed skill
 - [OpenAPI specification]({base}/openapi.json): the control-plane API
-- [Endpoint and scope reference]({base}/reference/endpoints.json): every
-  endpoint with required scopes and typical caller (agent / operator)
+- [Endpoint and permission reference]({base}/reference/endpoints.json): every
+  endpoint with required permissions and typical caller (agent / operator)
 - [OAuth discovery]({base}/.well-known/oauth-authorization-server): RFC 8414
   metadata — token endpoint, registration endpoint, supported grants
 - [Interactive API docs]({base}/docs): Swagger UI over the live spec
@@ -399,7 +401,7 @@ def get_agent_discovery_router() -> APIRouter:
 
     @router.get("/skills/index.json", include_in_schema=False)
     async def skills_index(request: Request, ctx: Context = Depends(get_ctx)) -> JSONResponse:
-        base = deployment_base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config, request)
         return JSONResponse(skills_index_rows(base), media_type="application/json")
 
     @router.get(SKILL_ALIAS_PATH, include_in_schema=False)
@@ -440,7 +442,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_PATH, include_in_schema=False)
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
-        base = deployment_base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config, request)
         # The enabled arm is gated on the surface actually carrying the mount,
         # not on config alone: this router rides every standalone surface
         # (split deployments), but the real ``/mcp`` transport is installed on

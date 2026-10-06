@@ -205,21 +205,51 @@ func TestRenderDirectOAuth2Provider(t *testing.T) {
 	if oauth2["kind"] != "direct_oauth2" {
 		t.Errorf("kind = %v, want direct_oauth2", oauth2["kind"])
 	}
-	if oauth2["redirect_uri"] != "http://127.0.0.1:8000/credentials/oauth/callback" {
-		t.Errorf("redirect_uri = %v, want http://127.0.0.1:8000/credentials/oauth/callback", oauth2["redirect_uri"])
+	// The backend derives the callback from the serving origin, so pinning it
+	// here would silently break connect after a port change (#818).
+	if _, ok := oauth2["redirect_uri"]; ok {
+		t.Errorf("redirect_uri must not be rendered, got %v", oauth2["redirect_uri"])
 	}
 }
 
-func TestRenderDirectOAuth2ProviderCustomBaseURL(t *testing.T) {
+func TestRenderPublicBaseURLOmittedWhenDerivable(t *testing.T) {
+	d := NewDraft()
+	d.ServerPort = "8020"
+	out := renderToMap(t, d)
+
+	server := out["server"].(map[string]any)
+	if _, ok := server["public_base_url"]; ok {
+		t.Errorf("public_base_url must be omitted for a bind-derivable origin, got %v", server["public_base_url"])
+	}
+	auth, _ := out["auth"].(map[string]any)
+	if _, ok := auth["canonical_base_url"]; ok {
+		t.Errorf("auth.canonical_base_url must not be rendered, got %v", auth["canonical_base_url"])
+	}
+}
+
+func TestRenderPublicBaseURLOverride(t *testing.T) {
 	d := NewDraft()
 	d.AuthBaseURL = "https://app.example.com"
 	out := renderToMap(t, d)
 
-	creds := out["credentials"].(map[string]any)
-	providers := creds["providers"].(map[string]any)
-	oauth2 := providers["direct_oauth2"].(map[string]any)
-	if oauth2["redirect_uri"] != "https://app.example.com/credentials/oauth/callback" {
-		t.Errorf("redirect_uri = %v, want https://app.example.com/credentials/oauth/callback", oauth2["redirect_uri"])
+	server := out["server"].(map[string]any)
+	if server["public_base_url"] != "https://app.example.com" {
+		t.Errorf("public_base_url = %v, want https://app.example.com", server["public_base_url"])
+	}
+}
+
+func TestRenderPublicBaseURLDockerNonLoopbackPublish(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.ServerHost = "10.9.8.7"
+	d.ServerPort = "18000"
+	out := renderToMap(t, d)
+
+	// The container binds 0.0.0.0 and would derive 127.0.0.1, which a browser
+	// on another machine can't reach — so the published origin is pinned.
+	server := out["server"].(map[string]any)
+	if server["public_base_url"] != "http://10.9.8.7:18000" {
+		t.Errorf("public_base_url = %v, want http://10.9.8.7:18000", server["public_base_url"])
 	}
 }
 
@@ -315,5 +345,20 @@ func TestRenderEncryptionKeysetOverrideWritesVerbatim(t *testing.T) {
 	if entries[1].(map[string]any)["id"] != "v2" ||
 		entries[1].(map[string]any)["material"] != "new-material" {
 		t.Errorf("entry[1] not preserved: %v", entries[1])
+	}
+}
+
+func TestRenderPublicBaseURLOmittedForLocalhostAlias(t *testing.T) {
+	// `localhost` and the backend-derived 127.0.0.1 reach the same process, so
+	// the answer must not pin public_base_url (which would freeze the port).
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.ServerHost = "localhost"
+	d.ServerPort = "8020"
+	out := renderToMap(t, d)
+
+	server := out["server"].(map[string]any)
+	if _, ok := server["public_base_url"]; ok {
+		t.Errorf("public_base_url must be omitted for a localhost bind, got %v", server["public_base_url"])
 	}
 }

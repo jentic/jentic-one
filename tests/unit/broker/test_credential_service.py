@@ -34,6 +34,12 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import (
+    VendorAuthConfig,
+    VendorDeviceAuthorizationFlowConfig,
+    VendorIdentityProbeConfig,
+    VendorRegistryConfig,
+)
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -48,9 +54,18 @@ _IDENTITY = Identity(
 )
 
 
-def _ctx(*, account_linking_base_url: str | None = None) -> MagicMock:
+def _ctx(
+    *,
+    account_linking_base_url: str | None = None,
+    vendors: VendorRegistryConfig | None = None,
+    public_base_url: str = "",
+) -> MagicMock:
     ctx = MagicMock()
     ctx.config.broker.account_linking_base_url = account_linking_base_url
+    ctx.config.server.public_base_url = public_base_url
+    # A real (default-empty) registry: the 424 arm reverse-maps the API onto
+    # a connect key, and a bare MagicMock would explode the .entries scan.
+    ctx.config.vendors = vendors or VendorRegistryConfig()
 
     @asynccontextmanager
     async def _noop_transaction() -> Any:
@@ -160,6 +175,95 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
     assert params["intent_id"].startswith("intent_")
 
 
+def _github_registry() -> VendorRegistryConfig:
+    return VendorRegistryConfig(
+        entries={
+            "github": VendorAuthConfig(
+                vendor="github.com/api.github.com",
+                display_name="GitHub",
+                flows=[
+                    VendorDeviceAuthorizationFlowConfig(
+                        client_id="cid",
+                        authorization_endpoint="https://github.com/login/device/code",
+                        token_endpoint="https://github.com/login/oauth/access_token",
+                    )
+                ],
+                identity_probe=VendorIdentityProbeConfig(
+                    endpoint="https://api.github.com/user",
+                    identity_field="login",
+                    display_template="@{login}",
+                ),
+            )
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_registry_vendor_suggests_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 1b (review M2): when the denied API reverse-maps onto a
+    vendor-registry key, the 424 directive carries a runnable
+    ``suggested_command`` (``jentic connect <key>`` — the registry key,
+    never the API identity) and the prose teaches the relay loop."""
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("github.com", "github.com/api.github.com", "")
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx(vendors=_github_registry())).inject(
+            api_vendor="github.com",
+            api_name="github.com/api.github.com",
+            api_version="",
+            identity=_IDENTITY,
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert directive.parameters["suggested_command"] == "jentic connect github"
+    instruction = directive.human_readable_instruction
+    assert "jentic connect github" in instruction
+    assert "request_connection" in instruction
+    assert "approval_url" in instruction
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_off_registry_keeps_operator_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off the registry no command is fabricated — the ask stays with the
+    operator (a suggested connect for an unknown vendor would only earn the
+    agent a guaranteed unknown-vendor error)."""
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx(vendors=_github_registry())).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert "suggested_command" not in directive.parameters
+    assert "jentic connect" not in directive.human_readable_instruction
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_ignores_public_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # server.public_base_url names this deployment, not an account-linking UI:
+    # it must not synthesize a provisioning_url (the path would 404 here).
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(
+            _ctx(account_linking_base_url=None, public_base_url="https://gw.example.com")
+        ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
+
+    params = exc.value.directive.parameters  # type: ignore[union-attr]
+    assert "provisioning_url" not in params
+
+
 @pytest.mark.asyncio
 async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_resolver(monkeypatch, AmbiguousCredentialError("stripe", "", "", 2))
@@ -198,6 +302,8 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
         )
     assert exc.value.type == "refresh_transient_error"
     assert exc.value.origin == ErrorOrigin.UPSTREAM
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
 
 
 @pytest.mark.asyncio
@@ -404,3 +510,114 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
     # Only an operator can fix an undecryptable credential, so the event must
     # be flagged actionable to surface in the Action Inbox — not just the rail.
     assert kwargs["requires_action"] is True
+
+
+def _owned(resolved: ResolvedCredential, owner: str | None) -> ResolvedCredential:
+    return resolved.model_copy(update={"created_by": owner})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["usr_cred_owner", None])
+async def test_access_event_names_the_credential_owner(
+    monkeypatch: pytest.MonkeyPatch, owner: str | None
+) -> None:
+    """``credential.accessed`` passes the resolved credential's owner through; the
+    actor stays the caller."""
+    _patch_resolved(monkeypatch, _owned(_resolved(), owner))
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.inject_auth",
+        lambda resolved, *, ctx, access_token=None: MagicMock(
+            headers={}, query_params={}, cookies={}
+        ),
+    )
+    audit = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
+    )
+
+    await CredentialService(_ctx()).inject(
+        api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+    )
+
+    assert audit.await_args is not None
+    assert audit.await_args.kwargs["actor_id"] == "agent_42"
+    assert audit.await_args.kwargs["credential_owner"] == owner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "resolved", "fail"),
+    [
+        (
+            "credential.undecryptable",
+            _resolved(),
+            ("inject_auth", DecryptionError("boom")),
+        ),
+        (
+            "credential.refresh_failed",
+            _resolved_oauth2(),
+            ("refresher", RefreshInvalidGrantError("cred_oauth")),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("owner", "expected_created_by"), [("usr_cred_owner", "usr_cred_owner"), (None, "agent_42")]
+)
+async def test_health_events_name_the_credential_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
+    resolved: ResolvedCredential,
+    fail: tuple[str, Exception],
+    owner: str | None,
+    expected_created_by: str,
+) -> None:
+    """Health events about a resolved credential set ``created_by`` to its owner
+    (the caller when the owner is unknown) and ``actor_id`` to the caller."""
+    _patch_resolved(monkeypatch, _owned(resolved, owner))
+    seam, exc = fail
+    if seam == "refresher":
+        _patch_refresher(monkeypatch, exc)
+    else:
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise exc
+
+        monkeypatch.setattr(
+            "jentic_one.broker.services.credentials.orchestrator.inject_auth", _boom
+        )
+    emit_evt = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_event_best_effort", emit_evt
+    )
+
+    with pytest.raises((CredentialUndecryptableError, CredentialNeedsReconnectError)):
+        await CredentialService(_ctx()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    assert emit_evt.await_args is not None
+    kwargs = emit_evt.await_args.kwargs
+    assert kwargs["type"] == event_type
+    assert kwargs["actor_id"] == "agent_42"
+    assert kwargs["created_by"] == expected_created_by
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_event_names_the_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no credential resolved there is no owner: the caller is both fields."""
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+    emit_evt = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_event_best_effort", emit_evt
+    )
+
+    with pytest.raises(CredentialNotProvisionedError):
+        await CredentialService(_ctx()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    assert emit_evt.await_args is not None
+    kwargs = emit_evt.await_args.kwargs
+    assert kwargs["type"] == "credential.not_provisioned"
+    assert kwargs["actor_id"] == "agent_42"
+    assert kwargs["created_by"] == "agent_42"

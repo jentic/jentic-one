@@ -57,6 +57,14 @@ export class MonitorApiError extends Error {
 	}
 }
 
+/**
+ * A refused read: 401 (no valid session) or 403 (missing permission). Retrying
+ * cannot change the answer, so callers stop and show an access state instead.
+ */
+export function isMonitorAccessDenied(error: unknown): boolean {
+	return error instanceof MonitorApiError && (error.status === 401 || error.status === 403);
+}
+
 function toMonitorError(error: unknown, fallback: string): MonitorApiError {
 	if (error instanceof ApiError) {
 		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
@@ -77,6 +85,8 @@ export interface ListExecutionsParams {
 	actorId?: string | null;
 	/** Origin surface filter (backend `Origin` wire value, e.g. `mcp`). */
 	origin?: string | null;
+	/** API filter, colon-encoded `vendor[:name[:version]]` (backend `api` param). */
+	api?: string | null;
 	status?: string[] | null;
 	from?: string | null;
 	to?: string | null;
@@ -92,6 +102,7 @@ export async function listExecutions(
 			traceId: params.traceId ?? null,
 			actorId: params.actorId ?? null,
 			origin: params.origin ?? null,
+			api: params.api ?? null,
 			status: params.status ?? null,
 			from: params.from ?? null,
 			to: params.to ?? null,
@@ -112,7 +123,7 @@ export async function getExecution(executionId: string): Promise<ExecutionRespon
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview usage (enriched aggregation, jentic-one-internal#561)      */
+/* Usage (enriched aggregation, jentic-one-internal#561)             */
 /* ------------------------------------------------------------------ */
 
 export interface UsageStatsParams {

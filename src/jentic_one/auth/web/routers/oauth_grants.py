@@ -69,7 +69,8 @@ async def list_agent_oauth_grants(
     name and redirect-URI origin, the granted scopes, the consenting user,
     and created/last-used timestamps. Allowed for the agent's owner or an
     admin — authorization is enforced in the service layer, mirroring the
-    ``:revoke`` semantics.
+    ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+    same as an agent that does not exist.
     """
     page = await grant_svc.list_grants_for_agent(
         agent_id, identity=identity, status=status, limit=limit, cursor=cursor

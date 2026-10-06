@@ -22,6 +22,7 @@ from jentic_one.shared.broker.execution import (
     ExecutionOutcome,
     RunnerResult,
 )
+from jentic_one.shared.schemas import OperationInfo
 
 
 def _ctx_req(**overrides: object) -> ExecuteRequestContext:
@@ -29,7 +30,7 @@ def _ctx_req(**overrides: object) -> ExecuteRequestContext:
         "upstream_url": "https://api.example.com/v1/things",
         "method": "GET",
         "trace_id": "trace-1",
-        "operation_id": "op-1",
+        "operation": OperationInfo(id="op-1"),
         "api_vendor": "example",
         "api_name": "widgets",
         "api_version": "v1",
@@ -54,7 +55,7 @@ def _outcome(
     context = ExecutionContext(
         execution_id="exec-1",
         toolkit_id="tk-1",
-        operation_id="op-1",
+        operation=OperationInfo(id="op-1"),
         api=None,
         trace_id="trace-1",
     )

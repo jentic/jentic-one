@@ -53,11 +53,13 @@ class ApiRevisionRepository:
         source_filename: str | None = None,
         source_content_id: uuid.UUID | None = None,
         submitted_by: str | None = None,
+        origin: str | None = None,
         created_by: str,
     ) -> ApiRevision:
         revision = ApiRevision(
             api_id=api_id,
             state=ApiRevisionState.DRAFT,
+            origin=origin,
             spec_digest=spec_digest,
             source_type=source_type,
             source_url=source_url,
@@ -214,6 +216,33 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def host_baseline_revision_id(
+        session: AsyncSession, api_id: uuid.UUID, *, exclude: uuid.UUID | None = None
+    ) -> uuid.UUID | None:
+        """The revision a server-host change is measured against, if any.
+
+        The API's current revision when it has one; otherwise the most recently
+        promoted revision (``promoted_at`` is set when a revision goes live, and
+        kept when it is archived). Falling back to the last live revision means
+        archiving the current revision first does not remove the baseline, so a
+        host change is still detected. ``exclude`` skips the revision under test.
+        ``None`` only when no revision of the API has ever been live.
+        """
+        api_current = await session.execute(select(Api.current_revision_id).where(Api.id == api_id))
+        current = api_current.scalar_one_or_none()
+        if current is not None and current != exclude:
+            return current
+        stmt = select(ApiRevision.id).where(
+            ApiRevision.api_id == api_id, ApiRevision.promoted_at.is_not(None)
+        )
+        if exclude is not None:
+            stmt = stmt.where(ApiRevision.id != exclude)
+        result = await session.execute(
+            stmt.order_by(ApiRevision.promoted_at.desc(), ApiRevision.id.desc()).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def current_revision_for_source_url(
         session: AsyncSession, source_url: str
     ) -> tuple[uuid.UUID, uuid.UUID] | None:
@@ -237,6 +266,27 @@ class ApiRevisionRepository:
         if row is None or row[1] is None:
             return None
         return (row[0], row[1])
+
+    @staticmethod
+    async def registered_vendor_for_source_url(
+        session: AsyncSession, source_url: str
+    ) -> str | None:
+        """The stored ``vendor`` of the local API already registered from ``source_url``.
+
+        Uses the same coverage key as ``CatalogRepository.registered_spec_urls``: any
+        non-archived revision whose ``source_url`` matches, not just the current one.
+        When several APIs match, the oldest wins so the answer is deterministic.
+        Returns ``None`` when nothing is registered from that URL.
+        """
+        result = await session.execute(
+            select(Api.vendor)
+            .join(ApiRevision, ApiRevision.api_id == Api.id)
+            .where(ApiRevision.source_url == source_url)
+            .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def origin_of(session: AsyncSession, revision_id: uuid.UUID) -> str | None:

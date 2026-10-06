@@ -19,7 +19,7 @@ export type InstanceIdentityResponse = {
      */
     broker_url?: (string | null);
     /**
-     * The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+     * The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
      */
     canonical_base_url: string;
     /**

@@ -1,11 +1,13 @@
 """Unit tests for control-surface dynamic query scoping.
 
-Theme-5 Phase 5b collapsed the filter builder to the credential/direct axis:
-``Toolkit``/``ToolkitKey`` are no longer scoped models (their management
-surface is gone; the tables survive only for the Phase-4 retirement job and
-the flag-off broker fallback until Phase 6b). Visibility widening for agents
+Theme-5 Phase 5b collapsed the filter builder to the credential/direct axis
+(the toolkit models themselves were deleted with the tables in Phase 6b).
+Visibility widening for agents
 now comes exclusively from ``bound_credential_ids`` — the caller-resolved
-direct ``agent_credential_bindings`` ids.
+direct ``agent_credential_bindings`` ids. Theme 7 then removed the
+``AccessRequest`` axis with the access-request feature. ``Credential`` and
+``ConnectSession`` (initiator axis, reusing the credential delegation scope)
+are the scoped models.
 """
 
 from __future__ import annotations
@@ -13,9 +15,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import ColumnElement, exists, select
 
-from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.scoping import filters as scoping_filters
 from jentic_one.control.scoping.filters import (
     _ACCESS_FILTER_PROVIDERS,
@@ -23,11 +24,8 @@ from jentic_one.control.scoping.filters import (
     register_access_filter_provider,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import (
-    OWNER_ACCESS_REQUESTS_READ,
-    OWNER_CREDENTIALS_READ,
-)
 
 
 def _identity(
@@ -93,17 +91,6 @@ def test_unknown_model_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="Unknown model"):
         build_access_filters(identity, FakeModel)
-
-
-def test_toolkit_is_no_longer_a_scoped_model() -> None:
-    """Phase 5b: the toolkit visibility axis is gone from the filter builder.
-
-    The management surface that queried scoped toolkits was deleted; any code
-    still asking for a Toolkit filter is a bug, not a fallback.
-    """
-    identity = _identity(sub="user_1", permissions=[])
-    with pytest.raises(ValueError, match="Unknown model"):
-        build_access_filters(identity, Toolkit)
 
 
 def test_agent_without_delegation_scope_returns_single_filter() -> None:
@@ -226,53 +213,48 @@ def test_admin_ignores_include_shared() -> None:
     assert build_access_filters(identity, Credential, include_shared=True) == []
 
 
-# --- AccessRequest model tests ---
+# --- ConnectSession model tests (initiator axis, credential-read delegation) ---
 
 
-def test_access_request_admin_returns_empty_filters() -> None:
+def test_connect_session_admin_returns_empty_filters() -> None:
     identity = _identity(permissions=["org:admin"])
-    filters = build_access_filters(identity, AccessRequest)
-    assert filters == []
+    assert build_access_filters(identity, ConnectSession) == []
 
 
-def test_access_request_user_returns_two_sided_filter() -> None:
-    identity = _identity(sub="user_77", permissions=["access-requests:read"])
-    filters = build_access_filters(identity, AccessRequest)
+def test_connect_session_user_returns_initiator_filter() -> None:
+    identity = _identity(sub="usr_lister", permissions=["credentials:read"])
+    filters = build_access_filters(identity, ConnectSession)
     assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "user_77" in sql
-    assert "created_by" in sql
-    assert "filer_owner_id" in sql
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "initiator_actor_id" in sql
+    assert "usr_lister" in sql
 
 
-def test_access_request_agent_with_delegation_scope_returns_widened_filter() -> None:
+def test_connect_session_agent_with_credential_delegation_scope_returns_or_filter() -> None:
+    """ConnectSession reuses OWNER_CREDENTIALS_READ — no dedicated scope exists."""
     identity = _identity(
-        sub="agent_2",
-        permissions=[OWNER_ACCESS_REQUESTS_READ],
+        sub="agnt_lister",
+        permissions=[OWNER_CREDENTIALS_READ],
         actor_type=ActorType.AGENT,
-        parent_actor_id="user_owner_2",
+        parent_actor_id="usr_owner",
     )
-    filters = build_access_filters(identity, AccessRequest)
+    filters = build_access_filters(identity, ConnectSession)
     assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "agent_2" in sql
-    assert "user_owner_2" in sql
-    assert "created_by" in sql
-    assert "filer_owner_id" in sql
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "initiator_actor_id" in sql
+    assert "agnt_lister" in sql
+    assert "usr_owner" in sql
 
 
-def test_access_request_agent_without_delegation_scope_returns_self_only() -> None:
+def test_connect_session_agent_without_delegation_scope_is_self_only() -> None:
     identity = _identity(
-        sub="agent_3",
-        permissions=["access-requests:read"],
+        sub="agnt_lister",
+        permissions=["credentials:read"],
         actor_type=ActorType.AGENT,
-        parent_actor_id="user_owner_3",
+        parent_actor_id="usr_owner",
     )
-    filters = build_access_filters(identity, AccessRequest)
+    filters = build_access_filters(identity, ConnectSession)
     assert len(filters) == 1
-    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
-    sql = str(compiled)
-    assert "agent_3" in sql
-    assert "user_owner_3" not in sql
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agnt_lister" in sql
+    assert "usr_owner" not in sql

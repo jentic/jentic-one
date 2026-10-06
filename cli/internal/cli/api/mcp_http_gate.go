@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
 // mcpPreAuthMethods are the JSON-RPC methods served WITHOUT a credential on
@@ -153,27 +155,136 @@ func bearerCredential(r *http.Request) string {
 }
 
 // allPreAuthMethods reports whether a JSON-RPC POST body carries only
-// whitelisted method names. Unreadable bodies fail closed.
+// whitelisted method names. Unreadable or ambiguous bodies fail closed.
+//
+// The raw body is forwarded to the SDK transport unchanged, so this check
+// must see exactly the method the SDK will dispatch. Each message's method is
+// therefore read with the SDK's own decoder (jsonrpc.DecodeMessage), and on
+// top of that the body is walked token by token: any message whose JSON-RPC
+// envelope members are duplicated or spelled in a different case, or any body
+// with trailing data, is refused rather than left to either decoder's
+// tie-breaking.
 func allPreAuthMethods(body []byte) bool {
-	var single struct {
-		Method string `json:"method"`
-	}
-	if err := json.Unmarshal(body, &single); err == nil && single.Method != "" {
-		return mcpPreAuthMethods[single.Method]
-	}
-	// Legacy batch shape: every element must be whitelisted.
-	var batch []struct {
-		Method string `json:"method"`
-	}
-	if err := json.Unmarshal(body, &batch); err != nil || len(batch) == 0 {
+	methods, ok := jsonRPCMethods(body)
+	if !ok || len(methods) == 0 {
 		return false
 	}
-	for _, item := range batch {
-		if item.Method == "" || !mcpPreAuthMethods[item.Method] {
+	for _, m := range methods {
+		if !mcpPreAuthMethods[m] {
 			return false
 		}
 	}
 	return true
+}
+
+// jsonRPCEnvelopeMembers are the JSON-RPC 2.0 member names whose spelling
+// must be exact and unique for the pre-auth sniff to trust a message.
+var jsonRPCEnvelopeMembers = []string{"jsonrpc", "id", "method", "params", "result", "error"}
+
+// jsonWhitespace is the insignificant whitespace JSON allows between tokens
+// (RFC 8259 §2) — narrower than bytes.TrimSpace's Unicode set.
+const jsonWhitespace = " \t\r\n"
+
+// jsonRPCMethods returns the method of every message in a single-message or
+// batch body, or ok=false when the body is not an unambiguous JSON-RPC
+// request (or non-empty array of them) followed by nothing but whitespace.
+func jsonRPCMethods(body []byte) ([]string, bool) {
+	trimmed := bytes.Trim(body, jsonWhitespace)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	if trimmed[0] != '[' {
+		m, ok := jsonRPCMethod(trimmed)
+		if !ok {
+			return nil, false
+		}
+		return []string{m}, true
+	}
+	var batch []json.RawMessage
+	if !decodeSingleValue(trimmed, &batch) || len(batch) == 0 {
+		return nil, false
+	}
+	methods := make([]string, 0, len(batch))
+	for _, raw := range batch {
+		m, ok := jsonRPCMethod(bytes.Trim(raw, jsonWhitespace))
+		if !ok {
+			return nil, false
+		}
+		methods = append(methods, m)
+	}
+	return methods, true
+}
+
+// jsonRPCMethod returns the method of one JSON-RPC request object as the SDK
+// decodes it. It refuses anything that is not a single object, has duplicate
+// or case-variant envelope members, or that the SDK does not decode as a
+// request.
+func jsonRPCMethod(msg []byte) (string, bool) {
+	if len(msg) == 0 || msg[0] != '{' || !uniqueExactEnvelope(msg) {
+		return "", false
+	}
+	decoded, err := jsonrpc.DecodeMessage(msg)
+	if err != nil {
+		return "", false
+	}
+	req, isRequest := decoded.(*jsonrpc.Request)
+	if !isRequest {
+		return "", false
+	}
+	return req.Method, true
+}
+
+// uniqueExactEnvelope walks one JSON object's top-level members and reports
+// whether every JSON-RPC envelope member appears at most once, spelled
+// exactly, with nothing after the closing brace. encoding/json folds case
+// (strings.EqualFold, which also folds e.g. U+017F to 's') and unescapes
+// member names before this comparison, so any spelling a decoder could map
+// onto an envelope member is caught here.
+func uniqueExactEnvelope(msg []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(msg))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	seen := make(map[string]bool, len(jsonRPCEnvelopeMembers))
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		key, isKey := tok.(string)
+		if !isKey {
+			return false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return false
+		}
+		for _, member := range jsonRPCEnvelopeMembers {
+			if !strings.EqualFold(key, member) {
+				continue
+			}
+			if key != member || seen[member] {
+				return false
+			}
+			seen[member] = true
+		}
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return false
+	}
+	_, err := dec.Token()
+	return err == io.EOF
+}
+
+// decodeSingleValue decodes exactly one JSON value from data, refusing
+// trailing content after it.
+func decodeSingleValue(data []byte, v any) bool {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(v); err != nil {
+		return false
+	}
+	_, err := dec.Token()
+	return err == io.EOF
 }
 
 func writeJSONStatus(w http.ResponseWriter, status int, body string) {

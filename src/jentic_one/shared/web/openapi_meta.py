@@ -24,7 +24,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 
 from jentic_one import __version__
-from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
+from jentic_one.shared.web.endpoint_permissions import build_operation_auth_map
 from jentic_one.shared.web.openapi_responses import PROBLEM_JSON, STATUS_EXAMPLES
 
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
@@ -51,6 +51,21 @@ LICENSE_INFO = {
 }
 
 SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
+
+# The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
+# outside any deployment (API catalogues, client generators), where a relative
+# server is meaningless. It carries placeholder hosts mirroring the Broker spec;
+# the live app serves ``deployment_servers`` (its real origin, else same-origin).
+PUBLISHED_SERVERS = [
+    {
+        "url": "https://control.your-instance.example",
+        "description": "Production (placeholder — set to your deployment's Control Plane host)",
+    },
+    {
+        "url": "https://control-dev.your-instance.example",
+        "description": "Development (placeholder — set to your deployment's Control Plane host)",
+    },
+]
 
 API_DESCRIPTION = """## Overview ##
 The **Jentic Control Plane API** is the unified HTTP surface of the
@@ -86,16 +101,15 @@ High-level components for the control plane API.
 
 Today the platform ships a local username + password identity
 provider for human users, alongside agent identity (Dynamic Client
-Registration + RFC 7523 JWT-bearer assertions) and service-account
-client credentials — every authenticated operation expects
+Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
 `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
 token) except `GET /health`, `POST /auth/login`,
 `POST /users:create-admin`, and `POST /users:redeem-invite`.
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
 TTL and can be re-minted before expiry via `POST /auth/refresh`
 (sliding session, bounded by an absolute window —
-`admin.auth.session_ttl_seconds`, 12 hours by default); agents and
-service accounts obtain tokens from `POST /oauth/token` (see
+`admin.auth.session_ttl_seconds`, 12 hours by default); agents
+obtain tokens from `POST /oauth/token` (see
 `BearerAuth`). The `permissions` claim on a token is a snapshot at
 issue time; permission changes take effect at the next re-issue —
 the next refresh or re-login (≤ 1 hour with the default TTL).
@@ -172,7 +186,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   edit.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
-  from it. To walk all executions under one logical request, use
+  from it. To walk the executions you can see under one logical request, use
   `GET /executions?trace_id=…`.
 - **Event stream.** The dashboard / operator UI consumes the
   `/events` resource (paginated list + SSE stream). Some events
@@ -192,8 +206,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
 
   | Prefix | Resource | Notes |
   |---|---|---|
-  | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
+  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -202,10 +216,11 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `rev_` | API revision | ULID-shaped. |
   | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-  | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
+  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.
@@ -240,26 +255,33 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Access Requests",
+        "name": "Vendors",
         "description": (
-            "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
-            "context). When an agent's brokered call is rejected by a permission rule — or "
-            "the agent needs access it doesn't yet have — the agent files an `AccessRequest` "
-            "containing one or more line items (`AccessRequestItem`). The request enters "
-            "`pending` state and surfaces an `approve_url` that the agent presents to a human "
-            "reviewer.\n\n"
-            "Reviewers `:decide` individual items (approve or deny each); filers can `:amend` "
-            "pending items (adjust rules or target) or `:withdraw` the entire request. Each "
-            "item transitions independently; the envelope status reflects the aggregate "
-            "(`pending` while any item is pending, `partially_approved` when some items are "
-            "decided but others remain, terminal once all items resolve).\n\n"
-            "Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: "
-            "`pending → partially_approved → approved | denied | withdrawn | expired`.\n\n"
-            "**Identity scoping.** List and get operations are identity-scoped: filers see "
-            "their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners "
-            "receive `404` (not `403`) to avoid leaking existence.\n\n"
-            "**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) "
-            "require `agents:write`; read operations require `agents:read`."
+            "Part of the **Core / Access** bounded context — the platform-curated catalog "
+            "of verified vendors that support agent-initiated OAuth connect flows. Each "
+            "entry describes the OAuth flows available (device_authorization, "
+            "authorization_code) and the scope catalog with read/write classification. "
+            "Vendor entries are seeded from operator config, not user-managed — the API "
+            "surfaces them read-only so the SPA and agents can discover which vendors "
+            "are available and pick a flow at ``:connect`` time."
+        ),
+    },
+    {
+        "name": "Integrations",
+        "description": (
+            "Part of the **Core / Access** bounded context — agent-initiated OAuth "
+            "connect sessions. A caller (agent or UI) begins a session via "
+            "``POST /integrations:connect``, choosing a vendor and requested scope set; "
+            "the platform provisions a pending credential, initiates the vendor's OAuth "
+            "flow (device_authorization or authorization_code depending on the vendor), "
+            "and returns a session id + human-facing challenge (device user_code / "
+            "authorize_url).\n\n"
+            "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
+            "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
+            "capped by a TTL; unfinished sessions can be cancelled via "
+            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
+            "hand-off that binds any pre-declared permission rules to the resulting "
+            "credential."
         ),
     },
     {
@@ -439,7 +461,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not "
             "stored. Records are written by the Broker; this surface is read-only. To walk the "
             "history of a single logical request that fanned out into multiple upstream calls, "
-            "list with `?trace_id={trace_id}`."
+            "list with `?trace_id={trace_id}`. An execution is visible only to the actor "
+            "that ran it, the owner of the agent that ran it, and `org:admin`; to any other "
+            "caller it is indistinguishable from a missing execution (`404`)."
         ),
     },
     {
@@ -450,7 +474,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "type-specific result payloads (the imported revisions for `import`, upstream "
             "response body for `execution`) live under `/jobs/{job_id}/result`. Result "
             "availability follows the organisation-level retention policy (one-shot or TTL); "
-            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`."
+            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. "
+            "A job is visible only to the actor that created it, the owner of the agent "
+            "that created it, and `org:admin`; to any other caller it is indistinguishable "
+            "from a missing job (`404`), including on `:cancel`."
         ),
     },
     {
@@ -462,7 +489,12 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`execution.repeated_failure`). Events reference the underlying `ExecutionRecord` "
             "or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via "
             "`GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` "
-            "filter."
+            "filter. An event is visible only to the actor it names (`actor_id`), to the "
+            "subject it is about (for example the owner of the credential or the agent "
+            "concerned), to the human owner of either when that is an agent, and to "
+            "`org:admin`; system events with no subject are visible only to `org:admin`. To "
+            "any other caller an event is indistinguishable from a missing one (`404`), "
+            "including on acknowledgement."
         ),
     },
     {
@@ -528,7 +560,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
+            "The same vocabulary is used for `User.permissions` — the coarse set embedded in "
+            "the JWT — "
             "so the catalogue below covers user assignment. The per-binding fine-grained "
             "`PermissionRule[]` (the inner PBAC tier) lives separately on the direct "
             "agent↔credential bindings under the `Credentials` tag."
@@ -547,9 +580,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Identity",
         "description": (
-            "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
-            "the presented token."
+            "Identity introspection for the calling principal (human or agent) — `GET /me` "
+            "returns the resolved subject and its permissions behind the presented token."
         ),
     },
     {
@@ -561,17 +593,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Service Accounts",
-        "description": (
-            "Machine principals for non-interactive integrations — lifecycle (create, list, "
-            "read, approve / deny, enable / disable, archive) mirroring the agent surface."
-        ),
-    },
-    {
         "name": "OAuth",
         "description": (
             "OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the "
-            "authorize, token, introspection, revocation, and assertion-mint endpoints plus "
+            "authorize, token, introspection, and revocation endpoints plus "
             "the redirect callback."
         ),
     },
@@ -593,7 +618,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Actors",
         "description": (
             "Unified actor directory — a lightweight read-only view across all actor types "
-            "(users, agents, service accounts). Returns ID-to-name mappings for UI cache "
+            "(users and agents). Returns ID-to-name mappings for UI cache "
             "hydration so dashboards can display friendly names wherever an `actor_id` appears."
         ),
     },
@@ -658,7 +683,8 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Credentials",
             "Permission Rule Sets",
-            "Access Requests",
+            "Vendors",
+            "Integrations",
         ],
     },
     {
@@ -695,7 +721,6 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Identity",
             "Agents",
-            "Service Accounts",
             "OAuth",
             "Agent Registration",
             "Discovery",
@@ -720,14 +745,10 @@ BEARER_SECURITY_SCHEME = {
             "- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` "
             "with a JWT assertion signed by the key registered via `POST /register` "
             "(the JWT is the *assertion*, not the resulting access token).\n"
-            "- **Service accounts** — `grant_type=client_credentials` with "
-            "`client_id` + `client_secret`.\n"
             "- **Users** — `grant_type=authorization_code` (interactive) or "
             "`grant_type=password`; refresh either with `grant_type=refresh_token`.\n\n"
-            "Service accounts can also mint short-lived, scope-narrowed task tokens "
-            "for agents via `POST /oauth/mint`.\n\n"
-            "Per-endpoint scope and actor-type requirements are not modelled in this "
-            "document (OpenAPI cannot faithfully express the OR-of-scopes / "
+            "Per-endpoint permission and actor-type requirements are not modelled in "
+            "this document (OpenAPI cannot faithfully express the OR-of-permissions / "
             "`org:admin` bypass / service-layer enforcement); see "
             "`GET /reference/endpoints.json` for the authoritative authorization "
             "reference."
@@ -816,7 +837,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
 #: credentials with ``401``, so the documented error responses are kept intact.
 #: Their ``security`` is dropped to ``[]`` (no platform bearer requirement); the
 #: real credential is described in the endpoint reference's ``auth_note`` (see
-#: ``NON_IDENTITY_AUTH`` in ``endpoint_scopes.py``).
+#: ``NON_IDENTITY_AUTH`` in ``endpoint_permissions.py``).
 NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # RFC 7592 registration-status poll: authenticated by the
@@ -864,7 +885,9 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
-    (re.compile(r"^/access-requests"), "Access Requests"),
+    (re.compile(r"^/integrations"), "Integrations"),
+    (re.compile(r"^/connect-sessions"), "Integrations"),
+    (re.compile(r"^/vendors"), "Vendors"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),
@@ -896,7 +919,6 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
-    (re.compile(r"^/service-accounts"), "Service Accounts"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),
@@ -935,14 +957,27 @@ def generate_operation_id(route: APIRoute) -> str:
     return _camelize(route.name)
 
 
-def fastapi_metadata_kwargs() -> dict[str, Any]:
+def deployment_servers(public_base_url: str = "") -> list[dict[str, str]]:
+    """The live document's ``servers``: the deployment's public origin, else ``SERVERS``.
+
+    ``server.public_base_url`` names the origin clients reach the control
+    surfaces on, so a spec downloaded from a configured deployment stays
+    callable outside the browser. Unset, the same-origin relative server is the
+    only honest value.
+    """
+    if public_base_url:
+        return [{"url": public_base_url, "description": "This deployment"}]
+    return SERVERS
+
+
+def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     """Keyword arguments to spread into ``FastAPI(...)`` for document metadata."""
     return {
         "title": API_TITLE,
         "summary": API_SUMMARY,
         "description": API_DESCRIPTION,
         "version": API_VERSION,
-        "servers": SERVERS,
+        "servers": deployment_servers(public_base_url),
         "contact": CONTACT,
         "license_info": LICENSE_INFO,
         "openapi_tags": OPENAPI_TAGS,
@@ -973,7 +1008,7 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         content[PROBLEM_JSON] = media
 
 
-def _stamp_scope_metadata(
+def _stamp_permission_metadata(
     method: str,
     path: str,
     operation: dict[str, Any],
@@ -982,11 +1017,12 @@ def _stamp_scope_metadata(
     """Stamp the operation's ``security`` from its recovered identity dependency.
 
     The OpenAPI document models only the real authentication mechanism —
-    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation scope/actor-type join
-    is *not* expressed here: OpenAPI's ``security`` model cannot faithfully carry
-    our OR-of-scopes semantics, the ``org:admin`` superuser bypass, the
-    typical-caller hint, or the fact that many scopes are enforced in the service
-    layer rather than at the gateway. Encoding it as a fabricated OAuth2 flow
+    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation
+    permission/actor-type join is *not* expressed here: OpenAPI's ``security`` model
+    cannot faithfully carry our OR-of-permissions semantics, the ``org:admin``
+    superuser bypass, the typical-caller hint, or the fact that many permissions are
+    enforced in the service layer rather than at the gateway. Encoding it as a
+    fabricated OAuth2 flow
     would misrepresent enforcement, so that richer authorization reference lives
     in the endpoint reference (:mod:`jentic_one.shared.web.endpoint_reference`,
     served at ``GET /reference/endpoints.json``), which the CLI and docs SPA
@@ -1065,12 +1101,12 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # Authenticates by a non-bearer credential (e.g. an RFC 7592
                     # Registration-Access-Token): drop the platform BearerAuth
                     # requirement but keep the 401 it genuinely returns on a bad
-                    # credential. It never reaches the scope/authz layer, so the
+                    # credential. It never reaches the permission/authz layer, so the
                     # 403 (which only the permission gate raises) is dropped.
                     operation["security"] = []
                     operation.get("responses", {}).pop("403", None)
                 else:
-                    _stamp_scope_metadata(method, path, operation, operation_auth)
+                    _stamp_permission_metadata(method, path, operation, operation_auth)
                 if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
                     # Validation failures are reshaped to the governing spec's
                     # dialect at the router; the framework 422 can never be

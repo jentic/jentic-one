@@ -8,10 +8,8 @@ from typing import Any, ClassVar
 import structlog
 
 from jentic_one.registry.core.url_index import (
-    build_index_entry,
-    expand_server_variables,
-    merge_paths,
-    parse_server_url,
+    MAX_SERVER_VARIABLE_EXPANSIONS,
+    build_server_index_entries,
     structural_regex,
 )
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
@@ -44,7 +42,7 @@ class BuildURLIndexStage(BasePipelineStage):
         operations = await OperationRepository.get_by_ids(ctx.session, operation_ids)
         revision_servers = content.get("servers", [])
 
-        seen: set[tuple[str, str, str]] = set()
+        seen: set[tuple[str, str, str, str]] = set()
 
         for op in operations:
             op_servers = self._get_effective_servers(op, content, revision_servers)
@@ -53,35 +51,40 @@ class BuildURLIndexStage(BasePipelineStage):
                 continue
 
             for server_data in op_servers:
-                variables: list[Any] = server_data.get("variables", [])
-                if isinstance(variables, dict):
-                    variables = [
-                        type("Var", (), {"name": k, "default_value": v.get("default")})()
-                        for k, v in variables.items()
-                    ]
-
-                expanded_url = expand_server_variables(server_data["url"], variables)
-                parsed = parse_server_url(expanded_url)
-                full_path = merge_paths(parsed.path, op.path)
-                entry = build_index_entry(parsed.host, full_path, parsed.scheme)
-
-                # Dedup on the entry's canonical template, not the raw merged
-                # path, so `/a/` and `/a` collapse to one structural key —
-                # matching the canonical form the entry itself was built from.
-                struct_form = structural_regex(entry.path_pattern)
-                dedup_key = (op.method.upper(), entry.host_pattern, struct_form)
-                if dedup_key in seen:
-                    continue
-                seen.add(dedup_key)
-
-                await UrlIndexRepository.upsert_entry(
-                    ctx.session,
-                    revision_id=revision_id,
-                    operation_id=op.id,
-                    method=op.method.upper(),
-                    entry=entry,
-                    created_by=ctx.created_by,
+                expansion = build_server_index_entries(
+                    server_data["url"], server_data.get("variables"), op.path
                 )
+                if expansion.capped:
+                    logger.warning(
+                        "server_variable_expansion_capped",
+                        operation_id=op.id,
+                        server_url=server_data["url"],
+                        max_expansions=MAX_SERVER_VARIABLE_EXPANSIONS,
+                    )
+
+                for entry in expansion.entries:
+                    # Dedup on the entry's canonical template, not the raw merged
+                    # path, so `/a/` and `/a` collapse to one structural key —
+                    # matching the canonical form the entry itself was built from.
+                    struct_form = structural_regex(entry.path_pattern)
+                    dedup_key = (
+                        op.method.upper(),
+                        entry.host_pattern,
+                        entry.host_regex.pattern,
+                        struct_form,
+                    )
+                    if dedup_key in seen:
+                        continue
+                    seen.add(dedup_key)
+
+                    await UrlIndexRepository.upsert_entry(
+                        ctx.session,
+                        revision_id=revision_id,
+                        operation_id=op.id,
+                        method=op.method.upper(),
+                        entry=entry,
+                        created_by=ctx.created_by,
+                    )
 
     def _get_effective_servers(
         self, op: Any, content: dict[str, Any], revision_servers: list[dict[str, Any]]

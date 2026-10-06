@@ -19,7 +19,10 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
-from jentic_one.registry.services.errors import OverlayStateConflictError
+from jentic_one.registry.services.errors import (
+    HostOwnedByOtherVendorError,
+    OverlayStateConflictError,
+)
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.services.overlay_service import OverlayService
 from jentic_one.shared.auth.identity import Identity
@@ -724,6 +727,81 @@ async def test_overlay_rollback_conflict_when_not_live(
         api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
         # Unchanged: base is still current, nothing rolled.
         assert api.current_revision_id == base_revision_id
+
+
+async def test_overlay_rollback_refused_when_another_vendor_now_serves_the_host(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """Rollback makes the superseded revision live again, so the host rule applies.
+
+    After materialize moves the API to ``new.example.com``, the base's
+    ``old.example.com`` is no longer served by it, so another vendor may go live
+    there. Restoring the base would then put two vendors on one host: the rollback
+    is refused with ``HostOwnedByOtherVendorError`` and changes nothing.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="rb3-vendor", name="rb3-api", version="1.0.0", origin="catalog"
+    )
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "rb3-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    overlaid = json.loads(_BASE_WITH_SERVERS)
+    overlaid["servers"] = [{"url": "https://new.example.com"}]
+    result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(overlaid),
+                    "filename": "openapi.json",
+                    "vendor": "rb3-vendor",
+                    "api_name": "rb3-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    # old.example.com is free now; another vendor goes live on it.
+    await _import_base(
+        handler, vendor="other-vendor", name="other-api", version="1.0.0", origin="catalog"
+    )
+
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
+    with pytest.raises(HostOwnedByOtherVendorError, match=r"old\.example\.com"):
+        await OverlayService(integration_context).rollback(
+            "rb3-vendor", "rb3-api", "1.0.0", overlay_id, identity=identity
+        )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == overlay_revision_id
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.status == "confirmed"
 
 
 async def _rematerialize_via_service(

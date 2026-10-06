@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, userEvent } from '@/__tests__/test-utils';
+import { render, screen, userEvent, within } from '@/__tests__/test-utils';
 import { RailFeed, type RailFeedFilters } from '@/shared/app/rail/RailFeed';
-import { formatStreamDateTimeParts, type StreamEvent } from '@/shared/lib/agentStream';
+import {
+	formatStreamAgo,
+	formatStreamDateTimeParts,
+	freezeFeed,
+	isAfterFreeze,
+	railTitle,
+	type StreamEvent,
+} from '@/shared/lib/agentStream';
 
 /** Minimal StreamEvent factory for feed-rendering tests. */
 function ev(partial: Partial<StreamEvent> & Pick<StreamEvent, 'id' | 'tsMs'>): StreamEvent {
@@ -19,11 +26,7 @@ function ev(partial: Partial<StreamEvent> & Pick<StreamEvent, 'id' | 'tsMs'>): S
 	};
 }
 
-const NO_FILTERS: RailFeedFilters = {
-	search: '',
-	severities: new Set(),
-	kinds: new Set(),
-};
+const NO_FILTERS: RailFeedFilters = { failuresOnly: false };
 
 describe('RailFeed — day separators (#705)', () => {
 	it('inserts day separators when the feed spans more than one day', () => {
@@ -110,10 +113,135 @@ describe('RailFeed — day separators (#705)', () => {
 		const { date, time } = formatStreamDateTimeParts(ts);
 		// The bubble only exists once the timestamp trigger is hovered.
 		expect(screen.queryByRole('tooltip')).toBeNull();
-		await user.hover(screen.getByText('14:04:31'));
+		const stamp = document.querySelector('time');
+		if (!stamp) throw new Error('no timestamp');
+		// Relative in the row ("16 Jul" for anything over a week old)…
+		expect(stamp).toHaveTextContent(formatStreamAgo(ts));
+		await user.hover(stamp);
 		const tip = await screen.findByRole('tooltip');
-		// Rendered as two rows: date on top, time below.
+		// …exact in the tooltip, as two rows: date on top, time below.
 		expect(tip).toHaveTextContent(date);
 		expect(tip).toHaveTextContent(time);
+	});
+});
+
+describe('RailFeed — folding routine runs', () => {
+	const now = Date.now();
+	const call = (id: string, minsAgo: number, actorId = 'support-triage') =>
+		ev({
+			id,
+			tsMs: now - minsAgo * 60_000,
+			title: `Execution completed: op.${id}`,
+			actorId,
+			actorType: 'agent',
+		});
+	const names = (id?: string) => (id === 'support-triage' ? 'Support Triage' : id);
+
+	it('folds a same-actor run of successes into one row that expands', async () => {
+		const user = userEvent.setup();
+		const events = [call('c', 1), call('b', 3), call('a', 9)];
+		render(
+			<RailFeed
+				events={events}
+				filters={NO_FILTERS}
+				resolveActor={(e) => names(e.actorId)}
+			/>,
+		);
+		const group = screen.getByRole('button', { name: /Support Triage: 3 calls succeeded/ });
+		expect(screen.queryByText('op.a')).not.toBeInTheDocument();
+		await user.click(group);
+		expect(group).toHaveAttribute('aria-expanded', 'true');
+		// Every member shows, without repeating the actor already on the group row.
+		for (const op of ['op.a', 'op.b', 'op.c']) expect(screen.getByText(op)).toBeInTheDocument();
+		expect(screen.getAllByText('Support Triage')).toHaveLength(1);
+	});
+
+	it('stays open when Load older extends the run at its oldest end', async () => {
+		const user = userEvent.setup();
+		const events = [call('c', 1), call('b', 3)];
+		const { rerender } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+		await user.click(screen.getByRole('button', { name: /2 calls succeeded/ }));
+		rerender(<RailFeed events={[...events, call('a', 9)]} filters={NO_FILTERS} />);
+		expect(screen.getByRole('button', { name: /3 calls succeeded/ })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		);
+	});
+
+	it('never folds failures, and a different actor breaks the run', () => {
+		const failed = ev({
+			id: 'f',
+			tsMs: now - 2 * 60_000,
+			type: 'execution.failed',
+			kind: 'execution',
+			severity: 'error',
+			title: 'Execution failed: boom',
+			actorId: 'support-triage',
+			actorType: 'agent',
+		});
+		const events = [call('c', 1), failed, call('b', 3), call('x', 4, 'invoice-bot')];
+		const { container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+		expect(container.querySelectorAll('[data-rail-row]')).toHaveLength(4);
+		expect(screen.queryByRole('button', { name: /Expand group/ })).not.toBeInTheDocument();
+	});
+
+	it('keeps the folded row mounted when a live arrival joins it', () => {
+		const events = [call('b', 3), call('a', 9)];
+		const { rerender, container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+		const before = container.querySelector('[data-rail-row]');
+		rerender(<RailFeed events={[call('c', 0), ...events]} filters={NO_FILTERS} />);
+		expect(container.querySelector('[data-rail-row]')).toBe(before);
+		expect(
+			within(container).getByRole('button', { name: /3 calls succeeded/ }),
+		).toBeInTheDocument();
+	});
+});
+
+describe("railTitle — the feed's short wording", () => {
+	it('drops what the icon already says and keeps the operation, error or API', () => {
+		expect(railTitle({ type: 'execution.completed', title: 'Execution completed: a.b' })).toBe(
+			'a.b',
+		);
+		expect(
+			railTitle({ type: 'execution.failed', title: 'Execution failed: 401 upstream' }),
+		).toBe('Failed: 401 upstream');
+		expect(railTitle({ type: 'import.completed', title: 'Import completed: petstore' })).toBe(
+			'Imported petstore',
+		);
+	});
+
+	it("turns the backend's id-only summary into words, and leaves the unknown alone", () => {
+		expect(
+			railTitle({ type: 'execution.completed', title: 'Execution exec_2Kx9 completed' }),
+		).toBe('Call succeeded');
+		expect(railTitle({ type: 'agent.registered', title: 'Agent registered: x' })).toBe(
+			'Agent registered: x',
+		);
+	});
+});
+
+describe('formatStreamAgo — compact relative time', () => {
+	const now = new Date(2026, 6, 20, 12, 0, 0).getTime();
+	it('reads now / minutes / hours / days, then a date', () => {
+		expect(formatStreamAgo(now - 10_000, now)).toBe('now');
+		expect(formatStreamAgo(now - 4 * 60_000, now)).toBe('4m');
+		expect(formatStreamAgo(now - 2 * 3_600_000, now)).toBe('2h');
+		expect(formatStreamAgo(now - 3 * 86_400_000, now)).toBe('3d');
+		expect(formatStreamAgo(now - 30 * 86_400_000, now)).toMatch(/20/);
+	});
+	it('never throws or prints "NaN" on a malformed timestamp', () => {
+		expect(formatStreamAgo(Number.NaN, now)).toBe('—');
+	});
+});
+
+describe('freezeFeed — what pause and "scrolled away" hold back', () => {
+	const at = (id: string, tsMs: number) => ev({ id, tsMs });
+	it('holds back only arrivals after the freeze, never older history loaded later', () => {
+		const freeze = freezeFeed([at('b', 200), at('a', 100)]);
+		expect(isAfterFreeze(at('b', 200), freeze)).toBe(false);
+		// A live arrival is newer than everything that was loaded…
+		expect(isAfterFreeze(at('c', 300), freeze)).toBe(true);
+		// …while "Load older" or a lens's backlog brings in older rows.
+		expect(isAfterFreeze(at('z', 50), freeze)).toBe(false);
 	});
 });

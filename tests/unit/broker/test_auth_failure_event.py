@@ -14,7 +14,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import DualTokenValidator
 from jentic_one.broker.web.deps import (
-    RequireToolkitAccess,
+    RequireExecuteAccess,
     _auth_failure_counts,
     _auth_failure_emitted,
 )
@@ -45,11 +45,11 @@ def _clear_counters() -> None:
 
 
 def _create_test_app(*, threshold: int = 3) -> TestClient:
-    """Build a test client that rejects scope checks (triggers auth failure tracking)."""
+    """Build a test client that rejects permission checks (triggers auth failure tracking)."""
     router = APIRouter()
 
     @router.post("/execute")
-    async def execute(request: Request, _identity: RequireToolkitAccess) -> Response:
+    async def execute(request: Request, _identity: RequireExecuteAccess) -> Response:
         return Response(content="ok", status_code=200)
 
     app = FastAPI()
@@ -105,7 +105,7 @@ def test_at_threshold_emits_event() -> None:
     router = APIRouter()
 
     @router.post("/execute")
-    async def execute(request: Request, _identity: RequireToolkitAccess) -> Response:
+    async def execute(request: Request, _identity: RequireExecuteAccess) -> Response:
         return Response(content="ok", status_code=200)
 
     app = FastAPI()

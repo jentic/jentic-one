@@ -19,8 +19,8 @@ from fastapi.testclient import TestClient
 from jentic_one.auth.web import app as auth_app
 from jentic_one.auth.web.routers import discovery
 from jentic_one.mcp.installer import install_mcp_challenge_placeholder
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.config import AuthConfig, ServerConfig
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 
 _BASE = "https://auth.example.com"
 
@@ -57,8 +57,7 @@ _ROOT_AS_GOLDEN = (
     b'"introspection_endpoint":"https://auth.example.com/oauth/introspect",'
     b'"jwks_uri":"https://auth.example.com/.well-known/jwks.json",'
     b'"grant_types_supported":["authorization_code",'
-    b'"urn:ietf:params:oauth:grant-type:jwt-bearer","refresh_token",'
-    b'"client_credentials"],'
+    b'"urn:ietf:params:oauth:grant-type:jwt-bearer","refresh_token"],'
     b'"token_endpoint_auth_methods_supported":["private_key_jwt",'
     b'"client_secret_basic","client_secret_post","none"],'
     b'"response_types_supported":["code"],'

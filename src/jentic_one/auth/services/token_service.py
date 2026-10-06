@@ -10,17 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos import (
     AccessTokenRepository,
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     OAuthClientGrantRepository,
     OAuthClientRepository,
     RefreshTokenRepository,
-    ServiceAccountRepository,
     UserRepository,
 )
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorStatus, ActorType, OAuthClientApprovalStatus
@@ -83,9 +83,14 @@ async def resolve_effective_scopes(
 ) -> list[str]:
     """The scope set the live resolvers actually enforce for a token.
 
-    Non-ephemeral AGENT/SERVICE_ACCOUNT tokens draw scopes *live* from
-    ``actor_scope_grants`` — the mint-time snapshot is dead weight for
-    enforcement on these actor types (scope edits take effect immediately by
+    Named for what it returns, not for what it reads: the result is a token's
+    OAuth2 scope set, even though the live arm reads internal permission grants to
+    compute it. The same applies to :func:`_apply_scope_ceiling` — a ceiling is an
+    OAuth2 concept.
+
+    Non-ephemeral AGENT tokens draw scopes *live* from
+    ``actor_permission_grants`` — the mint-time snapshot is dead weight for
+    enforcement on these actor types (permission edits take effect immediately by
     design). Ephemeral mints and USER tokens keep their snapshot. Either
     starting set is then intersected with the issuing client's
     ``allowed_scopes`` ceiling and the consent grant's scope set.
@@ -100,11 +105,11 @@ async def resolve_effective_scopes(
     grant-channel integration suite pins all three against each other.
     """
     scopes = snapshot_scopes
-    if not is_ephemeral and actor_type in (ActorType.AGENT, ActorType.SERVICE_ACCOUNT):
-        grants = await ActorScopeGrantRepository.list_for_actor(
+    if not is_ephemeral and actor_type == ActorType.AGENT:
+        grants = await ActorPermissionGrantRepository.list_for_actor(
             session, actor_id, actor_type=actor_type
         )
-        scopes = [g.scope for g in grants]
+        scopes = [g.permission for g in grants]
     scopes = _apply_scope_ceiling(scopes, client_ceiling)
     return _apply_scope_ceiling(scopes, grant_ceiling)
 
@@ -134,19 +139,17 @@ async def _actor_is_active(session: AsyncSession, actor_id: str, actor_type: str
     Disabling an actor must kill its *outstanding* tokens, not just block new
     mints (#1136) — so every token verdict re-checks the actor row. Fails
     closed when the actor row is missing (e.g. a hard-deleted user whose
-    tokens were never revoked). Unknown actor types are left to their token's
-    own revocation/expiry checks.
+    tokens were never revoked). Any other actor type, including the retired
+    ``service_account`` and ``toolkit`` strings on a residual row, fails
+    closed: only users and agents can authenticate.
     """
     if actor_type == ActorType.AGENT:
         agent = await AgentRepository.get_by_id(session, actor_id)
         return agent is not None and agent.status == ActorStatus.ACTIVE
-    if actor_type == ActorType.SERVICE_ACCOUNT:
-        sa = await ServiceAccountRepository.get_by_id(session, actor_id)
-        return sa is not None and sa.status == ActorStatus.ACTIVE
     if actor_type == ActorType.USER:
         user = await UserRepository.get_by_id(session, actor_id)
         return user is not None and user.active
-    return True
+    return False
 
 
 class TokenService:
@@ -286,7 +289,7 @@ class TokenService:
 
         ``scopes`` is the rotated access token's *effective* set, computed at
         rotation time exactly the way the live resolvers enforce it
-        (:func:`resolve_effective_scopes`): live ``actor_scope_grants`` ∩
+        (:func:`resolve_effective_scopes`): live ``actor_permission_grants`` ∩
         client ceiling ∩ grant scopes for non-ephemeral AGENT/SA actors, the
         family snapshot ∩ ceilings for USER actors. The token rows still
         carry the family's mint-time snapshot — enforcement for AGENT/SA
@@ -558,19 +561,18 @@ class TokenService:
     async def resolve_access_token(self, token: str) -> Identity | None:
         """Resolve an opaque access token for downstream middleware.
 
-        For long-lived agent and service-account tokens (an access+refresh pair,
+        For long-lived agent tokens (an access+refresh pair,
         ``is_ephemeral=False``), scopes are resolved *live* from the actor's
-        current ``ActorScopeGrant`` rows rather than the frozen snapshot stored
-        on the token. This makes scope edits (grant/revoke, replace, approved
-        ``scope:grant`` access requests) take effect immediately without forcing
-        a re-mint — the token row's ``scopes`` column is only a mint-time
-        snapshot.
+        current ``ActorPermissionGrant`` rows rather than the frozen snapshot stored
+        on the token. This makes scope edits (grant/revoke, replace) take
+        effect immediately without forcing a re-mint — the token row's
+        ``scopes`` column is only a mint-time snapshot.
 
-        Ephemeral minted tokens (``mint_task_token`` → ``issue_access_only``,
+        Ephemeral minted tokens (``issue_access_only``,
         ``is_ephemeral=True``) keep their frozen snapshot: their scopes are a
         deliberate downscoped subset of the host's grants and must not be
         re-broadened. User tokens also keep their snapshot (their permissions do
-        not come from ``ActorScopeGrant``).
+        not come from ``ActorPermissionGrant``).
 
         The verdict also re-checks the actor's own status (#1136): a disabled
         or archived actor's outstanding tokens resolve as inactive immediately,
@@ -587,6 +589,10 @@ class TokenService:
             at = await AccessTokenRepository.get_by_hash(session, token_hash)
 
             if at is None:
+                return None
+            if at.actor_type not in (ActorType.USER, ActorType.AGENT):
+                # A retired actor type on a residual row (theme 8 / theme 5):
+                # not an identity any more. Fail closed.
                 return None
 
             client_scope_ceiling: frozenset[str] | None = None
@@ -628,7 +634,7 @@ class TokenService:
             else:
                 actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
 
-            # Live grants (non-ephemeral AGENT/SA) or snapshot (ephemeral,
+            # Live grants (non-ephemeral AGENT) or snapshot (ephemeral,
             # USER), intersected with the client ceiling and the grant's
             # scope set (the quadruple intersection) — via the same helper
             # the §5.1 reporting paths use, so reported == enforced.
@@ -646,7 +652,11 @@ class TokenService:
         return Identity(
             sub=at.actor_id,
             actor_type=ActorType(at.actor_type),
-            permissions=scopes,
+            # Cross the OAuth2→internal boundary at the named seam: the resolved
+            # token scopes become the identity's permissions. Identity today,
+            # but routed through the one function so a future divergence has a
+            # single site to change.
+            permissions=scopes_to_permissions(scopes),
             expires_at=at.expires_at,
             active=active,
             parent_actor_id=parent_actor_id,

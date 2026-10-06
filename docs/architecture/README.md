@@ -11,7 +11,7 @@ here is grounded in the module it describes — follow the paths into
 | [Composition and processes](composition-and-processes.md) | How a process boots: `__main__.py` → `wiring.py` → app factories, `JENTIC__APPS`, database gating, lifespan ordering, background workers, deployment topologies. |
 | [Broker execution](broker-execution.md) | What happens to a brokered call: the pipeline, resilience stack, egress controls, and the credential injection point. |
 | [Data model](data-model.md) | The three databases, their headline entities, and why there are no cross-database foreign keys. |
-| [Identity and authorization](identity-and-authorization.md) | Who can call what: actor kinds, token kinds, scopes, and the default-deny access model. |
+| [Identity and authorization](identity-and-authorization.md) | Who can call what: actor kinds, token kinds, permissions (and the OAuth2 scopes they travel as), and the default-deny access model. |
 
 ## The system in one diagram
 
@@ -30,7 +30,7 @@ flowchart LR
 
     subgraph app [App process — JENTIC__APPS=registry,admin,control,auth]
         REG["registry/<br/>API catalog: import, search,<br/>inspect, overlays"]
-        CON["control/<br/>credentials, permission rules,<br/>access requests (+ /mcp mount)"]
+        CON["control/<br/>credentials, permission rules,<br/>connect flows (+ /mcp mount)"]
         ADM["admin/<br/>users, agents, jobs, events,<br/>audit, monitoring, SPA"]
         AUTH["auth/<br/>registration (RFC 7591/7592),<br/>token exchange (RFC 7523), JWKS"]
     end
@@ -104,7 +104,7 @@ Five things the diagram compresses:
 | Surface | Owns | Package |
 | ------- | ---- | ------- |
 | Registry | The API catalog: imported OpenAPI descriptions as immutable revisions, search, inspection, overlays, catalog-update tracking | [`src/jentic_one/registry/`](../../src/jentic_one/registry/) |
-| Control | Credentials, permission rules and shared rule sets, access requests; carries the optional `/mcp` mount | [`src/jentic_one/control/`](../../src/jentic_one/control/) |
+| Control | Credentials, permission rules and shared rule sets, vendor connect flows; carries the optional `/mcp` mount | [`src/jentic_one/control/`](../../src/jentic_one/control/) |
 | Admin | Operators (users), agents' admin records, jobs, events, executions monitor, audit log, instance config; serves the SPA | [`src/jentic_one/admin/`](../../src/jentic_one/admin/) |
 | Auth | Agent/OAuth-client registration and approval, Ed25519 assertion exchange, opaque tokens, API keys, JWKS and OAuth discovery | [`src/jentic_one/auth/`](../../src/jentic_one/auth/) |
 | Broker | The execution data plane: one credential-injecting forward proxy | [`src/jentic_one/broker/`](../../src/jentic_one/broker/) |

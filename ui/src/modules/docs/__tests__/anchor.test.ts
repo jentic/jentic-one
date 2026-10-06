@@ -17,8 +17,8 @@ function endpoint(method: string, path: string): ReferenceEndpoint {
 		authenticated: true,
 		public: false,
 		actor_types: [],
-		required_scopes: ['x'],
-		implied_scopes: {},
+		required_permissions: ['x'],
+		implied_permissions: {},
 		auth_note: null,
 		typical_caller: null,
 		group: 'g',
@@ -34,7 +34,7 @@ describe('lookupKey', () => {
 
 describe('indexReference', () => {
 	const payload: ReferencePayload = {
-		schema: 'jentic.endpoint-scope-tree/v1',
+		schema: 'jentic.endpoint-permission-tree/v1',
 		total: 2,
 		groups: ['g'],
 		endpoints: [endpoint('GET', '/credentials/{credential_id}'), endpoint('POST', '/gadgets')],
@@ -74,7 +74,7 @@ describe('operationAnchorId / modelAnchorId uniqueness', () => {
 	});
 
 	it('produces no duplicate model ids for distinct model names', () => {
-		const names = ['Credential', 'CredentialList', 'Gadget', 'Gadget_Binding', 'AccessRequest'];
+		const names = ['Credential', 'CredentialList', 'Gadget', 'Gadget_Binding', 'RuleSet'];
 		const ids = names.map(modelAnchorId);
 		expect(new Set(ids).size).toBe(ids.length);
 	});

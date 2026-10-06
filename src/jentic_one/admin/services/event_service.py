@@ -4,18 +4,27 @@ from __future__ import annotations
 
 from typing import Any
 
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import EventNotFoundError
 from jentic_one.admin.services.schemas.events import (
     EventFilter,
     EventView,
 )
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
 
 class EventService:
-    """Manages event queries."""
+    """Manages event queries.
+
+    Reads are owner-scoped: an event is visible to the actor it
+    names (``actor_id`` or ``created_by``), to the human owner of that agent, and to
+    ``org:admin``. System events with no subject are visible only to ``org:admin``.
+    To any other caller an event is indistinguishable from a missing one.
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -23,6 +32,8 @@ class EventService:
     async def list_all(
         self,
         filter: EventFilter,
+        *,
+        identity: Identity,
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[EventView]:
@@ -44,6 +55,7 @@ class EventService:
                 trace_id=filter.trace_id,
                 actor_id=filter.actor_id,
                 actor_type=filter.actor_type,
+                filters=build_access_filters(identity, Event),
             )
 
         has_more = len(events) > limit
@@ -57,9 +69,11 @@ class EventService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_by_id(self, event_id: str) -> EventView:
+    async def get_by_id(self, event_id: str, *, identity: Identity) -> EventView:
         async with self._ctx.admin_db.session() as session:
-            event = await EventRepository.get_by_id(session, event_id)
+            event = await EventRepository.get_by_id(
+                session, event_id, filters=build_access_filters(identity, Event)
+            )
         if event is None:
             raise EventNotFoundError(event_id)
         return self._to_view(event)

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
 
@@ -18,6 +18,8 @@ import { cn } from '@/shared/lib/utils';
 export interface SegmentedToggleOption<T extends string = string> {
 	value: T;
 	label: string;
+	/** Optional leading glyph (decorative — the label stays the accessible name). */
+	icon?: ReactNode;
 }
 
 interface SegmentedToggleProps<T extends string = string> {
@@ -158,6 +160,7 @@ export function SegmentedToggle<T extends string = string>({
 						role={isTabs ? 'tab' : undefined}
 						id={isTabs ? getTabId?.(option.value) : undefined}
 						aria-selected={isTabs ? isActive : undefined}
+						aria-pressed={isTabs ? undefined : isActive}
 						aria-controls={isTabs ? getControls?.(option.value) : undefined}
 						tabIndex={isTabs ? (isActive ? 0 : -1) : undefined}
 						ref={(el) => {
@@ -167,18 +170,23 @@ export function SegmentedToggle<T extends string = string>({
 						onClick={() => onChange(option.value)}
 						onKeyDown={handleKeyDown}
 						className={cn(
-							'relative rounded-md px-3 py-1 text-xs font-medium transition-colors',
+							'relative flex items-center rounded-md px-3 py-1 text-xs font-medium transition-colors',
 							!isActive && 'cursor-pointer',
 						)}
 					>
 						<span
 							className={cn(
-								'relative z-10 transition-colors',
+								'relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors',
 								isActive
 									? 'text-foreground'
 									: 'text-muted-foreground hover:text-foreground',
 							)}
 						>
+							{option.icon && (
+								<span aria-hidden="true" className="inline-flex shrink-0">
+									{option.icon}
+								</span>
+							)}
 							{option.label}
 						</span>
 					</button>

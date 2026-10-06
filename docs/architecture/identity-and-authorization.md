@@ -1,7 +1,7 @@
 # Identity and authorization
 
 Who can call what, and where that decision is made. This is the conceptual
-map; per-route scope requirements live in
+map; per-route permission requirements live in
 [`docs/reference/endpoints.md`](../reference/endpoints.md), and the auth
 surface's protocol details (discovery documents, registration endpoints) in
 [`docs/reference/`](../reference/README.md).
@@ -17,13 +17,32 @@ doesn't name one:
 | ----- | --------- | ------------------ |
 | `user` | A human operator, signed in through the SPA or `jenticctl`. | Session token (JWT), or a password login exchanged for one. |
 | `agent` | An AI agent owned by a user. Registered first, approved by a human before it can act. | Ed25519-signed assertion → opaque access token, or a `jak_` API key. |
-| `service_account` | A headless integration. | `sak_` API key. |
 
-The former `toolkit` actor is retired: a startup migration turns each
-`jntc_live_` toolkit key into a `sak_` service account, and a retired
-plaintext keeps authenticating as its migrated service account through the
-deprecation window (see the
-[release runbook](../development/releasing.md)).
+Agents are the only machine identity. Headless integrations (CI jobs, cron
+runners, scripts) register as an agent and authenticate with its `jak_` API
+key.
+
+Two former actor kinds are retired (see the
+[release runbook](../development/releasing.md)):
+
+- **`service_account`** — removed in theme 8. The migration converted each
+  service account into a successor agent, carrying over its grants and
+  bindings. In 0.41 (theme-8 Phase 4) the service-account tables are dropped
+  and **`sak_` keys stop working**: every surface answers a `sak_` key with a
+  401 whose detail says service-account keys were retired and to mint a
+  `jak_` key for the successor agent (an INFO `retired_service_account_key_refused`
+  log line names that agent). No new `sak_` keys are issued; the
+  `/service-accounts` API, `POST /oauth/mint`, and the `client_credentials`
+  grant are gone. `service_account` is no longer an `ActorType` value.
+  Leftover `service_account` token rows fail closed on every path, and
+  historical `sva_` ids in audit and event rows are labelled, never
+  resolved.
+- **`toolkit`** — on 0.40.x a startup migration turned each `jntc_live_`
+  toolkit key into a successor agent (it minted a service account before
+  theme 8, and those service accounts migrate like any other). The toolkit
+  tables are dropped in 0.41 (theme-5 Phase 6b); a retired plaintext keeps
+  authenticating as its successor agent through the migrated digest, until
+  no earlier than 2026-12-01.
 
 An agent's `Identity` carries its owner (`parent_actor_id`) and the owner's
 effective permissions (`parent_permissions`): an agent can never out-rank
@@ -77,8 +96,12 @@ sequenceDiagram
    one **Ed25519** public key (`registration_service.py` rejects anything
    else, including any private-key material).
 2. **Wait for approval**: registration lands as a `PENDING` agent; a human
-   approves or denies it (`agent_service.py`). Until approval, token
-   exchange answers "pending", distinct from a rejected assertion.
+   approves or denies it (`agent_service.py`). Once the agent has an owner
+   (claimed), its owner (holding `agents:write`) or an `org:admin` decides.
+   Only an `org:admin` can decide an unclaimed agent, and becomes its owner on
+   approval. Anyone else gets a 404.
+   Until approval, token exchange answers "pending", distinct from a rejected
+   assertion.
 3. **Exchange** (RFC 7523 JWT-bearer grant, `assertion_service.py`): the
    agent signs a short-lived assertion (≤ 5 minutes, single-use `jti`) with
    its private key; the auth surface verifies it against the registered
@@ -90,33 +113,60 @@ sequenceDiagram
    more than a few seconds fast produces `iat` rejections — keep both ends
    on NTP.
 
-Operators and the SPA use session JWTs minted at login; API keys
-(`jak_`/`sak_`) are the long-lived alternative, resolved by prefix against
+Operators and the SPA use session JWTs minted at login; agent API
+keys (`jak_`, plus legacy `jntc_live_` plaintexts that resolve as their
+successor agents once migrated; retired `sak_` keys are refused) are the
+long-lived alternative,
+dispatched by prefix and matched by digest against
 the admin DB ([`shared/auth/api_key_resolver.py`](../../src/jentic_one/shared/auth/api_key_resolver.py)). JWT verification for
 asymmetric tokens allows only asymmetric algorithms — `alg: none` and all
 HMAC algorithms are rejected ([`shared/auth/jwt_verification.py`](../../src/jentic_one/shared/auth/jwt_verification.py)).
 
-## Scopes
+## Permissions
 
-Scopes shared across surfaces are canonical constants in
-[`shared/scopes.py`](../../src/jentic_one/shared/scopes.py). The shape of the system:
+Two vocabularies meet here, and keeping them apart is what makes the code
+readable:
 
-- **`capabilities:execute`** is the one scope the broker's data plane
+- A **permission** is what an actor may do inside this platform — the string
+  stored in `actor_permission_grants`, carried on `Identity.permissions`, and
+  checked by route guards, the UI, and the CLI.
+- A **scope** is the same string travelling over this deployment's own
+  OAuth2/OIDC plane: a client's `allowed_scopes`, `scopes_supported` in
+  discovery, the consent-time set on a grant, `access_tokens.scopes` on a
+  minted token. (Third-party credential scopes are a third, unrelated thing —
+  they belong to the upstream API, not to us.)
+
+The two formats are identical today, and
+[`shared/auth/verify.scopes_to_permissions`](../../src/jentic_one/shared/auth/verify.py)
+is the named boundary where a token's scopes become an identity's permissions.
+Symbols are **named for what they return, not for what they read**:
+`resolve_effective_scopes` ([`auth/services/token_service.py`](../../src/jentic_one/auth/services/token_service.py))
+reads internal permission grants but returns a token's OAuth2 scope set, so it
+is named for scopes.
+
+Permissions shared across surfaces are canonical constants in
+[`shared/auth/permission_catalog.py`](../../src/jentic_one/shared/auth/permission_catalog.py),
+re-exported by [`admin/core/permissions.py`](../../src/jentic_one/admin/core/permissions.py)
+so admin stays the documented home for the concepts. The shape of the system:
+
+- **`capabilities:execute`** is the one permission the broker's data plane
   requires. Every accepted credential kind must carry it.
-- **`DEFAULT_AGENT_SCOPES`** is the safe agent baseline: execute, reads
+- **`DEFAULT_AGENT_PERMISSIONS`** is the safe agent baseline: execute, reads
   (`apis:read`, `executions:read`, `jobs:read`, `events:read`,
-  `capabilities:read`), `catalog:import`, and the `owner:*:read` delegation
-  scopes for resources, agents, credentials, and access requests
-  (not `owner:service-accounts:read`).
-- **Self-service elevation is bounded.** An agent may file a `scope:grant`
-  access request only for `GRANTABLE_SCOPES` (the baseline plus
-  `apis:write`). The privileged scopes — `org:admin`, `agents:write`,
-  `overlays:confirm` — are deliberately excluded, so neither an agent nor a
-  merely agent-owning operator can escalate through the request path.
-- **`owner:<resource>:read`** scopes power delegation: an operator holding
-  them sees their agents' rows (credentials, access requests)
-  without being org admin. The `scoping/filters.py` modules translate these
-  into row-level filters (see
+  `capabilities:read`), `catalog:import`, `credentials:connect` (start a
+  vendor connect flow — narrower than `credentials:write`), and the
+  `owner:*:read` delegation permissions for resources, agents, and credentials.
+  `MCP_TOOL_SCOPES` is the same set seen from the OAuth2 plane — the ceiling on
+  what a client registered at the anonymous DCR door may ask for.
+- **There is no self-service permission elevation.** Permissions are granted
+  by an operator on the agent detail surface, so the privileged permissions —
+  `org:admin`, `agents:write`, `overlays:confirm` — can never be reached
+  through an agent-facing path: neither an agent nor a merely agent-owning
+  operator can escalate.
+- **`owner:<resource>:read`** permissions power delegation: an operator
+  holding them sees their agents' rows (e.g. credentials) without being org
+  admin. The `scoping/filters.py` modules translate these into row-level
+  filters (see
   [surfaces and layering](surfaces-and-layering.md#the-scoping-packages)).
 
 ## Enforcement points
@@ -127,7 +177,7 @@ different questions:
 1. **Route admission** (`web/`): every non-health router declares an auth
    dependency (enforced by [`tests/arch/test_web_layer.py`](../../tests/arch/test_web_layer.py)); the dependency
    verifies the credential, resolves the `Identity`, and checks the route's
-   scope. On the broker, `CachedTokenValidator`
+   permission. On the broker, `CachedTokenValidator`
    ([`broker/core/token_validation.py`](../../src/jentic_one/broker/core/token_validation.py)) fronts the resolvers with a short-TTL
    cache keyed on the token's SHA-256 (both hits and misses cached, LRU
    bounded).
@@ -142,9 +192,9 @@ different questions:
    (see [broker execution](broker-execution.md)).
 
 The chain for an agent's first real call is therefore: registration
-approval (human) → credential binding via an access request (human) → scope
-check (route) → permission rule (call). Each step is auditable, and none is
-implied by the previous one.
+approval (human) → credential binding, via a consented vendor connect flow
+or an operator-made bind (human) → permission check (route) → permission rule
+(call). Each step is auditable, and none is implied by the previous one.
 
 ## Related
 

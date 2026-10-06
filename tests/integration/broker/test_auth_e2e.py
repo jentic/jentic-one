@@ -20,21 +20,20 @@ import pytest
 from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
-from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.shared.auth.errors import TokenValidationError
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
@@ -48,11 +47,8 @@ async def clean_access_tokens(admin_db: DatabaseSession) -> AsyncGenerator[None,
         async with admin_db.session() as session:
             await session.execute(delete(AccessToken))
             await session.execute(delete(RefreshToken))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
-            await session.execute(
-                delete(ServiceAccount).where(ServiceAccount.created_by == _SEED_MARKER)
-            )
             await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
             await session.execute(delete(OAuthClient).where(OAuthClient.created_by == _SEED_MARKER))
             await session.commit()
@@ -106,23 +102,6 @@ async def _seed_user_row(admin_db: DatabaseSession, user_id: str, *, active: boo
         await session.commit()
 
 
-async def _seed_service_account_row(
-    admin_db: DatabaseSession, sa_id: str, *, owner_id: str, status: str = "active"
-) -> None:
-    async with admin_db.session() as session:
-        session.add(
-            ServiceAccount(
-                id=sa_id,
-                name=f"e2e-{sa_id}",
-                owner_id=owner_id,
-                registered_by=owner_id,
-                created_by=_SEED_MARKER,
-                status=status,
-            )
-        )
-        await session.commit()
-
-
 async def _seed_opaque_token(
     admin_db: DatabaseSession,
     *,
@@ -138,7 +117,7 @@ async def _seed_opaque_token(
             token_hash=token_hash,
             actor_id=actor_id,
             actor_type=actor_type,
-            scopes=[BROKER_EXECUTE_SCOPE],
+            scopes=[BROKER_EXECUTE_PERMISSION],
             token_family_id="fam_test",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
             created_by=actor_id,
@@ -157,7 +136,7 @@ async def test_opaque_token_resolves_via_db(
     resolved = await _dual(admin_db).validate("at_live_opaque")
 
     assert resolved.sub == "agnt_opaque"
-    assert BROKER_EXECUTE_SCOPE in resolved.permissions
+    assert BROKER_EXECUTE_PERMISSION in resolved.permissions
 
 
 async def test_signed_jwt_validates_without_db_lookup(
@@ -170,7 +149,7 @@ async def test_signed_jwt_validates_without_db_lookup(
             "sub": "agnt_jwt",
             "exp": exp,
             "actor_type": "agent",
-            "scopes": [BROKER_EXECUTE_SCOPE],
+            "scopes": [BROKER_EXECUTE_PERMISSION],
         },
         _JWT_SECRET,
         algorithm="HS256",
@@ -179,7 +158,7 @@ async def test_signed_jwt_validates_without_db_lookup(
     resolved = await _dual(admin_db).validate(token)
 
     assert resolved.sub == "agnt_jwt"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
 
 
 async def test_unknown_opaque_token_is_rejected(
@@ -253,11 +232,11 @@ async def _seed_pair_and_grants(
             created_by=actor_id,
         )
         for scope in grants:
-            await ActorScopeGrantRepository.grant(
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id=actor_id,
                 actor_type="agent",
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -298,19 +277,19 @@ async def test_ephemeral_minted_token_keeps_downscoped_snapshot(
             token_hash=hashlib.sha256(b"at_minted_ephemeral").hexdigest(),
             actor_id="agnt_eph",
             actor_type="agent",
-            scopes=[BROKER_EXECUTE_SCOPE],
+            scopes=[BROKER_EXECUTE_PERMISSION],
             token_family_id="fam_eph",
             expires_at=now + timedelta(minutes=5),
             created_by="agnt_eph",
             is_ephemeral=True,
         )
         # Broader live grants exist, but the token is flagged ephemeral.
-        for scope in (BROKER_EXECUTE_SCOPE, "apis:write"):
-            await ActorScopeGrantRepository.grant(
+        for scope in (BROKER_EXECUTE_PERMISSION, "apis:write"):
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id="agnt_eph",
                 actor_type="agent",
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -319,7 +298,7 @@ async def test_ephemeral_minted_token_keeps_downscoped_snapshot(
     resolved = await _dual(admin_db).validate("at_minted_ephemeral")
 
     assert resolved.sub == "agnt_eph"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
 
 
 # --- actor-status kill switch on the execute path (#1136) ------------------
@@ -378,25 +357,19 @@ async def test_user_token_follows_user_active_flag(
             await _dual(admin_db).validate("at_user_token")
 
 
-@pytest.mark.parametrize("sa_status,should_pass", [("active", True), ("disabled", False)])
-async def test_service_account_token_follows_sa_status(
-    admin_db: DatabaseSession, clean_access_tokens: None, sa_status: str, should_pass: bool
+async def test_residual_service_account_token_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    """The SQL's `service_account` CASE branch."""
-    await _seed_user_row(admin_db, "usr_sa_owner")
-    await _seed_service_account_row(
-        admin_db, "sva_broker", owner_id="usr_sa_owner", status=sa_status
-    )
+    """The SQL's `service_account` CASE branch fails closed: a residual SA
+    session row (theme-8 Phase 4 dropped the SA tables, not the tokens) never
+    resolves to a live identity: the resolver drops the row (the actor type is
+    no longer a member of ``ActorType``) and the broker sees an unknown token."""
     await _seed_opaque_token(
         admin_db, plaintext="at_sa_token", actor_id="sva_broker", actor_type="service_account"
     )
 
-    if should_pass:
-        resolved = await _dual(admin_db).validate("at_sa_token")
-        assert resolved.sub == "sva_broker"
-    else:
-        with pytest.raises(TokenValidationError, match="token_inactive"):
-            await _dual(admin_db).validate("at_sa_token")
+    with pytest.raises(TokenValidationError, match="unknown_token"):
+        await _dual(admin_db).validate("at_sa_token")
 
 
 async def test_disable_mid_life_kills_token_after_cache_ttl(

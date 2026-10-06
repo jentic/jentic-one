@@ -12,7 +12,7 @@ call-sites get identical problem+json semantics.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 import structlog
 
@@ -40,6 +40,7 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.shared.access_guidance import connect_vendor_key
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
@@ -80,6 +81,8 @@ class CredentialService:
         allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
         preresolved: ResolvedCredential | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -100,7 +103,7 @@ class CredentialService:
         ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
         an operator inspecting an execution can join the credential-use record
         back to the specific execution that triggered it (#740). Optional so
-        non-execution call-sites (bind-time probes, service accounts) don't
+        non-execution call-sites (e.g. bind-time probes) don't
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
 
@@ -122,6 +125,8 @@ class CredentialService:
                 credential_name=credential_name,
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         )
         try:
@@ -153,6 +158,7 @@ class CredentialService:
                         f"for '{api.vendor}'"
                     ),
                     identity=identity,
+                    credential_owner=resolved.created_by,
                     requires_action=True,
                 )
                 raise CredentialUndecryptableError(
@@ -192,6 +198,7 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
+                    credential_owner=resolved.created_by,
                     # Sanitised: emit_event raises on a malformed trace_id, and
                     # a 500 here would fail the whole execute request (#903).
                     trace_id=valid_trace_id_or_none(trace_id),
@@ -229,6 +236,7 @@ class CredentialService:
                 type=EventType.CREDENTIAL_REFRESH_FAILED,
                 summary=f"Credential refresh failed for '{api.vendor}'",
                 identity=identity,
+                credential_owner=resolved.created_by,
                 tags={ErrorSource.AUTH_JENTIC},
             )
             raise CredentialNeedsReconnectError(
@@ -240,9 +248,12 @@ class CredentialService:
                 ),
             ) from exc
         except RefreshTransientError as exc:
+            # ``str(exc)`` is the credential id + exception class only (the
+            # refresher never forwards raw exception text); ``from None`` keeps
+            # any chained provider/transport error out of rendered tracebacks.
             raise CredentialRefreshTransientError(
                 detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
-            ) from exc
+            ) from None
 
     async def select(
         self,
@@ -254,6 +265,8 @@ class CredentialService:
         credential_name: str | None = None,
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -276,6 +289,8 @@ class CredentialService:
             credential_name=credential_name,
             credential_id=credential_id,
             allowed_credential_ids=allowed_credential_ids,
+            request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
         )
 
     async def _resolve_mapped(
@@ -286,6 +301,8 @@ class CredentialService:
         credential_name: str | None,
         credential_id: str | None,
         allowed_credential_ids: Collection[str] | None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -300,6 +317,8 @@ class CredentialService:
                 credential_name=credential_name,
                 credential_id=credential_id,
                 allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
@@ -350,10 +369,17 @@ class CredentialService:
         type: str,
         summary: str,
         identity: Identity,
+        credential_owner: str | None = None,
         tags: set[EventTag] | None = None,
         requires_action: bool = False,
     ) -> None:
-        """Emit a credential-health event on the admin DB (best-effort)."""
+        """Emit a credential-health event on the admin DB (best-effort).
+
+        ``actor_id`` is the identity whose request hit the failure. When the
+        failure concerns a resolved credential, ``credential_owner`` names its
+        owner as the event's ``created_by`` so the owner sees it under
+        owner-scoped event reads; otherwise ``created_by`` is the actor.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -361,7 +387,7 @@ class CredentialService:
                     type=type,
                     severity=EventSeverity.WARNING,
                     summary=summary,
-                    created_by=identity.sub,
+                    created_by=credential_owner or identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                     tags=tags,
@@ -373,24 +399,49 @@ class CredentialService:
     def _not_provisioned(
         self, api: APIReference, identity: Identity
     ) -> DomainCredentialNotProvisionedError:
-        """Build the 424 with a ``prompt_human`` directive enabling a human handoff."""
+        """Build the 424 with a ``prompt_human`` directive enabling a human handoff.
+
+        Phase 1b: when the API reverse-maps onto a vendor-registry key
+        (``connect_vendor_key``), the provisioning leg is agent-initiable —
+        the directive carries a runnable ``parameters.suggested_command``
+        (``jentic connect <key>``, the registry key, never the API identity)
+        and the prose teaches the relay loop. Off the registry the ask stays
+        with the operator (same registry-gated pattern as the 403 arms in
+        ``broker/web/routers/execute.py``); approval stays human either way.
+        """
         intent_id = f"intent_{uuid.uuid4().hex}"
         params: dict[str, object] = {"intent_id": intent_id, "vendor": api.vendor}
 
-        base = self._ctx.config.broker.account_linking_base_url
-        instruction = (
-            f"No credential is connected for '{api.vendor}'; "
-            "ask the user to connect the account before retrying."
+        connect_vendor = connect_vendor_key(
+            self._ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
         )
+        if connect_vendor:
+            params["suggested_command"] = f"jentic connect {connect_vendor}"
+
+        base = self._ctx.config.broker.account_linking_base_url
+        if connect_vendor:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'. Start connecting one "
+                f"yourself: run `jentic connect {connect_vendor}` (or call the "
+                "request_connection tool) and relay the approval_url to your human "
+                "operator — they approve it in the browser; you cannot. Once they "
+                "confirm, verify the new binding with whoami and retry."
+            )
+        else:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'; "
+                "ask the user to connect the account before retrying."
+            )
         if base:
             provisioning_url = (
                 f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
             )
             params["provisioning_url"] = provisioning_url
-            instruction = (
-                f"No credential is connected for '{api.vendor}'. Ask the user to open "
-                f"{provisioning_url} to authorize, then retry once they confirm."
-            )
+            if not connect_vendor:
+                instruction = (
+                    f"No credential is connected for '{api.vendor}'. Ask the user to open "
+                    f"{provisioning_url} to authorize, then retry once they confirm."
+                )
 
         return DomainCredentialNotProvisionedError(
             detail=f"No credential provisioned for '{api.vendor}'.",

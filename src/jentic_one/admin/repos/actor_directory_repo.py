@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, String, case, literal, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import CompoundSelect
 
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.shared.models import ActorStatus, ActorType
 
 
-def _build_union() -> CompoundSelect[Any]:
-    """Build a UNION ALL query across users, agents, and service accounts."""
+def _build_union(
+    agent_filters: Sequence[ColumnElement[bool]] = (),
+) -> CompoundSelect[Any]:
+    """Build a UNION ALL query across users and agents.
+
+    ``agent_filters`` narrows the agents arm only (the caller's agent
+    visibility); the users arm is never filtered here.
+
+    Service accounts left the directory in theme-8 Phase 2: every SA was
+    migrated to a successor agent (which the agents arm lists).
+    """
     users_q = select(
         User.id.label("id"),
         literal(ActorType.USER, type_=String).label("actor_type"),
@@ -33,23 +43,13 @@ def _build_union() -> CompoundSelect[Any]:
         .cast(Boolean)
         .label("active"),
         Agent.created_at.label("created_at"),
-    )
+    ).where(*agent_filters)
 
-    service_accounts_q = select(
-        ServiceAccount.id.label("id"),
-        literal(ActorType.SERVICE_ACCOUNT, type_=String).label("actor_type"),
-        ServiceAccount.name.label("name"),
-        case((ServiceAccount.status == ActorStatus.ACTIVE, literal(True)), else_=literal(False))
-        .cast(Boolean)
-        .label("active"),
-        ServiceAccount.created_at.label("created_at"),
-    )
-
-    return union_all(users_q, service_accounts_q, agents_q)
+    return union_all(users_q, agents_q)
 
 
 class ActorDirectoryRepository:
-    """Read-only actor directory — UNION ALL across users, agents, service accounts."""
+    """Read-only actor directory — UNION ALL across users and agents."""
 
     @staticmethod
     async def list_all(
@@ -70,5 +70,24 @@ class ActorDirectoryRepository:
         elif cursor_ts is not None:
             stmt = stmt.where(subq.c.created_at < cursor_ts)
 
+        result = await session.execute(stmt)
+        return list(result.all())
+
+    @staticmethod
+    async def get_by_ids(
+        session: AsyncSession,
+        ids: Sequence[str],
+        *,
+        agent_filters: Sequence[ColumnElement[bool]] = (),
+    ) -> list[Any]:
+        """Return the directory rows whose id is in ``ids``; unknown ids are skipped.
+
+        ``agent_filters`` restricts which agent rows can match; user rows are
+        returned for any requested id.
+        """
+        if not ids:
+            return []
+        subq = _build_union(agent_filters).subquery()
+        stmt = select(subq).where(subq.c.id.in_(list(ids))).order_by(subq.c.id)
         result = await session.execute(stmt)
         return list(result.all())

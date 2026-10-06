@@ -28,7 +28,7 @@ still NAMES the CLI-lane references and their HTTP URLs in its
 ``references`` rows; it advertises where the neutral channel serves them,
 it does not make them readable here.
 
-Kept as a sibling of ``app.py`` (the ``access_compose.py`` precedent:
+Kept as a sibling of ``app.py`` (the handlers-adjacent precedent:
 handlers-adjacent logic lives next to the handlers, keeping ``app.py``
 gate-focused). ``app.py``'s ``on_read_resource`` is a bare delegation to
 :func:`read_skill_resource` — pinned structurally by

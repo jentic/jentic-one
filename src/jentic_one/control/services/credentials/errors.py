@@ -79,14 +79,27 @@ class RuleSetInUseError(CredentialServiceError):
 
 
 class RuleSetAccessDeniedError(CredentialServiceError):
-    """Raised when a caller may see but not mutate a shared rule set.
+    """Raised when a caller may see but not modify a shared rule set.
 
-    Provisional creator-or-admin write gate pending the theme plan's open
-    ownership question (OQ-6); widening it later needs no schema change.
+    A curated set is modifiable only by an org admin; any other set by its
+    creator or an org admin.
+    """
+
+    def __init__(self, rule_set_id: str, *, curated: bool = False) -> None:
+        who = "an org admin" if curated else "the creator or an org admin"
+        super().__init__(f"Only {who} may modify permission rule set '{rule_set_id}'")
+        self.rule_set_id = rule_set_id
+
+
+class RuleSetAttachDeniedError(CredentialServiceError):
+    """Raised when a caller may see but not attach a shared rule set.
+
+    A set is attachable by its creator, by an org admin, or, when curated,
+    by any caller allowed to write the binding's rules.
     """
 
     def __init__(self, rule_set_id: str) -> None:
         super().__init__(
-            f"Only the creator or an org admin may modify permission rule set '{rule_set_id}'"
+            f"Only the creator or an org admin may attach permission rule set '{rule_set_id}'"
         )
         self.rule_set_id = rule_set_id

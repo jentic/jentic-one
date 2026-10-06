@@ -12,12 +12,12 @@ const PILLARS = [
 	{
 		icon: UserCheck,
 		question: 'Who is acting?',
-		body: 'Every call is tied to a verified identity — a human user, an autonomous agent, or a service account.',
+		body: 'Every call is tied to a verified identity — a human user or an autonomous agent.',
 	},
 	{
 		icon: ShieldCheck,
 		question: 'Are they allowed to?',
-		body: 'Coarse JWT scopes plus fine-grained per-binding permission rules decide what each identity may execute.',
+		body: 'Coarse token permissions plus fine-grained per-binding rules decide what each identity may execute.',
 	},
 	{
 		icon: ScrollText,

@@ -102,7 +102,10 @@ class ImportHandler:
             sources = payload.get("sources", [])
             overlay_id = payload.get("overlay_id")
             supersede_overlay_id = payload.get("supersede_overlay_id")
-            resolved_actor_type = ActorType(actor_type) if actor_type else ActorType.USER
+            # Opaque string, not ``ActorType(...)``: a job enqueued on 0.40 by a
+            # since-retired service account carries ``actor_type='service_account'``
+            # and must still import (the audit row keeps the historical label).
+            resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
             recovered_overlay_link = False
@@ -130,6 +133,11 @@ class ImportHandler:
                             "state": result.state,
                         }
                     )
+                    held = result.held_host_change
+                    if held is not None:
+                        # Server-host change guard: kept as a draft for operator review.
+                        revisions[-1]["held_for_review"] = True
+                        revisions[-1]["host_change"] = held.model_dump()
                     await record_audit_best_effort(
                         self._ctx,
                         action=AuditAction.CREATE,
@@ -143,7 +151,9 @@ class ImportHandler:
                             "name": result.api_name,
                             "version": result.api_version,
                             "state": result.state,
+                            **({"host_change": held.model_dump()} if held is not None else {}),
                         },
+                        reason="server_host_change_held" if held is not None else None,
                         origin=None,
                     )
                 except Exception as exc:
@@ -176,7 +186,15 @@ class ImportHandler:
             #     as success and (idempotently, CAS on CONFIRMED) deprecate + settle.
             recovered_supersede = False
             if supersede_overlay_id:
-                if revisions and not failures:
+                if any(rev.get("held_for_review") for rev in revisions):
+                    # The upstream revision was held for review, so nothing was archived
+                    # and the overlay is still served: leave it confirmed.
+                    logger.info(
+                        "overlay_supersede_skipped_host_change_held",
+                        job_id=job_id,
+                        overlay_id=supersede_overlay_id,
+                    )
+                elif revisions and not failures:
                     await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),
@@ -535,9 +553,9 @@ class ImportHandler:
         committed the fresh upstream revision and made it current, then crashed before the
         separate-transaction deprecate ran; the retry re-ingests identical content and
         fails with ``DuplicateRevisionError`` (no new revision). Returns the resolved
-        ``api_id`` — so the caller completes the job (instead of dead-lettering) and settles
-        events — when the served revision is now a *non-overlay* (upstream) revision,
-        meaning the supersede's durable effect already landed. In that case it also
+        ``api_id`` — so the caller completes the job (instead of dead-lettering) — when
+        the served revision is now a *non-overlay* (upstream) revision, meaning the
+        supersede's durable effect already landed. In that case it also
         (idempotently, CAS on CONFIRMED) deprecates the overlay to finish the interrupted
         step. Returns ``None`` for a genuine failure (served revision is still the overlay,
         or identity can't be resolved).

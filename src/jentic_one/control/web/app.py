@@ -6,20 +6,37 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI
 
-from jentic_one.control.services.access_requests.errors import AccessRequestServiceError
 from jentic_one.control.services.credentials.errors import CredentialServiceError
-from jentic_one.control.web.errors import (
-    access_request_service_error_handler,
-    credential_service_error_handler,
-    database_error_handler,
+from jentic_one.control.services.integrations.device_authorization import (
+    DeviceAuthorizationError,
 )
-from jentic_one.control.web.routers import access_requests, credentials, mcp
+from jentic_one.control.services.integrations.errors import ConnectSessionServiceError
+from jentic_one.control.services.vendors.service import (
+    UnknownVendorError,
+    UnsupportedFlowError,
+    VendorNotConfiguredError,
+)
+from jentic_one.control.web.errors import (
+    connect_session_error_handler,
+    credential_service_error_handler,
+    cursor_error_handler,
+    database_error_handler,
+    device_authorization_error_handler,
+    vendor_error_handler,
+)
+from jentic_one.control.web.routers import (
+    credentials,
+    integrations,
+    mcp,
+    vendors,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import (
     DatabaseDataError,
     DatabaseIntegrityError,
     DatabaseUnavailableError,
 )
+from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
@@ -32,8 +49,9 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     return [
         (make_health_router("control"), "/control", []),
         (credentials.router, "", []),
-        (access_requests.router, "", []),
         (mcp.router, "", []),
+        (vendors.router, "", []),
+        (integrations.router, "", []),
     ]
 
 
@@ -41,7 +59,12 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
     """Return surface-specific exception handlers to register on the combined app."""
     return [
         (CredentialServiceError, credential_service_error_handler),
-        (AccessRequestServiceError, access_request_service_error_handler),
+        (ConnectSessionServiceError, connect_session_error_handler),
+        (DeviceAuthorizationError, device_authorization_error_handler),
+        (UnknownVendorError, vendor_error_handler),
+        (UnsupportedFlowError, vendor_error_handler),
+        (VendorNotConfiguredError, vendor_error_handler),
+        (InvalidCursorError, cursor_error_handler),
         (DatabaseIntegrityError, database_error_handler),
         (DatabaseDataError, database_error_handler),
         (DatabaseUnavailableError, database_error_handler),

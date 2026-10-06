@@ -77,9 +77,10 @@ exposure vector in past audits.
 ## Agent-side hardening
 
 - **Least privilege by construction:** approve agents with narrow permission
-  rules (`allow` rules constrained by method/path), and review the `--reason`
-  on every access request. The rules match method/path/operation — never the
-  request body; do not accept a rule that pretends otherwise.
+  rules (`allow` rules constrained by method/path), and review what a vendor
+  connect flow will grant — the credential, the agent binding, and its
+  permissions — before consenting. The rules match method/path/operation —
+  never the request body; do not accept a rule that pretends otherwise.
 - **One identity per agent.** Each machine/agent registers its own identity so
   it can be individually approved, scoped, audited, and revoked (revoke in
   `/app/agents`; the upstream API key is untouched).

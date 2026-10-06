@@ -2,8 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
+import type { PermissionRuleSchema } from '../models/PermissionRuleSchema';
 import type { RuleSetCreateRequest } from '../models/RuleSetCreateRequest';
 import type { RuleSetListResponse } from '../models/RuleSetListResponse';
 import type { RuleSetResponse } from '../models/RuleSetResponse';
@@ -131,7 +131,10 @@ export class PermissionRuleSetsService {
     }
     /**
      * Update permission rule set
-     * Rename or re-describe a rule set (creator or org admin).
+     * Rename or re-describe a rule set.
+     *
+     * A curated set is editable by an org admin; any other set by its creator
+     * or an org admin (403 `rule_set_access_denied` otherwise).
      * @returns RuleSetResponse Successful Response
      * @throws ApiError
      */
@@ -175,7 +178,7 @@ export class PermissionRuleSetsService {
         requestBody,
     }: {
         ruleSetId: string,
-        requestBody: Array<jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema>,
+        requestBody: Array<PermissionRuleSchema>,
     }): CancelablePromise<PermissionRuleListResponse> {
         return __request(OpenAPI, {
             method: 'PUT',

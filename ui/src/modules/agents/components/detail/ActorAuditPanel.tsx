@@ -1,24 +1,25 @@
 /**
- * ActorAuditPanel — the "Recent changes" card on the agent / service-account
- * detail Overview tab: a thin, actor-scoped wrapper over the shared
- * {@link AuditTrailCard} (the shared audit card, so
- * "Recent changes" reads identically across consoles). Surfaces the lifecycle
+ * ActorAuditPanel — the "Recent changes" section of the dock's Activity
+ * sheet: a thin, actor-scoped wrapper over the shared {@link AuditTrailCard},
+ * so "Recent changes" reads identically on every surface. Surfaces the lifecycle
  * trail recorded against this actor as the TARGET (register, approve/deny,
  * disable/enable, key rotation, binding grant/revoke).
  *
- * Requires `org:admin` — the repository maps 401/403 to an empty list, so
- * non-admins see the graceful "no entries" state rather than an error.
+ * Requires `audit:read` (or `org:admin`): anyone else gets no request and a
+ * quiet note that the history is not visible to them, never an error.
  */
 import { AuditTrailCard } from '@/shared/ui';
+import { AUDIT_READ, useCanAccess, usePermissionsKnown } from '@/shared/auth';
 import { useActorAudit } from '@/modules/agents/api';
 
 export interface ActorAuditPanelProps {
-	actorKind: 'agent' | 'service-account';
 	actorId: string;
 }
 
-export function ActorAuditPanel({ actorKind, actorId }: ActorAuditPanelProps) {
-	const { data: entries = [], isLoading, isError } = useActorAudit(actorKind, actorId);
+export function ActorAuditPanel({ actorId }: ActorAuditPanelProps) {
+	const canReadAudit = useCanAccess(AUDIT_READ);
+	const permissionsKnown = usePermissionsKnown();
+	const { data: entries = [], isLoading, isError } = useActorAudit(actorId);
 
 	return (
 		<AuditTrailCard
@@ -30,13 +31,15 @@ export function ActorAuditPanel({ actorKind, actorId }: ActorAuditPanelProps) {
 				reason: entry.reason,
 				occurredAt: entry.occurred_at,
 			}))}
-			isLoading={isLoading}
+			isLoading={isLoading || !permissionsKnown}
 			isError={isError}
 			caption="Lifecycle events · admin only"
 			errorMessage="Failed to load the audit log."
-			emptyMessage={`No recorded changes for this ${
-				actorKind === 'agent' ? 'agent' : 'service account'
-			} yet. The full audit trail lives in Monitor → Audit.`}
+			emptyMessage={
+				canReadAudit
+					? 'No recorded changes for this agent yet. The full audit trail lives in Monitor → Audit.'
+					: "This agent's change history needs audit access."
+			}
 		/>
 	);
 }

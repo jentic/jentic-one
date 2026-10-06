@@ -43,6 +43,7 @@ from jentic_one.broker.services.execution.service import (
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.schemas import OperationInfo
 
 _ACTOR = "agt_broker"
 _TOOLKIT = "tk_broker00000000000000000"
@@ -110,7 +111,7 @@ def _ctx_req() -> ExecuteRequestContext:
         method="GET",
         trace_id=_TRACE,
         toolkit_id=_TOOLKIT,
-        operation_id=_OPERATION,
+        operation=OperationInfo(id=_OPERATION),
         api_vendor="example",
         api_name="api",
         api_version="1.0.0",

@@ -164,7 +164,37 @@ func (c Config) httpClient() *http.Client {
 	}
 	wrapped := *hc
 	wrapped.Transport = newRetryTransport(hc.Transport, c.credentials())
+	wrapped.CheckRedirect = sameOriginRedirects(hc.CheckRedirect)
 	return &wrapped
+}
+
+// maxRedirects mirrors net/http's default redirect cap, which a custom
+// CheckRedirect replaces.
+const maxRedirects = 10
+
+// sameOriginRedirects is the redirect policy for the SDK's authenticated
+// clients: a redirect is followed only while it stays on the origin (scheme,
+// host, port) of the original request. A redirect anywhere else is not
+// followed — the 3xx is returned to the caller as-is — so neither the
+// caller's Authorization header (which net/http keeps for subdomains) nor a
+// re-exchanged bearer from the retry policy's 401 arm can reach another
+// origin. A caller-supplied policy still runs for the redirects we allow.
+func sameOriginRedirects(next func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) == 0 {
+			return nil
+		}
+		if !auth.SameOrigin(via[0].URL, req.URL) {
+			return http.ErrUseLastResponse
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return nil
+	}
 }
 
 // NewControl builds the strictly-typed control-plane client, authenticated for the
@@ -285,6 +315,9 @@ func BrokerTransport(c Config) *http.Client {
 	}
 	wrapped := *hc
 	wrapped.Transport = newRetryTransport(hc.Transport, auth.Credentials{})
+	// execute's own bearer rides this client: never carry it off the broker's
+	// origin on a redirect.
+	wrapped.CheckRedirect = sameOriginRedirects(hc.CheckRedirect)
 	// Force CanReExchange=false without a real credential: execute owns its auth.
 	wrapped.Transport.(*retryTransport).reExchange = false
 	return &wrapped

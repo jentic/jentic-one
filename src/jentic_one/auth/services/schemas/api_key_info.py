@@ -1,4 +1,4 @@
-"""API key metadata schema — shared across agent and service-account surfaces."""
+"""API key metadata schema for the agent API-key surfaces."""
 
 from __future__ import annotations
 

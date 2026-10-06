@@ -29,9 +29,9 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from jentic_one.shared.auth import CachedJWKSPublisher
+from jentic_one.shared.auth.permission_catalog import MCP_TOOL_SCOPES
 from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.scopes import MCP_TOOL_SCOPES
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
 
@@ -62,7 +62,7 @@ async def oauth_authorization_server(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
     """Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms)."""
-    issuer = deployment_base_url(ctx.config.auth, request)
+    issuer = deployment_base_url(ctx.config, request)
     return {
         "issuer": issuer,
         "authorization_endpoint": f"{issuer}/authorize",
@@ -84,7 +84,6 @@ async def oauth_authorization_server(
             "authorization_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "refresh_token",
-            "client_credentials",
         ],
         "token_endpoint_auth_methods_supported": [
             "private_key_jwt",
@@ -228,7 +227,7 @@ async def mcp_oauth_authorization_server(
     separate, unchanged surface whose `registration_endpoint` remains the agent
     `/register`.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_authorization_server_document(base)
 
 
@@ -246,7 +245,7 @@ async def mcp_oauth_protected_resource(
     same body is also served at the root well-known path for clients that
     ignore the 401's `resource_metadata` pointer.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_protected_resource_document(base)
 
 
@@ -283,7 +282,7 @@ async def oauth_protected_resource(
       without breaking this fallback. The mounted MCP app must re-confirm the
       "exactly one OAuth-protected resource" premise before adding one.
     """
-    base = deployment_base_url(ctx.config.auth, request)
+    base = deployment_base_url(ctx.config, request)
     return _mcp_protected_resource_document(base)
 
 

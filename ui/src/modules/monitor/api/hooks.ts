@@ -7,18 +7,26 @@
  * backend's Service layer.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
 import {
 	cancelJob,
 	getExecution,
 	getJob,
 	getUsageStats,
+	isMonitorAccessDenied,
 	listActors,
 	listAudit,
 	listEvents,
 	listExecutions,
 	listJobs,
+	MonitorApiError,
 	resolveActor,
 	streamEvents,
 	type ListActorsParams,
@@ -29,10 +37,11 @@ import {
 	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
 import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
+import { useCanListActors } from '@/shared/hooks';
+import { toJobStatus } from '@/modules/monitor/api/types';
 import type {
 	ActorListResponse,
 	AuditListResponse,
-	EventListResponse,
 	EventResponse,
 	ExecutionListResponse,
 	ExecutionResponse,
@@ -49,10 +58,12 @@ export const monitorKeys = {
 	execution: (id: string) => [...monitorKeys.all, 'execution', id] as const,
 	jobs: (params: ListJobsParams) => [...monitorKeys.all, 'jobs', params] as const,
 	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
-	// Derives from the shared cross-module root: shared surfaces (rail/toast)
-	// invalidate that root, so the two prefixes
-	// must be the same list or they'd silently drift apart.
+	// Derives from the shared cross-module root, so a cross-module
+	// invalidation of that root reaches every events list here too.
 	events: (params: ListEventsParams) => [...sharedQueryKeys.monitorEventsRoot, params] as const,
+	// Same root, so that invalidation also refreshes the Activity feed.
+	eventFeed: (params: Omit<ListEventsParams, 'cursor'>) =>
+		[...sharedQueryKeys.monitorEventsRoot, 'feed', params] as const,
 	audit: (params: ListAuditParams) => [...monitorKeys.all, 'audit', params] as const,
 	usage: (params: UsageStatsParams) => [...monitorKeys.all, 'usage', params] as const,
 	actors: () => [...monitorKeys.all, 'actors'] as const,
@@ -62,33 +73,66 @@ export const monitorKeys = {
 /* Executions                                                          */
 /* ------------------------------------------------------------------ */
 
-export function useExecutions(params: ListExecutionsParams = {}) {
+/** `enabled: false` keeps a consumer that has nothing to ask for (e.g. a
+ * sheet with no trace yet) from firing an unfiltered list request. */
+export function useExecutions(
+	params: ListExecutionsParams = {},
+	{
+		enabled = true,
+		refetchInterval = false,
+	}: { enabled?: boolean; refetchInterval?: number | false } = {},
+) {
 	return useQuery<ExecutionListResponse>({
 		queryKey: monitorKeys.executions(params),
 		queryFn: () => listExecutions(params),
 		placeholderData: keepPreviousData,
-	});
-}
-
-export function useExecution(executionId: string | null) {
-	return useQuery<ExecutionResponse>({
-		queryKey: monitorKeys.execution(executionId ?? ''),
-		queryFn: () => getExecution(executionId as string),
-		enabled: executionId != null,
+		enabled,
+		refetchInterval,
 	});
 }
 
 /**
- * Enriched usage aggregation for the Overview tab (`GET /monitoring/usage`,
- * jentic-one-internal#561). One call per grouping dimension — the Overview
- * fires three (api / credential / agent) so the bubble chart and breakdown can
- * toggle between lenses without refetching.
+ * One execution by id. A 404 is the answer (the record does not exist or is
+ * not visible to the caller), so it is never retried: the detail shows "Call
+ * not found" at once. Any other failure follows the client's default retry.
  */
-export function useUsageStats(params: UsageStatsParams = {}) {
+export function useExecution(executionId: string | null) {
+	const defaultRetry = useQueryClient().getDefaultOptions().queries?.retry;
+	return useQuery<ExecutionResponse>({
+		queryKey: monitorKeys.execution(executionId ?? ''),
+		queryFn: () => getExecution(executionId as string),
+		enabled: executionId != null,
+		retry: (failureCount, error) => {
+			if (error instanceof MonitorApiError && error.status === 404) return false;
+			if (typeof defaultRetry === 'function') return defaultRetry(failureCount, error);
+			if (typeof defaultRetry === 'number') return failureCount < defaultRetry;
+			// TanStack's own default when the client sets none: three retries.
+			return defaultRetry ?? failureCount < 3;
+		},
+	});
+}
+
+/**
+ * Enriched usage aggregation for the Usage tab (`GET /monitoring/usage`,
+ * jentic-one-internal#561), org:admin. Usage asks for the ACTIVE lens
+ * only; `keepPreviousData` holds the last lens on screen while a new one loads.
+ * The caller gates `enabled` on org:admin so non-admins never fire a doomed
+ * request (the gate lives in the view, not here).
+ */
+export function useUsageStats(
+	params: UsageStatsParams = {},
+	{
+		enabled = true,
+		refetchInterval = false,
+	}: { enabled?: boolean; refetchInterval?: number | false } = {},
+) {
 	return useQuery<UsageResponse>({
 		queryKey: monitorKeys.usage(params),
 		queryFn: () => getUsageStats(params),
 		placeholderData: keepPreviousData,
+		enabled,
+		// Polling pauses while the tab is hidden (TanStack's default).
+		refetchInterval,
 	});
 }
 
@@ -96,11 +140,30 @@ export function useUsageStats(params: UsageStatsParams = {}) {
 /* Jobs                                                                */
 /* ------------------------------------------------------------------ */
 
-export function useJobs(params: ListJobsParams = {}) {
+/**
+ * `pollWhileActive` (ms) re-polls only while the loaded page still holds a
+ * queued/running job, so a settled queue stops hitting the backend.
+ * `enabled: false` (a caller without `jobs:read`) sends nothing.
+ */
+export function useJobs(
+	params: ListJobsParams = {},
+	{
+		pollWhileActive = false,
+		enabled = true,
+	}: { pollWhileActive?: number | false; enabled?: boolean } = {},
+) {
 	return useQuery<JobListResponse>({
+		enabled,
 		queryKey: monitorKeys.jobs(params),
 		queryFn: () => listJobs(params),
 		placeholderData: keepPreviousData,
+		refetchInterval: (query) =>
+			pollWhileActive !== false &&
+			(query.state.data?.data ?? []).some((job) =>
+				['queued', 'running'].includes(toJobStatus(job.status)),
+			)
+				? pollWhileActive
+				: false,
 	});
 }
 
@@ -145,15 +208,31 @@ export function useCancelJob() {
 /* Events                                                              */
 /* ------------------------------------------------------------------ */
 
-export function useEvents(params: ListEventsParams = {}) {
-	return useQuery<EventListResponse>({
-		queryKey: monitorKeys.events(params),
-		queryFn: () => listEvents(params),
+/** Page size for the Activity feed — a screenful of rows per "Load older". */
+const EVENT_FEED_PAGE = 50;
+
+/**
+ * The Activity feed's history: `GET /events` newest-first, paged backwards by
+ * cursor ("Load older" appends a page). Live events arrive separately through
+ * {@link useEventStream} and are merged on top by the view.
+ */
+export function useEventFeed(
+	params: Omit<ListEventsParams, 'cursor' | 'limit'>,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useInfiniteQuery({
+		enabled,
+		queryKey: monitorKeys.eventFeed(params),
+		queryFn: ({ pageParam }) =>
+			listEvents({ ...params, cursor: pageParam, limit: EVENT_FEED_PAGE }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
 		placeholderData: keepPreviousData,
 	});
 }
 
-export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error';
+/** `forbidden`: the server refused the stream (401/403) — nothing reconnects it. */
+export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error' | 'forbidden';
 
 /**
  * Subscribe to the live event SSE while `enabled`. Newest-first buffer, capped
@@ -162,14 +241,25 @@ export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error';
  *
  * Exposes `reconnect()` to force a re-subscribe after a stream error (the EU
  * surfaces this as a "Reconnect" affordance), and `clear()` to empty the
- * buffer. Toasts once when the stream errors so the failure isn't silent.
+ * buffer. Toasts once when the stream errors so the failure isn't silent. A
+ * refusal (401/403) reads `forbidden` instead of `error`, without a toast, so
+ * callers that reconnect on `error` leave it alone.
  */
-export function useEventStream(params: ListEventsParams, enabled: boolean, cap = 100) {
+export function useEventStream(
+	params: ListEventsParams,
+	enabled: boolean,
+	cap = 100,
+	// Surfaces that render the connection state inline (the Activity feed)
+	// opt out of the interruption toast so a reconnect loop can't spam it.
+	{ toastOnError = true }: { toastOnError?: boolean } = {},
+) {
 	const [events, setEvents] = useState<EventResponse[]>([]);
 	const [status, setStatus] = useState<LiveStreamStatus>('idle');
 	const [nonce, setNonce] = useState(0);
 	const paramsRef = useRef(params);
 	paramsRef.current = params;
+	const toastOnErrorRef = useRef(toastOnError);
+	toastOnErrorRef.current = toastOnError;
 
 	// Serialize the filter so the effect re-subscribes only on a real change
 	// (object identity would re-fire every render). `from` is the time-window
@@ -213,7 +303,12 @@ export function useEventStream(params: ListEventsParams, enabled: boolean, cap =
 				onOpen: () => setStatus('live'),
 				onEvent: (event) => setEvents((prev) => [event, ...prev].slice(0, cap)),
 				onError: (error) => {
+					if (isMonitorAccessDenied(error)) {
+						setStatus('forbidden');
+						return;
+					}
 					setStatus('error');
+					if (!toastOnErrorRef.current) return;
 					toast({
 						title: 'Live stream interrupted',
 						description: error.message || 'The event stream disconnected.',
@@ -235,11 +330,17 @@ export function useEventStream(params: ListEventsParams, enabled: boolean, cap =
 /* Audit (actor lens)                                                  */
 /* ------------------------------------------------------------------ */
 
-export function useAudit(params: ListAuditParams = {}) {
+/** `/audit` is org:admin — callers pass `enabled: isAdmin` (and false when
+ * they have nothing to look up) so non-admins never fire a 403. */
+export function useAudit(
+	params: ListAuditParams = {},
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useQuery<AuditListResponse>({
 		queryKey: monitorKeys.audit(params),
 		queryFn: () => listAudit(params),
 		placeholderData: keepPreviousData,
+		enabled,
 	});
 }
 
@@ -254,9 +355,13 @@ export function useAudit(params: ListAuditParams = {}) {
  * Jobs still have no actor on the wire payload, so they resolve via the audit
  * log filtered server-side by `target_id` (the job id).
  */
-export function useActorForTrace(traceId: string | null) {
-	// Primary source: the execution record's own actor fields (#375).
-	const execQuery = useExecutions(traceId ? { traceId } : {});
+export function useActorForTrace(
+	traceId: string | null,
+	{ canReadAudit = false }: { canReadAudit?: boolean } = {},
+) {
+	// Primary source: the execution record's own actor fields (#375). Nothing
+	// to look up without a trace — don't fire an unfiltered list.
+	const execQuery = useExecutions(traceId ? { traceId } : {}, { enabled: traceId != null });
 	const exec = traceId
 		? (execQuery.data?.data ?? []).find((e) => e.trace_id === traceId)
 		: undefined;
@@ -266,21 +371,29 @@ export function useActorForTrace(traceId: string | null) {
 			: null;
 
 	// Fallback for traces whose execution record predates actor attribution.
-	const auditQuery = useAudit(traceId && !execActor ? { limit: 50 } : {});
-	const entries = auditQuery.data?.data ?? [];
+	// Audit is org:admin, so only admins can take this path.
+	const needsAudit = traceId != null && execQuery.isSuccess && !execActor && canReadAudit;
+	const auditQuery = useAudit({ limit: 50 }, { enabled: needsAudit });
+	const entries = needsAudit ? (auditQuery.data?.data ?? []) : [];
 	const matched = traceId ? entries.filter((e) => e.trace_id === traceId) : [];
 
 	return { ...execQuery, actor: execActor ?? resolveActor(matched) };
 }
 
-export function useActorForJob(jobId: string | null) {
+export function useActorForJob(
+	jobId: string | null,
+	{ canReadAudit = false }: { canReadAudit?: boolean } = {},
+) {
 	// Filter server-side by target_type+target_id. The backend rejects a
 	// target_id without its matching target_type (400 invalid_input), so both
-	// must be sent together.
-	const query = useAudit(jobId ? { targetType: AuditTargetType.JOB, targetId: jobId } : {});
-	const entries = query.data?.data ?? [];
+	// must be sent together. Audit is org:admin — non-admins skip the lookup.
+	const enabled = jobId != null && canReadAudit;
+	const query = useAudit(jobId ? { targetType: AuditTargetType.JOB, targetId: jobId } : {}, {
+		enabled,
+	});
+	const entries = enabled ? (query.data?.data ?? []) : [];
 	const matched = jobId ? entries.filter((e) => e.job_id === jobId || e.target_id === jobId) : [];
-	return { ...query, actor: resolveActor(matched) };
+	return { ...query, actor: resolveActor(matched), canReadAudit };
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,12 +403,16 @@ export function useActorForJob(jobId: string | null) {
 /**
  * Hydrate the actor directory for the global filter bar's actor picker.
  * Directory data is small and slow-changing, so we cache it aggressively and
- * pull a large page in one shot.
+ * pull a large page in one shot. The listing needs `users:read`; without it the
+ * query stays off (no 403 round trip) and the picker offers "All actors" only,
+ * while row labels still resolve through `<ActorLabel>`'s by-id lookup.
  */
 export function useActors(params: ListActorsParams = {}) {
+	const canList = useCanListActors();
 	return useQuery<ActorListResponse>({
 		queryKey: monitorKeys.actors(),
 		queryFn: () => listActors(params),
+		enabled: canList === true,
 		staleTime: 5 * 60 * 1000,
 	});
 }

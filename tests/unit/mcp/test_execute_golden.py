@@ -175,15 +175,17 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     taxonomy; the broker's verbatim agent_directive rides the payload (the
     same fixture the execute_broker_denial_directive_json golden froze)."""
     directive = {
-        "instruction": "Ask your operator to approve access to acme/pets, then retry.",
-        "next_action": "wait_for_approval",
+        "instruction": "Run `jentic connect acme` and relay the approval_url, then retry.",
+        "parameters": {"suggested_command": "jentic connect acme"},
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             403,
             headers={"Content-Type": "application/json"},
-            content=json.dumps({"detail": "denied", "agent_directive": directive}).encode(),
+            content=json.dumps(
+                {"type": "no_credential_binding", "detail": "denied", "agent_directive": directive}
+            ).encode(),
         )
 
     broker(handler)
@@ -198,8 +200,78 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     assert payload["actionable_step"] == directive["instruction"]
     assert payload["details"] == {"http_status": 403}
     assert payload["retryable"] is False
-    assert payload["next_tool"] == "whoami"
+    assert payload["next_tool"] == "request_connection"
     assert "instance" in payload
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (403, {"type": "no_credential_binding", "detail": "denied"}, "whoami"),
+        (403, {"type": "no_toolkit_binding", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_not_provisioned", "detail": "denied"}, "whoami"),
+        (
+            403,
+            {
+                "type": "no_credential_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect acme`.",
+                    "parameters": {"suggested_command": "jentic connect acme"},
+                },
+            },
+            "request_connection",
+        ),
+        (
+            424,
+            {
+                "type": "credential_not_provisioned",
+                "agent_directive": {
+                    "instruction": "Ask your operator to connect a credential.",
+                    "parameters": {"vendor": "acme.com"},
+                },
+            },
+            "whoami",
+        ),
+        (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
+        (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
+        (403, {"detail": "denied"}, "whoami"),
+    ],
+)
+async def test_denial_next_tool_keys_on_problem_type(
+    broker, status: int, body: dict[str, Any], want_tool: str
+) -> None:
+    """The type→next_tool mapping (Phase 1b review M1): request_connection
+    ONLY for the provisioning-shaped problem types, and only when the
+    directive names a registry vendor (``parameters.suggested_command``) —
+    off the registry the tool would fail as an unknown vendor.
+    action_denied / identity-mismatch / unknown denials keep whoami — a
+    status-keyed fork would teach the model to file connect sessions to
+    route around permission rules. A non-provisioning hint never teaches
+    request_connection."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"Content-Type": "application/problem+json"},
+            content=json.dumps(body).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["next_tool"] == want_tool
+    step = payload["actionable_step"]
+    if body.get("type") not in {
+        "no_credential_binding",
+        "no_toolkit_binding",
+        "credential_not_provisioned",
+    }:
+        assert "request_connection" not in step
 
 
 async def test_insecure_broker_refusal_is_the_coded_transport_error(broker) -> None:
@@ -355,3 +427,253 @@ async def test_unreachable_broker_envelope_carries_no_dangling_pointer(broker) -
     assert payload["error_code"] == "TRANSPORT_ERROR"
     assert payload["retryable"] is True
     assert "next_tool" not in payload
+
+
+@pytest.mark.parametrize(
+    ("target", "inspected"),
+    [
+        # Broker-relative short-circuit: parsed as TRACE, never an opaque id.
+        ("TRACE:/v1/debug", None),
+        # Inspected form: the registry resolves the target to a TRACE operation.
+        ("TRACE:https://api.example.com/v1/debug", "TRACE"),
+    ],
+)
+async def test_trace_targets_are_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch, target: str, inspected: str | None
+) -> None:
+    """Pins the mount's parity with the Go ``ensureExecutableMethod`` gate: TRACE
+    echoes the request back (reflecting the credentials the broker injects), so
+    execute refuses it with a coded RESOLVE_FAILED and never sends it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": inspected, "url": "https://api.example.com/v1/debug"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a TRACE target must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": target})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "search_apis"
+
+
+async def test_host_relative_operation_is_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with the Go ``ensureAbsoluteUpstream`` gate: an operation whose
+    spec declares no absolute server (a search hit whose target is the registry
+    operation_id) has no upstream host to proxy to, so execute refuses it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": "GET", "url": "/pets"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a host-relative operation must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "op_pets"})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "no upstream host" in str(payload)
+
+
+async def test_transport_error_envelope_carries_exception_class_not_message(broker) -> None:
+    """The transport exception text can quote request material verbatim (an
+    illegal-header message carries the header value), so the agent sees only
+    the exception class — never the message."""
+    marker = "Illegal header value b'Bearer jak_test\\r\\nX-Injected: 1'"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.LocalProtocolError(marker)
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    rendered = json.dumps(payload)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["error"].startswith("transport error (LocalProtocolError)")
+    assert "jak_test" not in rendered
+    assert "Illegal header value" not in rendered
+    assert payload["retryable"] is False
+
+
+def _broker_problem(status: int, problem: dict[str, Any]) -> httpx.Response:
+    """A problem response in the broker's real ``problem_body`` shape (message in
+    ``title``, no ``detail``, ``Jentic-Error-Origin: broker``)."""
+    return httpx.Response(
+        status,
+        headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+        content=json.dumps({"status": status, "error_origin": "broker", **problem}).encode(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (
+            400,
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+            },
+            "whoami",
+        ),
+        (400, {"type": "credential_name_not_found", "title": "No credential named zzz"}, "whoami"),
+        (
+            404,
+            {
+                "type": "operation_not_found",
+                "title": "Operation not found — unregistered upstream URL.",
+            },
+            "search_apis",
+        ),
+        # A contract/payload error (413/422/428) is neither a discovery nor a
+        # binding problem — it points at the operation contract, not whoami.
+        (
+            413,
+            {"type": "payload_too_large", "title": "Request body exceeds the cap."},
+            "inspect_operation",
+        ),
+        # Exact type match: a type that merely mentions "credential" is not routed
+        # to whoami.
+        (400, {"type": "credential_header_malformed", "title": "bad header"}, "inspect_operation"),
+    ],
+)
+async def test_broker_resolve_failure_is_a_coded_soft_error(
+    broker, status, body, want_tool
+) -> None:
+    """#1429 (Go: TestMCPExecute_BrokerResolveFailureIsError): a broker-origin
+    4xx that is not a denial never reached the upstream, so it is an isError
+    RESOLVE_FAILED result, never a normal tool result."""
+    broker(lambda request: _broker_problem(status, body))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["details"]["http_status"] == status
+    assert payload["details"]["problem_type"] == body["type"]
+    assert body["title"] in payload["error"]
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == want_tool
+
+
+async def test_broker_resolve_failure_surfaces_validation_errors(broker) -> None:
+    """The broker's validation 422 (broker/web/errors.handle_validation) carries
+    its field errors in ``errors`` under a generic title; the reason must name
+    WHICH field was wrong (Go: ``TestBrokerErrorSurfacesValidationErrors``)."""
+    broker(
+        lambda request: _broker_problem(
+            422,
+            {
+                "type": "about:blank#validation",
+                "title": "Request validation failed",
+                "errors": [
+                    {
+                        "type": "missing",
+                        "loc": ["header", "jentic-credential-id"],
+                        "msg": "field required",
+                    }
+                ],
+            },
+        )
+    )
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "Request validation failed" in payload["error"]
+    assert "header.jentic-credential-id: field required" in payload["error"]
+    assert payload["next_tool"] == "inspect_operation"
+
+
+async def test_broker_resolve_failure_falls_back_to_status_phrase(broker) -> None:
+    """With no detail and no title the reason is the standard status phrase, the
+    same text Go's ``http.StatusText`` yields."""
+    broker(lambda request: _broker_problem(405, {}))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+
+    payload = decode_tool_json(result)
+    assert payload["error"].endswith("(HTTP 405): Method Not Allowed")
+
+
+async def test_broker_resolve_failure_relays_candidates(broker) -> None:
+    """#1429 candidate relay: the broker embeds the caller's own covering
+    credentials on an unknown id, so they ride details["candidates"] rather than
+    forcing a follow-up whoami to learn which ids exist."""
+    candidates = [
+        {"id": "cred_real", "name": "prod", "last4": "real", "created_at": None},
+        {"id": "cred_other", "name": "staging", "last4": "ther", "created_at": None},
+    ]
+    broker(
+        lambda request: _broker_problem(
+            400,
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+                "candidates": candidates,
+            },
+        )
+    )
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["details"]["candidates"] == candidates
+
+
+async def test_broker_rate_limit_is_not_a_resolve_failure(broker) -> None:
+    """A broker 429 is retryable after Retry-After, so it must not become a
+    RESOLVE_FAILED carrying retryable=false / "do not retry" advice."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _broker_problem(
+            429,
+            {
+                "type": "rate_limit_exceeded",
+                "title": "Rate limit exceeded; slow down and retry after the indicated delay.",
+            },
+        )
+        response.headers["Retry-After"] = "1"
+        return response
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert decode_tool_json(result).get("error_code") != "RESOLVE_FAILED"
+
+
+@pytest.mark.parametrize("origin", ["upstream", None])
+async def test_non_broker_4xx_still_passes_through(broker, origin) -> None:
+    """The other side of #1429: an upstream 4xx, or one with no origin header,
+    is the caller's data and stays a normal result."""
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Jentic-Error-Origin"] = origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers=headers, content=b'{"error": "no such pet"}')
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error

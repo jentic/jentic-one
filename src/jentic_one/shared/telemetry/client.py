@@ -27,8 +27,8 @@ def _serialise(event: TelemetryEvent, *, instance_id: str, version: str) -> dict
     impossible. ``tags`` is omitted entirely when there are none (not sent as an
     empty list or null). ``actor_type`` is a closed ``ActorType`` enum member
     (the sink drops any non-member before it ever reaches here); it is omitted
-    when None, and ``service_account`` is normalised to ``service-account`` to
-    match the server's enum.
+    when None, and any ``_`` is normalised to ``-`` to match the server's enum
+    (a no-op for the current ``user`` / ``agent`` members).
     """
     payload: dict[str, Any] = {
         "id": instance_id,

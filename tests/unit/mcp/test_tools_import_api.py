@@ -1,6 +1,6 @@
 """import_api on the mount — the Go table tests, replayed against the port.
 
-Mirrors ``cli/internal/cli/api/mcp_access_test.go``'s import coverage
+Mirrors ``cli/internal/cli/api/mcp_catalog_test.go``'s import coverage
 (validation arms, scope gate, three-outcome tracking, failed-job arm) plus the
 arms only the in-process port has: the duplicate-content short-circuit (the
 worker requeues a duplicate ingest with backoff and dead-letters it, so the
@@ -144,7 +144,7 @@ class _FakeJobService:
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
 
-    async def get_by_id(self, job_id: str) -> JobView:
+    async def get_by_id(self, job_id: str, *, identity: Identity) -> JobView:
         assert job_id == "job_9"
         if _FakeJobService.poll_error is not None:
             raise _FakeJobService.poll_error
@@ -162,7 +162,7 @@ class _FakeJobResultService:
     def __init__(self, ctx: Any) -> None:
         self._ctx = ctx
 
-    async def get(self, job_id: str) -> JobResultView:
+    async def get(self, job_id: str, *, identity: Identity) -> JobResultView:
         if _FakeJobResultService.error is not None:
             raise _FakeJobResultService.error
         return JobResultView(
@@ -246,25 +246,24 @@ def test_umbrella_api_id_with_literal_slash_stays_accepted() -> None:
     validate_api_id("googleapis.com/sheets")  # must not raise
 
 
-# ── scope gate (Go: 403PointsAtRequestAccessForScope) ────────────────────────
+# ── scope gate (Go: 403IsOperatorScopeGrant) ─────────────────────────────────
 
 
-async def test_missing_scope_is_broker_denied_with_the_pointer_served(
+async def test_missing_scope_is_broker_denied_routed_to_operator(
     services: None,
 ) -> None:
-    """The same gate as POST /catalog/{api_id}:import (catalog:import). The
-    handler raises the shared ``request_access`` pointer spelling (the
-    contract — the pinned description names it); with request_access now in
-    SERVED_TOOLS (PR B), #1254's lane-aware render filter lets it ride the
-    wire — the pointer resurfaced with no handler change, exactly as PR A
-    predicted."""
+    """The same gate as POST /catalog/{api_id}:import (catalog:import).
+    Access requests are retired: the scope grant is an operator action in the
+    dashboard, so the denial carries an ask-your-operator step and no tool
+    pointer."""
     result = await dispatch_tool_call(_env([]), "import_api", {"api_id": "googleapis.com/sheets"})
     assert result.is_error
     payload = _payload(result)
     assert payload["error_code"] == "BROKER_DENIED"
-    assert payload["next_tool"] == "request_access"  # served since PR B → rides (#1254)
+    assert "next_tool" not in payload
     assert "catalog:import" in payload["error"]
     assert "catalog:import" in payload["actionable_step"]
+    assert "operator" in payload["actionable_step"]
     assert _FakeCatalogService.filed == []
 
 
@@ -275,7 +274,7 @@ async def test_missing_jobs_read_degrades_to_the_filed_envelope_without_polling(
     leg does (GET /jobs/{id}). An identity with catalog:import but not
     jobs:read files successfully and gets the queued envelope — NOT an error
     (the filing succeeded) — and the job service is never touched. Both
-    scopes ride DEFAULT_AGENT_SCOPES, so defaults are unaffected."""
+    permissions ride DEFAULT_AGENT_PERMISSIONS, so defaults are unaffected."""
     env = _env(["catalog:import"])  # no jobs:read
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error, "a missing poll scope degrades; the filing still succeeded"
@@ -355,7 +354,7 @@ async def test_hung_poll_trips_the_hard_ceiling_and_maps_to_the_poll_failure_arm
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_BUDGET_SECONDS", 0.01)
     monkeypatch.setattr(tools_mod, "_IMPORT_WAIT_GRACE_SECONDS", 0.02)
 
-    async def _hang(self: Any, job_id: str) -> JobView:
+    async def _hang(self: Any, job_id: str, *, identity: Identity) -> JobView:
         await asyncio.Event().wait()  # never set — a poll that never returns
         raise AssertionError("unreachable")
 
@@ -566,7 +565,7 @@ async def test_promote_without_apis_write_soft_fails_without_calling_the_service
     result = await dispatch_tool_call(env, "import_api", {"api_id": "googleapis.com/sheets"})
     assert not result.is_error, "a promote failure is never a hard error"
     payload = _payload(result)
-    assert payload["promoted"] == {"rev_1": "promote failed: missing apis:write scope"}
+    assert payload["promoted"] == {"rev_1": "promote failed: missing apis:write permission"}
     assert _FakeRevisionService.promotes == []
 
 

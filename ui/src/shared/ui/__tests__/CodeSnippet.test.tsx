@@ -36,6 +36,14 @@ describe('CodeSnippet', () => {
 		});
 	});
 
+	it('names the copy button after what it copies when given a label for it', () => {
+		renderWithProviders(
+			<CodeSnippet code="Jentic-Credential-Id: cred_1" copyAriaLabel="Copy the header" />,
+		);
+		expect(screen.getByRole('button', { name: 'Copy the header' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy to clipboard' })).toBeNull();
+	});
+
 	it('preserves multi-line code (JSON config blocks)', () => {
 		const json = '{\n  "mcpServers": {}\n}';
 		renderWithProviders(<CodeSnippet code={json} />);

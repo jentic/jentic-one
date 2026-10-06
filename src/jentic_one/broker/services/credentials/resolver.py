@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ from jentic_one.shared.models.credentials import (
     StoredCredentialType,
 )
 from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.url import server_variables_compatible
 
 
 class ResolvedCredential(BaseModel):
@@ -41,6 +42,10 @@ class ResolvedCredential(BaseModel):
     # material back to the stored credential without a second DB round-trip
     # (#740). Always populated by the resolver; never a secret.
     name: str
+    # Owner of the stored credential (`Credential.created_by`). Credential use
+    # and health events name it as their subject so the owner sees another
+    # actor's use of the credential under owner-scoped event reads.
+    created_by: str | None = None
     wire_type: CredentialType
     stored_type: StoredCredentialType
     provider: str
@@ -85,6 +90,8 @@ class CredentialResolver:
         credential_name: str | None = None,
         credential_id: str | None = None,
         allowed_credential_ids: Collection[str] | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> ResolvedCredential:
         """Resolve a single active credential for the API tuple.
 
@@ -98,9 +105,18 @@ class CredentialResolver:
             allowed_credential_ids: When not ``None``, the **injection boundary**
                 (theme-5 Q-02): only these credential ids may resolve, filtered
                 *before* coverage matching. ``None`` means "no binding filter"
-                (the legacy toolkit path, whose binding check happens upstream).
+                — only queued async payloads from before the boundary existed
+                omit the key; every live path passes the bound ids.
                 An **empty** collection is a real, deny-all filter — the caller
                 is bound to nothing — never a wildcard.
+            request_server_variables: The concrete server-variable values of
+                the request URL (from discovery). A credential whose stored
+                ``server_variables`` give a different value for one of them does
+                not cover the request — e.g. a ``region=us`` credential is never
+                a match for an ``/eu/…`` URL.
+            server_variables_unresolved: Discovery could not determine the
+                request URL's server-variable values; a credential scoped by
+                ``server_variables`` is then never a match (fail closed).
 
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
@@ -138,8 +154,17 @@ class CredentialResolver:
                 scope = canonical_credential_scope(
                     vendor=c.api_vendor, name=c.api_name, version=c.api_version
                 )
-                if credential_covers(scope, vendor=api.vendor, name=api.name, version=api.version):
-                    covering.append((c, scope))
+                if not credential_covers(
+                    scope, vendor=api.vendor, name=api.name, version=api.version
+                ):
+                    continue
+                if not server_variables_compatible(
+                    c.server_variables,
+                    request_server_variables,
+                    unresolved=server_variables_unresolved,
+                ):
+                    continue
+                covering.append((c, scope))
 
             if not covering:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
@@ -227,6 +252,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -239,6 +265,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -253,6 +280,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -266,6 +294,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -283,6 +312,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -294,6 +324,7 @@ class CredentialResolver:
             return ResolvedCredential(
                 credential_id=credential.id,
                 name=credential.name,
+                created_by=credential.created_by,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,

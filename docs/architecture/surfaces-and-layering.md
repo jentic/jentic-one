@@ -42,7 +42,7 @@ no `test_auth_does_not_import_admin`. All other
 cross-surface needs are met three ways:
 
 - **[`shared/`](../../src/jentic_one/shared/)** — config, `Context`, the DB session layer, the `Broker`
-  protocol, jobs, events, audit, scopes, telemetry. Its independence is
+  protocol, jobs, events, audit, permissions, telemetry. Its independence is
   enforced only in specific directions: `shared/` never imports `broker`,
   never imports `auth`, and never imports `admin.core.permissions`
   (`test_module_boundaries.py`). It does reach other surfaces where it
@@ -54,11 +54,13 @@ cross-surface needs are met three ways:
   package so it may import several of them. It builds the `AppContainer` and
   the in-process seams (for example `InProcessRegistryResolver`, which lets
   the broker resolve operations without importing `jentic_one.registry`).
-- **Raw SQL at a named seam** — when the control plane must write an
-  admin-DB row (approving an access request binds a credential to an agent),
-  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) uses raw SQL rather than importing admin's
+- **Raw SQL at a named seam** — when the control plane must touch admin-DB
+  rows (the service-account migration mints successor agents; credential
+  effects bind credentials to agents),
+  [`control/repos/service_account_migration_repo.py`](../../src/jentic_one/control/repos/service_account_migration_repo.py) and
+  [`control/repos/effects_repo.py`](../../src/jentic_one/control/repos/effects_repo.py) use raw SQL rather than importing admin's
   ORM models. The [worked example below](#a-request-layer-by-layer) traces
-  this seam in action.
+  the cross-database boundary in action.
 
 ## The layers inside a surface
 
@@ -94,37 +96,36 @@ and the test that enforces each:
 [`registry/`](../../src/jentic_one/registry/), [`control/`](../../src/jentic_one/control/), and [`admin/`](../../src/jentic_one/admin/) each carry a `scoping/filters.py` whose
 `build_access_filters(identity, model)` returns the WHERE clauses a repo
 applies for row-level visibility: `org:admin` sees everything, an owner sees
-their own rows, and an operator holding a delegation scope
+their own rows, and an operator holding a delegation permission
 (`owner:<resource>:read`) sees the rows of the agents they own. Services pass the
 filters in; repos apply them; neither knows the other's internals. See
-[identity and authorization](identity-and-authorization.md) for the scope
+[identity and authorization](identity-and-authorization.md) for the permission
 model these filters implement.
 
 ### A request, layer by layer
 
-`POST /access-requests/{id}:decide` — an operator approving an agent's
-access request — exercises every rule above, including the cross-database
-seam:
+`POST /credentials` — an operator storing a credential — exercises every rule
+above, including the cross-database boundary:
 
-1. **`web/`** — the router ([`control/web/routers/access_requests.py`](../../src/jentic_one/control/web/routers/access_requests.py))
+1. **`web/`** — the router ([`control/web/routers/credentials.py`](../../src/jentic_one/control/web/routers/credentials.py))
    declares its auth dependency, receives the resolved `Identity`, converts
-   the body to plain data, and calls `AccessRequestService.decide()`. No DB
+   the body to plain data, and calls `CredentialService.create()`. No DB
    import, no business logic; a failure surfaces as an RFC 9457 problem
    detail.
-2. **`services/`** — `decide()` builds the identity's access filters, opens
-   `control_db.transaction()`, and applies the decision plus the
-   control-side effects (the binding's permission rules) **atomically** in
-   that one transaction.
-3. **`repos/`** — `AccessRequestRepository.get(session, id, filters=…)`
-   applies the filters it was handed. It never sees the `Identity` that
-   produced them.
-4. **The cross-database seam** — an approved credential bind or scope grant
-   must land in the *admin* DB, which the control transaction cannot span.
-   So `decide()` commits phase 1, then drives the admin-DB writes through
-   `EffectsRepository` (raw SQL, idempotent `ON CONFLICT`), and acks them
-   back into the control DB. An un-acked item is the retry marker:
-   re-calling `decide()` reconciles instead of erroring, so a crash between
-   the two phases leaves no orphaned grants. This is the
+2. **`services/`** — `create()` opens `control_db.transaction()` and writes
+   the credential row plus its type-specific secret row **atomically** in
+   that one transaction, then records the audit entry.
+3. **`repos/`** — `CredentialRepository.create(session, …)` and its
+   type-specific siblings run the SQLAlchemy statements against the session
+   they were handed. They never see the `Identity` that authorized the
+   write; on the read path (`get()`/`list()`) the service builds
+   `build_access_filters(identity, Credential, …)` and the repo applies the
+   filters it was handed verbatim.
+4. **The cross-database boundary** — the operator-facing "credential stored"
+   event lands in the *admin* DB, which the control transaction cannot span.
+   So `create()` commits the control write first, then emits the event in a
+   separate `admin_db.transaction()`, best-effort: an event failure is
+   logged, never rolled back into the credential write. This is the
    no-cross-database-foreign-keys rule (see [data model](data-model.md))
    showing up as control flow.
 

@@ -544,8 +544,9 @@ class OAuthClientService:
            (a genuinely new client, never a resurrection);
         4. the terminal audit entry is recorded (``audit_entries`` reference
            the client by plain id strings — no FK — so the trail survives);
-        5. any live actionable ``oauth_client.registered`` event is settled
-           (best-effort), so deleting a pending client clears its queue alert.
+        5. the pending client's ``oauth_client.registered`` queue alert stays
+           as append-only history — the queue reads live client rows, so the
+           hard-deleted row simply drops out of it.
 
         Grant/token history rows survive as revoked history (plain id
         columns, no FKs); grant listings already tolerate a missing client.

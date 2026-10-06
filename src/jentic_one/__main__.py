@@ -8,7 +8,6 @@ import importlib
 import json
 import os
 import sys
-from dataclasses import asdict
 from getpass import getpass
 
 import structlog
@@ -23,22 +22,32 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.control.services.key_retirement import KeyRetirementService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
-from jentic_one.shared.config import AppConfig, load_config, oneshot_config_source_active
+from jentic_one.shared.config import (
+    AppConfig,
+    check_public_url_consistency,
+    has_spa_platform_client,
+    load_config,
+    oneshot_config_source_active,
+    resolved_auth_base_url,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
 from jentic_one.shared.tracing import configure_tracing
+from jentic_one.shared.url import is_loopback_host
 from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_app
 from jentic_one.wiring import build_default_container
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
+from jentic_one.wiring import (
+    install_control_catalog_auto_importer as _install_control_catalog_auto_importer,
+)
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
-    # Auth reaches the control DB read-only to resolve toolkit-binding names for
-    # the /me whoami response (issue #686): the binding row lives in the admin DB
-    # but the toolkit name lives in the control DB.
+    # Auth reaches the control DB read-only to resolve credential names for the
+    # /me whoami response (issue #686): the binding row lives in the admin DB
+    # but the credential name lives in the control DB.
     "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
     # Every standalone surface in SURFACES_NEEDING_AUTH verifies callers locally
@@ -59,6 +68,15 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
 
 SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}
 
+# Surfaces that resolve credential providers through ``Context.providers``
+# (control's connect flows, the broker's token refresh), so their process must
+# merge the DB-backed provider configs at boot. Admin writes those configs and
+# refreshes explicitly after each write; registry and auth never resolve a
+# provider. Booting the refresh anywhere else is wasted work at best, and on a
+# surface that is not handed the credential keyset (standalone registry) it
+# cannot decrypt the stored client secrets at all.
+PROVIDER_REGISTRY_SURFACES: frozenset[str] = frozenset({"control", "broker"})
+
 
 def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     """Expand surface list into the full set of required DB names."""
@@ -72,6 +90,15 @@ def _expand_allowed_dbs(apps: list[str], config: AppConfig) -> set[str]:
     if "control" in apps and config.server.mcp.enabled:
         allowed.add("registry")
     return allowed
+
+
+def _build_context(config: AppConfig, apps: list[str]) -> Context:
+    """The serving process's Context: DB access and boot work scoped to ``apps``."""
+    return Context(
+        config,
+        allowed_dbs=_expand_allowed_dbs(apps, config),
+        refresh_providers_on_boot=not PROVIDER_REGISTRY_SURFACES.isdisjoint(apps),
+    )
 
 
 def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
@@ -95,10 +122,20 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
             _install_auth_verifier(app, ctx)
         if surface == "broker" and ctx.is_db_allowed("registry"):
             _install_broker_registry_resolver(app, ctx)
+        # Standalone control: enable catalog auto-import only when the process
+        # has registry-DB access (MCP-enabled configs widen the DB deps). A
+        # process without registry DB can't reach the catalog manifest anyway.
+        if surface == "control" and ctx.is_db_allowed("registry"):
+            _install_control_catalog_auto_importer(app, ctx)
         return app
     app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
         _install_broker_registry_resolver(app, ctx)
+    # Combined shape: install the auto-importer whenever control ships in the
+    # same process as the registry, so a connect finishing in this process can
+    # kick off an import in the same process too.
+    if "control" in apps and ctx.is_db_allowed("registry"):
+        _install_control_catalog_auto_importer(app, ctx)
     return app
 
 
@@ -117,13 +154,71 @@ def create_app() -> FastAPI:
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
+    ctx = _build_context(config, apps)
     return _build_app(ctx, apps)
 
 
 def _serve() -> None:
     """Load config, build context, and run the server."""
     config = load_config()
+    # Configure logging up front so any startup warnings below (URL-consistency,
+    # SQLite-reload) are emitted in the standard structured format. The reload
+    # branch re-execs into uvicorn factory workers that configure their own
+    # logging; the single-process path skips re-configuring since it's done here.
+    configure_logging(config)
+    logger = structlog.get_logger(__name__)
+
+    # Warn (never fail) when an explicitly configured public URL's origin does
+    # not match the serving origin — the classic "OAuth redirect points at the
+    # wrong port" misconfiguration (issue #818). Unset URLs self-derive and are
+    # skipped. Behind a reverse proxy the operator sets server.public_base_url,
+    # which then becomes the expected origin — no false positive.
+    for mismatch in check_public_url_consistency(config):
+        logger.warning(
+            "public_url_origin_mismatch",
+            field=mismatch.field,
+            configured=mismatch.configured,
+            expected=mismatch.expected,
+            detail=(
+                "configured public URL origin does not match the serving origin; "
+                "links/callbacks built from it may be unreachable. Set "
+                "server.public_base_url to the deployment's public origin, or "
+                "align this field with it."
+            ),
+        )
+
+    # The SPA platform client is synthesized from the resolved origin when
+    # config omits it; a plain-http non-loopback origin can't host one, and
+    # SPA login then fails with a generic redirect_uri error. Name the fix.
+    if "auth" in config.apps and not has_spa_platform_client(config):
+        logger.warning(
+            "spa_platform_client_unavailable",
+            origin=resolved_auth_base_url(config),
+            detail=(
+                "no 'jentic-one-spa' platform client could be registered for this "
+                "origin (platform redirect URIs must be https or loopback), so SPA "
+                "login will fail. Set server.public_base_url to the https origin "
+                "the browser uses, or declare auth.platform_clients explicitly."
+            ),
+        )
+
+    # With no configured public origin on a non-loopback bind, request-scoped
+    # URLs (OAuth connect callback, discovery issuer) follow the request's Host
+    # header. Say so once, so an operator behind a proxy knows to pin it.
+    if (
+        not config.server.public_base_url
+        and not config.auth.canonical_base_url
+        and not is_loopback_host(config.server.host)
+    ):
+        logger.info(
+            "public_base_url_derived_from_request",
+            detail=(
+                "server.public_base_url is unset on a non-loopback bind; public "
+                "URLs derive from each request's Host header. Pin "
+                "server.public_base_url behind a reverse proxy or TLS terminator."
+            ),
+        )
+
     # Reload mode spawns multiple uvicorn worker processes. A SQLite admin DB is a
     # single file that does not support concurrent writer processes, so reload
     # against it reintroduces the `database is locked` contention this fix targets
@@ -132,13 +227,7 @@ def _serve() -> None:
     # token-mint path; a SQLite registry/control DB under reload would still
     # contend, but that is out of scope here.
     reload_enabled = config.server.reload
-    logging_configured = False
     if reload_enabled and config.databases.admin.backend == "sqlite":
-        # Configure logging up front so the warning is emitted in the standard
-        # format; the reload branch returns before the single-process path, while
-        # the fallthrough below skips re-configuring when we've already done so.
-        configure_logging(config)
-        logger = structlog.get_logger(__name__)
         logger.warning(
             "reload_disabled_sqlite_admin_db",
             detail=(
@@ -147,16 +236,11 @@ def _serve() -> None:
             ),
         )
         reload_enabled = False
-        logging_configured = True
     if reload_enabled and oneshot_config_source_active():
         # The reload worker is a separate process that re-loads config from the
         # environment (see create_app); a one-shot source (pipe / /dev/fd) is
         # already drained in this process and would hang or fail the worker's
         # read. Degrade to a single process instead of hanging boot.
-        if not logging_configured:
-            configure_logging(config)
-            logging_configured = True
-        logger = structlog.get_logger(__name__)
         logger.warning(
             "reload_disabled_oneshot_config_source",
             detail=(
@@ -177,12 +261,10 @@ def _serve() -> None:
         )
         return
 
-    if not logging_configured:
-        configure_logging(config)
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps
-    ctx = Context(config, allowed_dbs=_expand_allowed_dbs(apps, config))
+    ctx = _build_context(config, apps)
     app = _build_app(ctx, apps)
     uvicorn.run(
         app,
@@ -309,48 +391,6 @@ async def _reset_password(
     return 0
 
 
-async def _retire_toolkit_keys(*, owner_email: str | None) -> int:
-    """Run the theme-5 Phase 4 toolkit-key retirement job.
-
-    Converts every resolvable ``jntc_live_`` key into a service account
-    carrying exactly ``capabilities:execute``; the unchanged plaintext keeps
-    authenticating as that account. One JSONL report line per key goes to
-    stdout. Idempotent — safe to re-run after a partial failure.
-    """
-    config = load_config()
-    configure_logging(config)
-
-    async with Context(config, allowed_dbs={"admin", "control"}) as ctx:
-        svc = KeyRetirementService(ctx)
-        try:
-            outcomes = await svc.run(fallback_owner_email=owner_email)
-        except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-
-    for outcome in outcomes:
-        print(json.dumps(asdict(outcome)), flush=True)
-
-    migrated = sum(1 for o in outcomes if o.action == "migrated")
-    skipped = [o for o in outcomes if o.action == "skipped"]
-    print(
-        f"==> {migrated} key(s) migrated, "
-        f"{sum(1 for o in outcomes if o.action == 'already_migrated')} already migrated, "
-        f"{len(skipped)} skipped.",
-        file=sys.stderr,
-        flush=True,
-    )
-    if any(o.reason == "owner_unresolved" for o in skipped):
-        print(
-            "==> Some keys have no resolvable owner; re-run with "
-            "--owner <admin-email> to assign them.",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 3
-    return 0
-
-
 def _write_report(findings: list[Finding], report_path: str | None) -> None:
     """Emit one JSON line per finding, to ``report_path`` or stdout."""
     if report_path is None:
@@ -390,6 +430,8 @@ async def _flatten_toolkits(
                 f"{result.legacy_pair_count} legacy pair(s), "
                 f"{result.direct_binding_count} direct binding(s), "
                 f"{result.missing_pair_count} missing, "
+                f"{result.unbackfilled_execution_name_count} execution name(s) unbackfilled, "
+                f"{result.live_unmigrated_key_count} live unmigrated toolkit key(s), "
                 f"{len(result.findings)} report line(s).",
                 file=sys.stderr,
                 flush=True,
@@ -398,8 +440,9 @@ async def _flatten_toolkits(
                 print(
                     "==> acknowledgement recorded — Phase 6b drops are unblocked."
                     if result.acknowledged
-                    else "==> acknowledgement REFUSED: verification failed; run "
-                    "flatten-toolkits first, then re-verify.",
+                    else "==> acknowledgement REFUSED: verification failed; resolve "
+                    "the verify_* report lines (run flatten-toolkits for missing pairs "
+                    "or names; retire or revoke live toolkit keys), then re-verify.",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -410,7 +453,9 @@ async def _flatten_toolkits(
         verb = "would create" if diff_only else "created"
         print(
             f"==> {run.pairs_total} legacy pair(s): {verb} {run.created} binding(s), "
-            f"{run.already_present} already present, {len(run.findings)} report line(s).",
+            f"{run.already_present} already present, "
+            f"{run.backfilled_execution_names} execution name(s) backfilled, "
+            f"{len(run.findings)} report line(s).",
             file=sys.stderr,
             flush=True,
         )
@@ -498,18 +543,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Temporary password (prompted, or read from stdin when non-interactive, if omitted).",
     )
 
-    retire_keys = sub.add_parser(
-        "retire-toolkit-keys",
-        help=("Migrate jntc_live_ toolkit keys to service accounts (theme-5 Phase 4; idempotent)."),
-    )
-    retire_keys.add_argument(
-        "--owner",
-        help=(
-            "Email of the user to own service accounts whose toolkit key has "
-            "no resolvable creator (such keys are skipped and reported otherwise)."
-        ),
-    )
-
     flatten = sub.add_parser(
         "flatten-toolkits",
         help=(
@@ -580,9 +613,6 @@ def main(argv: list[str] | None = None) -> int:
                 password=args.password,
             )
         )
-
-    if args.command == "retire-toolkit-keys":
-        return asyncio.run(_retire_toolkit_keys(owner_email=args.owner))
 
     if args.command == "flatten-toolkits":
         if args.acknowledge and not args.verify:

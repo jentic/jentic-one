@@ -85,12 +85,35 @@ release automates it as an optional `jentic setup` isolation step.
    /etc/sudoers.d/jentic-claude`):
 
    ```
-   yourdesktopuser ALL=(_jentic-claude) NOPASSWD: /usr/local/bin/jentic mcp --context claude
+   yourdesktopuser ALL=(_jentic-claude) NOPASSWD: /usr/local/libexec/jentic/jentic mcp --context claude
    ```
 
    One source user → one target user → the exact `jentic mcp --context
    <name>` argv. `sudo` matches the full argv, so the entry cannot be
    replayed with a different context or subcommand.
+
+   The pinned binary must be a root-owned file (`root:wheel` / `root:root`,
+   `0755`) whose every parent directory is root-owned and not group- or
+   world-writable — never a path your desktop user can write, such as a
+   Homebrew prefix or `~/.local/bin`. The automated `jentic setup` isolation
+   step installs such a copy at `/usr/local/libexec/jentic/jentic` (refreshed
+   whenever a re-run finds your `jentic` has changed) and pins that path,
+   replacing any earlier line for the same desktop user and service account;
+   `jentic reset` removes it. `jenticctl doctor` warns when an isolated entry
+   still pins another binary or the copy is missing or out of date — re-run
+   `jentic setup` and accept isolation to fix it.
+
+   The install refuses a tree it cannot trust rather than falling back
+   elsewhere. Stock macOS, Fedora, Ubuntu and Debian 10+ ship `/usr/local`
+   as `root` `0755`, which passes. Two setups do not: a Debian system still
+   using the legacy `staff`-writable `/usr/local` (`root:staff 2775`, kept
+   on hosts upgraded from Debian 9 or earlier, or opted into via
+   `/etc/staff-group-for-usr-local`), and a Mac whose `/usr/local` (or
+   `/usr/local/libexec`) was handed to your user by an old Homebrew install.
+   Restore `root` ownership and `0755` on the reported directory (for
+   example `sudo chown root:root /usr/local && sudo chmod 0755 /usr/local`
+   on Debian, `root:wheel` on macOS), then re-run `jentic setup`. A symlinked
+   `/usr/local` (as on Fedora Atomic desktops) is also refused.
 5. **Point the MCP entry at the shim** (`-n` because GUI spawns cannot answer
    prompts):
 
@@ -98,7 +121,7 @@ release automates it as an optional `jentic setup` isolation step.
    {
      "command": "sudo",
      "args": ["-n", "-u", "_jentic-claude",
-              "/usr/local/bin/jentic", "mcp", "--context", "claude"]
+              "/usr/local/libexec/jentic/jentic", "mcp", "--context", "claude"]
    }
    ```
 

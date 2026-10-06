@@ -18,6 +18,7 @@ import {
 	EventsService,
 	ApiError,
 	getToken,
+	problemDetailText,
 	type EventListResponse,
 	type EventResponse,
 	type EventSeverity,
@@ -41,14 +42,25 @@ export class RailApiError extends Error {
 }
 
 export function toRailError(error: unknown, fallback: string): RailApiError {
+	// Already classified (the stream's own non-OK response): keep its status.
+	if (error instanceof RailApiError) return error;
 	if (error instanceof ApiError) {
-		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
+		const detail = problemDetailText(error.body) ?? error.message;
 		return new RailApiError(detail || fallback, error.status, error);
 	}
 	if (error instanceof Error) {
 		return new RailApiError(error.message || fallback, null, error);
 	}
 	return new RailApiError(fallback, null, error);
+}
+
+/**
+ * A refused event read: 401 (no valid session) or 403 (no `events:read`).
+ * Retrying cannot change the answer, so the stream stops on it.
+ */
+export function isEventAccessDenied(error: unknown): boolean {
+	const status = error instanceof RailApiError || error instanceof ApiError ? error.status : null;
+	return status === 401 || status === 403;
 }
 
 export interface ListEventsParams {
@@ -58,6 +70,9 @@ export interface ListEventsParams {
 	from?: string | null;
 	to?: string | null;
 	traceId?: string | null;
+	/** Narrow to one actor (`actor_id` + `actor_type`, e.g. a single agent). */
+	actorId?: string | null;
+	actorType?: string | null;
 	cursor?: string | null;
 	limit?: number;
 }
@@ -72,6 +87,8 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 			from: params.from ?? null,
 			to: params.to ?? null,
 			traceId: params.traceId ?? null,
+			actorId: params.actorId ?? null,
+			actorType: params.actorType ?? null,
 			cursor: params.cursor ?? null,
 			limit: params.limit ?? 25,
 		});
@@ -86,10 +103,14 @@ export interface StreamEventsParams {
 	severity?: EventSeverity[] | null;
 	requiresAction?: boolean | null;
 	traceId?: string | null;
+	actorId?: string | null;
+	actorType?: string | null;
 }
 
 export interface StreamEventsHandlers {
 	onEvent: (event: EventResponse) => void;
+	/** Every failed attempt. A refused one ({@link isEventAccessDenied}) is the
+	 * last: no reconnect follows it. */
 	onError?: (error: RailApiError) => void;
 	onOpen?: () => void;
 	/**
@@ -147,8 +168,10 @@ function rewindIso(iso: string): string {
  * mid-batch drop doesn't skip same-instant siblings); the provider dedups by id.
  * The backoff only resets after a connection stays healthy for a while
  * (`HEALTHY_CONNECTION_MS`), so an immediately-dropping stream keeps escalating
- * instead of hot-looping. Returns an unsubscribe fn that aborts the in-flight
- * request and cancels any pending retry.
+ * instead of hot-looping. A 401/403 is terminal: the caller's access, not the
+ * connection, is the problem, so the loop reports it and stops. Returns an
+ * unsubscribe fn that aborts the in-flight request and cancels any pending
+ * retry.
  */
 export function streamEvents(
 	params: StreamEventsParams,
@@ -173,6 +196,8 @@ export function streamEvents(
 		if (params.requiresAction != null)
 			query.set('requires_action', String(params.requiresAction));
 		if (params.traceId) query.set('trace_id', params.traceId);
+		if (params.actorId) query.set('actor_id', params.actorId);
+		if (params.actorType) query.set('actor_type', params.actorType);
 		for (const t of params.eventType ?? []) query.append('event_type', t);
 		for (const s of params.severity ?? []) query.append('severity', s);
 		const qs = query.toString();
@@ -257,7 +282,9 @@ export function streamEvents(
 				if (openMs >= HEALTHY_CONNECTION_MS) attempt = 0;
 			} catch (error) {
 				if (stopped || controller.signal.aborted) return; // intentional unsubscribe
-				handlers.onError?.(toRailError(error, 'Event stream error.'));
+				const railError = toRailError(error, 'Event stream error.');
+				handlers.onError?.(railError);
+				if (isEventAccessDenied(railError)) return;
 			}
 			if (stopped || controller.signal.aborted) return;
 			// Schedule a reconnect with backoff (capped).

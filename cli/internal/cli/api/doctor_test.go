@@ -26,7 +26,7 @@ func meServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_test","status":"active","scopes":["apis:read"]}`))
+		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_test","status":"active","permissions":["apis:read"]}`))
 	}))
 }
 
@@ -73,6 +73,37 @@ func TestDoctorReportsReachableIdentity(t *testing.T) {
 	}
 	for key := range want {
 		t.Errorf("expected doctor check %q not found in report:\n%s", key, out)
+	}
+}
+
+// TestDoctorReportsServerIncompatibility: a pre-rename /me body is a release
+// mismatch, not an unreachable control plane — the doctor reports a
+// compatibility failure carrying the guard's remedy, and reachability passes.
+func TestDoctorReportsServerIncompatibility(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"type":"agent","id":"agnt_test","status":"active","scopes":["apis:read"]}`))
+	}))
+	defer srv.Close()
+
+	d := &agentDoctor{app: testApp(t)}
+	d.checkReachability(activeCtx(srv.URL), srv.URL, "jak_test")
+
+	got := map[string]agentCheck{}
+	for _, c := range d.checks {
+		got[c.Name] = c
+	}
+	if c := got["reachability"]; c.Status != agentPass {
+		t.Errorf("reachability = %s (%s), want pass", c.Status, c.Detail)
+	}
+	c, ok := got["compatibility"]
+	if !ok {
+		t.Fatalf("expected a compatibility check, got %+v", d.checks)
+	}
+	if c.Status != agentFail {
+		t.Errorf("compatibility = %s, want fail", c.Status)
+	}
+	if c.Hint != serverIncompatibleRemedy {
+		t.Errorf("hint = %q, want the guard's remedy %q", c.Hint, serverIncompatibleRemedy)
 	}
 }
 

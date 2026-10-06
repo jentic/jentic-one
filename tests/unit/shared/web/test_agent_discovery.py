@@ -227,7 +227,7 @@ def test_llms_txt_served_with_request_base_url(client: TestClient) -> None:
         "/.well-known/oauth-authorization-server",
         "/register",
         "/oauth/token",
-        "/access-requests",
+        "/me",
     ):
         assert f"http://testserver{path}" in body, f"llms.txt missing link to {path}"
 
@@ -382,7 +382,7 @@ def test_llms_txt_advertises_mcp_server(client: TestClient) -> None:
     assert "`jentic mcp`" in body
     # The routing paragraph: MCP preferred, CLI for recovery, same instance.
     assert "prefer them" in body
-    assert "`setup`/`access` recovery" in body
+    assert "`setup`/`doctor` recovery" in body
     assert "same instance" in body
     assert "`backend`/`host`" in body
     # The /mcp probe answers 404 or the OAuth-enabled 401 discovery challenge — the

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import Field
 
@@ -24,6 +24,7 @@ from jentic_one.control.services.credentials.providers.base import (
     ProviderError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
 )
@@ -34,12 +35,22 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import (
+    OAUTH_CALLBACK_PATH,
+    StateError,
+    decode_state,
+)
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.web.deps import (
     get_connect_service,
+    get_connect_session_service,
     get_credential_service,
 )
 from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
+    AuthCodeConnectChallengeResponse,
     ConnectChallengeResponse,
     ConnectRequestBody,
     CredentialAgentListResponse,
@@ -49,6 +60,7 @@ from jentic_one.control.web.schemas.credentials import (
     CredentialListResponse,
     CredentialRedactedResponse,
     CredentialUpdateRequest,
+    DeviceAuthorizationConnectChallengeResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
     RuleSetAttachRequest,
@@ -67,14 +79,26 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionTestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web.links import public_base_url
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 router = APIRouter()
 
 _logger = structlog.get_logger(__name__)
+
+
+def _connect_callback_url(request: Request, ctx: Context) -> str:
+    """The deployment-default OAuth connect callback for this request.
+
+    ``server.public_base_url`` (else the request origin) + the callback path.
+    The provider applies its own explicit ``redirect_uri`` override on top;
+    derived here because only the web layer sees the request origin.
+    """
+    return f"{public_base_url(ctx.config, request)}{OAUTH_CALLBACK_PATH}"
 
 
 def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedResponse:
@@ -106,13 +130,16 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
 # delegated agent here leaks nothing — it just keeps the credential reads uniform.
 @router.get("/credentials/providers", summary="List credential providers")
 async def list_providers(
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ProviderDiscoveryResponse:
     """Return discovery metadata for all configured credential providers."""
-    entries = svc.list_providers()
+    default_callback_url = _connect_callback_url(request, ctx)
+    entries = svc.list_providers(default_callback_url=default_callback_url)
     return ProviderDiscoveryResponse(
         providers=[
             ProviderDiscoveryEntryResponse(
@@ -177,6 +204,7 @@ async def create_credential(
         catalog_api_id=result.catalog_api_id,
         provider=result.provider,
         active=result.active,
+        created_by=result.created_by,
         created_at=result.created_at,
         server_variables=result.server_variables,
     )
@@ -239,12 +267,14 @@ def _oauth_callback_error() -> RedirectResponse:
     return RedirectResponse(f"{_CONNECT_RETURN_PATH}?status=error", status_code=303)
 
 
-@router.get("/credentials/oauth/callback", summary="OAuth connect callback")
+@router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback")
 async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
+    session_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:
     """Handle the OAuth callback from the IdP.
 
@@ -278,6 +308,70 @@ async def oauth_callback(
             error=error,
         )
         return _oauth_callback_error()
+
+    # Peek the state to see if this callback belongs to a connect-session
+    # (agent-driven integration flow). The ``sid`` claim is set by
+    # ``AuthCodeFlowHandler.begin`` — its presence routes completion to
+    # ``ConnectSessionService.complete_from_callback`` instead of the
+    # standalone-credential path. One URL, two consumers; the peek runs the
+    # verify + one-shot nonce consume inside whichever service we dispatch
+    # to, so no bypass around replay protection.
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    session_id: str | None
+    try:
+        session_id = decode_state(state_secret, state).session_id
+    except StateError:
+        # Fall through to the standalone path — it'll re-verify + surface
+        # the canonical error.
+        session_id = None
+
+    if session_id is not None:
+        if error or not code:
+            # Pass the raw state so the error branch runs the same
+            # ``consume_callback_state`` prologue (signature verify +
+            # one-shot nonce consume) as the success branch — a replayed
+            # callback URL carrying ``error=access_denied`` must not be
+            # able to terminate (and cascade-delete) a session that
+            # already connected.
+            try:
+                await session_svc.mark_terminal_from_callback(
+                    raw_state=state, error=error or "no_code_returned"
+                )
+            except StateError as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session.state_invalid",
+                    session_id=session_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session_error",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+            return _oauth_callback_error()
+        try:
+            # Pass the raw state so ``complete_from_callback`` runs the
+            # shared ``consume_callback_state`` prologue (signature
+            # verify + one-shot nonce consume) — never trust the sid
+            # we peeked at above as a bypass around replay protection.
+            await session_svc.complete_from_callback(raw_state=state, code=code)
+        except StateError as exc:
+            _logger.warning(
+                "oauth_callback.connect_session.state_invalid",
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _oauth_callback_error()
+        except Exception as exc:
+            _logger.warning(
+                "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
+            )
+            return _oauth_callback_error()
+        _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
+        return _oauth_callback_success()
 
     callback = ConnectCallback(code=code, error=error)
 
@@ -331,7 +425,8 @@ async def list_credential_agents(
     """List agents directly bound to a credential with cursor-based pagination.
 
     The reverse lookup for the credential-detail "Agents" view (theme 5
-    phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+    phase 1) — the direct-binding successor of the removed
+    ``GET /toolkits/{id}/agents``.
     Suspended bindings are included with their flag set.
     """
     data, has_more, next_cursor = await svc.list_agents(
@@ -494,7 +589,11 @@ async def attach_agent_rule_set(
 
     While attached, the set's ordered list is the binding's effective policy
     and its inline rules are dormant — `permissions:test` evaluates the set.
-    The set must exist (404 `rule_set_not_found`).
+    The set must exist (404 `rule_set_not_found`). The caller must be the
+    set's creator or an org admin, unless the set is curated (created by an
+    org admin), which any caller who may write the binding's rules can
+    attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+    binding already points at is a no-op.
     """
     await svc.attach_binding_rule_set(credential_id, agent_id, body.rule_set_id, identity=identity)
     return Response(status_code=204)
@@ -543,6 +642,7 @@ def _to_rule_set_response(
             for r in rules
         ],
         binding_count=binding_count,
+        curated=rule_set.curated,
         created_by=rule_set.created_by,
         created_at=rule_set.created_at,
     )
@@ -572,6 +672,7 @@ async def list_rule_sets(
                 name=rs.name,
                 description=rs.description,
                 rule_count=count,
+                curated=rs.curated,
                 created_by=rs.created_by,
                 created_at=rs.created_at,
             )
@@ -638,7 +739,11 @@ async def update_rule_set(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> RuleSetResponse:
-    """Rename or re-describe a rule set (creator or org admin)."""
+    """Rename or re-describe a rule set.
+
+    A curated set is editable by an org admin; any other set by its creator
+    or an org admin (403 `rule_set_access_denied` otherwise).
+    """
     await svc.update_rule_set(
         rule_set_id, identity=identity, name=body.name, description=body.description
     )
@@ -757,26 +862,46 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
+    response_model=None,
 )
 async def connect_credential(
     credential_id: str,
     body: ConnectRequestBody,
+    request: Request,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
-) -> ConnectChallengeResponse:
-    """Initiate the OAuth connect flow for a credential."""
+    ctx: Context = Depends(get_ctx),
+) -> ConnectChallengeResponse | JSONResponse:
+    """Initiate the OAuth connect flow for a credential.
+
+    Discriminates on the provider's returned challenge: OAuth2
+    authorization-code providers return an ``authorize_url`` for popup
+    redirect; device-flow providers return ``user_code`` /
+    ``verification_uri`` for the RFC 8628 human step.
+    """
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
+    redirect_uri = _connect_callback_url(request, ctx)
     try:
         challenge = await svc.begin(
             credential_id,
             connect_req,
             actor_id=identity.sub,
             actor_type=identity.actor_type,
+            redirect_uri=redirect_uri,
         )
     except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})  # type: ignore[return-value]
+        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})  # type: ignore[return-value]
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})  # type: ignore[return-value]
-    return ConnectChallengeResponse(authorize_url=challenge.authorize_url, state=challenge.state)
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if isinstance(challenge, AuthCodeChallenge):
+        return AuthCodeConnectChallengeResponse(
+            authorize_url=challenge.authorize_url, state=challenge.state
+        )
+    return DeviceAuthorizationConnectChallengeResponse(
+        user_code=challenge.user_code,
+        verification_uri=challenge.verification_uri,
+        verification_uri_complete=challenge.verification_uri_complete,
+        poll_interval_seconds=challenge.poll_interval_seconds,
+    )

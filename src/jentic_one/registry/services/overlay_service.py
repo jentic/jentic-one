@@ -19,8 +19,13 @@ from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.spec_file_repo import SpecFileRepository
+from jentic_one.registry.repos.url_index_repo import (
+    UrlIndexRepository,
+    describe_live_host_owners,
+)
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
+    HostOwnedByOtherVendorError,
     InvalidOverlayDocumentError,
     NoCurrentRevisionError,
     OverlayApplyConflictError,
@@ -1010,6 +1015,21 @@ class OverlayService:
                     "no superseded revision was recorded (a first-ever materialize "
                     "superseded nothing, or the overlay predates superseded-revision "
                     "tracking) — resolve manually, e.g. by re-importing upstream",
+                )
+
+            # The superseded revision goes live again, so it is held to the same
+            # one-vendor-per-host rule as promotion: another vendor may have gone
+            # live on one of its hosts since it was superseded. The server-host
+            # change guard (``registry/ingest/host_change_guard.py``) is not applied:
+            # rollback needs ``overlays:confirm``, the same operator scope that let
+            # the overlay rewrite the servers on confirm, and it only restores the
+            # revision that was live right before the overlay.
+            owners = await UrlIndexRepository.find_live_hosts_of_other_vendors(
+                session, revision_id=superseded_id, vendor=api.vendor
+            )
+            if owners:
+                raise HostOwnedByOtherVendorError(
+                    str(superseded_id), describe_live_host_owners(owners)
                 )
 
             # 1. Archive the current overlay revision (CAS on it being active).

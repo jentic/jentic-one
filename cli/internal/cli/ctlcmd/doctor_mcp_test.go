@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/mcpcfg"
 )
 
@@ -51,8 +52,7 @@ func TestDoctorMCPNoEntriesIsSingleWarn(t *testing.T) {
 }
 
 // TestDoctorMCPEntryBinaryChecksWrittenPath: the binary row judges the path
-// the ENTRY pins — present passes, missing warns — for both plain and
-// sudo-shim shapes. A `jentic` on PATH is irrelevant (and deliberately absent
+// the ENTRY pins — present passes, missing warns. A `jentic` on PATH is irrelevant (and deliberately absent
 // here).
 func TestDoctorMCPEntryBinaryChecksWrittenPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // guaranteed-absent jentic on PATH
@@ -64,7 +64,7 @@ func TestDoctorMCPEntryBinaryChecksWrittenPath(t *testing.T) {
 	d := &doctor{app: testApp(t), ctx: context.Background()}
 	d.checkMCPEntries(validCfg(), []mcpWrittenEntry{
 		writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry(realBin, "dev")),
-		writtenEntry(mcpcfg.RuntimeCodex, mcpcfg.SudoShimEntry("_jentic-codex", "/gone/jentic", "dev")),
+		writtenEntry(mcpcfg.RuntimeCodex, mcpcfg.PlainEntry("/gone/jentic", "dev")),
 	})
 
 	byName := map[string]checkStatus{}
@@ -193,5 +193,36 @@ func TestReadMCPEntriesFindsWrittenConfigs(t *testing.T) {
 	}
 	if entries[0].entry.PinnedContext() != "dev" {
 		t.Errorf("parsed entry = %+v", entries[0].entry)
+	}
+}
+
+// TestDoctorMCPIsolatedEntryMustRunRootOwnedCopy: an isolated (sudo-shim)
+// entry written by an older jentic pins the operator's own install. Even
+// when that file exists, the row warns and points at re-running the
+// isolation step; a plain entry at the same path still passes.
+func TestDoctorMCPIsolatedEntryMustRunRootOwnedCopy(t *testing.T) {
+	operatorBin := filepath.Join(t.TempDir(), "jentic")
+	if err := os.WriteFile(operatorBin, []byte("#!"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &doctor{app: testApp(t), ctx: context.Background()}
+	d.checkMCPEntries(validCfg(), []mcpWrittenEntry{
+		writtenEntry(mcpcfg.RuntimeCursor, mcpcfg.PlainEntry(operatorBin, "dev")),
+		writtenEntry(mcpcfg.RuntimeCodex, mcpcfg.SudoShimEntry("_jentic-codex", operatorBin, "dev")),
+	})
+	for _, c := range d.checks {
+		switch c.name {
+		case "binary (cursor)":
+			if c.status != statusPass {
+				t.Errorf("plain entry should pass, got %+v", c)
+			}
+		case "binary (codex)":
+			if c.status != statusWarn || !strings.Contains(c.hint, localagent.ServiceBinaryPath()) {
+				t.Errorf("isolated entry off the root-owned copy should warn with a pointer to it, got %+v", c)
+			}
+		}
+	}
+	if d.failed() != 0 {
+		t.Error("the warning must not flip doctor's exit code")
 	}
 }

@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronRight, Minus } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
-import type { EnhancedScope, ScopeGroup as ScopeGroupType } from '@/shared/lib/scopes';
+import {
+	VOCABULARY_NOUNS,
+	type EnhancedScope,
+	type ScopeGroup as ScopeGroupType,
+	type ScopeVocabulary,
+} from '@/shared/lib/scopes';
 
 /**
  * Collapsible group of scopes for one resource (ported from jentic-webapp's
@@ -11,8 +16,9 @@ import type { EnhancedScope, ScopeGroup as ScopeGroupType } from '@/shared/lib/s
  * description and (optionally) a "Recommended" hint.
  *
  * Source-agnostic: drives credentials' OAuth2 scopes and the platform
- * permission scopes on actors. Pure presentation — selection state + toggles
- * are owned by the parent `ScopePicker`.
+ * permissions on actors — `vocabulary` picks the noun the header announces.
+ * Pure presentation — selection state + toggles are owned by the parent
+ * `ScopePicker`.
  */
 export interface ScopeGroupProps {
 	group: ScopeGroupType;
@@ -26,6 +32,8 @@ export interface ScopeGroupProps {
 	disabledScopes?: Set<string>;
 	/** Show the per-scope "Recommended" badge (OAuth2 only). Default true. */
 	showRecommended?: boolean;
+	/** Noun the header's accessible name uses. Default `'scope'`. */
+	vocabulary?: ScopeVocabulary;
 }
 
 export function ScopeGroup({
@@ -37,7 +45,9 @@ export function ScopeGroup({
 	defaultExpanded = false,
 	disabledScopes,
 	showRecommended = true,
+	vocabulary = 'scope',
 }: ScopeGroupProps) {
+	const noun = VOCABULARY_NOUNS[vocabulary];
 	const selectedCount = group.scopes.filter((s) => selectedScopes.has(s.scope)).length;
 	const totalCount = group.scopes.length;
 	// Only scopes the caller can actually grant count toward "all selected".
@@ -75,7 +85,7 @@ export function ScopeGroup({
 				<button
 					type="button"
 					aria-expanded={isExpanded}
-					aria-label={`${group.name} scopes, ${selectedCount} of ${totalCount} selected`}
+					aria-label={`${group.name} ${noun.plural}, ${selectedCount} of ${totalCount} selected`}
 					onClick={toggleExpanded}
 					className="flex flex-1 cursor-pointer items-center gap-3 text-left"
 				>
@@ -143,6 +153,7 @@ export function ScopeGroup({
 									scope={scope}
 									isSelected={selectedScopes.has(scope.scope)}
 									disabled={disabledScopes?.has(scope.scope)}
+									disabledTitle={`You do not have permission to grant this ${noun.singular}`}
 									showRecommended={showRecommended}
 									onToggle={(): void => onToggleScope(scope.scope)}
 								/>
@@ -159,12 +170,14 @@ function ScopeItem({
 	scope,
 	isSelected,
 	disabled,
+	disabledTitle,
 	showRecommended,
 	onToggle,
 }: {
 	scope: EnhancedScope;
 	isSelected: boolean;
 	disabled?: boolean;
+	disabledTitle: string;
 	showRecommended: boolean;
 	onToggle: () => void;
 }) {
@@ -175,7 +188,7 @@ function ScopeItem({
 			aria-checked={isSelected}
 			aria-label={scope.scope}
 			disabled={disabled}
-			title={disabled ? 'You do not have permission to grant this scope' : undefined}
+			title={disabled ? disabledTitle : undefined}
 			onClick={onToggle}
 			className={cn(
 				'group flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',

@@ -5,17 +5,13 @@
  * `shared/models/actors.py`): the status/verb unions below mirror those values
  * verbatim. The web response schema still serializes attribution as
  * `registered_by`/`approved_by`/`denied_by` (NOT yet `actor_id`/`actor_type`),
- * so we adapt the served `AgentResponse`/`ServiceAccountResponse` into neutral
- * entity envelopes here. When the web schema is regenerated to
+ * so we adapt the served `AgentResponse` into a neutral entity envelope
+ * here. When the web schema is regenerated to
  * `actor_id`/`actor_type`, only these adapters change — hooks/views are
  * unaffected.
  */
-import type {
-	AgentResponse,
-	PermissionRuleReadSchema,
-	PermissionTestResponse,
-	ServiceAccountResponse,
-} from '@/shared/api';
+import type { AgentResponse, PermissionRuleReadSchema, PermissionTestResponse } from '@/shared/api';
+import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -64,7 +60,7 @@ export const ACTION_LABEL: Record<AgentAction, string> = {
 
 /**
  * Button variant per lifecycle action — one source of truth so the destructive
- * emphasis is identical on the roster and the detail page.
+ * emphasis is identical on every surface that offers the action.
  */
 export const ACTION_VARIANT: Record<AgentAction, 'primary' | 'secondary' | 'danger' | 'outline'> = {
 	approve: 'primary',
@@ -96,19 +92,6 @@ export interface AgentEntity {
 	hasApiKey: boolean;
 }
 
-/** UI envelope for a service account. */
-export interface ServiceAccountEntity {
-	id: string;
-	name: string;
-	description: string | null;
-	status: ActorStatus;
-	ownerId: string;
-	denialReason: string | null;
-	createdAt: string;
-	approvedAt: string | null;
-	attribution: Attribution;
-}
-
 export function agentToEntity(r: AgentResponse): AgentEntity {
 	return {
 		id: r.id,
@@ -129,22 +112,14 @@ export function agentToEntity(r: AgentResponse): AgentEntity {
 	};
 }
 
-export function serviceAccountToEntity(r: ServiceAccountResponse): ServiceAccountEntity {
-	return {
-		id: r.id,
-		name: r.name,
-		description: r.description ?? null,
-		status: toActorStatus(r.status),
-		ownerId: r.owner_id,
-		denialReason: r.denial_reason ?? null,
-		createdAt: r.created_at,
-		approvedAt: r.approved_at ?? null,
-		attribution: {
-			registeredBy: r.registered_by ?? null,
-			approvedBy: r.approved_by ?? null,
-			deniedBy: r.denied_by ?? null,
-		},
-	};
+/**
+ * True when the agent was minted by the theme-8 service-account migration.
+ * Keys off the immutable `registered_by` stamp
+ * (`control/repos/service_account_migration_repo.py`), so it still holds
+ * after an operator renames the agent.
+ */
+export function isServiceAccountSuccessor(agent: Pick<AgentEntity, 'attribution'>): boolean {
+	return agent.attribution.registeredBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,8 +148,12 @@ export interface CredentialBindingEntity {
 	/** True when the binding is soft-suspended (reversible cut-off): the row
 	 * and its rules survive, but the broker excludes it until resumed. */
 	suspended: boolean;
-	/** Shared rule set this binding points at; null = inline rules apply.
-	 * Read-only here — rule-set management is out of scope for this phase. */
+	/** Why the binding is suspended: null for a manual pause, `api_deleted`
+	 * when the API its credential serves was deleted. */
+	suspendedReason: string | null;
+	/** Shared rule set this binding points at; null = inline rules apply. While
+	 * set, the set's rules are the binding's effective policy and its inline
+	 * rules are dormant (the broker and `permissions:test` evaluate the set). */
 	ruleSetId: string | null;
 	boundAt: string;
 	serves: ServedApiEntity[];
@@ -205,6 +184,21 @@ export interface AgentBindableCredential {
 
 /** A stored permission rule on a direct binding (includes system fields). */
 export type BindingPermissionRule = PermissionRuleReadSchema;
+
+/** A shared permission rule set (`GET /permission-rule-sets/{id}`), as read by a
+ * binding that points at it. */
+export interface BindingRuleSetEntity {
+	id: string;
+	name: string;
+	description: string | null;
+	/** Created by an org admin: attachable by anyone who may write a binding's
+	 * rules, editable only by an org admin. */
+	curated: boolean;
+	/** How many agent-credential bindings point at this set. */
+	bindingCount: number;
+	/** The set's ordered, first-match-wins rules. */
+	rules: BindingPermissionRule[];
+}
 
 /** Broker dry-run verdict from the direct-binding `:test` — NO vendor
  * pooling, so `rule_index` always points into this binding's own rule list. */
@@ -239,7 +233,7 @@ export interface ApiKeyHistoryEntry {
 
 /**
  * A platform permission from the catalogue (`GET /permissions`). These are the
- * scope vocabulary that actor `scopes` draw from — distinct from the OAuth2
+ * vocabulary that actor `permissions` draw from — distinct from the OAuth2
  * provider scopes the credentials picker uses. `grantableByCaller` is false for
  * permissions the current operator lacks the authority to grant.
  */
@@ -321,8 +315,8 @@ export interface InstanceIdentityEntity {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth consent grants — the detail console's "Connected
-// clients" panel: which OAuth clients hold a live consent→agent grant.
+// OAuth consent grants — the Permissions sheet's "Connected
+// clients" card: which OAuth clients hold a live consent→agent grant.
 // ---------------------------------------------------------------------------
 
 /**

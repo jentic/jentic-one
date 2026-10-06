@@ -1,7 +1,7 @@
 """drop event acknowledgement columns
 
 Revision ID: c1d2e3f4a5b6
-Revises: b9d0e1f2a3b4
+Revises: e3f4a5b6c7d8
 Create Date: 2026-09-22
 
 Removes the event acknowledgement feature: the ``acknowledged`` /
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c1d2e3f4a5b6"  # pragma: allowlist secret
-down_revision: str | None = "b9d0e1f2a3b4"  # pragma: allowlist secret
+down_revision: str | None = "e3f4a5b6c7d8"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

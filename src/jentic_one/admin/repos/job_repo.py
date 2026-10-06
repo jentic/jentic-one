@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.services.errors import JobNotFoundError
@@ -39,8 +41,19 @@ class JobRepository:
         return job
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, job_id: str) -> Job | None:
-        return await session.get(Job, job_id)
+    async def get_by_id(
+        session: AsyncSession,
+        job_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> Job | None:
+        if filters is None:
+            return await session.get(Job, job_id)
+        stmt = select(Job).where(Job.id == job_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def update(
@@ -77,6 +90,7 @@ class JobRepository:
         status: list[str] | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[Job]:
         stmt = select(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
         if cursor is not None:
@@ -97,18 +111,32 @@ class JobRepository:
             stmt = stmt.where(Job.created_at >= since)
         if until is not None:
             stmt = stmt.where(Job.created_at < until)
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
-    async def cancel_if_active(session: AsyncSession, job_id: str) -> Job | None:
-        """Cancel a job if active (queued or running). Returns None if already terminal."""
+    async def cancel_if_active(
+        session: AsyncSession,
+        job_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> Job | None:
+        """Cancel a job if active (queued or running).
+
+        Returns None if already terminal or not matched by ``filters``.
+        """
         stmt = (
             update(Job)
             .where(Job.id == job_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
             .values(status=JobStatus.CANCELLED)
             .returning(Job)
         )
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is not None:

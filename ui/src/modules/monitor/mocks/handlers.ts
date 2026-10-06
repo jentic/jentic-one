@@ -17,6 +17,9 @@
  * deserializes them unchanged.
  */
 import { http, HttpResponse } from 'msw';
+// Side effect: appends the Everything feed's event mix to the rail's store;
+// the dev-only records behind it join the fixtures below.
+import { DEV_AUDIT, DEV_EXECUTIONS } from '@/modules/monitor/mocks/activityMix';
 
 // ── Rolling fixture clock ────────────────────────────────────────────────────
 // Fixtures were authored against a fixed 2026-06-19 anchor. The Monitor filters
@@ -68,7 +71,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_1',
 		http_status: 200,
-		operation_id: 'POST /v1/charges',
+		operation_id: 'op_charges01',
+		operation_path: '/v1/charges',
+		operation_method: 'POST',
 		origin: 'api',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:00:00Z',
@@ -87,7 +92,9 @@ const EXECUTIONS = rebaseFixture([
 		error: 'Upstream 503 from github.com',
 		execution_id: 'exec_2',
 		http_status: 503,
-		operation_id: 'GET /repos/{owner}/{repo}',
+		operation_id: 'op_getrepo01',
+		operation_path: '/repos/{owner}/{repo}',
+		operation_method: 'GET',
 		origin: 'cli',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:05:00Z',
@@ -106,7 +113,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_3',
 		http_status: 200,
-		operation_id: 'POST /v1/refunds',
+		operation_id: 'op_refunds01',
+		operation_path: '/v1/refunds',
+		operation_method: 'POST',
 		// MCP-origin run (local-MCP #1178) — the origin-filter specs pivot on it.
 		origin: 'mcp',
 		pinned_revisions: null,
@@ -128,7 +137,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_4',
 		http_status: 200,
-		operation_id: 'POST /chat.postMessage',
+		// Legacy row: id-only, no operation_path/method — pins that the opaque
+		// id never renders (the cells show the empty placeholder instead).
+		operation_id: 'op_chatpost01',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:07:00Z',
 		status: 'completed',
@@ -155,7 +166,7 @@ const USAGE_DAILY = rebaseFixture([
 // Sub-day activity anchored to the request's `until`, so the 24h (hourly
 // buckets) window renders real bars: the rebase delta parks the newest daily
 // fixture point ≥ ~24h back, which would otherwise leave `days=1` empty and
-// gate the whole Overview behind its EmptyState in dev/tests. Sums to 34
+// gate the whole Usage tab behind its EmptyState in dev/tests. Sums to 34
 // executions (31 success / 3 failed).
 const USAGE_RECENT = [
 	{ hoursAgo: 2, total: 9, success: 8, failed: 1, avg_ms: 430 },
@@ -251,6 +262,45 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 240,
 			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
 		},
+		// Keys mirroring the credentials dev seed, so a card's "N calls in 7d" resolves
+		// for some secrets and reads "no calls in 7d" for the rest — the card only says
+		// zero because this list comes back shorter than the top-N asked for.
+		{
+			key: 'cred_slack_1',
+			label: 'cred_slack_1',
+			total: 28,
+			success: 27,
+			failed: 1,
+			avg_ms: 260,
+			trend: [2, 2, 3, 2, 3, 2, 2, 3, 2, 3, 2, 2],
+		},
+		{
+			key: 'cred_github_1',
+			label: 'cred_github_1',
+			total: 19,
+			success: 15,
+			failed: 4,
+			avg_ms: 610,
+			trend: [1, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1],
+		},
+		{
+			key: 'cred_stripe_1',
+			label: 'cred_stripe_1',
+			total: 24,
+			success: 24,
+			failed: 0,
+			avg_ms: 395,
+			trend: [2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 1],
+		},
+		{
+			key: 'cred_nyt_1',
+			label: 'cred_nyt_1',
+			total: 7,
+			success: 7,
+			failed: 0,
+			avg_ms: 180,
+			trend: [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0],
+		},
 	],
 	agent: [
 		{
@@ -271,7 +321,7 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 520,
 			trend: [2, 3, 2, 4, 2, 3, 2, 3, 2, 3, 2, 2],
 		},
-		// Keys mirroring the agents-module store seeds (agnt_*/sva_*) so the
+		// Keys mirroring the agents-module store seeds (agnt_*) so the
 		// fleet table's activity columns (which read this same aggregate with
 		// group_by=agent) light up in mocked dev and tests. Extra rows here are
 		// harmless to the Monitor Breakdown — it just lists more actors.
@@ -293,6 +343,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 980,
 			trend: [22, 18, 15, 12, 10, 8, 6, 3, 2, 0, 0, 0],
 		},
+		// A historical pre-theme-8 service-account bucket: executions keep
+		// their original actor_type, so the Breakdown must still list it.
 		{
 			key: 'service_account/sva_active_1',
 			label: 'service_account/sva_active_1',
@@ -420,6 +472,17 @@ const AUDIT = rebaseFixture([
 	},
 ]);
 
+const byNewest =
+	<T>(at: (row: T) => string) =>
+	(a: T, b: T) =>
+		at(b).localeCompare(at(a));
+const ALL_EXECUTIONS_NEWEST_FIRST = [...EXECUTIONS, ...DEV_EXECUTIONS].sort(
+	byNewest((r) => r.started_at),
+);
+const ALL_AUDIT = DEV_AUDIT.length
+	? [...AUDIT, ...DEV_AUDIT].sort(byNewest((r) => r.occurred_at))
+	: AUDIT;
+
 function paginate<T>(rows: T[]) {
 	return { data: rows, has_more: false, next_cursor: null };
 }
@@ -465,21 +528,35 @@ export const monitorHandlers = [
 		const actorId = url.searchParams.get('actor_id');
 		const origin = url.searchParams.get('origin');
 		const from = url.searchParams.get('from');
+		const to = url.searchParams.get('to');
 		const statuses = url.searchParams.getAll('status');
 		const cursor = url.searchParams.get('cursor');
+		// Colon-encoded `vendor[:name[:version]]`, like the real router.
+		const api = url.searchParams.get('api');
 		// Fixed small page size (independent of the client's limit) so the
-		// three-row fixture spans two pages and exercises the cursor pager.
-		const limit = 2;
-		let rows = EXECUTIONS;
+		// three-row fixture spans two pages and exercises the cursor pager;
+		// mocked dev pages its larger, newest-first set like the real API.
+		const limit = DEV_EXECUTIONS.length ? 25 : 2;
+		let rows = DEV_EXECUTIONS.length ? ALL_EXECUTIONS_NEWEST_FIRST : EXECUTIONS;
 		if (traceId) rows = rows.filter((r) => r.trace_id === traceId);
 		if (actorId) rows = rows.filter((r) => r.actor_id === actorId);
 		if (origin) rows = rows.filter((r) => (r as { origin?: string }).origin === origin);
 		if (from) rows = rows.filter((r) => r.started_at >= from);
+		if (to) rows = rows.filter((r) => r.started_at <= to);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
+		if (api) {
+			const [vendor, name, version] = api.split(':');
+			rows = rows.filter(
+				(r) =>
+					r.api?.vendor === vendor &&
+					(!name || r.api?.name === name) &&
+					(!version || r.api?.version === version),
+			);
+		}
 		return HttpResponse.json(paginateCursor(rows, cursor, limit));
 	}),
 	http.get('/executions/:id', ({ params }) => {
-		const row = EXECUTIONS.find((r) => r.execution_id === String(params.id));
+		const row = ALL_EXECUTIONS_NEWEST_FIRST.find((r) => r.execution_id === String(params.id));
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
 	}),
 	http.get('/monitoring/usage', ({ request }) => {
@@ -622,8 +699,12 @@ export const monitorHandlers = [
 		const url = new URL(request.url);
 		const statuses = url.searchParams.getAll('status');
 		const kind = url.searchParams.get('kind');
+		const from = url.searchParams.get('from');
+		const to = url.searchParams.get('to');
 		let rows = JOBS;
 		if (kind) rows = rows.filter((r) => r.kind === kind);
+		if (from) rows = rows.filter((r) => r.created_at >= from);
+		if (to) rows = rows.filter((r) => r.created_at <= to);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
 		return HttpResponse.json(paginate(rows));
 	}),
@@ -704,7 +785,7 @@ export const monitorHandlers = [
 		const actorId = url.searchParams.get('actor_id');
 		const since = url.searchParams.get('since');
 		const until = url.searchParams.get('until');
-		let rows = AUDIT;
+		let rows = ALL_AUDIT;
 		// Mirror the backend: target_type and target_id must be supplied together
 		// (a lone target id is rejected with 400 invalid_input).
 		if ((targetType == null) !== (targetId == null)) {

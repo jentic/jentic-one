@@ -35,6 +35,67 @@ export function Badge({ variant = 'default', dot, children, className, ...props 
 	);
 }
 
+export type StatusTone = 'success' | 'warning' | 'muted';
+
+const statusToneClasses: Record<StatusTone, { text: string; dot: string }> = {
+	success: { text: 'text-success', dot: 'bg-success ring-3 ring-success/20' },
+	warning: { text: 'text-warning', dot: 'bg-warning ring-3 ring-warning/20' },
+	muted: { text: 'text-muted-foreground', dot: 'border border-current' },
+};
+
+interface StatusTextProps extends React.HTMLAttributes<HTMLSpanElement> {
+	tone: StatusTone;
+}
+
+/**
+ * A live state as a dot and a word, without a container — for a card's one
+ * status line, where a filled pill competes with the card's own title. A muted
+ * tone draws a hollow dot: the thing is idle, not faulty.
+ */
+export function StatusText({ tone, children, className, ...props }: StatusTextProps) {
+	const classes = statusToneClasses[tone];
+	return (
+		<span
+			className={cn(
+				'inline-flex items-center gap-2 text-xs font-medium',
+				classes.text,
+				className,
+			)}
+			{...props}
+		>
+			<span
+				className={cn('h-1.5 w-1.5 shrink-0 rounded-full', classes.dot)}
+				aria-hidden="true"
+			/>
+			{children}
+		</span>
+	);
+}
+
+interface TagProps extends React.HTMLAttributes<HTMLSpanElement> {
+	/** Optional leading glyph that names the category at a glance. */
+	icon?: React.ComponentType<{ className?: string }>;
+}
+
+/**
+ * A neutral category label (an auth type, a kind) — grey, because a category
+ * is neither good nor bad, so it takes none of the status colours.
+ */
+export function Tag({ icon: Icon, children, className, ...props }: TagProps) {
+	return (
+		<span
+			className={cn(
+				'bg-muted/60 text-muted-foreground border-border/60 inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none font-medium whitespace-nowrap',
+				className,
+			)}
+			{...props}
+		>
+			{Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />}
+			{children}
+		</span>
+	);
+}
+
 const methodColors: Record<string, string> = {
 	GET: 'bg-accent-teal/10 text-accent-teal border-accent-teal/30',
 	POST: 'bg-accent-blue/10 text-accent-blue border-accent-blue/30',

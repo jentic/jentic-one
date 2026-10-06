@@ -163,8 +163,9 @@ credential is a near-miss), several → resolution disambiguates (or asks for
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
-The retired toolkit path remains behind `broker.direct_bindings_enabled`
-(default on) as an emergency fallback until the phase-6b table drops.
+Authorization is direct-only: the retired toolkit path and its
+`broker.direct_bindings_enabled` fallback were removed with the phase-6b
+table drops (setting the flag to `false` now fails config validation).
 
 ## What gets recorded
 
@@ -186,5 +187,5 @@ incidents each emit typed events into the monitor.
   always runs alone, and how its runner stack is assembled at startup.
 - [Identity and authorization](identity-and-authorization.md) — the token
   kinds the broker's composite validator accepts.
-- [`docs/reference/endpoints.md`](../reference/endpoints.md) — the scope
+- [`docs/reference/endpoints.md`](../reference/endpoints.md) — the permission
   each route requires.

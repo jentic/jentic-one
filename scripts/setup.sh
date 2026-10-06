@@ -68,17 +68,12 @@ for schema in registry control admin; do
 done
 
 echo "==> Running migrations..."
-migration_failed=0
-for name in registry control admin; do
-    if ! uv run alembic -n "$name" upgrade head; then
-        echo "    ERROR: $name migration failed"
-        migration_failed=1
-    fi
-done
-
-if [ "$migration_failed" -ne 0 ]; then
+# The full runner, not per-database `alembic upgrade`: it orders the databases
+# and runs the cross-database upgrade steps (e.g. the service-account
+# retirement the admin drop revision requires).
+if ! uv run python -m jentic_one.migrations.run; then
     echo ""
-    echo "ERROR: One or more migrations failed. See output above."
+    echo "ERROR: Migrations failed. See output above."
     exit 1
 fi
 

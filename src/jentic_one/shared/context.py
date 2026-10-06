@@ -45,8 +45,14 @@ class Context:
         config: AppConfig | None = None,
         *,
         allowed_dbs: set[str] | None = None,
+        refresh_providers_on_boot: bool = True,
     ) -> None:
         self._config = config if config is not None else load_config()
+        # Whether startup() merges the DB-backed provider configs into the
+        # provider registry. Only processes that resolve providers (control,
+        # broker) need it; the composition root turns it off for the rest, which
+        # may not even hold the keyset those configs' client secrets decrypt with.
+        self._refresh_providers_on_boot = refresh_providers_on_boot
         self._allowed_dbs: frozenset[str] | None = (
             frozenset(allowed_dbs) if allowed_dbs is not None else None
         )
@@ -250,13 +256,18 @@ class Context:
             raise
         # Pick up runtime (DB-backed) provider configs on boot so a fresh
         # process reflects DB state without a restart. Only meaningful where the
-        # admin DB is available (the registry owner); a surface without admin
-        # access keeps the YAML-only registry from the lazy `providers` property.
+        # admin DB is available (the registry owner) and the process resolves
+        # providers at all (refresh_providers_on_boot); any other process keeps
+        # the YAML-only registry from the lazy `providers` property.
         #
         # Best-effort: a transient admin-DB blip at boot must not crash startup.
         # On failure we keep the lazy YAML-only registry and let the next admin
         # write (which calls refresh_providers explicitly) reconcile DB state.
-        if self._is_allowed("admin") and self._admin_db is not None:
+        if (
+            self._refresh_providers_on_boot
+            and self._is_allowed("admin")
+            and self._admin_db is not None
+        ):
             try:
                 await self.refresh_providers()
             except Exception as exc:

@@ -52,7 +52,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "name",
@@ -134,7 +134,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "name",
@@ -181,7 +181,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -206,7 +206,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -250,7 +250,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account (default human)"
+                  "usage": "Interaction mode: human|agent (default human)"
                 },
                 {
                   "name": "theme",
@@ -281,7 +281,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -307,7 +307,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -330,7 +330,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -355,7 +355,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -388,7 +388,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -422,7 +422,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -463,7 +463,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -494,7 +494,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -517,7 +517,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -551,7 +551,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -591,7 +591,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -622,7 +622,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -646,7 +646,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "name",
@@ -675,7 +675,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -703,7 +703,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -718,6 +718,31 @@
                   "usage": "Skip the confirmation prompt"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "whoami",
+          "path": "jentic whoami",
+          "use": "whoami",
+          "short": "Show who you are: identity, status, permissions, and credential bindings",
+          "long": "whoami answers with your identity as the control plane sees it — the\nauthenticated GET /me response, verbatim. For an agent that is the id,\nstatus, permissions, and credential bindings with the APIs each one serves;\na user token renders its own /me variant. Check it before executing\nanything new — access is decided from your bindings, never by probing\nwith execute.",
+          "group_title": "Identity \u0026 access",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
             }
           ]
         },
@@ -737,7 +762,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "purge-legacy",
@@ -775,7 +800,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -816,7 +841,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
@@ -869,7 +894,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "registered",
@@ -916,7 +941,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "tag",
@@ -950,7 +975,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "no-promote",
@@ -1010,7 +1035,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1033,7 +1058,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1060,7 +1085,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -1104,7 +1129,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1144,7 +1169,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1188,7 +1213,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "state",
@@ -1238,7 +1263,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
@@ -1255,7 +1280,7 @@
             {
               "name": "inspect",
               "path": "jentic apis inspect",
-              "use": "inspect \u003coperation_id\u003e",
+              "use": "inspect \u003cMETHOD:url\u003e",
               "short": "Inspect an operation's structural detail",
               "flags": [
                 {
@@ -1272,7 +1297,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "revision",
@@ -1300,7 +1325,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1323,7 +1348,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1349,7 +1374,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1379,7 +1404,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "out",
@@ -1431,7 +1456,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "name",
@@ -1466,14 +1491,14 @@
           "name": "endpoints",
           "path": "jentic endpoints",
           "use": "endpoints",
-          "short": "Browse the API endpoint + scope reference",
-          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the scope(s) it requires. The grouping is an advisory hint — the\nscope is the real gate. It reads the server's public endpoint reference\n(/reference/endpoints.json, no token needed) — the same join published in\ndocs/reference/endpoints.md.\nFilter with --scope or --actor, or use --json for a machine-readable dump.",
+          "short": "Browse the API endpoint + permission reference",
+          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the permission(s) it requires. The grouping is an advisory hint —\nthe permission is the real gate. It reads the server's public endpoint\nreference (/reference/endpoints.json, no token needed) — the same join\npublished in docs/reference/endpoints.md.\nFilter with --permission or --actor, or use --json for a machine-readable dump.",
           "group_title": "APIs",
           "flags": [
             {
               "name": "actor",
               "type": "string",
-              "usage": "only endpoints callable by this actor type (user, agent, service_account)"
+              "usage": "only endpoints callable by this actor type (user, agent)"
             },
             {
               "name": "context",
@@ -1489,12 +1514,12 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
-              "name": "scope",
+              "name": "permission",
               "type": "string",
-              "usage": "only endpoints requiring this scope"
+              "usage": "only endpoints requiring this permission"
             },
             {
               "name": "theme",
@@ -1521,7 +1546,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -1555,7 +1580,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1583,7 +1608,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -1595,12 +1620,60 @@
           ]
         },
         {
+          "name": "connect",
+          "path": "jentic connect",
+          "use": "connect \u003cvendor\u003e",
+          "short": "Start connecting a credential for a registry vendor (a human approves it)",
+          "long": "connect starts a connect session for a verified vendor from the deployment's\nvendor registry (e.g. `jentic connect github`) and prints the approval_url.\nRelay that URL to your human operator: they approve the connection and its\nscopes in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout.",
+          "group_title": "APIs",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "usage": "why you need this connection (shown to the approver; max 1024 chars)"
+            },
+            {
+              "name": "scopes",
+              "type": "stringSlice",
+              "default": "[]",
+              "usage": "vendor scope names to request (the human approver confirms the final set)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
+              "name": "timeout",
+              "type": "duration",
+              "default": "5m0s",
+              "usage": "how long --wait polls before exiting 3 (TIMEOUT_PENDING)"
+            },
+            {
+              "name": "wait",
+              "type": "bool",
+              "default": "false",
+              "usage": "poll the session until it connects or ends (rejected, expired, or cancelled)"
+            }
+          ]
+        },
+        {
           "name": "search",
           "path": "jentic search",
           "use": "search \u003cquery\u003e",
           "short": "Search for operations by natural-language query",
-          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
-          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
+          "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nEach hit carries a `target` to pass verbatim to inspect/execute:\nits METHOD:url pair, or its operation_id when the url is host-relative\n(the spec declares no absolute server, e.g. /pets). Such an\noperation_id target is inspect-only — execute refuses it.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
+          "example": "  jentic search \"list users\"\n  jentic search -q \"create issue\" --api github-com/api-github-com --limit 5\n  jentic search \"list pets\" --all --json | jq -r '.data[].target'",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1640,7 +1713,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "query",
@@ -1658,10 +1731,10 @@
         {
           "name": "inspect",
           "path": "jentic inspect",
-          "use": "inspect \u003cMETHOD:url | operation_id\u003e",
+          "use": "inspect \u003cMETHOD:url\u003e",
           "short": "Inspect an operation's contract (schema, parameters, examples)",
-          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nThe space form (`GET \u003curl\u003e`) is also accepted, but the colon form is\ncanonical (it needs no shell quoting).\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
-          "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect createUser --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
+          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget is a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets).\nAn opaque registry operation_id also still resolves, for compatibility\n— prefer the METHOD:url form. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nThe space form (`GET \u003curl\u003e`) is also accepted, but the colon form is\ncanonical (it needs no shell quoting).\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
+          "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect POST:https://api.example.com/v1/users --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].target' | xargs jentic inspect",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1683,7 +1756,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "revision",
@@ -1700,10 +1773,10 @@
         {
           "name": "execute",
           "path": "jentic execute",
-          "use": "execute \u003cMETHOD:url | METHOD:/path | operation_id\u003e",
+          "use": "execute \u003cMETHOD:url | METHOD:/path\u003e",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you have no credential binding\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
-          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  jentic execute uploadPic --form demo=true --form-file images=@face.jpg --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target is the operation's method + URL:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` print (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n(An opaque registry operation_id also still resolves, for compatibility\nwith older scripts — prefer the METHOD:url form. A search hit whose\ntarget is an operation_id has a host-relative url — its spec declares no\nabsolute server — so it is inspect-only: execute refuses it with\nRESOLVE_FAILED, since there is no upstream host to proxy to.)\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you have no credential binding\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. an unknown operation)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
+          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute GET:https://api.example.com/v1/pets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  jentic execute POST:https://api.example.com/v1/pics --form demo=true --form-file images=@face.jpg --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1778,7 +1851,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "path",
@@ -1811,280 +1884,6 @@
           ]
         },
         {
-          "name": "access",
-          "path": "jentic access",
-          "use": "access",
-          "short": "Inspect your access and request more (credentials, scopes)",
-          "long": "access is how an agent closes the gap between having an identity and having\nthe access to use it. An approved agent starts bound to no credentials, so its\nfirst execute fails with a 403 telling it to request access. Use this group\nto see what you can do now (whoami), ask a human to grant more (request),\nand track those requests (list, status, withdraw).\n\nApproval is a human action: filing a request prints an approve_url for your\noperator. Output defaults to JSON when stdout is not a TTY (agent-friendly).",
-          "group_title": "Find and run operations",
-          "flags": [
-            {
-              "name": "context",
-              "type": "string",
-              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-            },
-            {
-              "name": "mode",
-              "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-            },
-            {
-              "name": "theme",
-              "type": "string",
-              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-            }
-          ],
-          "subcommands": [
-            {
-              "name": "whoami",
-              "path": "jentic access whoami",
-              "use": "whoami",
-              "short": "Show your agent identity, scopes, and credential bindings",
-              "long": "whoami answers \"what can I do right now?\" — your agent id, status, granted\nscopes, and the credentials you are bound to (each with the APIs it serves).\nAn empty bindings list means you cannot execute against any API yet; use\n`jentic access request` to ask.",
-              "flags": [
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                }
-              ]
-            },
-            {
-              "name": "request",
-              "path": "jentic access request",
-              "use": "request",
-              "short": "File a request for credential bindings, scope grants, or provisioning plans",
-              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name an API you found in search to be\nbound to a credential serving it (--api vendor/name), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen no credential serves an API yet (a fresh import), use --provision\nvendor/name to file the whole path to first execution as one plan: provision\na credential and bind yourself to it (with your proposed --rules-json). A\nhuman fulfils the provision step in the dashboard (they enter the secret —\nit never rides in your request) and approves. Use --auth to declare the\ncredential type you detected from the spec (bearer, api_key, basic, oauth2,\nor none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --api/--scope appends a single item. With more\nthan one --provision, key --auth and --rules-json by the same\nvendor/name[/version] passed to --provision; the bare form applies when\nthere is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
-              "example": "  jentic access request --api httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --scope owner:credentials:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --api github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
-              "flags": [
-                {
-                  "name": "api",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "request a binding to a credential serving this API (vendor/name[/version]; repeatable)"
-                },
-                {
-                  "name": "auth",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=\u003ctype\u003e)"
-                },
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "provision",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)"
-                },
-                {
-                  "name": "reason",
-                  "type": "string",
-                  "usage": "human-readable justification shown to the approver"
-                },
-                {
-                  "name": "rules-json",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=\u003cjson\u003e)"
-                },
-                {
-                  "name": "scope",
-                  "type": "stringArray",
-                  "default": "[]",
-                  "usage": "request this scope be granted (repeatable)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                },
-                {
-                  "name": "timeout",
-                  "type": "duration",
-                  "default": "10m0s",
-                  "usage": "max time to wait with --wait"
-                },
-                {
-                  "name": "wait",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "block until the request is decided"
-                }
-              ]
-            },
-            {
-              "name": "list",
-              "path": "jentic access list",
-              "use": "list",
-              "short": "List your access requests",
-              "flags": [
-                {
-                  "name": "all",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "follow pagination and return all results"
-                },
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "cursor",
-                  "type": "string",
-                  "usage": "pagination cursor from a previous response"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "limit",
-                  "type": "int",
-                  "default": "0",
-                  "usage": "max results per page (0 = server default)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "status",
-                  "type": "string",
-                  "usage": "filter by status (pending, approved, denied, withdrawn, …)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                }
-              ]
-            },
-            {
-              "name": "status",
-              "path": "jentic access status",
-              "use": "status \u003crequest-id\u003e",
-              "short": "Show one access request, including per-item state and approve_url",
-              "flags": [
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                }
-              ]
-            },
-            {
-              "name": "withdraw",
-              "path": "jentic access withdraw",
-              "use": "withdraw \u003crequest-id\u003e",
-              "short": "Withdraw a pending access request",
-              "flags": [
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                }
-              ]
-            },
-            {
-              "name": "refresh",
-              "path": "jentic access refresh",
-              "use": "refresh",
-              "short": "Re-mint your token so newly granted scopes take effect",
-              "long": "refresh forces a fresh token mint, picking up any scopes granted since your\ncurrent token was issued. Tokens bake in their scopes at mint time, so after\nan approved `scope:grant` request your existing token still can't exercise the\nnew scope until you refresh. Run this when `jentic access whoami` shows a scope\nunder \"granted\" that isn't yet active on your token.",
-              "flags": [
-                {
-                  "name": "context",
-                  "type": "string",
-                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
-                },
-                {
-                  "name": "json",
-                  "type": "bool",
-                  "default": "false",
-                  "usage": "force JSON output (default when stdout is not a TTY)"
-                },
-                {
-                  "name": "mode",
-                  "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
-                },
-                {
-                  "name": "theme",
-                  "type": "string",
-                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
-                }
-              ]
-            }
-          ]
-        },
-        {
           "name": "history",
           "path": "jentic history",
           "use": "history",
@@ -2100,7 +1899,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2151,7 +1950,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "output",
@@ -2193,7 +1992,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2222,7 +2021,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2250,7 +2049,7 @@
           "use": "api \u003cMETHOD\u003e \u003cPATH\u003e",
           "short": "Authenticated passthrough to the control plane",
           "long": "api sends an arbitrary request to the control plane, reusing the same\nauth, session, and transport as every other command. The PATH must match a\nroute in the CLI's embedded OpenAPI spec (use --live to allow routes the\nconnected server serves that this binary predates). Discover routes with\n`jentic api ops` and their contract with `jentic api describe`.\n\nRequest body (mirrors `jentic execute`): -d/--data inline JSON, -d - for\nstdin, --data-file \u003cpath\u003e, or auto-stdin when a body is piped/redirected.\n\nBy default any transport-successful response (2xx or 4xx/5xx) exits 0 and\nthe body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
-          "example": "  jentic api GET /credentials\n  jentic api POST /service-accounts -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
+          "example": "  jentic api GET /credentials\n  jentic api POST /agents -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -2290,7 +2089,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "query",
@@ -2336,7 +2135,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2365,7 +2164,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2392,7 +2191,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2440,7 +2239,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2493,7 +2292,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2535,7 +2334,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2593,7 +2392,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "operator",
@@ -2665,7 +2464,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "no-allow-dir",
@@ -2733,7 +2532,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2764,7 +2563,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2863,7 +2662,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "read-only",
@@ -2914,7 +2713,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",
@@ -2937,7 +2736,7 @@
                 {
                   "name": "mode",
                   "type": "string",
-                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                 },
                 {
                   "name": "theme",
@@ -2961,7 +2760,7 @@
                     {
                       "name": "mode",
                       "type": "string",
-                      "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                      "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                     },
                     {
                       "name": "theme",
@@ -3006,7 +2805,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "project-id",
@@ -3046,7 +2845,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "theme",
@@ -3075,7 +2874,7 @@
                         {
                           "name": "mode",
                           "type": "string",
-                          "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                          "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
                         },
                         {
                           "name": "theme",
@@ -3095,7 +2894,7 @@
           "path": "jentic theme",
           "use": "theme \u003cdark|light|no-color\u003e",
           "short": "Set the persistent color theme",
-          "long": "theme persists the global color theme in ~/.config/jentic/config.yaml.\nOverride per-invocation with --theme or $JENTIC_THEME. Agent and\nservice-account modes always use no-color regardless of this setting.",
+          "long": "theme persists the global color theme in ~/.config/jentic/config.yaml.\nOverride per-invocation with --theme or $JENTIC_THEME. Agent mode\nalways uses no-color regardless of this setting.",
           "group_title": "Administration",
           "flags": [
             {
@@ -3106,7 +2905,7 @@
             {
               "name": "mode",
               "type": "string",
-              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
             },
             {
               "name": "theme",

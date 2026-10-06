@@ -138,11 +138,11 @@ class NoteService:
         )
         return _to_view(note)
 
-    async def get(self, note_id: str, *, identity: Identity | None = None) -> NoteView:
+    async def get(self, note_id: str, *, identity: Identity) -> NoteView:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
-        access_filters = build_access_filters(identity, Note) if identity is not None else None
+        access_filters = build_access_filters(identity, Note)
 
         async with self._ctx.registry_db.session() as session:
             note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)
@@ -163,7 +163,7 @@ class NoteService:
         credential_id: str | None = None,
         type: str | None = None,
         created_by: str | None = None,
-        identity: Identity | None = None,
+        identity: Identity,
     ) -> NotePage:
         cursor_created_at: datetime | None = None
         cursor_id: str | None = None
@@ -187,7 +187,7 @@ class NoteService:
             if not api_ids:
                 return NotePage(data=[], has_more=False, next_cursor=None)
 
-        access_filters = build_access_filters(identity, Note) if identity is not None else None
+        access_filters = build_access_filters(identity, Note)
 
         async with self._ctx.registry_db.session() as session:
             rows = await NoteRepository.list_page(
@@ -232,8 +232,12 @@ class NoteService:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
+        # Mutations apply the same visibility as reads: a note the caller cannot
+        # see is reported as not found, before any revision check.
+        access_filters = build_access_filters(identity, Note)
+
         async with self._ctx.registry_db.transaction() as session:
-            note = await NoteRepository.get_by_id(session, note_id)
+            note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)
             if note is None:
                 raise NoteNotFoundError(note_id)
 
@@ -271,8 +275,12 @@ class NoteService:
         if not note_id.startswith("note_"):
             raise NoteNotFoundError(note_id)
 
+        # Mutations apply the same visibility as reads: a note the caller cannot
+        # see is reported as not found, before any revision check.
+        access_filters = build_access_filters(identity, Note)
+
         async with self._ctx.registry_db.transaction() as session:
-            note = await NoteRepository.get_by_id(session, note_id)
+            note = await NoteRepository.get_by_id(session, note_id, filters=access_filters)
             if note is None:
                 raise NoteNotFoundError(note_id)
 

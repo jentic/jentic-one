@@ -11,8 +11,8 @@ from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth.token_validation import CompositeTokenValidator
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 
 def _make_identity(
@@ -23,7 +23,7 @@ def _make_identity(
     return Identity(
         sub=sub,
         actor_type=actor_type,
-        permissions=[BROKER_EXECUTE_SCOPE],
+        permissions=[BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=True,
     )
@@ -59,12 +59,11 @@ async def test_retired_toolkit_key_routes_to_api_key_path(
 ) -> None:
     """A retired jntc_live_ key routes to the api-key resolver, never the opaque path.
 
-    The retirement job (theme-5 Phase 4) migrates each key's digest to a
-    service account, so the api-key path resolves the unchanged plaintext as
-    that account.
+    The flatten (theme-5 Phase 6a) moves each key's digest onto its successor
+    agent, so the api-key path resolves the unchanged plaintext as that agent.
     """
     api_key_resolver.resolve_access_token = AsyncMock(
-        return_value=_make_identity(sub="sva_migrated1", actor_type=ActorType.SERVICE_ACCOUNT)
+        return_value=_make_identity(sub="agnt_migrated1", actor_type=ActorType.AGENT)
     )
     opaque_cached = CachedTokenValidator(resolver=opaque_resolver, cache_ttl_seconds=5.0)
     api_key_cached = CachedTokenValidator(resolver=api_key_resolver, cache_ttl_seconds=5.0)
@@ -72,8 +71,8 @@ async def test_retired_toolkit_key_routes_to_api_key_path(
 
     result = await triple.validate("jntc_live_abc123")  # pragma: allowlist secret
 
-    assert result.sub == "sva_migrated1"
-    assert result.actor_type is ActorType.SERVICE_ACCOUNT
+    assert result.sub == "agnt_migrated1"
+    assert result.actor_type is ActorType.AGENT
     api_key_resolver.resolve_access_token.assert_called_once_with(
         "jntc_live_abc123"  # pragma: allowlist secret
     )

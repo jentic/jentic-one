@@ -167,6 +167,9 @@ func (a *app) startDocker(ctx context.Context, composePath string) error {
 //   - pending: a schema WITH data that forward-only migrations would rewrite.
 //     That is the operator's decision to make with a backup in hand, so we
 //     refuse and name the command, rather than silently migrating on a `start`.
+//   - steps pending: every database is at head but a post-migration upgrade
+//     step has not run. No revision would rewrite data, but the step must run
+//     before the app serves traffic, so we refuse and name the command.
 //
 // An undeterminable state never blocks the start: refusing because a diagnostic
 // failed would be a worse regression than the bug being fixed.
@@ -180,6 +183,11 @@ func (a *app) ensureDockerSchema(composePath string) error {
 			"  Back up your data, then apply migrations:\n" +
 			"    jenticctl update --stack-only\n" +
 			"  (starting now would run the app against a schema it does not match)")
+
+	case install.SchemaStepsPending:
+		return errors.New("an upgrade step has not run — start aborted.\n" +
+			"  Run the migrations to perform it:\n" +
+			"    jenticctl update --stack-only")
 
 	case install.SchemaUninitialized:
 		fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))

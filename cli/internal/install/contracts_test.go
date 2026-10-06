@@ -97,7 +97,7 @@ func TestWizardAnswersAreContracts(t *testing.T) {
 		{"MetricsExporter", "config", "exporter: prometheus"},
 		{"TracingExporter", "config", "exporter: otlp"},
 		// Auth section.
-		{"AuthBaseURL", "config", "canonical_base_url: https://jentic.example.test"},
+		{"AuthBaseURL", "config", "public_base_url: https://jentic.example.test"},
 	}
 	for _, row := range rows {
 		out, name := config, "config"

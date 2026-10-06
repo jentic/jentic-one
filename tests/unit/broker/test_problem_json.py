@@ -18,18 +18,16 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     OperationNotFoundError,
     UpstreamTimeoutError,
-    action_denied_directive,
     ambiguous_credential_binding_directive,
-    ambiguous_toolkit_directive,
     credential_identity_mismatch_directive,
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
-    no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.headers import JenticHeader
-from jentic_one.broker.web.errors import STATUS_BY_ERROR, handle_broker_error, problem_response
+from jentic_one.broker.core.problem import STATUS_BY_ERROR
+from jentic_one.broker.web.errors import handle_broker_error, problem_response
 from jentic_one.shared.broker.protocols import IdentityMismatch
 
 
@@ -49,10 +47,6 @@ def test_directive_factories_emit_known_strategies() -> None:
     in lock-step until the contract is a shared OpenAPI schema (review P1-1)."""
     directives = [
         switch_toolkit_directive(503),
-        no_toolkit_binding_directive(
-            vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=True
-        ),
-        ambiguous_toolkit_directive(["tk_a", "tk_b"]),
         credential_identity_mismatch_directive(
             mismatch=IdentityMismatch(
                 expected_vendor="acme",
@@ -64,7 +58,6 @@ def test_directive_factories_emit_known_strategies() -> None:
                 would_match_if_normalized=False,
             )
         ),
-        action_denied_directive(),
         no_credential_binding_directive(
             vendor="acme", name="widgets", version="1.0.0", api_served=True
         ),
@@ -87,21 +80,22 @@ def test_directive_factories_emit_known_strategies() -> None:
 
 
 def test_no_credential_binding_directive_names_surviving_commands() -> None:
-    """The default-path missing-binding directive carries a runnable command.
+    """The default-path missing-binding directive routes to the operator.
 
-    U-03 (phase 5c): every directive names a surviving flag/command. Served →
-    a bind request by API reference (`--api`); unserved → the provisioning
-    plan (`--provision`). Neither variant may reference the retired toolkit
-    vocabulary.
+    Access requests are retired: neither variant may emit a
+    ``suggested_command`` naming the removed ``jentic access`` group. Off the
+    vendor registry (``connect_vendor=None``, the default) no command is
+    fabricated at all: served → ask the operator to bind to the serving
+    credential; unserved → ask the operator to connect/provision one first.
+    Neither variant may reference the retired toolkit vocabulary.
     """
     served = no_credential_binding_directive(
         vendor="acme", name="widgets", version="1.0.0", api_served=True
     )
     assert served.strategy == "prompt_human"
     assert served.parameters["api_served"] is True
-    assert served.parameters["suggested_command"] == (
-        "jentic access request --api acme/widgets --wait"
-    )
+    assert "suggested_command" not in served.parameters
+    assert "operator" in served.human_readable_instruction
     assert "toolkit" not in served.human_readable_instruction.lower()
 
     unserved = no_credential_binding_directive(
@@ -109,13 +103,43 @@ def test_no_credential_binding_directive_names_surviving_commands() -> None:
     )
     assert unserved.strategy == "prompt_human"
     assert unserved.parameters["api_served"] is False
-    assert unserved.parameters["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
-    )
+    assert "suggested_command" not in unserved.parameters
     instruction = unserved.human_readable_instruction
-    assert "--auth" in instruction
-    assert "--rules-json" in instruction
+    assert "operator" in instruction
+    assert "provision" in instruction
     assert "toolkit" not in instruction.lower()
+
+
+def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> None:
+    """theme-7 Phase 1b: when the API reverse-maps onto a vendor-registry key
+    (``connect_vendor``), the provisioning leg is agent-initiable — the
+    directive carries a runnable ``suggested_command`` (``jentic connect
+    <key>``, the registry key, never the API id) and the prose teaches the
+    relay loop. Approval and the binding grant stay human in the wording."""
+    unserved = no_credential_binding_directive(
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=False,
+        connect_vendor="github",
+    )
+    assert unserved.strategy == "prompt_human"
+    assert unserved.parameters["suggested_command"] == "jentic connect github"
+    instruction = unserved.human_readable_instruction
+    assert "jentic connect github" in instruction
+    assert "request_connection" in instruction
+    assert "approval_url" in instruction
+
+    served = no_credential_binding_directive(
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=True,
+        connect_vendor="github",
+    )
+    # Served keeps the bind-me-first ask; connect is the alternative.
+    assert served.parameters["suggested_command"] == "jentic connect github"
+    assert "bind" in served.human_readable_instruction
 
 
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
@@ -130,15 +154,6 @@ def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> Non
     assert d.parameters["candidates"] == ["cred_a", "cred_b"]
     assert d.parameters["headers"] == {"Jentic-Credential-Id": "cred_a"}
     assert "Jentic-Credential-Name" in d.human_readable_instruction
-
-
-def test_ambiguous_toolkit_suggested_command_is_runnable() -> None:
-    """The disambiguation command must be copy-pasteable — not a template with a
-    literal ellipsis the CLI would print verbatim (review P3-1)."""
-    d = ambiguous_toolkit_directive(["tk_a", "tk_b"])
-    cmd = d.parameters["suggested_command"]
-    assert "…" not in cmd
-    assert "Jentic-Toolkit-Id=tk_a" in cmd
 
 
 def test_credential_identity_mismatch_directive_has_no_fabricated_command() -> None:

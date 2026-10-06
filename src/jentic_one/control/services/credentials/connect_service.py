@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import datetime as dt
-from datetime import timedelta
 
 import structlog
 
 from jentic_one.control.repos import (
-    ConnectNonceRepository,
     CredentialRepository,
     OAuthTokenRepository,
 )
@@ -21,7 +19,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.state import (
     StateError,
-    decode_state,
+    consume_callback_state,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
@@ -49,6 +47,7 @@ class ConnectService:
         *,
         actor_id: str | None = None,
         actor_type: ActorType | None = None,
+        redirect_uri: str | None = None,
     ) -> ConnectChallenge:
         """Load credential, resolve provider, initiate connect flow."""
         async with self._ctx.control_db.session() as session:
@@ -73,6 +72,7 @@ class ConnectService:
                 "actor_id": actor_id or "",
                 "actor_type": str(actor_type) if actor_type else "",
             },
+            redirect_uri=redirect_uri,
         )
 
         return await provider.begin_connect(self._ctx, api=api, request=enriched_request)
@@ -83,35 +83,29 @@ class ConnectService:
         callback: ConnectCallback,
     ) -> str:
         """Verify state, exchange code via provider, persist tokens. Returns credential_id."""
-        state_secret = self._ctx.config.credentials.connect.state_secret.get_secret_value()
-
+        # Shared prologue with ``ConnectSessionService.complete_from_callback``
+        # so replay protection lives in exactly one place. ``StateError``
+        # covers every failure mode (expired / invalid / missing-actor /
+        # nonce already consumed); we surface the taxonomy back to the
+        # router via ``ConnectFlowError`` for the standalone path.
         try:
-            state = decode_state(state_secret, raw_state)
+            state = await consume_callback_state(self._ctx, raw_state)
         except StateError as exc:
-            raise ConnectFlowError("Invalid or expired connect state") from exc
+            raise ConnectFlowError(str(exc)) from exc
 
         encryption = self._ctx.encryption
-        state_ttl = self._ctx.config.credentials.connect.state_ttl_seconds
-        nonce_expires_at = state.issued_at + timedelta(seconds=state_ttl)
-        # The connect flow binds the initiating subject into the signed state at
-        # `begin`; a state without it cannot be attributed to a real actor.
-        if state.actor_id is None:
-            raise ConnectFlowError("Connect state is missing the initiating subject")
         created_by = state.actor_id
+        # ``consume_callback_state`` guarantees ``actor_id`` is populated;
+        # narrow the type for mypy.
+        assert created_by is not None
 
-        actor_type = ActorType(state.actor_type) if state.actor_type else ActorType.USER
         try:
-            async with self._ctx.control_db.transaction() as session:
-                consumed = await ConnectNonceRepository.consume(
-                    session,
-                    nonce=state.nonce,
-                    credential_id=state.credential_id,
-                    expires_at=nonce_expires_at,
-                    created_by=created_by,
-                )
-                if not consumed:
-                    raise ConnectFlowError("Connect state already used")
-
+            actor_type = ActorType(state.actor_type) if state.actor_type else ActorType.USER
+        except ValueError as exc:
+            # A state signed for a retired actor type (e.g. ``service_account``,
+            # theme-8 Phase 4): that actor can no longer own a credential.
+            raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
+        try:
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 

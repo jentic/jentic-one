@@ -237,6 +237,19 @@ export function apiRefDisplayName(input: {
 }
 
 /**
+ * A version string as it reads on a card or tile. Registry versions arrive bare
+ * (`1.1.4`, `2024-01-01`) and need the `v`, or already prefixed (`v4`), which must
+ * not collect a second one. `null` for a blank version, so callers can drop the
+ * clause.
+ */
+export function formatApiVersion(version: string | null | undefined): string | null {
+	const v = version?.trim();
+	if (!v) return null;
+	// Already a version label: `v` (or `V`) immediately followed by a digit.
+	return /^v\d/i.test(v) ? v : `v${v}`;
+}
+
+/**
  * Raw machine-identity subtitle. The persisted catalog slug wins verbatim —
  * it IS the machine identity (`nytimes.com/article_search`) and is what the
  * user saw when they picked the API. Legacy rows join `vendor/name`, dropping
@@ -259,4 +272,27 @@ export function apiIdentityTuple(input: {
 	}
 	if (vendor && name) return `${vendor}/${name}`;
 	return vendor || name;
+}
+
+/**
+ * Human-readable operation label for an execution record.
+ *
+ * Renders the record's `operation_method` + `operation_path` (the spec's HTTP
+ * method + path template, e.g. "GET /repos/{owner}/{repo}"). Returns null when
+ * the record carries no path (legacy rows) — deliberately NEVER the opaque
+ * `operation_id` (`op_…` hash): it is a machine key, meaningless to humans,
+ * and must not render anywhere in the UI. Callers show their own empty
+ * placeholder ("—") instead. The input is shaped after the wire
+ * `ExecutionResponse` fields so every surface that lists executions (Monitor,
+ * dashboard, agent activity) can pass its row straight through — or map
+ * camelCase fields into this shape.
+ */
+export function formatOperation(row: {
+	operation_path?: string | null;
+	operation_method?: string | null;
+}): string | null {
+	if (!row.operation_path) return null;
+	return row.operation_method
+		? `${row.operation_method} ${row.operation_path}`
+		: row.operation_path;
 }

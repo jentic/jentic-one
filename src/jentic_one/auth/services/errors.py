@@ -132,6 +132,34 @@ class InvalidOwnerError(AuthServiceError):
         self.owner_id = owner_id
 
 
+class UnknownPermissionError(AuthServiceError):
+    """Raised when a permission to grant to an agent is not in the permission catalogue."""
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' is not a known permission")
+        self.permission = permission
+
+
+class PermissionNotGrantableError(AuthServiceError):
+    """Raised when the caller may not grant a permission to an agent.
+
+    A caller without ``org:admin`` may only grant permissions it holds itself (plus
+    the default agent baseline), and never ``org:admin`` or ``agents:write``.
+    """
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' cannot be granted by the caller")
+        self.permission = permission
+
+
+class OwnerTransferForbiddenError(AuthServiceError):
+    """Raised when a caller without ``org:admin`` tries to change an agent's owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Changing the owner of agent '{agent_id}' requires org:admin")
+        self.agent_id = agent_id
+
+
 class ClaimTokenInvalidError(AuthServiceError):
     """Raised when an agent-ownership claim token is missing, wrong, or expired."""
 
@@ -152,7 +180,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account presenting the claim
+    agent. An authenticated agent presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """
@@ -233,6 +261,21 @@ class InvalidRevocationRequestError(AuthServiceError):
     ONLY error arm of the revocation endpoint's form-encoded path: a request
     missing the required ``token`` parameter. Invalid, unknown, foreign, and
     already-revoked tokens are deliberately NOT errors (200 no-op, no oracle).
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidIntrospectionRequestError(AuthServiceError):
+    """Raised when an RFC 7662 introspection request body is malformed.
+
+    Maps to 400 ``invalid_request`` (RFC 7662 §2.1: a request missing the
+    required ``token`` parameter answers 400) on both the form-encoded and
+    JSON arms of ``POST /oauth/introspect``. Whether the *token* is invalid,
+    unknown, or expired is never an error — that verdict is the RFC 7662 §2.2
+    ``{"active": false}`` response body.
     """
 
     def __init__(self, reason: str = "token is required") -> None:

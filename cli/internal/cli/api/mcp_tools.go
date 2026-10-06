@@ -251,8 +251,8 @@ func (s *mcpServer) handleWhoami(ctx context.Context, req *mcp.CallToolRequest) 
 		s.logger.Warn("whoami failed", "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
-	// Envelope passthrough: the same GET /me agent object `jentic access
-	// whoami --json` prints, re-projected to a map so the instance stamp can
+	// Envelope passthrough: the verbatim GET /me agent object,
+	// re-projected to a map so the instance stamp can
 	// join it as a top-level sibling.
 	raw, err := json.Marshal(me)
 	if err != nil {

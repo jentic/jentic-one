@@ -19,7 +19,7 @@ from jentic_one.admin.core.permissions import (
 )
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentRepository,
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
@@ -40,7 +40,7 @@ from jentic_one.auth.core.idp import (
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import TokenService, resolve_effective_scopes
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
-from jentic_one.shared.config import AuthConfig
+from jentic_one.shared.config import AuthConfig, resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import (
@@ -83,15 +83,15 @@ def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
 class AgentConsentOption:
     """One row of the agent-picker consent page.
 
-    ``scopes`` is the agent's *live* scope set (its current
-    ``actor_scope_grants``) — the consent page intersects it with the request
-    per candidate, and the submit path recomputes server-side (the browser's
-    selection is never trusted for scope math).
+    ``permissions`` is the agent's *live* permission set (its current
+    ``actor_permission_grants``) — the consent page intersects it with the
+    requested OAuth2 scopes per candidate, and the submit path recomputes
+    server-side (the browser's selection is never trusted for scope math).
     """
 
     id: str
     name: str
-    scopes: frozenset[str]
+    permissions: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,20 +281,20 @@ class AuthorizeService:
                 limit=1000,
                 filters=[Agent.status == ActorStatus.ACTIVE.value],
             )
-            # One batch query for every candidate's live scopes (a
-            # avoids a per-agent actor_scope_grants round-trip, run twice
-            # because the submit path re-runs this predicate).
-            grants = await ActorScopeGrantRepository.list_for_actors(
+            # One batch query for every candidate's live permissions, which
+            # avoids a per-agent actor_permission_grants round-trip — run twice,
+            # because the submit path re-runs this predicate.
+            grants = await ActorPermissionGrantRepository.list_for_actors(
                 session, [agent.id for agent in agents], actor_type=ActorType.AGENT.value
             )
-            scopes_by_agent: dict[str, set[str]] = {}
+            permissions_by_agent: dict[str, set[str]] = {}
             for grant in grants:
-                scopes_by_agent.setdefault(grant.actor_id, set()).add(grant.scope)
+                permissions_by_agent.setdefault(grant.actor_id, set()).add(grant.permission)
             return [
                 AgentConsentOption(
                     id=agent.id,
                     name=agent.name,
-                    scopes=frozenset(scopes_by_agent.get(agent.id, set())),
+                    permissions=frozenset(permissions_by_agent.get(agent.id, set())),
                 )
                 for agent in agents
             ]
@@ -498,8 +498,14 @@ class AuthorizeService:
         redirect_uri: str,
         client_id: str,
         oauth_client_id: str | None = None,
+        issuer: str | None = None,
     ) -> tuple[str, str, str | None, list[str]]:
         """Exchange auth code + PKCE verifier for tokens.
+
+        ``issuer`` is the ``iss`` stamped on the ``id_token``; the web layer
+        passes the same request-scoped base URL the discovery document
+        advertises, so OIDC clients' issuer check matches. When omitted it
+        falls back to the request-less ``resolved_auth_base_url``.
 
         Returns (access_token, refresh_token, id_token, scopes). ``scopes`` is
         the effective set the minted access token will actually enforce,
@@ -640,6 +646,7 @@ class AuthorizeService:
 
         id_token = issue_id_token(
             self._auth_config,
+            issuer=issuer or resolved_auth_base_url(self._ctx.config),
             sub=user.id,
             email=user.email,
             aud=client_id,

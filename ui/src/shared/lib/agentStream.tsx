@@ -11,32 +11,29 @@ import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { EventSeverity, type EventResponse } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { listEvents, streamEvents } from '@/shared/lib/railEvents';
-import { decideAllPending } from '@/shared/lib/accessRequests';
+import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
+import { isEventAccessDenied, listEvents, streamEvents } from '@/shared/lib/railEvents';
 
 /*
   SSE → QUERY-CACHE BRIDGE.
 
-  The rail's event feed is local React state — it never touched the TanStack
-  Query cache the dashboard (and nav badge) read, so a freshly-filed or decided
-  access request left those surfaces stale until their staleTime lapsed. These
-  ROOT keys are invalidated whenever an `access_request.*` event lands on the
-  stream, or when the rail's Deny fast-path decides a request.
+  The rail's event feed is local React state — it never touches the TanStack
+  Query cache the Notifications bell (and nav badge) read, so surfaces that count or
+  list the same records would go stale until their staleTime lapsed. These
+  ROOT keys are invalidated whenever a matching event lands on the stream.
 
-  We invalidate by the shared ROOT keys (not by importing `dashboardKeys` /
-  `pendingAccessRequestCountKey`) on purpose: this is shared-layer code and must
-  not reach into a feature module. The roots are a stable contract owned by the
-  shared query-key registry — the dashboard hooks key off `dashboardRoot`
-  (`['dashboard', …]`), the durable queue + nav badge off `accessRequestsRoot`
-  (`['access-requests', …]`) — so a prefix invalidation here refreshes every
-  matching slice without crossing a module boundary.
+  We invalidate by the shared ROOT keys (not by importing a module's key
+  factory) on purpose: this is shared-layer code and must not reach into a
+  feature module. The roots are a stable contract owned by the shared
+  query-key registry — the bell keys off `attentionRoot` (`['attention', …]`)
+  — so a prefix invalidation here refreshes every matching slice without
+  crossing a module boundary.
 */
-const DASHBOARD_ROOT_KEY = sharedQueryKeys.dashboardRoot;
-const ACCESS_REQUESTS_ROOT_KEY = sharedQueryKeys.accessRequestsRoot;
+const ATTENTION_ROOT_KEY = sharedQueryKeys.attentionRoot;
 const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
 
 /*
-  AGENT RAIL STREAM — backed by the REAL platform event feed.
+  ACTIVITY RAIL STREAM — backed by the REAL platform event feed.
 
   The rail consumes jentic-one's `/events` contract: a backlog fetch
   (`GET /events`) seeds the feed, then a live SSE subscription
@@ -44,10 +41,15 @@ const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
   adapts the wire `EventResponse` into the rail's UI-shaped `StreamEvent` and
   exposes the same provider/hook surface the rail components already consume.
 
-  This is an ORG-WIDE platform feed (import/execution/access-request events) —
-  there is no per-agent lens because `/events` carries no actor filter
-  (tracked: jentic/jentic-one#387). Event types the backend can emit today:
-  `import.*`, `execution.*`, `access_request.*`, `credential.*`.
+  The SSE subscription is unfiltered by actor (toasts and the query-cache
+  bridge below must see every event the caller can see; the server limits it
+  to the caller's own events and their agents', or the whole org for
+  `org:admin`). The Activity rail can narrow to one actor: `setScope`
+  fetches that actor's backlog via `GET /events?actor_id=&actor_type=` and the
+  rail filters the shared list client-side with `matchesActivityScope` — so one
+  connection serves every consumer. Event types the backend can emit today:
+  `import.*`, `execution.*`, `credential.*`, `agent.*`, plus retired
+  namespaces that may linger as history (see RETIRED_EVENT_TYPE_PREFIXES).
 */
 
 /**
@@ -62,14 +64,7 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * the backend adds later so the rail never crashes on an unknown type.
  */
 export type StreamKind =
-	| 'import'
-	| 'execution'
-	| 'access_request'
-	| 'credential'
-	| 'agent'
-	| 'catalog'
-	| 'oauth'
-	| 'other';
+	'import' | 'execution' | 'credential' | 'agent' | 'catalog' | 'oauth' | 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
@@ -77,10 +72,13 @@ export type StreamTokens = {
 	/** Historical events only — new events carry `credential_id` instead. */
 	toolkit_id?: string;
 	operation_id?: string;
+	/** Human-readable operation identity (spec path template + HTTP method)
+	 * on execution events that carry it; render via `formatOperation`. */
+	operation_path?: string;
+	operation_method?: string;
 	credential_id?: string;
 	job_id?: string;
 	execution_id?: string;
-	access_request_id?: string;
 	agent_id?: string;
 	// Catalog/overlay events carry the affected API's identity triple (so the
 	// row can deep-link to its Workspace detail page) plus the overlay id for
@@ -116,10 +114,11 @@ export type StreamLinks = {
 /**
  * UI-shaped view of a single platform event. A faithful adaptation of
  * `EventResponse` — `id`/`tsMs`/`title` map to `event_id`/`created_at`/
- * `summary`; `requiresAction` drives the inline action slot. The backend keeps
- * events as append-only history, so `resolved` is derived client-side: a row
- * resolves when the loaded feed holds the decision that supersedes it (see
- * `resolveSupersededRows`), or optimistically the instant its action is taken.
+ * `summary`; `requiresAction` + `resolved` drive the inline action slot. The
+ * server keeps events as append-only history, so `resolved` is derived
+ * client-side: a row resolves when its decision event is in the loaded feed
+ * (see `resolveSupersededRows`), or optimistically the instant its action is
+ * taken.
  */
 export type StreamEvent = {
 	id: string;
@@ -132,9 +131,11 @@ export type StreamEvent = {
 	tokens: StreamTokens;
 	links: StreamLinks;
 	requiresAction: boolean;
-	/** Client-derived: this actionable row's action has been taken (see type doc). */
 	resolved: boolean;
 	resolvedAt?: number;
+	/** Who caused the event (`actor_id`/`actor_type` on the wire), when known. */
+	actorId?: string;
+	actorType?: string;
 	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
 	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
@@ -147,20 +148,26 @@ export const TOAST_SCOPE_STORAGE_KEY = 'j1.toasts.scope';
 export const RAIL_COLLAPSED_STORAGE_KEY = 'j1.agentRail.collapsed';
 export const RAIL_AUDIO_STORAGE_KEY = 'j1.rail.audioOnCritical';
 export const TOAST_SCOPE_CHANGE_EVENT = 'j1:toast-scope-change';
-export const RAIL_COLLAPSE_CHANGE_EVENT = 'j1:rail-collapse-change';
 
 /* ------------------------------------------------------------------ */
 /* Wire → UI adaptation                                                */
 /* ------------------------------------------------------------------ */
 
-const KNOWN_KINDS = new Set<StreamKind>([
-	'import',
-	'execution',
-	'access_request',
-	'credential',
-	'agent',
-	'catalog',
-]);
+const KNOWN_KINDS = new Set<StreamKind>(['import', 'execution', 'credential', 'agent', 'catalog']);
+
+/**
+ * RETIRED event-type namespaces (theme 7, epic jentic/jentic-one#1374). The
+ * backend no longer grows these, but HISTORICAL rows can still arrive on a
+ * backlog page or a reconnect-overlap redelivery. The rail TOLERATES them —
+ * they're silently dropped at ingestion (never rendered, never toasted) so an
+ * old event can't crash the feed or resurrect a retired surface.
+ */
+const RETIRED_EVENT_TYPE_PREFIXES = ['access_request.'] as const;
+
+/** True when an event type belongs to a retired namespace (see above). */
+export function isRetiredEventType(type: string): boolean {
+	return RETIRED_EVENT_TYPE_PREFIXES.some((prefix) => type.startsWith(prefix));
+}
 
 /**
  * Namespace before the first dot → `StreamKind` (`other` for anything else).
@@ -190,12 +197,79 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	import: 'Import',
 	execution: 'Execution',
 	credential: 'Credential',
-	access_request: 'Access request',
 	agent: 'Agent',
 	catalog: 'Catalog',
 	oauth: 'OAuth',
 	other: 'Platform',
 };
+
+/**
+ * The Activity filter's "What" buckets — the kinds an operator thinks in, not
+ * the wire namespaces. `other` belongs to none, so it only shows unfiltered.
+ */
+export type ActivityCategory = 'calls' | 'apis' | 'credentials' | 'agents';
+
+export const ACTIVITY_CATEGORIES: { value: ActivityCategory; label: string }[] = [
+	{ value: 'calls', label: 'Calls' },
+	{ value: 'apis', label: 'APIs' },
+	{ value: 'credentials', label: 'Credentials' },
+	{ value: 'agents', label: 'Agents' },
+];
+
+const CATEGORY_FOR_KIND: Record<StreamKind, ActivityCategory | null> = {
+	execution: 'calls',
+	import: 'apis',
+	catalog: 'apis',
+	credential: 'credentials',
+	agent: 'agents',
+	// OAuth clients and grants are how agents connect.
+	oauth: 'agents',
+	other: null,
+};
+
+export function categoryForKind(kind: StreamKind): ActivityCategory | null {
+	return CATEGORY_FOR_KIND[kind];
+}
+
+const EXECUTION_COMPLETED = /^Execution completed:\s*(.+)$/;
+const EXECUTION_COMPLETED_BY_ID = /^Execution \S+ completed$/;
+const EXECUTION_FAILED = /^Execution failed:\s*(.+)$/;
+const IMPORT_COMPLETED = /^Import completed:\s*(.+)$/;
+
+/**
+ * The feed's short wording for an event. The row's icon and stripe already say
+ * what kind of thing happened and whether it went wrong, so the text keeps only
+ * what's new: the operation, the error, the API. A bare execution id says
+ * nothing to a human ("Execution exec_2Kx… completed") — it reads "Call
+ * succeeded" and the row still opens the execution. Anything unrecognised
+ * keeps its summary as-is; the full summary is always the row's accessible
+ * name.
+ */
+export function railTitle(ev: Pick<StreamEvent, 'type' | 'title'>): string {
+	const t = ev.title.trim();
+	if (ev.type === 'execution.completed') {
+		const m = EXECUTION_COMPLETED.exec(t);
+		if (m) return m[1];
+		if (EXECUTION_COMPLETED_BY_ID.test(t)) return 'Call succeeded';
+	}
+	if (ev.type === 'execution.failed') {
+		const m = EXECUTION_FAILED.exec(t);
+		if (m) return `Failed: ${m[1]}`;
+	}
+	if (ev.type === 'import.completed') {
+		const m = IMPORT_COMPLETED.exec(t);
+		if (m) return `Imported ${m[1]}`;
+	}
+	return t;
+}
+
+/** Plural wording for a folded run of `count` same-type events, when there is one. */
+export function railGroupTitle(type: string, count: number): string | null {
+	if (type === 'execution.completed') return `${count} calls succeeded`;
+	if (type === 'import.completed') return `${count} imports completed`;
+	if (type === 'credential.created') return `${count} credentials added`;
+	return null;
+}
 
 /**
  * Map the real `EventSeverity` to the rail's `StreamSeverity`. They share the
@@ -243,11 +317,6 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 		t.tokens.credential_id ??
 		// Historical events may only carry the retired toolkit attribution.
 		t.tokens.toolkit_id ??
-		// The request id must outrank the agent id: real `access_request.*`
-		// events carry BOTH (the requesting agent is the top-level actor), and
-		// keying on the agent would collapse two requests filed by the same
-		// agent in one burst — the normal CLI provisioning case — into one row.
-		t.tokens.access_request_id ??
 		// A grant id keys the grant-lifecycle pair; the client id keys the
 		// registration/approval pair (distinct clients → distinct rows).
 		t.tokens.grant_id ??
@@ -300,11 +369,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
 		operation_id: stringField(data, 'operation_id'),
+		operation_path: stringField(data, 'operation_path'),
+		operation_method: stringField(data, 'operation_method'),
 		credential_id: stringField(data, 'credential_id'),
 		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
 		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
-		access_request_id:
-			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
 		// Precedence matters: explicit `data.agent_id` first, then the top-level
 		// actor when it IS an agent (guarded — e.g. DCR self-registration). No
 		// `data.actor_id` fallback: no current emitter populates it, and one
@@ -363,6 +432,8 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		},
 		requiresAction: e.requires_action,
 		resolved: false,
+		actorId: e.actor_id ?? undefined,
+		actorType: e.actor_type ?? undefined,
 		conflict,
 		groupKey: '',
 	};
@@ -374,42 +445,86 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 /* Provider                                                            */
 /* ------------------------------------------------------------------ */
 
-export type StreamStatus = 'idle' | 'connecting' | 'live' | 'error';
+/**
+ * `forbidden`: the caller cannot read events — no `events:read`, or the server
+ * refused the feed with a 401/403. Nothing is fetched or retried in that state.
+ */
+export type StreamStatus = 'idle' | 'connecting' | 'live' | 'error' | 'forbidden';
+
+/** What every activity surface says to a caller who cannot read events. */
+export const EVENTS_FORBIDDEN_COPY = {
+	title: 'No access to activity',
+	description:
+		"Your account doesn't have permission to view platform events. An organisation admin can grant events:read.",
+} as const;
+
+/**
+ * A snapshot of the feed's head: what was loaded, and how new the newest of it
+ * was. Pause and "scrolled away" both hold back only what arrived AFTER it —
+ * older history loaded later (Load older, a lens's backlog) still shows, and
+ * never counts as "new".
+ */
+export type FeedFreeze = { ids: ReadonlySet<string>; newestTs: number };
+
+export function freezeFeed(events: readonly StreamEvent[]): FeedFreeze {
+	let newestTs = Number.NEGATIVE_INFINITY;
+	for (const e of events) if (e.tsMs > newestTs) newestTs = e.tsMs;
+	return { ids: new Set(events.map((e) => e.id)), newestTs };
+}
+
+/** Did `ev` arrive after the freeze? Compares server timestamps only. */
+export function isAfterFreeze(ev: StreamEvent, freeze: FeedFreeze): boolean {
+	return !freeze.ids.has(ev.id) && !(ev.tsMs < freeze.newestTs);
+}
+
+/** The Activity rail's actor lens. `null` = every actor in the org. */
+export type ActivityScope = { actorId: string; actorType: string } | null;
+
+/** Does `ev` belong to the rail's current actor lens? */
+export function matchesActivityScope(ev: StreamEvent, scope: ActivityScope): boolean {
+	if (!scope) return true;
+	if (ev.actorId === scope.actorId && ev.actorType === scope.actorType) return true;
+	// Events ABOUT an agent that another actor caused (an admin approving it)
+	// still belong on that agent's lens.
+	return scope.actorType === 'agent' && ev.tokens.agent_id === scope.actorId;
+}
 
 type AgentStreamValue = {
 	events: StreamEvent[];
+	/** The Activity rail's actor lens, shared by the docked rail and the drawer. */
+	scope: ActivityScope;
+	setScope: (scope: ActivityScope) => void;
+	/**
+	 * The rest of the Activity view state, owned here with the lens so it's ONE
+	 * choice everywhere — the docked rail, the drawer and Monitor's panel, on
+	 * every page. `paused` holds back what arrives after the pause (`frozen`);
+	 * rows keep reading their live objects, so a resolve still reflects.
+	 */
+	failuresOnly: boolean;
+	setFailuresOnly: (next: boolean) => void;
+	/** The rail's "What" filter; empty = every kind. */
+	categories: ReadonlySet<ActivityCategory>;
+	setCategories: (next: ReadonlySet<ActivityCategory>) => void;
+	paused: boolean;
+	setPaused: (next: boolean) => void;
+	frozen: FeedFreeze | null;
 	latest: StreamEvent | null;
 	status: StreamStatus;
 	/**
-	 * Decide an `access_request.filed` event: approve/deny the request's pending
-	 * items (`POST /access-requests/{id}:decide`). `reason` is the human's note
-	 * fed back to the agent (required by the UI for denials). Resolves the filed
-	 * event locally on success; the authoritative approved/denied event arrives
-	 * over the live stream.
-	 *
-	 * This is the row's FAST PATH (deny-all / approve-all with one verdict). For
-	 * per-item control the row opens the request-detail dialog, which decides
-	 * items individually and then calls `resolveEvent` to settle the row.
-	 */
-	decide: (eventId: string, decision: 'approved' | 'denied', reason?: string) => Promise<void>;
-	/**
-	 * Mark a filed event's action slot as handled locally, without issuing a
-	 * decision RPC. Used by the request-detail dialog after it has decided the
-	 * request's items itself (`POST /access-requests/{id}:decide`); the
-	 * authoritative `access_request.approved/denied` event arrives over the
-	 * stream and supersedes this optimistic flip.
-	 */
-	resolveEvent: (eventId: string) => void;
-	/**
-	 * Resolve every outstanding actionable `oauth_client.registered` row for
+	 * Resolve every unresolved actionable `oauth_client.registered` row for
 	 * one client (matched on the internal `oauth_client_id` token). The approve
-	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
-	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
-	 * client id — calls this on success. This syncs the live session's local
-	 * copy so a stale "Review" prompt doesn't linger until the next backlog
-	 * fetch.
+	 * arm resolves through its `oauth_client.approved` event
+	 * (`resolveSupersededRows`); a DENY emits no event (§4.8 / D7), so the deny
+	 * mutation — which knows the client id — calls this on success so a stale
+	 * "Review" prompt doesn't linger in the live session.
 	 */
 	settleOAuthClientRegistration: (oauthClientId: string) => void;
+	/**
+	 * Flip an event's local `resolved` flag — for consumers that took the
+	 * event's action through their own mutation and need the live session's
+	 * in-memory copy to reflect it without waiting for a decision event.
+	 */
+	resolveEvent: (eventId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -428,12 +543,15 @@ const MAX_EVENTS = 300;
  *   2. Subscribe to the live SSE (`GET /events/stream`); each new event is
  *      prepended (deduped by id) and exposed as `latest` so the ToastHost +
  *      audio cue can react.
- *   3. `decide` fans a verdict across an access request's items and resolves
- *      the filed event's action slot locally.
+ *   3. Each upsert re-derives `resolved` from decision events in the feed.
  *   4. `loadOlderEvents` pages backwards via the list cursor.
  *
  * `live` defaults to `true`; tests pass `live={false}` to skip the SSE
  * subscription and drive a deterministic, backlog-only feed.
+ *
+ * A caller without event access ({@link useCanReadEvents}) gets neither the
+ * backlog nor the stream, and `status` reads `forbidden`. A 401/403 from either
+ * read lands in the same state, and the stream does not retry it.
  */
 export function AgentStreamProvider({
 	children,
@@ -448,19 +566,23 @@ export function AgentStreamProvider({
 	const [cursor, setCursor] = useState<string | null>(null);
 	const [hasMore, setHasMore] = useState(false);
 	const [loadingOlder, setLoadingOlder] = useState(false);
+	const [scope, setScopeState] = useState<ActivityScope>(null);
+	// Cursor for the scoped backlog — paging "older" under a lens pages THAT
+	// actor's history, not the org's (which could take many pages to reach it).
+	const [scopedCursor, setScopedCursor] = useState<string | null>(null);
+	const [scopedHasMore, setScopedHasMore] = useState(false);
+	const [failuresOnly, setFailuresOnly] = useState(false);
+	const [categories, setCategories] = useState<ReadonlySet<ActivityCategory>>(() => new Set());
+	const [frozen, setFrozen] = useState<FeedFreeze | null>(null);
+	const canReadEvents = useCanReadEvents();
+	// The server refused an event read (401/403) — terminal for this session.
+	const [accessDenied, setAccessDenied] = useState(false);
 	const queryClient = useQueryClient();
-
-	/**
-	 * Refresh the dashboard + durable access-request surfaces (cards, tiles,
-	 * queue page, nav badge). Centralised here so EVERY decision path — a live
-	 * `access_request.*` event, the Deny fast-path — converges on the same
-	 * invalidation, and so the dashboard updates app-wide rather than only while
-	 * it happens to be mounted.
-	 */
-	const invalidateApprovalSurfaces = useCallback(() => {
-		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
-		void queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_ROOT_KEY });
-	}, [queryClient]);
+	const setScope = useCallback((next: ActivityScope) => {
+		setScopeState((prev) =>
+			prev?.actorId === next?.actorId && prev?.actorType === next?.actorType ? prev : next,
+		);
+	}, []);
 
 	/**
 	 * Refresh the agent-approval surfaces (pending-agents card, "Awaiting
@@ -469,11 +591,11 @@ export function AgentStreamProvider({
 	 * 45–60s fallback polls and looked broken right after `jentic register`.
 	 */
 	const invalidateAgentSurfaces = useCallback(() => {
-		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 		void queryClient.invalidateQueries({ queryKey: AGENTS_ROOT_KEY });
 		// A registration changes the actor DIRECTORY too — it's cached
 		// aggressively (5-min staleTime) as reference data, and a CLI agent
-		// files its provisioning request seconds after registering. Without
+		// starts emitting events seconds after registering. Without
 		// this, every `actor_id` resolution for the new agent (rail rows, the
 		// setup wizard's header badge) misses and
 		// falls back to the raw `agnt_…` id until the cache expires.
@@ -490,20 +612,12 @@ export function AgentStreamProvider({
 	const invalidateOAuthSurfaces = useCallback(() => {
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
 		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.oauthGrantsRoot });
-		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 	}, [queryClient]);
-
-	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
-	// re-subscribing (e.g. `decide` reads a row's request id). Reading this ref
-	// avoids stale closures and avoids side-effecting inside a `setState` updater.
-	const eventsRef = useRef<StreamEvent[]>(events);
-	eventsRef.current = events;
-	// Events with a decision RPC in flight, so a double-click can't fire twice.
-	const inFlightRef = useRef<Set<string>>(new Set());
 
 	/**
 	 * Flip a single event by id with `fn`, leaving the rest untouched. Centralises
-	 * the optimistic-update / rollback pattern used by decide so the
+	 * the optimistic-update pattern used by resolve so the
 	 * map-by-id boilerplate isn't repeated (and can't drift between flip and undo).
 	 */
 	const patchEvent = useCallback((eventId: string, fn: (ev: StreamEvent) => StreamEvent) => {
@@ -515,14 +629,6 @@ export function AgentStreamProvider({
 			...ev,
 			resolved: true,
 			resolvedAt: Date.now(),
-		}),
-		[],
-	);
-	const markUnresolved = useCallback(
-		(ev: StreamEvent): StreamEvent => ({
-			...ev,
-			resolved: false,
-			resolvedAt: undefined,
 		}),
 		[],
 	);
@@ -562,13 +668,16 @@ export function AgentStreamProvider({
 			const base = prev.map((e) => byId.get(e.id) ?? e);
 			const merged = front ? [...appended, ...base] : [...base, ...appended];
 			merged.sort((a, b) => b.tsMs - a.tsMs);
-			return resolveSupersededRows(merged.slice(0, MAX_EVENTS));
+			// History the user asked for (Load older, a lens's backlog) raises the
+			// cap instead of being sorted past it and dropped on arrival; live
+			// events keep the list at whatever size it has reached.
+			const cap = Math.max(MAX_EVENTS, front ? prev.length : prev.length + appended.length);
+			return resolveSupersededRows(merged.slice(0, cap));
 		});
 	}, []);
 
-	// One definition for both `oauth_client.registered` settle arms (approve
-	// via its SSE event in the live subscription below, deny via the deny
-	// mutation through the context) so the matching predicate can't drift.
+	// The deny arm of an `oauth_client.registered` decision (the approve arm
+	// resolves through `resolveSupersededRows`).
 	const settleOAuthClientRegistration = useCallback(
 		(oauthClientId: string) => {
 			setEvents((prev) =>
@@ -584,28 +693,58 @@ export function AgentStreamProvider({
 		[markResolved],
 	);
 
-	// 1. Backlog seed.
+	// 1. Backlog seed. Retired-namespace history is tolerated but dropped.
 	useEffect(() => {
+		if (!canReadEvents) return undefined;
 		let cancelled = false;
 		void (async () => {
 			try {
 				const page = await listEvents({ limit: BACKLOG_LIMIT });
 				if (cancelled) return;
-				upsert(page.data.map(adaptEvent), false);
+				upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
 				setCursor(page.next_cursor ?? null);
 				setHasMore(page.has_more);
-			} catch {
-				// A failed backlog is non-fatal — the live stream may still connect.
+			} catch (error) {
+				// A refusal means no event access. Any other failed backlog is
+				// non-fatal — the live stream may still connect.
+				if (!cancelled && isEventAccessDenied(error)) setAccessDenied(true);
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [upsert]);
+	}, [upsert, canReadEvents]);
+
+	// 1b. Scoped backlog. The shared list only holds the newest unfiltered page,
+	// which may contain nothing from a quiet agent — seed that actor's history.
+	useEffect(() => {
+		setScopedCursor(null);
+		setScopedHasMore(false);
+		if (!scope || !canReadEvents) return undefined;
+		let cancelled = false;
+		void (async () => {
+			try {
+				const page = await listEvents({
+					actorId: scope.actorId,
+					actorType: scope.actorType,
+					limit: BACKLOG_LIMIT,
+				});
+				if (cancelled) return;
+				upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
+				setScopedCursor(page.next_cursor ?? null);
+				setScopedHasMore(page.has_more);
+			} catch {
+				// Non-fatal: the lens still filters whatever the shared feed holds.
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [scope, upsert, canReadEvents]);
 
 	// 2. Live SSE subscription (with auto-reconnect inside `streamEvents`).
 	useEffect(() => {
-		if (!live) {
+		if (!live || !canReadEvents) {
 			setStatus('idle');
 			return undefined;
 		}
@@ -623,6 +762,9 @@ export function AgentStreamProvider({
 			{
 				onOpen: () => setStatus('live'),
 				onEvent: (wire) => {
+					// Tolerate retired-namespace events (historical redeliveries)
+					// without rendering, toasting, or invalidating anything.
+					if (isRetiredEventType(wire.type)) return;
 					const ev = adaptEvent(wire);
 					const firstDelivery = !deliveredIds.has(ev.id);
 					if (firstDelivery) {
@@ -639,67 +781,28 @@ export function AgentStreamProvider({
 					// its actionable row whichever of the two lands first.
 					if (!firstDelivery) return;
 					setLatest(ev);
-					// Bridge: a filed/decided access request changes the durable
-					// queue + dashboard counts. Refresh those surfaces so they
-					// don't go stale. Agent lifecycle events (CLI
-					// self-registration, approval) likewise refresh the agent
-					// surfaces the instant they land.
-					if (ev.kind === 'access_request') {
-						invalidateApprovalSurfaces();
-					} else if (ev.kind === 'agent') {
+					// Bridge: agent lifecycle events (CLI self-registration,
+					// approval) refresh the agent surfaces the instant they
+					// land; OAuth events likewise refresh theirs.
+					if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
 					} else if (ev.kind === 'oauth') {
 						invalidateOAuthSurfaces();
 					}
 				},
-				onError: () => setStatus('error'),
-				onReconnecting: () => setStatus('connecting'),
+				onError: (error) => {
+					// A refusal ends the subscription (the client does not retry it).
+					if (isEventAccessDenied(error)) setAccessDenied(true);
+					setStatus('error');
+				},
+				// The client fires onError then onReconnecting back-to-back on
+				// every failed attempt; keep 'error' until a connect succeeds
+				// (onOpen) so the header doesn't flicker Offline ↔ Connecting.
+				onReconnecting: () => setStatus((s) => (s === 'error' ? 'error' : 'connecting')),
 			},
 		);
 		return unsubscribe;
-	}, [
-		live,
-		upsert,
-		invalidateApprovalSurfaces,
-		invalidateAgentSurfaces,
-		invalidateOAuthSurfaces,
-	]);
-
-	const decide = useCallback(
-		async (eventId: string, decision: 'approved' | 'denied', reason?: string) => {
-			// Guard against a double-click firing two decision RPCs for one row.
-			if (inFlightRef.current.has(eventId)) return;
-			// Read the row's request id from the fresh mirror — no side effects in
-			// a setState updater, no stale closure.
-			const target = eventsRef.current.find((ev) => ev.id === eventId);
-			const requestId = target?.tokens.access_request_id;
-			inFlightRef.current.add(eventId);
-			// Optimistically resolve the filed event's action slot.
-			patchEvent(eventId, markResolved);
-			try {
-				if (!requestId) {
-					// No request id on the event — nothing to route a decision to;
-					// leave it resolved locally so the row doesn't get stuck asking
-					// for a decision it can't route.
-					return;
-				}
-				await decideAllPending(requestId, decision, reason);
-				// The fast path bypasses React Query entirely, so without this the
-				// dashboard tiles/cards, the durable queue, and the nav badge would
-				// stay stale until their staleTime lapsed (the bug). The
-				// authoritative approved/denied event also arrives over the stream
-				// and re-invalidates, but we refresh eagerly here so the surfaces
-				// update the instant the Deny resolves.
-				invalidateApprovalSurfaces();
-			} catch {
-				// Roll back the optimistic resolve; the row re-offers the decision.
-				patchEvent(eventId, markUnresolved);
-			} finally {
-				inFlightRef.current.delete(eventId);
-			}
-		},
-		[patchEvent, markResolved, markUnresolved, invalidateApprovalSurfaces],
-	);
+	}, [live, canReadEvents, upsert, invalidateAgentSurfaces, invalidateOAuthSurfaces]);
 
 	const resolveEvent = useCallback(
 		(eventId: string) => {
@@ -708,40 +811,83 @@ export function AgentStreamProvider({
 		[patchEvent, markResolved],
 	);
 
+	// The lens at call time vs. now: a Load older still in flight when the lens
+	// changes must not write its actor's cursor under the new one.
+	const scopeRef = useRef(scope);
+	useEffect(() => {
+		scopeRef.current = scope;
+	}, [scope]);
+
 	const loadOlderEvents = useCallback(async () => {
-		if (!cursor) return;
+		const from = scope ? scopedCursor : cursor;
+		if (!from || !canReadEvents) return;
 		setLoadingOlder(true);
 		try {
-			const page = await listEvents({ cursor, limit: BACKLOG_LIMIT });
-			upsert(page.data.map(adaptEvent), false);
-			setCursor(page.next_cursor ?? null);
-			setHasMore(page.has_more);
+			const page = await listEvents({
+				cursor: from,
+				limit: BACKLOG_LIMIT,
+				actorId: scope?.actorId,
+				actorType: scope?.actorType,
+			});
+			upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
+			if (scopeRef.current !== scope) return;
+			if (scope) {
+				setScopedCursor(page.next_cursor ?? null);
+				setScopedHasMore(page.has_more);
+			} else {
+				setCursor(page.next_cursor ?? null);
+				setHasMore(page.has_more);
+			}
 		} catch {
 			/* leave the cursor in place so the user can retry */
 		} finally {
 			setLoadingOlder(false);
 		}
-	}, [cursor, upsert]);
+	}, [cursor, scope, scopedCursor, upsert, canReadEvents]);
 
+	const setPaused = useCallback(
+		(next: boolean) => setFrozen(next ? freezeFeed(events) : null),
+		[events],
+	);
+
+	const forbidden = !canReadEvents || accessDenied;
 	const value = useMemo<AgentStreamValue>(
 		() => ({
 			events,
+			scope,
+			setScope,
+			failuresOnly,
+			setFailuresOnly,
+			categories,
+			setCategories,
+			paused: frozen !== null,
+			setPaused,
+			frozen,
 			latest,
-			status,
-			decide,
-			resolveEvent,
+			status: forbidden ? 'forbidden' : status,
 			settleOAuthClientRegistration,
+			resolveEvent,
 			loadOlderEvents,
-			canLoadOlder: hasMore && cursor != null,
+			canLoadOlder:
+				!forbidden &&
+				(scope ? scopedHasMore && scopedCursor != null : hasMore && cursor != null),
 			loadingOlder,
 		}),
 		[
 			events,
+			scope,
+			setScope,
+			failuresOnly,
+			categories,
+			frozen,
+			setPaused,
+			scopedHasMore,
+			scopedCursor,
 			latest,
 			status,
-			decide,
-			resolveEvent,
+			forbidden,
 			settleOAuthClientRegistration,
+			resolveEvent,
 			loadOlderEvents,
 			hasMore,
 			cursor,
@@ -761,8 +907,7 @@ export function useAgentStream(): AgentStreamValue {
 /**
  * Provider-optional variant for module-side hooks that should SYNC with the
  * stream when it's mounted (the app shell) but must not require it (tests,
- * embedded surfaces). Monitor uses this to read the rail's in-memory feed so
- * shared surfaces (e.g. the failure pill) stay consistent with the live stream.
+ * embedded surfaces).
  */
 export function useAgentStreamOptional(): AgentStreamValue | null {
 	return useContext(AgentStreamContext);
@@ -812,11 +957,11 @@ export function isFailureSeverity(severity: StreamSeverity): boolean {
 }
 
 /**
- * Count of failure events (error/critical) in the LOADED feed
- * window (backlog seed + live inserts, capped) — the number shown on the
- * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
- * is a "recent activity" signal, not a global failures query (that's
- * the Monitor Events tab); labels around it say "recent" for that reason.
+ * Count of failure events (error/critical) in the LOADED feed window (backlog
+ * seed + live inserts, capped) — the number shown on the rail's persistent
+ * failure badge (#671). Deliberately window-scoped: the pill is a "recent
+ * activity" signal, not a global failures query (that's Monitor); labels
+ * around it say "recent" for that reason.
  */
 export function recentFailureCount(events: StreamEvent[]): number {
 	let n = 0;
@@ -834,9 +979,6 @@ export function recentFailureCount(events: StreamEvent[]): number {
  * `settleOAuthClientRegistration`.)
  */
 const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens }> = {
-	'access_request.approved': { target: 'access_request.filed', token: 'access_request_id' },
-	'access_request.denied': { target: 'access_request.filed', token: 'access_request_id' },
-	'access_request.withdrawn': { target: 'access_request.filed', token: 'access_request_id' },
 	'agent.registration_approved': { target: 'agent.self_registered', token: 'agent_id' },
 	'agent.registration_denied': { target: 'agent.self_registered', token: 'agent_id' },
 	'oauth_client.approved': { target: 'oauth_client.registered', token: 'oauth_client_id' },
@@ -846,9 +988,9 @@ const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens 
  * Mark every actionable row whose superseding decision is in `events` as
  * resolved. Pure and idempotent; returns the same array when nothing changes.
  * Applied on every upsert, so it covers the backlog seed, "load older" pages
- * (a decision and its filed row can land on different pages, in either order)
- * and live re-deliveries — without it a reload would resurrect View/Deny/Review
- * buttons on requests, agents and OAuth clients that were already decided.
+ * (a decision and its actionable row can land on different pages, in either
+ * order) and live re-deliveries — without it a reload would resurrect Review
+ * prompts on agents and OAuth clients that were already decided.
  */
 export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
 	const decided = new Set<string>();
@@ -910,6 +1052,23 @@ export function formatStreamTime(tsMs: number): string {
 	const mm = d.getMinutes().toString().padStart(2, '0');
 	const ss = d.getSeconds().toString().padStart(2, '0');
 	return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Compact relative time for feed rows: "now", "4m", "2h", "3d", then a date.
+ * The exact time lives in the row's tooltip.
+ */
+export function formatStreamAgo(tsMs: number, now: number = Date.now()): string {
+	if (!Number.isFinite(tsMs)) return '—';
+	const sec = Math.max(0, Math.floor((now - tsMs) / 1000));
+	if (sec < 45) return 'now';
+	const min = Math.max(1, Math.round(sec / 60));
+	if (min < 60) return `${min}m`;
+	const hr = Math.floor(min / 60);
+	if (hr < 24) return `${hr}h`;
+	const day = Math.floor(hr / 24);
+	if (day < 7) return `${day}d`;
+	return new Date(tsMs).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
 /**
@@ -977,57 +1136,32 @@ export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): st
 /*
   EVENT BEHAVIOUR — derived from the REAL contract.
 
-  One backend mutation reaches the rail:
-    • Decide (`POST /access-requests/{id}:decide`) — the real "feed the agent
-      back" action for an `access_request.filed` event. The event carries the
-      request id in `data.request_id`; Approve/Deny fan a verdict across the
-      request's pending items, and Deny carries a reason the agent reads back.
-
-  So the inline-action slot is:
-    • View / Deny — for an outstanding `access_request.filed` event that carries
-      a request id. "View" opens the request-detail dialog (per-item
-      approve/deny); "Deny" is the reason-gated fast path that denies the whole
-      request.
-    • "Review" links — deep-link to where the action for an actionable event
-      lives (agent page, OAuth queue, API detail).
+  Events are append-only history; no backend mutation reaches the rail. The
+  inline-action slot is navigation only:
+    • "Review" — for an unresolved action-required event, deep-links to where
+      its action lives (agent approval, OAuth queue, API detail).
     • "View" links — deep-link into the execution/job/trace the event references.
   Navigation targets are router-relative (basename `/app` is prepended) to match
   jentic-one's route tree.
 */
 export type InlineActionKind =
-	| 'approve'
-	| 'deny'
-	| 'view_request'
-	| 'view_agent'
-	| 'view_api'
-	| 'view_execution'
-	| 'view_job'
-	| 'view_trace'
-	| 'view_oauth_queue';
+	'view_agent' | 'view_api' | 'view_execution' | 'view_job' | 'view_trace' | 'view_oauth_queue';
 
 export type InlineActionSpec = {
 	kind: InlineActionKind;
 	label: string;
-	/** Access-request decision (approve/deny via `:decide`). */
-	decides?: 'approved' | 'denied';
-	/**
-	 * Opens the access-request detail dialog (per-item approve/deny) rather than
-	 * navigating or firing an RPC. The parent supplies the request id from the
-	 * event's `access_request_id` token.
-	 */
-	opensRequest?: boolean;
-	/** Navigation target (omit for pure RPC). */
+	/** Navigation target. */
 	href?: (ev: StreamEvent) => string | null;
-	/** A human reason must be supplied before the action fires (denials). */
-	requiresReason?: boolean;
+	/** The row's call to action (an unresolved event's "Review"). */
+	primary?: boolean;
 };
 
 /**
  * Resolve a HAL `_links` URL or token into a router-relative monitor route.
  *
- * The detail-param vocabulary MUST match what the Monitor tabs read off the URL:
- * the Executions tab opens its trace/execution sheet from `trace_id`/`execution_id`
- * and the Jobs tab from `job_id` (the underscore names — see
+ * The detail-param vocabulary MUST match what Monitor's Activity view reads off
+ * the URL: `show=calls` opens its trace/execution sheet from `trace_id`/
+ * `execution_id` and `show=jobs` from `job_id` (the underscore names — see
  * `modules/monitor/lib/links.ts` and the tabs' `searchParams.get(...)`). Emitting
  * the short `trace`/`execution`/`job` aliases here switched the tab but left the
  * detail sheet closed, so a rail "View execution" click looked like a dead end
@@ -1040,21 +1174,23 @@ const hasUsableTrace = (traceId: string | null | undefined): traceId is string =
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
-			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			? `/monitor?show=calls&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
 			: null,
 	execution: (ev: StreamEvent) => {
 		const id = ev.tokens.execution_id;
-		if (id) return `/monitor?tab=executions&execution_id=${encodeURIComponent(id)}`;
+		if (id) return `/monitor?show=calls&execution_id=${encodeURIComponent(id)}`;
 		return hasUsableTrace(ev.tokens.trace_id)
-			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			? `/monitor?show=calls&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
 			: null;
 	},
 	job: (ev: StreamEvent) =>
 		ev.tokens.job_id
-			? `/monitor?tab=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
+			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
+	// Agent events open the agent as selected on the Agents page — the shape of
+	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
-		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
 	// Catalog/overlay events deep-link to the affected API's Workspace detail
 	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
 	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
@@ -1074,28 +1210,20 @@ const NAV = {
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	const actions: InlineActionSpec[] = [];
 	if (ev.requiresAction && !ev.resolved) {
-		// An access_request.filed event with a routable request id gets View
-		// (opens the per-item decision dialog) + a reason-gated Deny fast path
-		// (denies the whole request). Approving without seeing the items is the
-		// risky direction, so approve lives inside the dialog. Everything else
-		// that needs action gets a "Review" deep-link to where its action lives.
-		if (ev.type === 'access_request.filed' && ev.tokens.access_request_id) {
-			actions.push({ kind: 'view_request', label: 'View', opensRequest: true });
-			actions.push({
-				kind: 'deny',
-				label: 'Deny',
-				decides: 'denied',
-				requiresReason: true,
-			});
-		} else if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
+		if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
 			// A self-registered agent awaits approval — route the operator to the
-			// agent's page (where approve/deny lives).
-			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
+			// agent on the Agents page (where approve/deny lives).
+			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent, primary: true });
 		} else if (ev.type === 'oauth_client.registered') {
 			// A DCR client registration awaiting approval — route
 			// the operator to the Settings approval queue, where the D7
 			// approve/deny verbs live.
-			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });
+			actions.push({
+				kind: 'view_oauth_queue',
+				label: 'Review',
+				href: NAV.oauthQueue,
+				primary: true,
+			});
 		} else if (
 			(ev.type === 'catalog.update_available' ||
 				ev.type === 'catalog.update_conflicts_overlay') &&
@@ -1104,7 +1232,12 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			// An upstream spec change (or a change that conflicts with a confirmed
 			// overlay) — deep-link the operator to the API's Workspace detail page
 			// (where Re-import / overlay resolution lives).
-			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
+			actions.push({
+				kind: 'view_api',
+				label: 'Review',
+				href: NAV.workspaceApi,
+				primary: true,
+			});
 		}
 	}
 	// A deep-link into the underlying record, when the event references one.
@@ -1123,8 +1256,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
 		}
 	} else if (ev.kind === 'oauth' && ev.tokens.agent_id) {
-		// Grant lifecycle rows deep-link to the bound agent, whose "Connected
-		// clients" panel lists (and can revoke) the grant (§4.8).
+		// Grant lifecycle rows deep-link to the bound agent, whose Permissions
+		// sheet's "Connected clients" card lists (and can revoke) the grant.
 		actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
@@ -1189,15 +1322,13 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 			return ev.tokens.credential_id
 				? `/credentials/${ev.tokens.credential_id}`
 				: NAV.trace(ev);
-		case 'access_request':
-			return ev.tokens.agent_id ? `/agents/${ev.tokens.agent_id}` : NAV.trace(ev);
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':
 			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
 		case 'oauth':
-			// Grant rows go to the bound agent's console (its Connected-clients
-			// panel); client registration/approval rows go to the Settings queue.
+			// Grant rows go to the bound agent (its Permissions sheet's Connected
+			// clients); client registration/approval rows go to the Settings queue.
 			return ev.tokens.grant_id && ev.tokens.agent_id ? NAV.agent(ev) : NAV.oauthQueue();
 		default:
 			return NAV.trace(ev);

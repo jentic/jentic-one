@@ -45,293 +45,6 @@ components:
       - vendor
       title: APIReferenceRequest
       type: object
-    AccessRequestFileRequest:
-      description: Request body for filing an access request.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/AccessRequestItemRequest'
-          minItems: 1
-          title: Items
-          type: array
-        reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Reason
-      required:
-      - items
-      title: AccessRequestFileRequest
-      type: object
-    AccessRequestItemRequest:
-      description: |-
-        A single line-item in a file request.
-
-        **Permission rules:** Rules control which upstream API operations the broker
-        allows through a direct agent↔credential binding. They are enforced per
-        (agent, credential) pair, so they can only be attached to credential:bind
-        items — not scope:grant. Include them (or a shared ``rule_set_id``)
-        directly on the credential:bind item when filing the access request, and
-        the approver's decision persists them on the binding.
-      properties:
-        action:
-          enum:
-          - bind
-          - grant
-          - provision
-          title: Action
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        resource_reference:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Resource Reference
-        resource_type:
-          enum:
-          - credential
-          - scope
-          title: Resource Type
-          type: string
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Shared permission rule set for the binding (credential:bind only), as an alternative to inline rules. While attached, the set's ordered list is the binding's effective policy.
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__access_requests__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          description: 'Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
-          title: Rules
-      required:
-      - resource_type
-      - action
-      title: AccessRequestItemRequest
-      type: object
-    AccessRequestItemResponse:
-      description: Response model for a single access-request line item.
-      properties:
-        action:
-          title: Action
-          type: string
-        already_satisfied:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          description: Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, an item whose target cannot be determined, an ambiguous credential reference — which approval would refuse as filed — or a credential:bind whose credential is not visible to the caller). API REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a credential this caller cannot see'; explicit-id targets are probed directly.
-          title: Already Satisfied
-        already_satisfied_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: For a satisfied credential:bind, the id of the credential the agent is already bound to — names the exact object so consumers can point the operator at it. Null for other item types and whenever already_satisfied is not true.
-          title: Already Satisfied By
-        applied_effects:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Applied Effects
-        credential_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Credential Name
-        decided_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Decided At
-        decided_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decided By
-        decision_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decision Reason
-        id:
-          title: Id
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        resource_reference:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Resource Reference
-        resource_type:
-          title: Resource Type
-          type: string
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Shared permission rule set attached to a credential:bind item, as an alternative policy carrier to inline rules.
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              additionalProperties: true
-              type: object
-            type: array
-          - type: 'null'
-          title: Rules
-        status:
-          title: Status
-          type: string
-        to_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Id
-        to_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: To Type
-        toolkit_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Toolkit Name
-      required:
-      - id
-      - resource_type
-      - action
-      - status
-      title: AccessRequestItemResponse
-      type: object
-    AccessRequestListResponse:
-      description: Paginated list of access requests.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/AccessRequestResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: AccessRequestListResponse
-      type: object
-    AccessRequestOwnerResponse:
-      description: |-
-        Display info for the filer's human owner (labelling only, not authorization).
-
-        Server-resolved from ``filer_owner_id`` (falling back to ``created_by``
-        when the former is null, mirroring what consumers render) so they don't
-        need ``users:read`` (or a roster fetch) just to label a row. Absent when
-        the id doesn't resolve to a user (service-account filers, purged rows) or
-        on mutation responses, which skip the enrichment.
-      properties:
-        display_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: The owner's full name, when set on the profile.
-          title: Display Name
-        email:
-          description: The owner's email address.
-          title: Email
-          type: string
-        id:
-          description: The resolved owner's user id (filer_owner_id, or created_by when null).
-          title: Id
-          type: string
-      required:
-      - id
-      - email
-      title: AccessRequestOwnerResponse
-      type: object
-    AccessRequestResponse:
-      description: Response model for an access request envelope.
-      properties:
-        actor_id:
-          title: Actor Id
-          type: string
-        approve_url:
-          title: Approve Url
-          type: string
-        created_by:
-          title: Created By
-          type: string
-        evaluation:
-          anyOf:
-          - $ref: '#/components/schemas/EvaluationResponse'
-          - type: 'null'
-        expires_at:
-          format: date-time
-          title: Expires At
-          type: string
-        filed_at:
-          format: date-time
-          title: Filed At
-          type: string
-        filer_owner:
-          anyOf:
-          - $ref: '#/components/schemas/AccessRequestOwnerResponse'
-          - type: 'null'
-        filer_owner_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Filer Owner Id
-        id:
-          title: Id
-          type: string
-        items:
-          items:
-            $ref: '#/components/schemas/AccessRequestItemResponse'
-          title: Items
-          type: array
-        reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Reason
-        requested_by:
-          title: Requested By
-          type: string
-        status:
-          title: Status
-          type: string
-      required:
-      - id
-      - actor_id
-      - requested_by
-      - status
-      - approve_url
-      - filed_at
-      - expires_at
-      - created_by
-      - items
-      title: AccessRequestResponse
-      type: object
     ActorListResponse:
       description: Paginated list of actors.
       properties:
@@ -352,6 +65,49 @@ components:
       - data
       - has_more
       title: ActorListResponse
+      type: object
+    ActorLookupEntryResponse:
+      description: Display fields of one actor resolved by id.
+      properties:
+        active:
+          description: False for a disabled user or a non-active agent.
+          title: Active
+          type: boolean
+        actor_type:
+          $ref: '#/components/schemas/ActorType'
+          description: Whether the actor is a user or an agent.
+        id:
+          description: Actor id (`usr_…` or `agnt_…`).
+          title: Id
+          type: string
+        name:
+          description: 'Display name: a user''s full name or an agent''s name.'
+          title: Name
+          type: string
+      required:
+      - id
+      - actor_type
+      - name
+      - active
+      title: ActorLookupEntryResponse
+      type: object
+    ActorLookupResponse:
+      description: Actors resolved by id; ids that match no actor are omitted.
+      examples:
+      - data:
+        - active: true
+          actor_type: user
+          id: usr_2abc
+          name: Ada Lovelace
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/ActorLookupEntryResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: ActorLookupResponse
       type: object
     ActorSummaryResponse:
       description: Single actor entry in the actors list.
@@ -381,21 +137,17 @@ components:
       type: object
     ActorType:
       description: |-
-        Type of authenticated actor.
+        Type of authenticated actor: a human user or an agent.
 
-        ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-        service accounts the key-retirement job created, so no code path mints a
-        toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
-        historical rows (events, audit entries, execution records) until the
-        Phase-6b scope-data sweep; read paths must tolerate the string without
-        round-tripping it through this enum.
+        Historical records may carry older actor-type values that are no longer
+        issued; treat unrecognised values as opaque labels.
       enum:
       - user
       - agent
-      - service_account
       title: ActorType
       type: string
     AgentCreateRequest:
+      additionalProperties: false
       description: Request body for creating an agent manually.
       properties:
         description:
@@ -409,7 +161,7 @@ components:
           minLength: 1
           title: Name
           type: string
-        scopes:
+        permissions:
           anyOf:
           - items:
               maxLength: 64
@@ -419,7 +171,7 @@ components:
             maxItems: 100
             type: array
           - type: 'null'
-          title: Scopes
+          title: Permissions
       required:
       - name
       title: AgentCreateRequest
@@ -469,6 +221,35 @@ components:
           - type: 'null'
           title: Owner Id
       title: AgentPatchRequest
+      type: object
+    AgentPermissionsRequest:
+      additionalProperties: false
+      description: Request body for replacing an agent's permissions.
+      properties:
+        permissions:
+          items:
+            maxLength: 64
+            minLength: 1
+            pattern: ^[a-zA-Z0-9_:./-]+$
+            type: string
+          maxItems: 100
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsRequest
+      type: object
+    AgentPermissionsResponse:
+      description: Response containing an agent's current permissions.
+      properties:
+        permissions:
+          items:
+            type: string
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsResponse
       type: object
     AgentResponse:
       description: Agent representation in API responses.
@@ -536,74 +317,6 @@ components:
       - status
       - created_at
       title: AgentResponse
-      type: object
-    AgentScopesRequest:
-      description: Request body for replacing an agent's scopes.
-      properties:
-        scopes:
-          items:
-            maxLength: 64
-            minLength: 1
-            pattern: ^[a-zA-Z0-9_:./-]+$
-            type: string
-          maxItems: 100
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesRequest
-      type: object
-    AgentScopesResponse:
-      description: Response containing an agent's current scopes.
-      properties:
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesResponse
-      type: object
-    AmendItemSchema:
-      description: A single item amendment.
-      properties:
-        item_id:
-          title: Item Id
-          type: string
-        resource_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Resource Id
-        rule_set_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Rule Set Id
-        rules:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__access_requests__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          title: Rules
-      required:
-      - item_id
-      title: AmendItemSchema
-      type: object
-    AmendRequest:
-      description: Request body for the :amend verb.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/AmendItemSchema'
-          minItems: 1
-          title: Items
-          type: array
-      required:
-      - items
-      title: AmendRequest
       type: object
     ApiImportLinksResponse:
       description: Hypermedia links for an import response.
@@ -1700,19 +1413,28 @@ components:
       - token
       title: ClaimRequest
       type: object
-    ConnectChallengeResponse:
-      description: Response from a connect initiation.
+    ConfirmSessionRequest:
       properties:
-        authorize_url:
-          title: Authorize Url
-          type: string
-        state:
-          title: State
-          type: string
+        agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Id
+        confirmed_scopes:
+          items:
+            type: string
+          maxItems: 100
+          title: Confirmed Scopes
+          type: array
+        permission_rules:
+          items:
+            $ref: '#/components/schemas/PermissionRuleSchema'
+          maxItems: 100
+          title: Permission Rules
+          type: array
       required:
-      - authorize_url
-      - state
-      title: ConnectChallengeResponse
+      - confirmed_scopes
+      title: ConfirmSessionRequest
       type: object
     ConnectRequestBody:
       description: Request body for initiating a credential connect flow.
@@ -1728,6 +1450,82 @@ components:
           title: Scopes
           type: array
       title: ConnectRequestBody
+      type: object
+    ConnectSessionListResponse:
+      description: Cursor-paginated envelope of connect-session summaries.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/ConnectSessionSummaryResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: ConnectSessionListResponse
+      type: object
+    ConnectSessionSummaryResponse:
+      description: Slim list row for the console — deliberately excludes ``poll_token``.
+      properties:
+        agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Id
+        connected_as:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Connected As
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        requested_by_actor_id:
+          title: Requested By Actor Id
+          type: string
+        session_id:
+          title: Session Id
+          type: string
+        state:
+          enum:
+          - created
+          - polling
+          - connected
+          title: State
+          type: string
+        vendor_display_name:
+          title: Vendor Display Name
+          type: string
+        vendor_key:
+          title: Vendor Key
+          type: string
+      required:
+      - session_id
+      - state
+      - vendor_key
+      - vendor_display_name
+      - requested_by_actor_id
+      - created_at
+      title: ConnectSessionSummaryResponse
       type: object
     ConsentAgentStatusResponse:
       description: |-
@@ -1879,6 +1677,11 @@ components:
           default: false
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suspended Reason
       required:
       - credential_id
       - bound_at
@@ -1931,6 +1734,11 @@ components:
         suspended:
           title: Suspended
           type: boolean
+        suspended_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Suspended Reason
       required:
       - id
       - agent_id
@@ -2158,141 +1966,17 @@ components:
       - failed
       title: DailyExecutionBucket
       type: object
-    DecideItemSchema:
-      description: A single item decision.
+    DenyRequest:
+      description: Request body for denying an agent.
       properties:
-        decision:
-          enum:
-          - approved
-          - denied
-          title: Decision
-          type: string
-        decision_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Decision Reason
-        item_id:
-          title: Item Id
-          type: string
-      required:
-      - item_id
-      - decision
-      title: DecideItemSchema
-      type: object
-    DecideRequest:
-      description: Request body for the :decide verb.
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/DecideItemSchema'
-          minItems: 1
-          title: Items
-          type: array
-      required:
-      - items
-      title: DecideRequest
-      type: object
-    DuplicatePendingProblem:
-      description: |-
-        RFC 9457 Problem Details for a 409 on ``POST /access-requests``.
-
-        Filing a request whose target already has a pending request is refused with
-        a 409 whose body carries two extension members on top of the standard
-        Problem Details shape, so a client can attach to the existing request rather
-        than re-file. These are emitted at runtime by the access-request error hook
-        (``control/web/errors.py``); this model documents them in the OpenAPI spec so
-        the generated SDK exposes a typed 409
-        (``FileAccessRequestHTTPResp.ApplicationproblemJSON409``) instead of forcing
-        callers to parse the raw body (ARCH-21 Step 0).
-      examples:
-      - detail: The request body is missing one or more required fields.
-        errors:
-        - detail: Field 'name' is required.
-          pointer: '#/name'
-        instance: /v2/capability-sets
-        status: 400
-        title: Bad Request
-        type: about:blank
-      properties:
-        approve_url:
-          description: Console URL to review/approve the existing pending request.
-          examples:
-          - https://app.jentic.com/access-requests/acr_01HXXY...
-          title: Approve Url
-          type: string
-        code:
-          anyOf:
-          - maxLength: 50
-            type: string
-          - type: 'null'
-          description: An optional provider-specific code for internal error taxonomy and observability correlation.
-          examples:
-          - JENTIC-4001
-          title: Code
-        detail:
-          description: A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
-          examples:
-          - The request body is missing required field 'name'.
-          maxLength: 4096
-          title: Detail
-          type: string
-        errors:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/ErrorItem'
-            maxItems: 1000
-            type: array
-          - type: 'null'
-          description: An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
-          title: Errors
-        existing_request_id:
-          description: The id of the pending access request that already covers the conflicting target.
-          examples:
-          - acr_01HXXY...
-          title: Existing Request Id
-          type: string
-        instance:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          description: A URI reference identifying the specific occurrence of the problem. Typically the request path.
-          examples:
-          - /v2/capability-sets
-          title: Instance
-        status:
-          anyOf:
-          - maximum: 599.0
-            minimum: 100.0
-            type: integer
-          - type: 'null'
-          description: The HTTP status code for this occurrence of the problem.
-          examples:
-          - 400
-          title: Status
-        title:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          description: A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
-          examples:
-          - Bad Request
-          title: Title
-        type:
-          default: about:blank
-          description: A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
-          examples:
-          - about:blank
+        reason:
           maxLength: 1024
-          title: Type
+          minLength: 1
+          title: Reason
           type: string
       required:
-      - detail
-      - existing_request_id
-      - approve_url
-      title: DuplicatePendingProblem
+      - reason
+      title: DenyRequest
       type: object
     EffectivePermission:
       description: A single effective permission with provenance.
@@ -2361,41 +2045,6 @@ components:
       required:
       - detail
       title: ErrorItem
-      type: object
-    EvaluationCheckResponse:
-      description: A single evaluation check result.
-      properties:
-        blocker:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Blocker
-        check:
-          title: Check
-          type: string
-        passed:
-          title: Passed
-          type: boolean
-      required:
-      - check
-      - passed
-      title: EvaluationCheckResponse
-      type: object
-    EvaluationResponse:
-      description: Computed evaluation of whether the caller can fulfill a request.
-      properties:
-        can_fulfill:
-          title: Can Fulfill
-          type: boolean
-        checks:
-          items:
-            $ref: '#/components/schemas/EvaluationCheckResponse'
-          title: Checks
-          type: array
-      required:
-      - can_fulfill
-      - checks
-      title: EvaluationResponse
       type: object
     EventLinks:
       description: HAL-style links for an event.
@@ -2592,6 +2241,18 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+          title: Operation Method
+        operation_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The operation''s spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.'
+          title: Operation Path
         origin:
           anyOf:
           - type: string
@@ -2693,10 +2354,11 @@ components:
       description: |-
         Grouping dimension for usage statistics.
 
-        ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
-        release later, with the toolkit tables (Phase 6b): execution records
-        carry a ``credential_id`` since Phase 2 and the direct-binding path
-        writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
+        ``TOOLKIT`` is a legacy axis: it groups over the surviving
+        ``execution_records.toolkit_id`` attribution column, which nothing writes
+        since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+        historical dashboards keep working; ``CREDENTIAL`` is the live
+        consumer axis (execution records carry ``credential_id`` since Phase 2).
       enum:
       - api
       - toolkit
@@ -2749,7 +2411,7 @@ components:
           description: 'The broker (data plane) base URL a client should send `execute` traffic to, as configured by the operator (server.mcp.broker_url), with any userinfo stripped. Null when the platform cannot honestly advertise one: on a ''remote'' backend a loopback-host value (the config default) describes the control plane''s own machine, not an address any client can dial, so it is withheld rather than published as misleading guidance. Deployment metadata, not a secret — the broker URL is handed to every client expected to call it (issue #1249).'
           title: Broker Url
         canonical_base_url:
-          description: The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.
+          description: The instance's own canonical base URL (auth.canonical_base_url, else server.public_base_url, else the serving bind origin), with any userinfo stripped.
           title: Canonical Base Url
           type: string
         host:
@@ -2773,21 +2435,43 @@ components:
       - host
       title: InstanceIdentityResponse
       type: object
-    IntrospectRequest:
-      description: Introspection endpoint request (form body).
+    IntegrationsConnectRequest:
       properties:
-        token:
-          title: Token
-          type: string
-          x-sensitive: true
-        token_type_hint:
+        agent_id:
           anyOf:
           - type: string
           - type: 'null'
-          title: Token Type Hint
+          title: Agent Id
+        preferred_flow:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preferred Flow
+        reason:
+          anyOf:
+          - maxLength: 1024
+            type: string
+          - type: 'null'
+          title: Reason
+        requested_permission_rules:
+          items:
+            $ref: '#/components/schemas/PermissionRuleSchema'
+          maxItems: 100
+          title: Requested Permission Rules
+          type: array
+        requested_scopes:
+          items:
+            type: string
+          maxItems: 100
+          title: Requested Scopes
+          type: array
+        vendor:
+          description: Vendor registry key (e.g. 'github')
+          title: Vendor
+          type: string
       required:
-      - token
-      title: IntrospectRequest
+      - vendor
+      title: IntegrationsConnectRequest
       type: object
     IntrospectResponse:
       description: RFC 7662 introspection response.
@@ -3053,23 +2737,18 @@ components:
           - type: string
           - type: 'null'
           title: Parent Agent Id
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
           type: string
-        token_scopes:
+        token_permissions:
           items:
             type: string
-          title: Token Scopes
-          type: array
-        toolkit_bindings:
-          items:
-            $ref: '#/components/schemas/ToolkitBindingEntry'
-          title: Toolkit Bindings
+          title: Token Permissions
           type: array
         type:
           const: agent
@@ -3080,54 +2759,9 @@ components:
       - id
       - name
       - status
-      - scopes
-      - token_scopes
-      - toolkit_bindings
+      - permissions
+      - token_permissions
       title: MeAgent
-      type: object
-    MeServiceAccount:
-      description: Identity response for a service-account actor.
-      properties:
-        approved_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Approved By
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        registered_by:
-          title: Registered By
-          type: string
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-        status:
-          title: Status
-          type: string
-        token_scopes:
-          items:
-            type: string
-          title: Token Scopes
-          type: array
-        type:
-          const: service_account
-          default: service_account
-          title: Type
-          type: string
-      required:
-      - id
-      - name
-      - status
-      - scopes
-      - token_scopes
-      - registered_by
-      title: MeServiceAccount
       type: object
     MeUser:
       description: Identity response for a user actor.
@@ -3147,10 +2781,10 @@ components:
         name:
           title: Name
           type: string
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
@@ -3166,56 +2800,16 @@ components:
       - email
       - admin
       - status
-      - scopes
+      - permissions
       - must_change_password
       title: MeUser
-      type: object
-    MintRequest:
-      description: Ephemeral token minting request.
-      properties:
-        scope:
-          title: Scope
-          type: string
-        target_agent_id:
-          title: Target Agent Id
-          type: string
-        ttl_seconds:
-          anyOf:
-          - maximum: 3600.0
-            minimum: 1.0
-            type: integer
-          - type: 'null'
-          title: Ttl Seconds
-      required:
-      - scope
-      - target_agent_id
-      title: MintRequest
-      type: object
-    MintResponse:
-      description: Ephemeral token minting response.
-      properties:
-        access_token:
-          title: Access Token
-          type: string
-          x-sensitive: true
-        expires_in:
-          title: Expires In
-          type: integer
-        token_type:
-          default: bearer
-          title: Token Type
-          type: string
-      required:
-      - access_token
-      - expires_in
-      title: MintResponse
       type: object
     NoAuthCreateRequest:
       description: |-
         Create request for no_auth credentials.
 
         A no-auth credential carries no secret — it represents "this API is called
-        without authentication". It still exists as a credential row so a toolkit
+        without authentication". It still exists as a credential row so an agent
         binding (and its permission rules) can hang off it, and the broker resolves
         it as a no-op auth (see broker credential resolver / injection).
       properties:
@@ -4397,6 +3991,10 @@ components:
         relevance_score:
           title: Relevance Score
           type: number
+        target:
+          description: 'The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.'
+          title: Target
+          type: string
         type:
           const: operation
           default: operation
@@ -4410,6 +4008,7 @@ components:
       - operation_id
       - method
       - url
+      - target
       - relevance_score
       - _links
       title: OperationResultResponse
@@ -4707,6 +4306,7 @@ components:
           title: Description
           type: string
         grantable_by_caller:
+          description: Whether the caller may grant this scope to an agent. `org:admin` callers may grant any scope; anyone else only scopes they hold or the default agent scopes, and never `org:admin` or `agents:write`.
           title: Grantable By Caller
           type: boolean
         implies:
@@ -4784,6 +4384,57 @@ components:
       required:
       - effect
       title: PermissionRuleReadSchema
+      type: object
+    PermissionRuleSchema:
+      additionalProperties: false
+      description: |-
+        Permission rule for an agent↔credential binding.
+
+        Rules are evaluated first-match-wins. If no rule matches, the request is
+        denied (default-deny). A binding with zero rules therefore blocks all
+        operations — users must explicitly add at least one allow rule.
+      properties:
+        effect:
+          description: Whether this rule allows or denies the matched request.
+          enum:
+          - allow
+          - deny
+          title: Effect
+          type: string
+        match_mode:
+          default: regex
+          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
+          enum:
+          - regex
+          - prefix
+          - exact
+          title: Match Mode
+          type: string
+        methods:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: HTTP methods to match (case-insensitive). None matches all.
+          title: Methods
+        operations:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: OpenAPI operation IDs to match. None matches all operations.
+          title: Operations
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
+          title: Path
+      required:
+      - effect
+      title: PermissionRuleSchema
       type: object
     PermissionTestRequest:
       additionalProperties: false
@@ -4872,7 +4523,7 @@ components:
         add:
           anyOf:
           - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+              $ref: '#/components/schemas/PermissionRuleSchema'
             type: array
           - type: 'null'
           title: Add
@@ -5175,7 +4826,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: OAuth2 redirect URI for providers that require it.
+          description: OAuth2 redirect URI for providers that require it. When no explicit redirect_uri is configured, this is derived from the deployment's public origin (server.public_base_url or the request origin), so it reflects the exact callback the connect flow will register with the IdP. Add this URL to your OAuth app's allowed redirect URIs.
           title: Callback Url
         configured:
           description: Whether the provider is fully configured and operational.
@@ -5403,7 +5054,7 @@ components:
         rules:
           description: Initial ordered rule list (first-match-wins, default-deny).
           items:
-            $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+            $ref: '#/components/schemas/PermissionRuleSchema'
           maxItems: 100
           title: Rules
           type: array
@@ -5448,6 +5099,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5469,6 +5124,7 @@ components:
       - name
       - rules
       - binding_count
+      - curated
       - created_at
       title: RuleSetResponse
       type: object
@@ -5484,6 +5140,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5502,6 +5162,7 @@ components:
       - rule_set_id
       - name
       - rule_count
+      - curated
       - created_at
       title: RuleSetSummaryResponse
       type: object
@@ -5706,7 +5367,7 @@ components:
       type: object
     ServedApiRef:
       description: |-
-        An API served by a toolkit's bound credential, keyed by its stored identity.
+        An API served by an agent's bound credential, keyed by its stored identity.
 
         Distinct from ``APIReference`` on purpose: this carries the *stored* credential
         identity, where ``api_name``/``api_version`` may be NULL (the "covers all
@@ -5730,141 +5391,6 @@ components:
       required:
       - api_vendor
       title: ServedApiRef
-      type: object
-    ServiceAccountCreateRequest:
-      description: Request body for creating a service account.
-      properties:
-        description:
-          anyOf:
-          - maxLength: 1024
-            type: string
-          - type: 'null'
-          title: Description
-        name:
-          maxLength: 255
-          minLength: 1
-          title: Name
-          type: string
-        scopes:
-          anyOf:
-          - items:
-              maxLength: 64
-              minLength: 1
-              pattern: ^[a-zA-Z0-9_:./-]+$
-              type: string
-            maxItems: 100
-            type: array
-          - type: 'null'
-          title: Scopes
-      required:
-      - name
-      title: ServiceAccountCreateRequest
-      type: object
-    ServiceAccountListResponse:
-      description: List of service accounts.
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/ServiceAccountResponse'
-          title: Data
-          type: array
-        has_more:
-          title: Has More
-          type: boolean
-        next_cursor:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Next Cursor
-      required:
-      - data
-      - has_more
-      title: ServiceAccountListResponse
-      type: object
-    ServiceAccountResponse:
-      description: ServiceAccount representation in API responses.
-      properties:
-        approved_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Approved At
-        approved_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Approved By
-        created_at:
-          format: date-time
-          title: Created At
-          type: string
-        denial_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Denial Reason
-        denied_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Denied By
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Description
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        owner_id:
-          title: Owner Id
-          type: string
-        registered_by:
-          title: Registered By
-          type: string
-        status:
-          title: Status
-          type: string
-      required:
-      - id
-      - name
-      - owner_id
-      - registered_by
-      - status
-      - created_at
-      title: ServiceAccountResponse
-      type: object
-    ServiceAccountScopesRequest:
-      description: Request body for replacing a service account's scopes.
-      properties:
-        scopes:
-          items:
-            maxLength: 64
-            minLength: 1
-            pattern: ^[a-zA-Z0-9_:./-]+$
-            type: string
-          maxItems: 100
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: ServiceAccountScopesRequest
-      type: object
-    ServiceAccountScopesResponse:
-      description: Response containing a service account's current scopes.
-      properties:
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: ServiceAccountScopesResponse
       type: object
     SetPermissionsRequest:
       description: Request body for setting user permissions.
@@ -6032,7 +5558,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent and service-account tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
+          description: Space-delimited effective scopes of the minted access token (RFC 6749 §3.3), computed the way the platform's resolvers enforce them (live scope grants ∩ client ceiling ∩ consent-grant scopes for agent tokens), so the granted set may be narrower than requested and clients must not assume they got what they asked for. Present on every response whose token carries at least one scope; OMITTED (never the ABNF-invalid empty string) only when the effective set is empty — reachable solely on legs where the client requested no scopes at the token endpoint (the token request carries no scope parameter, and consent fails closed on an empty intersection).
           title: Scope
         token_type:
           default: bearer
@@ -6042,32 +5568,6 @@ components:
       - access_token
       - expires_in
       title: TokenResponse
-      type: object
-    ToolkitBindingEntry:
-      description: Toolkit binding summary for the /me response.
-      properties:
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Name
-        serves:
-          default: []
-          items:
-            $ref: '#/components/schemas/ServedApiRef'
-          title: Serves
-          type: array
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-      required:
-      - toolkit_id
-      - bound_at
-      title: ToolkitBindingEntry
       type: object
     TopOperation:
       description: Aggregated execution counts for a single operation.
@@ -6393,6 +5893,40 @@ components:
           title: Last Name
       title: UserUpdateRequest
       type: object
+    VendorListResponse:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/VendorSummaryResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: VendorListResponse
+      type: object
+    VendorSummaryResponse:
+      properties:
+        display_name:
+          title: Display Name
+          type: string
+        flow_kinds:
+          items:
+            type: string
+          title: Flow Kinds
+          type: array
+        key:
+          title: Key
+          type: string
+        vendor:
+          title: Vendor
+          type: string
+      required:
+      - key
+      - vendor
+      - display_name
+      - flow_kinds
+      title: VendorSummaryResponse
+      type: object
     VersionResponse:
       description: The running app version and the latest release known to this backend.
       properties:
@@ -6415,127 +5949,6 @@ components:
       - update_available
       title: VersionResponse
       type: object
-    jentic_one__auth__web__schemas__agents__DenyRequest:
-      description: Request body for denying an agent.
-      properties:
-        reason:
-          maxLength: 1024
-          minLength: 1
-          title: Reason
-          type: string
-      required:
-      - reason
-      title: DenyRequest
-      type: object
-    jentic_one__auth__web__schemas__service_accounts__DenyRequest:
-      description: Request body for denying a service account.
-      properties:
-        reason:
-          maxLength: 1024
-          minLength: 1
-          title: Reason
-          type: string
-      required:
-      - reason
-      title: DenyRequest
-      type: object
-    jentic_one__control__web__schemas__access_requests__PermissionRuleSchema:
-      additionalProperties: false
-      description: Permission rule for an access request item.
-      properties:
-        effect:
-          enum:
-          - allow
-          - deny
-          - require-approval
-          title: Effect
-          type: string
-        match_mode:
-          default: regex
-          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
-          enum:
-          - regex
-          - prefix
-          - exact
-          title: Match Mode
-          type: string
-        methods:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: HTTP methods to match (case-insensitive). None matches all.
-          title: Methods
-        operations:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: OpenAPI operation IDs to match. None matches all operations.
-          title: Operations
-        path:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
-          title: Path
-      required:
-      - effect
-      title: PermissionRuleSchema
-      type: object
-    jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema:
-      additionalProperties: false
-      description: |-
-        Permission rule for an agent↔credential binding.
-
-        Rules are evaluated first-match-wins. If no rule matches, the request is
-        denied (default-deny). A binding with zero rules therefore blocks all
-        operations — users must explicitly add at least one allow rule.
-      properties:
-        effect:
-          description: Whether this rule allows or denies the matched request.
-          enum:
-          - allow
-          - deny
-          title: Effect
-          type: string
-        match_mode:
-          default: regex
-          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
-          enum:
-          - regex
-          - prefix
-          - exact
-          title: Match Mode
-          type: string
-        methods:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: HTTP methods to match (case-insensitive). None matches all.
-          title: Methods
-        operations:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          description: OpenAPI operation IDs to match. None matches all operations.
-          title: Operations
-        path:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
-          title: Path
-      required:
-      - effect
-      title: PermissionRuleSchema
-      type: object
   securitySchemes:
     BearerAuth:
       description: |-
@@ -6543,12 +5956,9 @@ components:
 
         Obtain one from `POST /oauth/token` using the grant for your actor type:
         - **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).
-        - **Service accounts** — `grant_type=client_credentials` with `client_id` + `client_secret`.
         - **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.
 
-        Service accounts can also mint short-lived, scope-narrowed task tokens for agents via `POST /oauth/mint`.
-
-        Per-endpoint scope and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-scopes / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
+        Per-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
       scheme: bearer
       type: http
 info:
@@ -6591,16 +6001,15 @@ info:
 
     Today the platform ships a local username + password identity
     provider for human users, alongside agent identity (Dynamic Client
-    Registration + RFC 7523 JWT-bearer assertions) and service-account
-    client credentials — every authenticated operation expects
+    Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
     `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
     token) except `GET /health`, `POST /auth/login`,
     `POST /users:create-admin`, and `POST /users:redeem-invite`.
     Human tokens are issued by `POST /auth/login` with a fixed 1-hour
     TTL and can be re-minted before expiry via `POST /auth/refresh`
     (sliding session, bounded by an absolute window —
-    `admin.auth.session_ttl_seconds`, 12 hours by default); agents and
-    service accounts obtain tokens from `POST /oauth/token` (see
+    `admin.auth.session_ttl_seconds`, 12 hours by default); agents
+    obtain tokens from `POST /oauth/token` (see
     `BearerAuth`). The `permissions` claim on a token is a snapshot at
     issue time; permission changes take effect at the next re-issue —
     the next refresh or re-login (≤ 1 hour with the default TTL).
@@ -6677,7 +6086,7 @@ info:
       edit.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
-      from it. To walk all executions under one logical request, use
+      from it. To walk the executions you can see under one logical request, use
       `GET /executions?trace_id=…`.
     - **Event stream.** The dashboard / operator UI consumes the
       `/events` resource (paginated list + SSE stream). Some events
@@ -6697,8 +6106,8 @@ info:
 
       | Prefix | Resource | Notes |
       |---|---|---|
-      | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the service account it was migrated to. |
+      | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+      | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -6707,10 +6116,11 @@ info:
       | `rev_` | API revision | ULID-shaped. |
       | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
       | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-      | `areq_` | Access request | Human-approval ticket for scope grants and credential bindings; see the `Access Requests` tag. |
+      | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated service account — for the deprecation window; rotate holders to `sak_` keys. |
+      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+      | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.
@@ -6719,7 +6129,7 @@ info:
     name: Apache-2.0
   summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, direct agent bindings), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
   title: Jentic Control Plane API
-  version: 0.39.0
+  version: 0.41.0
 openapi: 3.1.0
 paths:
   /.well-known/jwks.json:
@@ -7009,27 +6419,11 @@ paths:
       summary: OAuth protected resource metadata for the MCP resource
       tags:
       - Discovery
-  /access-requests:
+  /actors:
     get:
-      description: List access requests with cursor-based pagination.
-      operationId: listAccessRequests
+      description: List all actors (users and agents) for UI cache hydration.
+      operationId: listActors
       parameters:
-      - in: query
-        name: actor_id
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Actor Id
-      - in: query
-        name: status
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Status
       - in: query
         name: cursor
         required: false
@@ -7042,8 +6436,8 @@ paths:
         name: limit
         required: false
         schema:
-          default: 50
-          maximum: 200
+          default: 1000
+          maximum: 5000
           minimum: 1
           title: Limit
           type: integer
@@ -7052,7 +6446,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccessRequestListResponse'
+                $ref: '#/components/schemas/ActorListResponse'
           description: Successful Response
         '400':
           content:
@@ -7108,463 +6502,89 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List access requests
-      tags:
-      - Access Requests
-    post:
-      description: File a new access request.
-      operationId: fileAccessRequest
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AccessRequestFileRequest'
-        required: true
-      responses:
-        '202':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '409':
-          content:
-            application/problem+json:
-              example: &id008
-                detail: The request conflicts with the current state of the resource.
-                instance: /example/path
-                status: 409
-                title: Conflict
-                type: conflict
-              schema:
-                $ref: '#/components/schemas/DuplicatePendingProblem'
-          description: A pending request already exists for the same resource.
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: File access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:
-    get:
-      description: Get a single access request by ID.
-      operationId: getAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: &id007
-                detail: The requested resource does not exist or is not visible to you.
-                instance: /example/path
-                status: 404
-                title: Not Found
-                type: not_found
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:amend:
-    post:
-      description: Amend pending items on an access request.
-      operationId: amendAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AmendRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Amend access request
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:decide:
-    post:
-      description: Decide (approve/deny) items on an access request.
-      operationId: decideAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DecideRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Decide access request items
-      tags:
-      - Access Requests
-  /access-requests/{request_id}:withdraw:
-    post:
-      description: Withdraw a pending access request.
-      operationId: withdrawAccessRequest
-      parameters:
-      - in: path
-        name: request_id
-        required: true
-        schema:
-          title: Request Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AccessRequestResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '404':
-          content:
-            application/problem+json:
-              example: *id007
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Not Found
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Withdraw access request
-      tags:
-      - Access Requests
-  /actors:
-    get:
-      description: List all actors (users, agents, service accounts) for UI cache hydration.
-      operationId: listActors
-      parameters:
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 1000
-          maximum: 5000
-          minimum: 1
-          title: Limit
-          type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActorListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
       summary: List Actors
+      tags:
+      - Actors
+  /actors/lookup:
+    get:
+      description: |-
+        Resolve user and agent ids to display names for any signed-in caller.
+
+        Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
+        asked for, so a caller without ``users:read`` can label the owners,
+        approvers and actors it already sees by id. Users resolve for any caller;
+        agents only when the caller may see them (its own agents, itself, or with
+        ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+        Ids that match no visible user or agent are left out of the response
+        rather than reported as errors. Listing the whole directory stays behind
+        ``users:read`` on ``GET /actors``.
+      operationId: lookupActors
+      parameters:
+      - description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+        in: query
+        name: id
+        required: true
+        schema:
+          description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+          items:
+            maxLength: 64
+            type: string
+          maxItems: 100
+          minItems: 1
+          title: Id
+          type: array
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActorLookupResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Resolve actor names by id
       tags:
       - Actors
   /admin/config/providers:
@@ -7667,7 +6687,12 @@ paths:
         '404':
           content:
             application/problem+json:
-              example: *id007
+              example: &id007
+                detail: The requested resource does not exist or is not visible to you.
+                instance: /example/path
+                status: 404
+                title: Not Found
+                type: not_found
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Not Found
@@ -8770,7 +7795,7 @@ paths:
         Archive an agent — terminal-but-kept.
 
         The row is retained for history, but the action is not reversible and
-        the agent's authority is swept: scope grants, credential bindings, and
+        the agent's authority is swept: permission grants, credential bindings, and
         OAuth consent grants are revoked. For the reversible kill switch use
         ``:disable`` / ``:enable`` instead.
       operationId: archiveAgent
@@ -9254,13 +8279,13 @@ paths:
         schema:
           title: Credential Id
           type: string
-      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+      - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
         in: query
         name: purge
         required: false
         schema:
           default: false
-          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright.'
+          description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
           title: Purge
           type: boolean
       responses:
@@ -9469,7 +8494,8 @@ paths:
         name and redirect-URI origin, the granted scopes, the consenting user,
         and created/last-used timestamps. Allowed for the agent's owner or an
         admin — authorization is enforced in the service layer, mirroring the
-        ``:revoke`` semantics.
+        ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+        same as an agent that does not exist.
       operationId: listAgentOauthGrants
       parameters:
       - in: path
@@ -9569,10 +8595,10 @@ paths:
       summary: List agent OAuth grants
       tags:
       - Agents
-  /agents/{agent_id}/scopes:
+  /agents/{agent_id}/permissions:
     get:
-      description: List scopes granted to an agent.
-      operationId: getAgentScopes
+      description: List permissions granted to an agent.
+      operationId: getAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -9585,7 +8611,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -9631,12 +8657,12 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Scopes
+      summary: Get Agent Permissions
       tags:
       - Agents
     put:
-      description: Replace all scopes for an agent.
-      operationId: replaceAgentScopes
+      description: Replace all permissions for an agent.
+      operationId: replaceAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -9648,14 +8674,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AgentScopesRequest'
+              $ref: '#/components/schemas/AgentPermissionsRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -9701,12 +8727,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Replace Agent Scopes
+      summary: Replace Agent Permissions
       tags:
       - Agents
   /agents/{agent_id}:approve:
     post:
-      description: Approve a pending agent.
+      description: |-
+        Approve a pending agent.
+
+        Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+        (an unclaimed self-registration) can be approved only by an ``org:admin``,
+        who becomes its owner. Any other caller gets a 404, whatever the agent's
+        status, so the response does not reveal agents outside the caller's
+        ownership.
       operationId: approveAgent
       parameters:
       - in: path
@@ -9781,13 +8814,13 @@ paths:
 
         Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
         only a human can own an agent. The ``require_actor_type`` gate rejects a
-        non-user actor (agent/service-account) at the boundary with a 403;
+        non-user actor (an agent) at the boundary with a 403;
         ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
         ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
         claiming is an onboarding step a brand-new user may hit before they have
         rotated a temporary password, so a must-change-password state must not block
-        it. The claim only sets ownership — it grants no scopes and cannot act as the
+        it. The claim only sets ownership — it grants no permissions and cannot act as the
         agent — so allowing it under an expired password is low-risk.
       operationId: claimAgent
       parameters:
@@ -9859,7 +8892,12 @@ paths:
       - Agents
   /agents/{agent_id}:deny:
     post:
-      description: Deny a pending agent.
+      description: |-
+        Deny a pending agent.
+
+        Same authorization as approve: the agent's owner or an ``org:admin``, and
+        only an ``org:admin`` for an agent with no owner. Any other caller gets a
+        404.
       operationId: denyAgent
       parameters:
       - in: path
@@ -9872,7 +8910,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/jentic_one__auth__web__schemas__agents__DenyRequest'
+              $ref: '#/components/schemas/DenyRequest'
         required: true
       responses:
         '200':
@@ -11288,8 +10326,9 @@ paths:
         promotes the prior revision back to current), so it is the same operator action as
         confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
         carry a recorded superseded revision that is still restorable; otherwise a 409 is
-        returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
-        changes.
+        returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
+        ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
+        restored revision's hosts) and nothing changes.
       operationId: rollbackOverlay
       parameters:
       - in: path
@@ -11901,7 +10940,14 @@ paths:
       - APIs
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote:
     post:
-      description: Promote a draft revision to published, archiving the current one.
+      description: |-
+        Promote a draft revision to published, archiving the current one.
+
+        If the draft declares different server hosts than the API's current (or last
+        live) revision, or serves a host over plaintext http that was https-only, and
+        the API has credentials bound to agents, the caller also needs
+        ``credentials:write``; otherwise the promote is refused with 403
+        ``host_change_requires_operator``.
       operationId: promoteRevision
       parameters:
       - in: path
@@ -12988,7 +12034,12 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: *id008
+              example: &id008
+                detail: The request conflicts with the current state of the resource.
+                instance: /example/path
+                status: 409
+                title: Conflict
+                type: conflict
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
@@ -13137,6 +12188,431 @@ paths:
       summary: Refresh Catalog
       tags:
       - Catalog
+  /connect-sessions:
+    get:
+      description: |-
+        List connect sessions with cursor-based pagination.
+
+        Rows are slim summaries scoped to the caller (initiator-owned;
+        ``org:admin`` sees all; a delegated agent holding
+        ``owner:credentials:read`` also sees its owner's sessions). The
+        ``poll_token`` capability is never included.
+      operationId: listConnectSessions
+      parameters:
+      - description: Filter by session state
+        in: query
+        name: state
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - created
+            - polling
+            - connected
+            type: string
+          - type: 'null'
+          description: Filter by session state
+          title: State
+      - description: Filter by vendor registry key
+        in: query
+        name: vendor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by vendor registry key
+          title: Vendor
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cursor
+      - in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 200
+          minimum: 1
+          title: Limit
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectSessionListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List connect sessions
+      tags:
+      - Integrations
+  /connect-sessions/{session_id}:
+    get:
+      description: |-
+        Data the review page needs: vendor display name, resolved flow, the
+        scope catalog flagged with default/requested, current state, reason.
+
+        Gated by the session's ``poll_token`` capability (rides the approval
+        URL / the ``:connect`` response) — ``credentials:write`` alone must
+        not read arbitrary sessions' review data. Missing session and token
+        mismatch both surface as 403, matching ``/status`` (no session-id
+        enumeration oracle).
+      operationId: getConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get review data for a connect session
+      tags:
+      - Integrations
+  /connect-sessions/{session_id}/status:
+    get:
+      operationId: pollConnectSessionStatus
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Poll a connect session's status
+      tags:
+      - Integrations
+  /connect-sessions/{session_id}:cancel:
+    post:
+      description: |-
+        Terminate a still-active session at the user's request.
+
+        Gated by the same ``poll_token`` capability as ``/status`` — the
+        SPA already holds it, so we don't force the caller to bring a
+        heavier scope than the poller endpoint they're already using.
+
+        A still-existing but already-terminal session is a 204 no-op — a
+        "Cancel" click racing the poll scanner doesn't error. A session
+        that has already been cascade-deleted (unhappy-terminal path in
+        ``_mark_terminal``) surfaces as 403, matching ``/status`` — the
+        caller can't distinguish "gone" from "your poll_token is wrong",
+        which is the enumeration-oracle guard. The SPA's cancel-on-unmount
+        is fire-and-forget and ``.catch``es the 403, so this doesn't leak
+        into the UX.
+      operationId: cancelConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Cancel an in-flight connect session
+      tags:
+      - Integrations
+  /connect-sessions/{session_id}:confirm:
+    post:
+      description: |-
+        Called by the review page after the human confirms selections.
+
+        Shares the ``:connect`` per-actor rate bucket — this is the endpoint
+        that actually fires the vendor's device-authorization call, and a
+        failed ``begin`` leaves the session retryable, so it must not be
+        free to hammer during a vendor incident. Gated by ``poll_token``
+        like the review read (403 on mismatch or missing session).
+      operationId: confirmConnectSession
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          title: Session Id
+          type: string
+      - description: Opaque poll capability
+        in: query
+        name: poll_token
+        required: true
+        schema:
+          description: Opaque poll capability
+          title: Poll Token
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmSessionRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Confirm scopes + permissions and kick off the vendor flow
+      tags:
+      - Integrations
   /control/health:
     get:
       description: |-
@@ -13732,7 +13208,8 @@ paths:
         List agents directly bound to a credential with cursor-based pagination.
 
         The reverse lookup for the credential-detail "Agents" view (theme 5
-        phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+        phase 1) — the direct-binding successor of the removed
+        ``GET /toolkits/{id}/agents``.
         Suspended bindings are included with their flag set.
       operationId: listCredentialAgents
       parameters:
@@ -14002,7 +13479,7 @@ paths:
           application/json:
             schema:
               items:
-                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+                $ref: '#/components/schemas/PermissionRuleSchema'
               maxItems: 100
               title: Body
               type: array
@@ -14240,7 +13717,11 @@ paths:
 
         While attached, the set's ordered list is the binding's effective policy
         and its inline rules are dormant — `permissions:test` evaluates the set.
-        The set must exist (404 `rule_set_not_found`).
+        The set must exist (404 `rule_set_not_found`). The caller must be the
+        set's creator or an org admin, unless the set is curated (created by an
+        org admin), which any caller who may write the binding's rules can
+        attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+        binding already points at is a no-op.
       operationId: attachAgentCredentialRuleSet
       parameters:
       - in: path
@@ -14320,7 +13801,13 @@ paths:
       - Credentials
   /credentials/{credential_id}/connect:
     post:
-      description: Initiate the OAuth connect flow for a credential.
+      description: |-
+        Initiate the OAuth connect flow for a credential.
+
+        Discriminates on the provider's returned challenge: OAuth2
+        authorization-code providers return an ``authorize_url`` for popup
+        redirect; device-flow providers return ``user_code`` /
+        ``verification_uri`` for the RFC 8628 human step.
       operationId: connectCredential
       parameters:
       - in: path
@@ -14339,8 +13826,7 @@ paths:
         '200':
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/ConnectChallengeResponse'
+              schema: {}
           description: Successful Response
         '400':
           content:
@@ -15011,10 +14497,10 @@ paths:
 
         **Always self-scoped** — derived from the authenticated identity's own
         credential bindings; there is no cross-actor or admin variant. Credentials
-        bind to agents and service accounts, so agent-scoped tokens (the OAuth
-        agent-consent flow's output) and `sak_` keys are the callers this endpoint
-        serves — a plain user token yields an empty set. Suspended bindings and
-        inactive credentials still contribute their hosts: keep diverting that
+        bind to agents, so agent-scoped tokens (the OAuth agent-consent flow's
+        output) and agent API keys are the callers this endpoint serves — a plain
+        user token yields an empty set. Suspended bindings and inactive
+        credentials still contribute their hosts: keep diverting that
         traffic, so the broker can refuse it — dropping it from the list would
         send it direct to the upstream, unbrokered. The ``digest`` covers exactly
         the ``data`` list and is also emitted as a strong ``ETag``, so integrators
@@ -15125,7 +14611,13 @@ paths:
       - System
   /inspect:
     get:
-      description: Inspect an operation — resolve to full structural detail.
+      description: |-
+        Inspect an operation — resolve to full structural detail.
+
+        `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+        reference: the identity to use in credential scopes, revision pins and
+        other API references. `api.display_name` (optional) is a human-readable
+        label only.
       operationId: inspectOperation
       parameters:
       - description: METHOD URL identifier
@@ -15241,6 +14733,78 @@ paths:
       summary: Backend identity
       tags:
       - System
+  /integrations:connect:
+    post:
+      description: |-
+        Both entrypoints (agent + UI) use this endpoint.
+
+        Agent callers: `agent_id` in the payload is refused (the caller *is*
+        the agent — spoofing another agent's id is a permission-boundary
+        violation). The caller's own identity is injected instead. UI / user
+        callers: `agent_id` is optional — when named, confirm creates the
+        direct agent-credential binding + permission rules; when omitted, the
+        credential connects unbound and an agent can be bound later through
+        the credentials API.
+      operationId: integrationsConnect
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationsConnectRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Start an integration connect session
+      tags:
+      - Integrations
   /jobs:
     get:
       description: List jobs with optional filters.
@@ -15761,13 +15325,11 @@ paths:
                 discriminator:
                   mapping:
                     agent: '#/components/schemas/MeAgent'
-                    service_account: '#/components/schemas/MeServiceAccount'
                     user: '#/components/schemas/MeUser'
                   propertyName: type
                 oneOf:
                 - $ref: '#/components/schemas/MeUser'
                 - $ref: '#/components/schemas/MeAgent'
-                - $ref: '#/components/schemas/MeServiceAccount'
                 title: Response Getme
           description: Successful Response
         '400':
@@ -16966,13 +16528,53 @@ paths:
       - OAuth
   /oauth/introspect:
     post:
-      description: Introspect a token (RFC 7662).
+      description: |-
+        Introspect a token (RFC 7662).
+
+        Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+        encoding) and JSON (the platform's own contract) bodies. Both arms
+        require a platform bearer identity, and both answer an unknown, invalid,
+        or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+        malformed request body (missing ``token``) is a 400 ``invalid_request``:
+        Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+        form arm.
       operationId: introspectEndpoint
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IntrospectRequest'
+              description: Introspection endpoint request (RFC 7662) — JSON or form-encoded.
+              properties:
+                token:
+                  title: Token
+                  type: string
+                  x-sensitive: true
+                token_type_hint:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Token Type Hint
+              required:
+              - token
+              title: IntrospectRequest
+              type: object
+          application/x-www-form-urlencoded:
+            schema:
+              description: Introspection endpoint request (RFC 7662) — JSON or form-encoded.
+              properties:
+                token:
+                  title: Token
+                  type: string
+                  x-sensitive: true
+                token_type_hint:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Token Type Hint
+              required:
+              - token
+              title: IntrospectRequest
+              type: object
         required: true
       responses:
         '200':
@@ -16987,7 +16589,7 @@ paths:
               example: *id001
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
+          description: 'Malformed request body (missing `token`). JSON requests get platform Problem Details (`type: invalid_request`); form-encoded (RFC 7662 §2.1) requests get the RFC 6749 §5.2 dialect: `{"error": "invalid_request", "error_description": "..."}`. An unknown, invalid, or expired token value is never an error — it is 200 `{"active": false}` (RFC 7662 §2.2).'
         '401':
           content:
             application/problem+json:
@@ -17026,74 +16628,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Introspect Endpoint
-      tags:
-      - OAuth
-  /oauth/mint:
-    post:
-      description: |-
-        Mint a short-lived ephemeral token for a task agent.
-
-        The caller must be an authenticated service account. The requested scopes
-        must be a subset of the caller's own scopes.
-      operationId: mintEndpoint
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MintRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MintResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Mint Endpoint
       tags:
       - OAuth
   /oauth/revoke:
@@ -17266,7 +16800,7 @@ paths:
   /oauth/token:
     post:
       description: |-
-        Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+        Exchange a refresh token, JWT assertion, or authorization code for tokens.
 
         Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
         ``error_description``), NOT platform Problem Details — reshaped by
@@ -17704,7 +17238,11 @@ paths:
       tags:
       - Permission Rule Sets
     patch:
-      description: Rename or re-describe a rule set (creator or org admin).
+      description: |-
+        Rename or re-describe a rule set.
+
+        A curated set is editable by an org admin; any other set by its creator
+        or an org admin (403 `rule_set_access_denied` otherwise).
       operationId: updatePermissionRuleSet
       parameters:
       - in: path
@@ -17800,7 +17338,7 @@ paths:
           application/json:
             schema:
               items:
-                $ref: '#/components/schemas/jentic_one__control__web__schemas__permission_rules__PermissionRuleSchema'
+                $ref: '#/components/schemas/PermissionRuleSchema'
               maxItems: 100
               title: Body
               type: array
@@ -18271,741 +17809,6 @@ paths:
       summary: Search operations
       tags:
       - Search
-  /service-accounts:
-    get:
-      description: List service accounts — owner-scoped unless caller is org:admin.
-      operationId: listServiceAccounts
-      parameters:
-      - in: query
-        name: cursor
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Cursor
-      - in: query
-        name: limit
-        required: false
-        schema:
-          default: 50
-          maximum: 200
-          minimum: 1
-          title: Limit
-          type: integer
-      - in: query
-        name: status
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Status
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountListResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: List Service Accounts
-      tags:
-      - Service Accounts
-    post:
-      description: Create a new service account.
-      operationId: createServiceAccount
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ServiceAccountCreateRequest'
-        required: true
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Create Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:
-    delete:
-      description: |-
-        Archive a service account — terminal-but-kept.
-
-        The row is retained for history, but the action is not reversible and
-        the account's scope grants are revoked. For the reversible kill switch
-        use ``:disable`` / ``:enable`` instead.
-      operationId: archiveServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Archive Service Account
-      tags:
-      - Service Accounts
-    get:
-      description: Get service account by ID — requires service-accounts:read or self-read.
-      operationId: getServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}/scopes:
-    get:
-      description: List scopes granted to a service account.
-      operationId: getServiceAccountScopes
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountScopesResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Get Service Account Scopes
-      tags:
-      - Service Accounts
-    put:
-      description: Replace all scopes for a service account.
-      operationId: replaceServiceAccountScopes
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ServiceAccountScopesRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountScopesResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Replace Service Account Scopes
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:approve:
-    post:
-      description: Approve a pending service account.
-      operationId: approveServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Approve Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:deny:
-    post:
-      description: Deny a pending service account.
-      operationId: denyServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/jentic_one__auth__web__schemas__service_accounts__DenyRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceAccountResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Deny Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:disable:
-    post:
-      description: Disable an active service account.
-      operationId: disableServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Disable Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:enable:
-    post:
-      description: Enable a disabled service account.
-      operationId: enableServiceAccount
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '204':
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Enable Service Account
-      tags:
-      - Service Accounts
-  /service-accounts/{service_account_id}:generate-api-key:
-    post:
-      description: Generate a new API key for a service account. Rotates any existing key.
-      operationId: generateServiceAccountApiKey
-      parameters:
-      - in: path
-        name: service_account_id
-        required: true
-        schema:
-          title: Service Account Id
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKeyResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Generate Service Account Api Key
-      tags:
-      - Service Accounts
   /system/version:
     get:
       description: |-
@@ -19344,6 +18147,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user is the last active org:admin
         '422':
           content:
             application/problem+json:
@@ -19549,6 +18366,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Would remove org:admin from the last active org:admin
         '422':
           content:
             application/problem+json:
@@ -19610,6 +18441,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: *id008
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The user is the last active org:admin
         '422':
           content:
             application/problem+json:
@@ -19877,27 +18722,155 @@ paths:
       summary: Redeem invite
       tags:
       - Users
+  /vendors:
+    get:
+      description: |-
+        Public metadata for every vendor in the config-seeded registry.
+
+        Used by the UI's "Add integration" picker. Never returns secrets.
+      operationId: listVendors
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendorListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List verified vendors
+      tags:
+      - Vendors
+  /vendors/{vendor_key}/auth-capabilities:
+    get:
+      description: |-
+        Full auth capabilities for one vendor — flows, scopes, classifications.
+
+        Never returns client_secret (authorization-code flow's secret is stripped
+        at response build time). ``UnknownVendorError`` maps to a 404 problem
+        detail via the handler registered in ``control/web/app.py``.
+      operationId: getAuthCapabilities
+      parameters:
+      - in: path
+        name: vendor_key
+        required: true
+        schema:
+          title: Vendor Key
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get a vendor's SSO capabilities
+      tags:
+      - Vendors
 security:
 - BearerAuth: []
 servers:
-- description: Same-origin (relative)
-  url: /
+- description: Production (placeholder — set to your deployment's Control Plane host)
+  url: https://control.your-instance.example
+- description: Development (placeholder — set to your deployment's Control Plane host)
+  url: https://control-dev.your-instance.example
 tags:
 - description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once** at creation (and on rotation via `PATCH`). Read paths return a redacted projection — last-N characters, hints, never the secret itself.
   name: Credentials
 - description: Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a named, shareable ordered rule list (first-match-wins, default-deny) that many direct agent↔credential bindings can point at via their `rule_set_id`, so a policy edit or `permissions:test` stays a single-place operation. A binding with no `rule_set_id` uses its own inline rules instead. Rule sets carry policy, not secrets; deleting one that bindings still reference is refused (409 `rule_set_in_use`).
   name: Permission Rule Sets
+- description: Part of the **Core / Access** bounded context — the platform-curated catalog of verified vendors that support agent-initiated OAuth connect flows. Each entry describes the OAuth flows available (device_authorization, authorization_code) and the scope catalog with read/write classification. Vendor entries are seeded from operator config, not user-managed — the API surfaces them read-only so the SPA and agents can discover which vendors are available and pick a flow at ``:connect`` time.
+  name: Vendors
 - description: |-
-    Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.
+    Part of the **Core / Access** bounded context — agent-initiated OAuth connect sessions. A caller (agent or UI) begins a session via ``POST /integrations:connect``, choosing a vendor and requested scope set; the platform provisions a pending credential, initiates the vendor's OAuth flow (device_authorization or authorization_code depending on the vendor), and returns a session id + human-facing challenge (device user_code / authorize_url).
 
-    Reviewers `:decide` individual items (approve or deny each); filers can `:amend` pending items (adjust rules or target) or `:withdraw` the entire request. Each item transitions independently; the envelope status reflects the aggregate (`pending` while any item is pending, `partially_approved` when some items are decided but others remain, terminal once all items resolve).
-
-    Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: `pending → partially_approved → approved | denied | withdrawn | expired`.
-
-    **Identity scoping.** List and get operations are identity-scoped: filers see their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners receive `404` (not `403`) to avoid leaking existence.
-
-    **Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) require `agents:write`; read operations require `agents:read`.
-  name: Access Requests
+    The initiator polls ``GET /connect-sessions/{id}/status`` until the session reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are capped by a TTL; unfinished sessions can be cancelled via ``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only hand-off that binds any pre-declared permission rules to the resulting credential.
+  name: Integrations
 - description: |-
     The `Api` aggregate root — what APIs are registered for this deployment, addressable by the loose `(vendor, name, version)` tuple. Every successful import lands a new immutable `ApiRevision`; the `Api` carries the live `current_revision_id` plus presentation metadata (`display_name`, `description`, `icon_url`).
 
@@ -19963,11 +18936,11 @@ tags:
 
     **Authentication.** Any authenticated principal (agent or human) can submit, edit, confirm, or deprecate overlays. Platform-side rate limits gate abuse.
   name: Overlays
-- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`.
+- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
-- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`.
+- description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs
-- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter.
+- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter. An event is visible only to the actor it names (`actor_id`), to the subject it is about (for example the owner of the credential or the agent concerned), to the human owner of either when that is an agent, and to `org:admin`; system events with no subject are visible only to `org:admin`. To any other caller an event is indistinguishable from a missing one (`404`), including on acknowledgement.
   name: Events
 - description: |-
     Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).
@@ -19987,23 +18960,21 @@ tags:
 
     One reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.
 
-    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
+    The same vocabulary is used for `User.permissions` — the coarse set embedded in the JWT — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
-- description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
+- description: Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject and its permissions behind the presented token.
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents
-- description: Machine principals for non-interactive integrations — lifecycle (create, list, read, approve / deny, enable / disable, archive) mirroring the agent surface.
-  name: Service Accounts
-- description: OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the authorize, token, introspection, revocation, and assertion-mint endpoints plus the redirect callback.
+- description: OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the authorize, token, introspection, and revocation endpoints plus the redirect callback.
   name: OAuth
 - description: Dynamic agent registration (RFC 7591-style) — register a new agent client, poll registration status, update, or delete a registration.
   name: Agent Registration
 - description: Unauthenticated metadata discovery — the JWKS document and OAuth authorization server metadata under `/.well-known/*`.
   name: Discovery
-- description: Unified actor directory — a lightweight read-only view across all actor types (users, agents, service accounts). Returns ID-to-name mappings for UI cache hydration so dashboards can display friendly names wherever an `actor_id` appears.
+- description: Unified actor directory — a lightweight read-only view across all actor types (users and agents). Returns ID-to-name mappings for UI cache hydration so dashboards can display friendly names wherever an `actor_id` appears.
   name: Actors
 - description: Append-only administrative audit trail — who did what, when. Distinct from `Executions` (brokered upstream calls); this records control-plane mutations.
   name: Audit
@@ -20020,7 +18991,8 @@ x-tagGroups:
   tags:
   - Credentials
   - Permission Rule Sets
-  - Access Requests
+  - Vendors
+  - Integrations
 - name: Registry
   tags:
   - APIs
@@ -20048,7 +19020,6 @@ x-tagGroups:
   tags:
   - Identity
   - Agents
-  - Service Accounts
   - OAuth
   - Agent Registration
   - Discovery

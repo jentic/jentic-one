@@ -1,4 +1,4 @@
-"""OAuth token, revocation, introspection, and ephemeral minting endpoints."""
+"""OAuth token, revocation, and introspection endpoints."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from jentic.problem_details import ProblemDetail
 from pydantic import ValidationError
 
 from jentic_one.admin.services.oauth_client_service import OAuthClientService
@@ -20,29 +21,27 @@ from jentic_one.auth.services.assertion_service import AssertionService
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import (
     InvalidGrantError,
+    InvalidIntrospectionRequestError,
     InvalidRevocationRequestError,
     RateLimitExceededError,
 )
 from jentic_one.auth.services.oauth_revocation_service import OAuthRevocationService
-from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.auth.web.errors import record_rate_limited_request
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
-    MintRequest,
-    MintResponse,
     RevokeRequest,
     TokenRequest,
     TokenResponse,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.links import deployment_base_url
 
 logger = structlog.get_logger(__name__)
 
@@ -113,7 +112,6 @@ async def _check_token_rate_limit(request: Request, ctx: Context = Depends(get_c
 
 
 _JWT_BEARER_GRANT = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-_CLIENT_CREDENTIALS_GRANT = "client_credentials"
 _AUTHORIZATION_CODE_GRANT = "authorization_code"
 
 
@@ -126,8 +124,8 @@ def _scope_member(scopes: list[str]) -> str | None:
     honest here: no grant leg of this endpoint accepts a scope parameter in
     the token request, and the consent flow fails closed on an empty
     intersection (``no_grantable_scopes``), so an empty set can only mean the
-    caller never asked for scopes at this endpoint (zero-grant agents/SAs on
-    the jwt-bearer/client-credentials legs) or every grant was revoked
+    caller never asked for scopes at this endpoint (zero-grant agents on
+    the jwt-bearer leg) or every grant was revoked
     post-mint (refresh leg) — a live, reversible administrative state the
     platform deliberately distinguishes from revocation, which fails the
     exchange closed instead.
@@ -141,10 +139,6 @@ def get_token_service(ctx: Context = Depends(get_ctx)) -> TokenService:
 
 def get_assertion_service(ctx: Context = Depends(get_ctx)) -> AssertionService:
     return AssertionService(ctx)
-
-
-def get_sa_auth_service(ctx: Context = Depends(get_ctx)) -> ServiceAccountAuthService:
-    return ServiceAccountAuthService(ctx)
 
 
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
@@ -354,11 +348,10 @@ async def token_endpoint(
     ctx: Context = Depends(get_ctx),
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),
-    sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
     oauth_client_svc: OAuthClientService = Depends(get_oauth_client_service),
 ) -> TokenResponse:
-    """Exchange a refresh token, JWT assertion, authorization code, or client creds for tokens.
+    """Exchange a refresh token, JWT assertion, or authorization code for tokens.
 
     Error responses speak the RFC 6749 §5.2 dialect (top-level ``error`` +
     ``error_description``), NOT platform Problem Details — reshaped by
@@ -413,6 +406,7 @@ async def token_endpoint(
             redirect_uri=body.redirect_uri,
             client_id=body.client_id,
             oauth_client_id=third_party_client_id,
+            issuer=deployment_base_url(ctx.config, request),
         )
         return TokenResponse(
             access_token=access_token,
@@ -430,30 +424,13 @@ async def token_endpoint(
                 oauth_error_code="invalid_request",
             )
         access_token, refresh_token, scopes = await assertion_svc.verify_and_exchange(
-            body.assertion
+            body.assertion, request_base_url=deployment_base_url(ctx.config, request)
         )
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=token_svc.access_ttl_seconds,
-            scope=_scope_member(scopes),
-        )
-
-    if body.grant_type == _CLIENT_CREDENTIALS_GRANT:
-        if not body.client_id or not body.client_secret:
-            raise InvalidGrantError(
-                "client_id and client_secret are required",
-                oauth_error_code="invalid_request",
-            )
-        access_token, refresh_token, scopes = await sa_auth_svc.authenticate_client_credentials(
-            body.client_id, body.client_secret
-        )
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=sa_auth_svc.access_ttl_seconds,
             scope=_scope_member(scopes),
         )
 
@@ -498,35 +475,6 @@ async def token_endpoint(
 # Mounted via its own router so `_TokenRoute` owns the endpoint's error
 # dialect (same include pattern as `revocation_router` below).
 router.include_router(token_router)
-
-
-@router.post("/oauth/mint")
-async def mint_endpoint(
-    body: MintRequest,
-    identity: Identity = get_current_identity(require_actor_type=ActorType.SERVICE_ACCOUNT),
-    sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
-) -> MintResponse:
-    """Mint a short-lived ephemeral token for a task agent.
-
-    The caller must be an authenticated service account. The requested scopes
-    must be a subset of the caller's own scopes.
-    """
-    requested_scopes = [s.strip() for s in body.scope.split() if s.strip()]
-    ttl = body.ttl_seconds if body.ttl_seconds is not None else 300
-
-    access_token = await sa_auth_svc.mint_task_token(
-        host_sa_id=identity.sub,
-        host_sa_scopes=identity.permissions,
-        requested_scopes=requested_scopes,
-        target_agent_id=body.target_agent_id,
-        ttl_seconds=ttl,
-    )
-
-    return MintResponse(
-        access_token=access_token,
-        token_type="bearer",
-        expires_in=ttl,
-    )
 
 
 #: Raw request-body ceiling for the anonymous RFC 7009 form arm — the DCR
@@ -726,18 +674,115 @@ async def revoke_endpoint(
 router.include_router(revocation_router)
 
 
-@router.post(
+async def _parse_introspect_request(request: Request) -> IntrospectRequest:
+    """Parse the introspection request from JSON or form-encoded body (RFC 7662 §2.1).
+
+    §2.1 prescribes ``application/x-www-form-urlencoded`` for introspection
+    requests; the JSON arm is the platform's own pre-existing contract. Both
+    arms answer a malformed body with 400 ``invalid_request`` — the RFC 7662
+    §2.1 verdict for a missing ``token`` parameter — via the same parse-error
+    taxonomy as ``_parse_token_request``.
+    """
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type == "application/x-www-form-urlencoded":
+        form = await request.form()
+        data = dict(form)
+        try:
+            return IntrospectRequest.model_validate(data)
+        except ValidationError as exc:
+            raise InvalidIntrospectionRequestError(str(exc.errors()[0]["msg"])) from None
+    body_bytes = await request.body()
+    if not body_bytes:
+        raise InvalidIntrospectionRequestError("request body is required")
+    try:
+        return IntrospectRequest.model_validate_json(body_bytes)
+    except ValidationError as exc:
+        raise InvalidIntrospectionRequestError(str(exc.errors()[0]["msg"])) from None
+
+
+_INTROSPECT_REQUEST_SCHEMA = IntrospectRequest.model_json_schema()
+_INTROSPECT_REQUEST_BODY: dict[str, object] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": _INTROSPECT_REQUEST_SCHEMA},
+            "application/x-www-form-urlencoded": {"schema": _INTROSPECT_REQUEST_SCHEMA},
+        },
+    },
+}
+
+
+class _IntrospectionRoute(APIRoute):
+    """Route class making the form arm of ``POST /oauth/introspect`` speak RFC 6749 §5.2.
+
+    A form-encoded request comes from an RFC 7662 client, which parses the
+    OAuth error dialect (top-level ``error`` / ``error_description``), not
+    platform Problem Details — so a malformed form body answers 400
+    ``{"error": "invalid_request", …}``. The JSON arm is the platform's own
+    contract and keeps Problem Details, the same split as ``/oauth/revoke``.
+    Wrapping the whole route handler covers errors raised by the
+    ``_parse_introspect_request`` dependency.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except InvalidIntrospectionRequestError as exc:
+                content_type = (
+                    (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                )
+                if content_type != "application/x-www-form-urlencoded":
+                    raise
+                return _rfc6749_error(400, str(exc))
+
+        return handler
+
+
+introspection_router = APIRouter(route_class=_IntrospectionRoute)
+
+
+@introspection_router.post(
     "/oauth/introspect",
+    openapi_extra=_INTROSPECT_REQUEST_BODY,
+    responses={
+        400: {
+            "description": "Malformed request body (missing `token`). JSON requests get "
+            "platform Problem Details (`type: invalid_request`); form-encoded (RFC 7662 "
+            "§2.1) requests get the RFC 6749 §5.2 dialect: "
+            '`{"error": "invalid_request", "error_description": "..."}`. An unknown, '
+            "invalid, or expired token value is never an error — it is 200 "
+            '`{"active": false}` (RFC 7662 §2.2).',
+            "model": ProblemDetail,
+        },
+    },
     # RFC 7662 §2.2: members the server has no value for are omitted from the
     # introspection response, never emitted as JSON null (the inactive-token
     # body is exactly `{"active": false}`).
     response_model_exclude_none=True,
 )
 async def introspect_endpoint(
-    body: IntrospectRequest,
+    # Identity is declared (and so resolved) before the body parser: an
+    # unauthenticated caller gets the 401 before any body is read or
+    # validated, never a 400 that reflects the body's shape.
     identity: Identity = get_current_identity(allow_expired_password=True),
+    body: IntrospectRequest = Depends(_parse_introspect_request),
     token_svc: TokenService = Depends(get_token_service),
 ) -> IntrospectResponse:
-    """Introspect a token (RFC 7662)."""
+    """Introspect a token (RFC 7662).
+
+    Accepts both ``application/x-www-form-urlencoded`` (the §2.1 request
+    encoding) and JSON (the platform's own contract) bodies. Both arms
+    require a platform bearer identity, and both answer an unknown, invalid,
+    or expired *token value* with 200 ``{"active": false}`` (§2.2) — only a
+    malformed request body (missing ``token``) is a 400 ``invalid_request``:
+    Problem Details on the JSON arm, the RFC 6749 §5.2 error dialect on the
+    form arm.
+    """
     result = await token_svc.introspect(body.token)
     return IntrospectResponse.model_validate(result)
+
+
+router.include_router(introspection_router)

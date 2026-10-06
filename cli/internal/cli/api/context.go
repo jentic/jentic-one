@@ -174,7 +174,7 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&env, "env", "", "Environment this context targets")
 	cmd.Flags().StringVar(&ident, "identity", "", "Identity this context acts as")
-	cmd.Flags().StringVar(&mode, "mode", "", "Interaction mode: human|agent|service-account (default human)")
+	cmd.Flags().StringVar(&mode, "mode", "", "Interaction mode: human|agent (default human)")
 	cmd.Flags().BoolVar(&use, "use", false, "Set this as the active context after creating it")
 	cmd.Flags().BoolVar(&force, "force", false, "Replace an existing context of the same name")
 	mustMarkRequired(cmd, "env")

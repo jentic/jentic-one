@@ -56,12 +56,10 @@ type mcpServer struct {
 	// (mcp_resources.go); zero means the hostedSkillFetchTimeout default.
 	// It exists as a field only so tests can inject a short budget.
 	hostedFetchTimeout time.Duration
-	// importWaitBudget / accessPollBudget override the access-loop tools'
-	// bounded waits (mcp_access.go: import-job tracking, the post-file
-	// auto-decision poll); zero means the defaults. Fields only so tests can
-	// inject short budgets.
+	// importWaitBudget overrides import_api's bounded wait
+	// (mcp_catalog.go: import-job tracking); zero means the default. A field
+	// only so tests can inject short budgets.
 	importWaitBudget time.Duration
-	accessPollBudget time.Duration
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set
@@ -108,7 +106,7 @@ func newMCPServer(a *app, version string, opts *mcpOptions, logger *slog.Logger)
 			Instructions: "Jentic One tool server. On a new machine, or after any tool returns an " +
 				"auth or connectivity error, call get_started first — it diagnoses this " +
 				"machine's setup state and returns the exact operator instruction to fix it. " +
-				"Call whoami to see the agent identity, status, scopes, and credential bindings. " +
+				"Call whoami to see the agent identity, status, permissions, and credential bindings. " +
 				"Every tool result carries a top-level `instance` key identifying the Jentic " +
 				"One instance it came from; instance.backend is \"unreachable\" when the " +
 				"control plane could not be reached. The skill://jentic resource is the " +
@@ -207,8 +205,9 @@ var inspectOperationSchema = map[string]any{
 	"properties": map[string]any{
 		"operation_id": map[string]any{
 			"type": "string",
-			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a registry " +
-				"operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+			"description": "The operation to inspect (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
+				"pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. " +
+				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"revision": map[string]any{
 			"type":        "string",
@@ -220,16 +219,18 @@ var inspectOperationSchema = map[string]any{
 // toolSpecs declares the served tool surface: the 1-A pre-auth pair
 // (get_started, whoami), the 1-B discovery pair (search_apis,
 // inspect_operation), the 1-C execute surface (execute, execute_read,
-// get_execution_result — mcp_execute.go), and the 2-E1 access-loop tools
-// (search_catalog, import_api, request_access — mcp_access.go). Docstrings
+// get_execution_result — mcp_execute.go), the catalog tools
+// (search_catalog, import_api — mcp_catalog.go), and the connect tool
+// (request_connection — mcp_request_connection.go). Docstrings
 // encode the flow (get_started first, whoami before discovery, search →
-// inspect → execute, request access via a human — never probe by executing)
-// per §3.2, with concrete argument examples a model can copy.
+// inspect → execute, access is granted by a human operator — never probe by
+// executing) per §3.2, with concrete argument examples a model can copy.
 func (s *mcpServer) toolSpecs() []mcpToolSpec {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	execSpecs := s.executeToolSpecs()
-	accessSpecs := s.accessToolSpecs()
-	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(accessSpecs))
+	catalogSpecs := s.catalogToolSpecs()
+	connectSpecs := s.connectToolSpecs()
+	specs := make([]mcpToolSpec, 0, 4+len(execSpecs)+len(catalogSpecs)+len(connectSpecs))
 	specs = append(specs, []mcpToolSpec{
 		{
 			tool: &mcp.Tool{
@@ -253,7 +254,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Name:  "whoami",
 				Title: "Show agent identity",
 				Description: "Show the calling agent's identity as the Jentic control plane sees it: " +
-					"id, status, scopes, and credential bindings with the APIs each one serves. " +
+					"id, status, permissions, and credential bindings with the APIs each one serves. " +
 					"Call after get_started reports ready, and before requesting access or " +
 					"executing operations — never execute an operation just to probe whether " +
 					"you have access. On an auth error, call get_started for the fix.",
@@ -269,7 +270,7 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 			laneOverrides: map[string]mcpToolLaneOverride{
 				"http": {
 					description: "Show the calling agent's identity as the Jentic control plane sees it: " +
-						"id, status, scopes, and credential bindings with the APIs each one serves. " +
+						"id, status, permissions, and credential bindings with the APIs each one serves. " +
 						"Call before requesting access or executing operations — never execute " +
 						"an operation just to probe whether you have access. On an auth error, " +
 						"relay it to your human operator: this connection's credentials and the " +
@@ -284,10 +285,13 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 				Description: "Search the connected Jentic One registry for API operations by " +
 					"natural-language query. This is the first step of the discovery flow " +
 					"(whoami → search_apis → inspect_operation → execute): call it whenever " +
-					"you need an operation you don't already have the id of. " +
+					"you need an operation you don't already know the method + URL of. " +
 					`Example: {"query": "create github issue", "limit": 5}. Returns one page ` +
-					"as {data, has_more, next_cursor}; each hit carries the operation_id to " +
-					"pass to inspect_operation. When has_more is true, pass next_cursor back " +
+					"as {data, has_more, next_cursor}; each hit carries a target (its " +
+					"METHOD:url, or its operation_id when the url is host-relative — " +
+					"such a target is inspect-only, execute refuses it) — " +
+					"pass it verbatim as inspect_operation's operation_id. When has_more " +
+					"is true, pass next_cursor back " +
 					"as cursor for the next page. Optionally restrict to specific APIs with " +
 					`apis (vendor/name/version slugs from earlier hits), e.g. ` +
 					`{"query": "list pets", "apis": ["acme/pets/v1"]}. An empty data array ` +
@@ -305,11 +309,11 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 					"URL, parameters, request/response schemas, and security requirements. " +
 					"This is the read-contract step of the flow (whoami → search_apis → " +
 					"inspect_operation → execute) — always inspect before you execute. " +
-					`Example: {"operation_id": "op_abc123"} with an id from a search_apis ` +
-					`hit, or a METHOD:url pair like {"operation_id": ` +
-					`"GET:https://rest.coincap.io/v3/markets"}. Optionally pin a revision ` +
+					`Example: {"operation_id": "GET:https://rest.coincap.io/v3/markets"} — ` +
+					"a search_apis hit's target, passed verbatim. " +
+					"Optionally pin a revision " +
 					"for reproducibility. If the operation is not found, call search_apis " +
-					"to rediscover the right id.",
+					"to rediscover the right target.",
 				InputSchema: inspectOperationSchema,
 				Annotations: readOnly,
 			},
@@ -317,14 +321,15 @@ func (s *mcpServer) toolSpecs() []mcpToolSpec {
 		},
 	}...)
 	specs = append(specs, execSpecs...)
-	return append(specs, accessSpecs...)
+	specs = append(specs, catalogSpecs...)
+	return append(specs, connectSpecs...)
 }
 
 // registerTools applies the serving filters. --exclude-tools drops by name;
 // --read-only drops everything whose OWN ReadOnlyHint annotation is absent —
-// the advertised annotation is the single source of truth, so from 2-E1 on
-// that is exactly execute (1-C), import_api, and request_access (execute_read,
-// get_execution_result, and search_catalog stay).
+// the advertised annotation is the single source of truth, so
+// that is exactly execute (1-C), import_api, and request_connection
+// (execute_read, get_execution_result, and search_catalog stay).
 func (s *mcpServer) registerTools() {
 	for _, spec := range s.toolSpecs() {
 		if s.excluded[spec.tool.Name] {

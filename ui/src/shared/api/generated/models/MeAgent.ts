@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CredentialBindingEntry } from './CredentialBindingEntry';
-import type { ToolkitBindingEntry } from './ToolkitBindingEntry';
 /**
  * Identity response for an agent actor.
  */
@@ -13,10 +12,9 @@ export type MeAgent = {
     id: string;
     name: string;
     parent_agent_id?: (string | null);
-    scopes: Array<string>;
+    permissions: Array<string>;
     status: string;
-    token_scopes: Array<string>;
-    toolkit_bindings: Array<ToolkitBindingEntry>;
+    token_permissions: Array<string>;
     type?: string;
 };
 

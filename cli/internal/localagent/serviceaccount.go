@@ -94,7 +94,9 @@ func CreateServiceAccountCmds(serviceUser, homeDir string) []AccountStep {
 		},
 		AccountStep{
 			What: "own the state dir to the service account",
-			Cmd:  exec.Command("sudo", "chown", "-R", serviceUser+":", homeDir), //nolint:gosec // validated inputs.
+			// Same no-dereference, hard-link-skipping walk as the agent-home
+			// chowns: on a re-run the dir already holds service-owned content.
+			Cmd: recursiveChownCmd(serviceUser+":", homeDir, false),
 		},
 		AccountStep{
 			What: "pin the state dir to 0700",
@@ -174,6 +176,9 @@ func McpServiceTeardownCmds(serviceUser, homeDir string, accountExists bool) []A
 // name. Both land verbatim on a sudoers line, where a space, comma, colon,
 // backslash, or control character could open a second alias/command — so the
 // shape is constrained at the source, mirroring ValidateAccount's posture.
+// The binary path must additionally be the root-owned pinned copy
+// (ServiceBinaryPath): the rule lets the operator run that file as the
+// service uid, so it must never name a file the operator uid can replace.
 func ValidateMcpSudoersInputs(binPath, contextName string) error {
 	if err := rejectControlChars("jentic binary path", binPath); err != nil {
 		return err
@@ -183,6 +188,9 @@ func ValidateMcpSudoersInputs(binPath, contextName string) error {
 	}
 	if strings.ContainsAny(binPath, " \t,:=\\") {
 		return fmt.Errorf("jentic binary path %q contains characters unsafe in a sudoers rule", binPath)
+	}
+	if binPath != ServiceBinaryPath() {
+		return fmt.Errorf("jentic binary path %q must be the root-owned copy %s for the sudoers rule", binPath, ServiceBinaryPath())
 	}
 	if contextName == "" {
 		return errors.New("context name is empty")
@@ -201,17 +209,52 @@ func ValidateMcpSudoersInputs(binPath, contextName string) error {
 // `jentic mcp --context <name>` argv. sudo matches the full command line, so
 // the entry cannot be replayed with a different context or subcommand. There
 // is no root capability here — the runas spec names only the unprivileged
-// service account.
+// service account. binPath is the root-owned copy (ServiceBinaryPath);
+// ValidateMcpSudoersInputs enforces that before the rule is built.
 func McpSudoersRule(operator, serviceUser, binPath, contextName string) string {
 	return operator + " ALL=(" + serviceUser + ") NOPASSWD: " +
 		binPath + " mcp --context " + contextName
 }
 
-// InstallSudoersRuleCmd adds one exact rule line to the shared
-// /etc/sudoers.d/jentic-agent drop-in, using the same idempotent,
-// visudo-validated temp-file edit as InstallSudoersCmd (which now delegates
-// here). Runs as root. Removal is RemoveSudoersCmd, anchored on the rule's
-// runas spec.
+// InstallSudoersRuleCmd installs one MCP rule line (McpSudoersRule) in the
+// shared /etc/sudoers.d/jentic-agent drop-in, REPLACING any earlier MCP line
+// for the same operator → service-user pair: a rule written by an older
+// jentic (pinning the operator's own binary path) or for a previously pinned
+// context would otherwise stay live next to the new one. Lines for other
+// operators, service users and agent accounts are untouched. Same
+// temp-file + `visudo -cf` plumbing as InstallSudoersCmd, except that a
+// validation failure is reported as an error instead of silently skipping
+// the install. Runs as root. Removal is RemoveSudoersCmd, anchored on the
+// rule's runas spec.
 func InstallSudoersRuleCmd(rule string) *exec.Cmd {
-	return installSudoersRuleCmd(rule)
+	return exec.Command("sudo", "sh", "-c", mcpSudoersRuleScript(sudoersPath, rule, "visudo -cf")) //nolint:gosec // the rule is built from validated inputs and shell-quoted; the script edits a fixed sudoers path via visudo validation.
+}
+
+// mcpSudoersRulePrefix is the part of an MCP rule that identifies its
+// operator → service-user pair: everything up to and including "NOPASSWD: ".
+// Empty for a line that does not have McpSudoersRule's shape.
+func mcpSudoersRulePrefix(rule string) string {
+	const marker = ") NOPASSWD: "
+	i := strings.Index(rule, marker)
+	if i < 0 || !strings.Contains(rule[:i], " ALL=(") {
+		return ""
+	}
+	return rule[:i+len(marker)]
+}
+
+// mcpSudoersRuleScript is InstallSudoersRuleCmd's script, parameterised on
+// the drop-in path and the validator so tests can run it unprivileged. awk
+// drops every line that STARTS WITH the rule's operator/runas prefix (an
+// anchored prefix match, so operator "bob" never matches "jimbob") except the
+// exact rule; the rule is then appended if absent. Both strings reach awk via
+// the environment, never as program text or -v (which would interpret
+// backslashes).
+func mcpSudoersRuleScript(path, rule, validate string) string {
+	r := shellQuote(rule)
+	return fixedPATHPrefix + `f=` + shellQuote(path) + `; tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT; ` +
+		`if [ -f "$f" ]; then P=` + shellQuote(mcpSudoersRulePrefix(rule)) + ` R=` + r + ` ` +
+		`awk 'ENVIRON["P"] == "" || index($0, ENVIRON["P"]) != 1 || $0 == ENVIRON["R"]' "$f" > "$tmp"; fi; ` +
+		`grep -qxF ` + r + ` "$tmp" 2>/dev/null || echo ` + r + ` >> "$tmp"; ` +
+		`if ` + validate + ` "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; ` +
+		`else echo "$f: the updated sudoers drop-in failed validation; left unchanged" >&2; exit 1; fi`
 }

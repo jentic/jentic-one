@@ -5,8 +5,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 
@@ -56,3 +57,32 @@ class ServerRepository:
         session.add_all(servers)
         await session.flush()
         return [server.id for server in servers]
+
+    @staticmethod
+    async def list_url_specs(
+        session: AsyncSession, revision_id: uuid.UUID
+    ) -> list[tuple[str, dict[str, list[str]]]]:
+        """Every server of a revision as ``(url, {variable: [default, *enum]})``.
+
+        API- and operation-level servers alike; the shape ``hosts_from_servers``
+        consumes, so a stored revision's host set compares against a spec's.
+        """
+        result = await session.execute(
+            select(Server)
+            .where(Server.revision_id == revision_id)
+            .options(selectinload(Server.variables))
+        )
+        specs: list[tuple[str, dict[str, list[str]]]] = []
+        for server in result.scalars().all():
+            variables: dict[str, list[str]] = {}
+            for variable in server.variables:
+                values: list[str] = []
+                if variable.default_value is not None:
+                    values.append(variable.default_value)
+                if isinstance(variable.enum, list):
+                    values.extend(
+                        str(v) for v in variable.enum if v is not None and str(v) not in values
+                    )
+                variables[variable.name] = values
+            specs.append((server.url, variables))
+        return specs

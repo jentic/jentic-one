@@ -6,7 +6,7 @@ const ITEMS: RecentExecutionItem[] = [
 		id: 'exec_1',
 		status: 'completed',
 		httpStatus: 201,
-		label: 'github.create_issue',
+		label: 'github · POST /repos/{owner}/{repo}/issues',
 		durationMs: 310,
 		startedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
 	},
@@ -14,7 +14,7 @@ const ITEMS: RecentExecutionItem[] = [
 		id: 'exec_2',
 		status: 'failed',
 		httpStatus: 403,
-		label: 'github.delete_repo',
+		label: 'github · DELETE /repos/{owner}/{repo}',
 		error: 'Denied by permission rule (deny /admin/*).',
 		durationMs: 22,
 		startedAt: new Date(Date.now() - 18 * 60_000).toISOString(),
@@ -22,7 +22,7 @@ const ITEMS: RecentExecutionItem[] = [
 	{
 		id: 'exec_3',
 		status: 'running',
-		label: 'slack.post_message',
+		label: 'slack · POST /chat.postMessage',
 		durationMs: null,
 		startedAt: new Date(Date.now() - 30_000).toISOString(),
 	},
@@ -33,7 +33,7 @@ describe('RecentExecutionsCard', () => {
 		renderWithProviders(<RecentExecutionsCard items={ITEMS} monitorHref="/monitor" />);
 
 		expect(screen.getAllByTestId('execution-feed-row')).toHaveLength(3);
-		expect(screen.getByText('github.create_issue')).toBeInTheDocument();
+		expect(screen.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeInTheDocument();
 		expect(screen.getByText('201')).toBeInTheDocument();
 		expect(screen.getByText('403')).toBeInTheDocument();
 		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();

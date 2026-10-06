@@ -1,19 +1,80 @@
-"""Shared service-error to Problem Details handler factory.
+"""Shared error handlers: service-error → Problem Details, and request validation.
 
 Surfaces supply their error map and an optional response hook; the factory
 returns a handler function that implements the standard MRO-walk, logging,
 and Problem Details response construction.
+
+:func:`sanitize_validation_errors` / :func:`request_validation_error_handler`
+strip the submitted values that FastAPI's default 422 body echoes back, so a
+malformed request carrying a secret never has it reflected in the response.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine, Mapping
-from typing import Any
+from collections.abc import Callable, Coroutine, Iterable, Mapping
+from typing import Any, Final
 
 import structlog
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jentic.problem_details import ProblemDetailException
+
+# ``ctx`` members that describe the *schema constraint* (never the submitted
+# value). Anything else in ``ctx`` — notably ``error``, which carries a custom
+# validator's exception and may quote the input — is dropped.
+_SAFE_VALIDATION_CTX_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "expected",
+        "pattern",
+        "min_length",
+        "max_length",
+        "gt",
+        "ge",
+        "lt",
+        "le",
+        "multiple_of",
+        "max_digits",
+        "decimal_places",
+        "whole_digits",
+        "discriminator",
+        "expected_tags",
+    }
+)
+
+
+def sanitize_validation_errors(errors: Iterable[Any]) -> list[dict[str, Any]]:
+    """Return JSON-safe validation error items with the submitted input removed.
+
+    Pydantic/FastAPI error items carry ``input`` (the raw submitted value —
+    for a credential body that is the secret itself) and ``ctx`` (constraint
+    context, which for custom validators embeds the raised exception). Keep
+    ``type``/``loc``/``msg``/``url`` and only the schema-derived ``ctx`` keys.
+    """
+    sanitized: list[dict[str, Any]] = []
+    for err in errors:
+        if not isinstance(err, Mapping):
+            continue
+        item = {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        ctx = err.get("ctx")
+        if isinstance(ctx, Mapping):
+            safe_ctx = {k: v for k, v in ctx.items() if k in _SAFE_VALIDATION_CTX_KEYS}
+            if safe_ctx:
+                item["ctx"] = safe_ctx
+        sanitized.append(jsonable_encoder(item))
+    return sanitized
+
+
+async def request_validation_error_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """FastAPI's default 422 body (``{"detail": [...]}``) without echoed input."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": sanitize_validation_errors(exc.errors())},
+    )
+
 
 ResponseHook = Callable[[Request, Exception, int, JSONResponse], JSONResponse]
 ServiceErrorHandler = Callable[[Request, Any], Coroutine[Any, Any, JSONResponse]]

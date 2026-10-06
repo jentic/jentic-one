@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Mapping
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -131,6 +132,8 @@ async def test_inspect_by_method_url_summary_returns_200(
     assert data["type"] == "operation"
     assert data["method"] == "GET"
     assert data["api"]["vendor"] == "acme"
+    assert data["api"]["name"] == "pets"
+    assert data["api"]["display_name"] == "Acme Pets"
     assert "links" in data
 
 
@@ -250,6 +253,7 @@ async def test_inspect_accept_markdown_returns_text(
     assert resp.status_code == 200
     assert "text/markdown" in resp.headers.get("content-type", "")
     assert "# " in resp.text
+    assert "**API:** Acme Pets (acme/pets v1)" in resp.text
 
 
 async def test_inspect_accept_openapi_yaml(authed_client: TestClient, web_context: Context) -> None:
@@ -262,6 +266,9 @@ async def test_inspect_accept_openapi_yaml(authed_client: TestClient, web_contex
     assert resp.status_code == 200
     assert "openapi+yaml" in resp.headers.get("content-type", "")
     assert "openapi:" in resp.text
+    info = yaml.safe_load(resp.text)["info"]
+    assert info["title"] == "Acme Pets (acme/pets)"
+    assert info["version"] == "v1"
 
 
 async def test_inspect_accept_unsupported_returns_406(

@@ -1,4 +1,4 @@
-"""Agent authentication: API key, client secret generation, and client_credentials grant."""
+"""Agent authentication: API key issuance, revocation, and history."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from jentic_one.shared.models import ActorStatus, AuditReason
 
 
 class AgentAuthService:
-    """Handles credential generation and client_credentials auth for agents."""
+    """Handles API-key credential lifecycle for agents."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx

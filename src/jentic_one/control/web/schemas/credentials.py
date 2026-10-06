@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleReadSchema,
@@ -45,6 +46,23 @@ def _validate_server_variables(v: dict[str, str] | None) -> dict[str, str] | Non
     return v
 
 
+# C0 controls (incl. CR/LF/TAB/NUL) and DEL. These values are injected verbatim
+# into upstream request headers / query parameters, where a control character is
+# either illegal (the HTTP client rejects the request) or a header-splitting
+# vector, so reject them at the edge.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_chars(v: str | None, info: ValidationInfo) -> str | None:
+    """Reject control characters in a value injected into an upstream request.
+
+    The message names the field only — never the value, which may be a secret.
+    """
+    if v is not None and _CONTROL_CHARS.search(v):
+        raise ValueError(f"{info.field_name} must not contain control characters")
+    return v
+
+
 # --- Create request models (per type) ---
 
 
@@ -60,6 +78,7 @@ class BearerTokenCreateRequest(BaseModel):
     token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -99,6 +118,7 @@ class ApiKeyCreateRequest(BaseModel):
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthCreateRequest(BaseModel):
@@ -143,7 +163,7 @@ class NoAuthCreateRequest(BaseModel):
     """Create request for no_auth credentials.
 
     A no-auth credential carries no secret — it represents "this API is called
-    without authentication". It still exists as a credential row so a toolkit
+    without authentication". It still exists as a credential row so an agent
     binding (and its permission rules) can hang off it, and the broker resolves
     it as a no-op auth (see broker credential resolver / injection).
     """
@@ -187,6 +207,11 @@ class Sigv4CreateRequest(BaseModel):
     aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialCreateRequest = Annotated[
@@ -214,6 +239,7 @@ class BearerTokenUpdateRequest(BaseModel):
     token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyUpdateRequest(BaseModel):
@@ -243,6 +269,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthUpdateRequest(BaseModel):
@@ -290,6 +317,11 @@ class Sigv4UpdateRequest(BaseModel):
     aws_service: str | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialUpdateRequest = Annotated[
@@ -426,11 +458,37 @@ class ConnectRequestBody(BaseModel):
     extra: dict[str, str] = Field(default_factory=dict)
 
 
-class ConnectChallengeResponse(BaseModel):
-    """Response from a connect initiation."""
+class AuthCodeConnectChallengeResponse(BaseModel):
+    """Authorization-code redirect challenge.
 
+    Client opens ``authorize_url`` in a popup; completion lands
+    server-side via ``/credentials/oauth/callback``.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str
     state: str
+
+
+class DeviceAuthorizationConnectChallengeResponse(BaseModel):
+    """RFC 8628 device-code challenge.
+
+    Client shows ``user_code`` at ``verification_uri`` and polls
+    ``GET /credentials/{id}`` until state moves off ``pending``
+    (scanner-driven server-side).
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+
+
+ConnectChallengeResponse = Annotated[
+    AuthCodeConnectChallengeResponse | DeviceAuthorizationConnectChallengeResponse,
+    Field(discriminator="kind"),
+]
 
 
 class ProviderDiscoveryEntryResponse(BaseModel):
@@ -448,7 +506,14 @@ class ProviderDiscoveryEntryResponse(BaseModel):
         description="Whether the provider is fully configured and operational."
     )
     callback_url: str | None = Field(
-        default=None, description="OAuth2 redirect URI for providers that require it."
+        default=None,
+        description=(
+            "OAuth2 redirect URI for providers that require it. When no explicit "
+            "redirect_uri is configured, this is derived from the deployment's "
+            "public origin (server.public_base_url or the request origin), so it "
+            "reflects the exact callback the connect flow will register with the "
+            "IdP. Add this URL to your OAuth app's allowed redirect URIs."
+        ),
     )
 
 
@@ -521,6 +586,13 @@ class RuleSetSummaryResponse(BaseModel):
     name: str
     description: str | None = None
     rule_count: int
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
+    )
     created_by: str | None = None
     created_at: datetime
 
@@ -534,6 +606,13 @@ class RuleSetResponse(BaseModel):
     rules: list[PermissionRuleReadSchema]
     binding_count: int = Field(
         description="How many agent-credential bindings currently point at this set."
+    )
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
     )
     created_by: str | None = None
     created_at: datetime

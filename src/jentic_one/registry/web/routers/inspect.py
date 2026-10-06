@@ -35,7 +35,13 @@ async def inspect_operation(
     revision_id: str | None = Query(None, description="Pin to specific revision"),
     detail: Literal["summary", "full"] = Query("summary"),
 ) -> Response:
-    """Inspect an operation — resolve to full structural detail."""
+    """Inspect an operation — resolve to full structural detail.
+
+    `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+    reference: the identity to use in credential scopes, revision pins and
+    other API references. `api.display_name` (optional) is a human-readable
+    label only.
+    """
     if id and operation_id:
         raise BadRequest(
             detail="Provide exactly one of 'id' or 'operation_id', not both",

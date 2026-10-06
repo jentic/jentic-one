@@ -135,6 +135,12 @@ func (r *ExecuteResult) Envelope() ux.ExecuteEnvelope {
 // denying HTTP status plus the recovery directive when the body carried one.
 type Denial struct {
 	Status int
+	// ProblemType is the problem+json "type" member the denial body carried
+	// ("no_credential_binding", "action_denied", …), empty when the body was
+	// not parseable. Recovery pointers key on it — the HTTP status alone is
+	// ambiguous (403 covers both a missing binding and a permission-rule
+	// denial, whose recoveries are opposites).
+	ProblemType string
 	// Directive is the parsed agent_directive, or nil when the denial carried
 	// none (the caller synthesizes a status-keyed recovery hint instead).
 	Directive *ux.Directive

@@ -13,5 +13,6 @@ export type CredentialBindingEntry = {
     rule_set_id?: (string | null);
     serves?: Array<ServedApiRef>;
     suspended?: boolean;
+    suspended_reason?: (string | null);
 };
 

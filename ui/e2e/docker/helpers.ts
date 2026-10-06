@@ -199,20 +199,6 @@ export function uniqueSuffix(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** POST /service-accounts → 201. Returns the created service-account id. */
-export async function createServiceAccount(
-	request: APIRequestContext,
-	name: string,
-	description = 'created by e2e',
-): Promise<string> {
-	const res = await request.post('/service-accounts', {
-		headers: authHeaders(),
-		data: { name, description },
-	});
-	expect(res.status(), `createServiceAccount failed: ${await res.text()}`).toBe(201);
-	return (await res.json()).id;
-}
-
 /**
  * POST /credentials → 201 (requires the credential-at-rest encryption keyset,
  * see config/local.yaml). Returns the credential id. Defaults to a bearer token.
@@ -301,22 +287,22 @@ export async function postCredentialRaw(
 }
 
 /**
- * PUT /agents/{id}/scopes → 200. Replaces ALL scopes for an agent (bulk
- * replace, see replaceAgentScopes). This is the public-API path that landed
- * with #517 — it is what lets a DCR agent acquire `capabilities:execute`
- * without a direct DB write. Returns the resulting scope list.
+ * PUT /agents/{id}/permissions → 200. Replaces ALL permissions for an agent
+ * (bulk replace — there is no partial grant/revoke endpoint). This is the
+ * public-API path that landed with #517 — it is what lets a DCR agent acquire
+ * `capabilities:execute` without a direct DB write. Returns the resulting list.
  */
-export async function replaceAgentScopes(
+export async function replaceAgentPermissions(
 	request: APIRequestContext,
 	agentId: string,
-	scopes: string[],
+	permissions: string[],
 ): Promise<string[]> {
-	const res = await request.put(`/agents/${agentId}/scopes`, {
+	const res = await request.put(`/agents/${agentId}/permissions`, {
 		headers: authHeaders(),
-		data: { scopes },
+		data: { permissions },
 	});
-	expect(res.status(), `replaceAgentScopes failed: ${await res.text()}`).toBe(200);
-	return (await res.json()).scopes;
+	expect(res.status(), `replaceAgentPermissions failed: ${await res.text()}`).toBe(200);
+	return (await res.json()).permissions;
 }
 
 /** POST /agents/{id}/credentials → 201. Binds a credential directly to an agent. Returns the binding id. */
@@ -395,34 +381,4 @@ export async function importInlineApi(
 			},
 		)
 		.toMatch(/succeeded|completed|done/);
-}
-
-/**
- * POST /access-requests → 202 (status: pending). Returns the request id.
- *
- * The backend dedups pending requests on (actor, resource_type, action,
- * resource_id), so concurrent specs that file the same resource_type+action
- * collide with 409 access_request_duplicate_pending. We default resource_id to
- * a unique value per call so each spec owns an independent pending request
- * (hermetic, no cross-spec coupling); callers can pin it for assertions.
- */
-export async function fileAccessRequest(
-	request: APIRequestContext,
-	opts: { reason?: string; resourceType?: string; action?: string; resourceId?: string } = {},
-): Promise<string> {
-	const res = await request.post('/access-requests', {
-		headers: authHeaders(),
-		data: {
-			reason: opts.reason ?? 'e2e access request',
-			items: [
-				{
-					resource_type: opts.resourceType ?? 'credential',
-					action: opts.action ?? 'bind',
-					resource_id: opts.resourceId ?? `e2e-res-${uniqueSuffix()}`,
-				},
-			],
-		},
-	});
-	expect(res.status(), `fileAccessRequest failed: ${await res.text()}`).toBe(202);
-	return (await res.json()).id;
 }

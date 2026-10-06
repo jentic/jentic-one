@@ -125,6 +125,6 @@ def test_unsupported_grant_type_returns_400(
     )
     assert resp.status_code == 400
     data = resp.json()
-    # Missing credentials on a SUPPORTED grant type is a §5.2 invalid_request
-    # (missing required parameter), not unsupported_grant_type.
-    assert data["error"] == "invalid_request"
+    # Theme-8 Phase 2 removed the client_credentials grant with the
+    # service-account surface: it is now an unsupported grant type (§5.2).
+    assert data["error"] == "unsupported_grant_type"

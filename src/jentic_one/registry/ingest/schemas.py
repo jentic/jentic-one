@@ -9,6 +9,13 @@ from pydantic import BaseModel
 from jentic_one.shared.models import ApiRevisionState
 
 
+class HeldHostChange(BaseModel):
+    """A catalog revision kept as a draft because it changes the API's server hosts."""
+
+    current_hosts: list[str]
+    new_hosts: list[str]
+
+
 class IngestResult(BaseModel):
     """Result of a successful ingest operation."""
 
@@ -23,3 +30,6 @@ class IngestResult(BaseModel):
     superseded_revision_id: uuid.UUID | None = None
     state: ApiRevisionState = ApiRevisionState.DRAFT
     operation_count: int
+    #: Set when the revision was held as a DRAFT for operator review because it
+    #: would change the server hosts of an API with bound credentials.
+    held_host_change: HeldHostChange | None = None
