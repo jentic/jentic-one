@@ -63,7 +63,9 @@ const MEMBER = {
 	first_name: 'Member',
 	last_name: 'User',
 	active: true,
-	permissions: [],
+	// A non-admin who can read the event feed; callers without it get the
+	// feed's no-access state (eventAccess.test.tsx).
+	permissions: ['events:read'],
 	must_change_password: false,
 	created_at: '2026-01-01T00:00:00Z',
 	updated_at: null,
