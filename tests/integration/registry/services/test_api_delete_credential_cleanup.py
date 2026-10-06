@@ -254,6 +254,14 @@ async def test_delete_api_suspends_agent_bindings(
         )
         assert len(events) == 2
         assert all(e.actor_id == _IDENTITY.sub for e in events)
+        # Summaries name the credential and the agent; the ids stay in ``data``.
+        assert sorted(e.summary for e in events) == [
+            f"Credential 'cred-{cred_id}' suspended for agent '{_AGENT_PREFIX}-a' "
+            "because its API was deleted"
+            for cred_id in ("cred_exact", "cred_inactive")
+        ]
+        assert sorted(e.data["credential_id"] for e in events) == ["cred_exact", "cred_inactive"]
+        assert all(e.data["agent_id"] == agent_id for e in events)
         api_delete = (
             await session.execute(
                 select(AuditEntry)

@@ -25,6 +25,22 @@ _ZERO_TRACE_ID = "0" * 32
 MAX_EVENT_SUMMARY_FIELD_LEN = 128
 
 
+def summary_label(name: str | None, fallback_id: str) -> str:
+    """Name an entity in an event ``summary``: its quoted display name, else its id.
+
+    The UI renders ``summary`` as-is, so a human-readable name beats an opaque
+    id. Whitespace runs collapse to one space and the name is bounded by
+    :data:`MAX_EVENT_SUMMARY_FIELD_LEN`, so a summary naming two entities stays
+    inside the column. Callers keep the id in the event's ``data``.
+    """
+    clean = " ".join((name or "").split())
+    if not clean:
+        return fallback_id
+    if len(clean) > MAX_EVENT_SUMMARY_FIELD_LEN:
+        clean = clean[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
+    return f"'{clean}'"
+
+
 def valid_trace_id_or_none(trace_id: str | None) -> str | None:
     """Coerce ``trace_id`` to ``None`` unless it is a valid 32-hex trace id.
 
@@ -253,6 +269,7 @@ async def emit_credential_access(
     api_name: str,
     api_version: str,
     credential_owner: str | None = None,
+    credential_name: str | None = None,
     trace_id: str | None = None,
 ) -> str:
     """Emit a credential-access audit event and return its ID.
@@ -267,13 +284,18 @@ async def emit_credential_access(
     the credential's owner (``credential_owner``, falling back to the actor when
     the owner is unknown), so under owner-scoped event reads both the owner and
     the actor's owner see the use.
+
+    The summary names the credential by ``credential_name`` (the stored
+    ``Credential.name``), falling back to ``credential_id``; the id always
+    rides in ``data``.
     """
     api = "/".join(part for part in (api_vendor, api_name, api_version) if part)
+    credential = summary_label(credential_name, credential_id)
     return await emit_event(
         session,
         type=EventType.CREDENTIAL_ACCESSED,
         severity=EventSeverity.INFO,
-        summary=f"Credential {credential_id} accessed by {actor_id} for {api or api_vendor}",
+        summary=f"Credential {credential} accessed by {actor_id} for {api or api_vendor}",
         created_by=credential_owner or actor_id,
         trace_id=trace_id,
         actor_id=actor_id,
