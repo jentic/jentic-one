@@ -378,7 +378,7 @@ function WorkspaceListControls({
 				size="sm"
 				tone="inset"
 				// Keeps the shared control edge: on the panel's tonal fill the
-				// field alone was ≈1.1:1 and disappeared.
+				// field alone is ≈1.1:1 and disappears.
 				field
 				icon={<Filter className="h-3.5 w-3.5" />}
 				placeholder="Filter by name, vendor or description…"

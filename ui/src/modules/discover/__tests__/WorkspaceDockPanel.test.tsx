@@ -259,7 +259,7 @@ describe('WorkspaceDockPanel — serving state, usage, pending imports', () => {
 		const row = screen.getByTestId('workspace-panel-api');
 		expect(row).toHaveTextContent('47 calls');
 		expect(within(row).getByTestId('workspace-panel-api-failed')).toHaveTextContent('8 failed');
-		// The sparkline was dropped: no chart svg in the row (lucide icons only).
+		// No sparkline: no chart svg in the row (lucide icons only).
 		expect(row.querySelector('svg.overflow-visible')).toBeNull();
 	});
 

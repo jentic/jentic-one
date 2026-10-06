@@ -4,9 +4,9 @@ import { renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import { useFitToViewport } from '@/modules/discover/lib/useFitToViewport';
 
 /**
- * Regression for the "void below the list" bug: at the end of the page the
- * sticky dock was pushed up, its raw (negative) top made it taller, which made
- * the page taller — scrolling the dock's header away and leaving empty space.
+ * Pins the dock's fit at the end of the page: when the sticky dock is pushed
+ * up, a raw (negative) top must not make it taller — that would make the page
+ * taller too, scrolling the dock's header away and leaving a void below the list.
  */
 function Page({ mainHeight = 1600 }: { mainHeight?: number }) {
 	const dock = useRef<HTMLDivElement>(null);
