@@ -63,11 +63,10 @@ _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.ENABLE: {ActorStatus.DISABLED: ActorStatus.ACTIVE},
 }
 
-# Registration decisions stay open to every approver (any ``agents:write``
-# holder, admins included) — they are the review of a pending registration,
-# not a mutation of an agent the caller owns. Every other by-id mutation is
-# owner-or-``org:admin`` (see ``AgentService._load_owned_agent``).
-_APPROVER_WIDE_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVerb.DENY})
+# Verbs whose decision races ``:claim`` for the row: approving an unowned agent
+# makes the approver its owner, so the owner check and the write must see the
+# same ``owner_id``. ``_check_transition`` locks the row for these.
+_ROW_LOCKED_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVerb.DENY})
 
 
 class AgentService:
@@ -252,6 +251,12 @@ class AgentService:
             logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
 
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Activate a pending agent.
+
+        Allowed for the agent's owner or an ``org:admin``; an unowned agent
+        (an unclaimed self-registration) only for an ``org:admin``, who becomes
+        its owner. Anyone else gets ``ActorNotFoundError``.
+        """
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
             existing_grants = await ActorScopeGrantRepository.list_for_actor(
@@ -322,9 +327,9 @@ class AgentService:
         at ``/register`` (see ``auth/core/claim.py``). Any *authenticated human
         user* may claim — the token is the proof, not a role — so a plain member
         can take ownership of the agent they registered. Once owned, the agent
-        shows under the caller via the normal scoping filter and the existing
-        approve path applies (an admin approving later no longer steals ownership,
-        because ``owner_id`` is already set).
+        shows under the caller via the normal scoping filter, and the owner (or
+        an ``org:admin``) approves or denies it. Approval keeps the claimant as
+        owner because ``owner_id`` is already set.
 
         Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
         so a non-user actor (an agent) is rejected up front
@@ -387,6 +392,7 @@ class AgentService:
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
+        """Reject a pending agent; same authorization as :meth:`approve`."""
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DENY, identity=identity)
             agent = await AgentRepository.set_denial(
@@ -886,12 +892,18 @@ class AgentService:
     async def _check_transition(
         self, session: AsyncSession, agent_id: str, verb: ActorVerb, *, identity: Identity
     ) -> None:
-        if verb in _APPROVER_WIDE_VERBS:
-            agent = await AgentRepository.get_by_id(session, agent_id)
-            if agent is None:
-                raise ActorNotFoundError(agent_id)
-        else:
-            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+        """Authorize ``verb`` on the agent, then validate the state transition.
+
+        Every verb, approve/deny included, is owner-or-``org:admin``: an agent
+        with an owner is decided by that owner or an admin, and an unowned
+        (unclaimed self-registered) agent only by an admin. The ownership check
+        runs before the state check so a caller who may not act on the agent
+        gets the same 404 whatever its status, never a 409 that confirms it
+        exists.
+        """
+        agent = await self._load_owned_agent(
+            session, agent_id, identity=identity, for_update=verb in _ROW_LOCKED_VERBS
+        )
         if agent.status == ActorStatus.ARCHIVED:
             raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, verb)
         allowed_from = _VALID_TRANSITIONS[verb]

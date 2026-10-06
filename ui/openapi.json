@@ -14326,7 +14326,7 @@
     },
     "/agents/{agent_id}:approve": {
       "post": {
-        "description": "Approve a pending agent.",
+        "description": "Approve a pending agent.\n\nAllowed for the agent's owner or an ``org:admin``. An agent with no owner\n(an unclaimed self-registration) can be approved only by an ``org:admin``,\nwho becomes its owner. Any other caller gets a 404, whatever the agent's\nstatus, so the response does not reveal agents outside the caller's\nownership.",
         "operationId": "approveAgent",
         "parameters": [
           {
@@ -14628,7 +14628,7 @@
     },
     "/agents/{agent_id}:deny": {
       "post": {
-        "description": "Deny a pending agent.",
+        "description": "Deny a pending agent.\n\nSame authorization as approve: the agent's owner or an ``org:admin``, and\nonly an ``org:admin`` for an agent with no owner. Any other caller gets a\n404.",
         "operationId": "denyAgent",
         "parameters": [
           {

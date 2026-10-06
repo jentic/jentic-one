@@ -7,9 +7,11 @@
 - ``PUT …/scopes``, ``PATCH``, ``:disable``, ``:enable`` and ``DELETE`` are
   owner-or-``org:admin`` with a uniform 404; an ``owner_id`` change is
   ``org:admin``-only.
-- ``:approve`` / ``:deny`` stay open to any approver holding ``agents:write``,
-  but approving applies the approver's ceiling to the scopes a
-  self-registration requested (they become live on approval).
+- ``:approve`` / ``:deny`` are owner-or-``org:admin`` with the same uniform
+  404; an unowned (unclaimed self-registered) agent is decided only by an
+  ``org:admin``, who becomes its owner on approval. Approving applies the
+  approver's ceiling to the scopes a self-registration requested (they become
+  live on approval).
 
 Router, service, repositories and DB are real; the only shim is the identity
 dependency override (the same pattern as ``test_oauth_grant_transfer.py``).
@@ -138,6 +140,14 @@ async def _audit_scopes(ctx: Context, agent_id: str, action: AuditAction) -> obj
 
 async def _register_audit_scopes(ctx: Context, agent_id: str) -> object:
     return await _audit_scopes(ctx, agent_id, AuditAction.REGISTER)
+
+
+async def _claim_as(ctx: Context, agent_id: str, owner_id: str) -> None:
+    """Give a self-registered agent an owner, as a successful ``:claim`` does."""
+    async with ctx.admin_db.transaction() as session:
+        agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+        assert agent is not None
+        await AgentRepository.set_owner_from_claim(session, agent, owner_id=owner_id)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +358,8 @@ async def test_unknown_agent_is_404_for_owner_scoped_verbs(
             await client.post(f"/agents/{missing}:disable"),
             await client.post(f"/agents/{missing}:enable"),
             await client.delete(f"/agents/{missing}"),
+            await client.post(f"/agents/{missing}:approve"),
+            await client.post(f"/agents/{missing}:deny", json={"reason": "no"}),
         ]
     for resp in responses:
         assert resp.status_code == 404
@@ -355,36 +367,135 @@ async def test_unknown_agent_is_404_for_owner_scoped_verbs(
 
 
 # ---------------------------------------------------------------------------
-# Registration decisions stay approver-wide
+# Registration decisions — owner or org:admin; unowned agents org:admin only
 # ---------------------------------------------------------------------------
 
 
-async def test_any_approver_can_approve_pending_agent(
+async def test_owner_can_approve_own_pending_agent(
     integration_context: Context, users: None
 ) -> None:
     agent_id = await seeds.seed_agent(
         integration_context, owner_id=OWNER, scopes=[], status=ActorStatus.PENDING
     )
-    async with _client(integration_context, _writer(OTHER)) as client:
+    async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "active"
+    agent = await _agent(integration_context, agent_id)
+    assert agent.owner_id == OWNER
+    assert agent.approved_by == OWNER
 
 
-async def test_any_approver_can_deny_pending_agent(
-    integration_context: Context, users: None
-) -> None:
+async def test_owner_can_deny_own_pending_agent(integration_context: Context, users: None) -> None:
     agent_id = await seeds.seed_agent(
         integration_context, owner_id=OWNER, scopes=[], status=ActorStatus.PENDING
     )
-    async with _client(integration_context, _writer(OTHER)) as client:
+    async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.post(f"/agents/{agent_id}:deny", json={"reason": "no"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "rejected"
 
 
+@pytest.mark.parametrize("status", [ActorStatus.PENDING, ActorStatus.ACTIVE])
+async def test_non_owner_cannot_approve_or_deny(
+    integration_context: Context, users: None, status: ActorStatus
+) -> None:
+    # The 404 does not depend on the agent's status: a non-pending agent must
+    # not answer 409 and so confirm it exists.
+    agent_id = await seeds.seed_agent(integration_context, owner_id=OWNER, scopes=[], status=status)
+    async with _client(integration_context, _writer(OTHER)) as client:
+        responses = [
+            await client.post(f"/agents/{agent_id}:approve"),
+            await client.post(f"/agents/{agent_id}:deny", json={"reason": "no"}),
+        ]
+    for resp in responses:
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["type"] == "actor_not_found"
+    assert (await _agent(integration_context, agent_id)).status == status
+
+
+async def test_owner_deciding_non_pending_agent_is_409(
+    integration_context: Context, users: None
+) -> None:
+    agent_id = await seeds.seed_agent(integration_context, owner_id=OWNER, scopes=[])
+    async with _client(integration_context, _writer(OWNER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 409, resp.text
+
+
+async def test_admin_can_decide_any_owned_agent(integration_context: Context, users: None) -> None:
+    approve_id = await seeds.seed_agent(
+        integration_context, owner_id=OWNER, scopes=[], status=ActorStatus.PENDING
+    )
+    deny_id = await seeds.seed_agent(
+        integration_context, owner_id=OWNER, scopes=[], status=ActorStatus.PENDING
+    )
+    async with _client(integration_context, _admin()) as client:
+        approved = await client.post(f"/agents/{approve_id}:approve")
+        denied = await client.post(f"/agents/{deny_id}:deny", json={"reason": "no"})
+    assert approved.status_code == 200, approved.text
+    assert denied.status_code == 200, denied.text
+    # Approving someone else's agent leaves it with its owner.
+    assert (await _agent(integration_context, approve_id)).owner_id == OWNER
+
+
+async def test_non_admin_cannot_decide_unowned_agent(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    agent_id = await self_register("")
+    async with _client(integration_context, _writer(OTHER)) as client:
+        responses = [
+            await client.post(f"/agents/{agent_id}:approve"),
+            await client.post(f"/agents/{agent_id}:deny", json={"reason": "no"}),
+        ]
+    for resp in responses:
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["type"] == "actor_not_found"
+    agent = await _agent(integration_context, agent_id)
+    assert agent.status == ActorStatus.PENDING
+    assert agent.owner_id is None
+
+
+async def test_admin_approving_unowned_agent_becomes_owner(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    agent_id = await self_register("")
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    assert (await _agent(integration_context, agent_id)).owner_id == ADMIN
+
+
+async def test_admin_can_deny_unowned_agent(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    agent_id = await self_register("")
+    async with _client(integration_context, _admin()) as client:
+        resp = await client.post(f"/agents/{agent_id}:deny", json={"reason": "no"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "rejected"
+    assert (await _agent(integration_context, agent_id)).owner_id is None
+
+
+async def test_claimant_can_approve_claimed_agent(
+    integration_context: Context, self_register: Callable[[str], Awaitable[str]]
+) -> None:
+    agent_id = await self_register("")
+    await _claim_as(integration_context, agent_id, OTHER)
+    async with _client(integration_context, _writer(OWNER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 404, resp.text
+    async with _client(integration_context, _writer(OTHER)) as client:
+        resp = await client.post(f"/agents/{agent_id}:approve")
+    assert resp.status_code == 200, resp.text
+    agent = await _agent(integration_context, agent_id)
+    assert agent.owner_id == OTHER
+    assert agent.approved_by == OTHER
+
+
 @pytest.mark.parametrize("requested", ["org:admin", "agents:write", "users:write"])
-async def test_non_admin_approver_cannot_activate_requested_scope_above_ceiling(
+async def test_non_admin_owner_cannot_activate_requested_scope_above_ceiling(
     integration_context: Context,
     self_register: Callable[[str], Awaitable[str]],
     requested: str,
@@ -394,6 +505,7 @@ async def test_non_admin_approver_cannot_activate_requested_scope_above_ceiling(
         "capabilities:read",
         requested,
     ]
+    await _claim_as(integration_context, agent_id, OTHER)
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 403
@@ -407,11 +519,12 @@ async def test_non_admin_approver_cannot_activate_requested_scope_above_ceiling(
     assert await _scopes(integration_context, agent_id) == {"capabilities:read", requested}
 
 
-async def test_non_admin_approver_can_activate_requested_default_scopes(
+async def test_non_admin_owner_can_activate_requested_default_scopes(
     integration_context: Context, self_register: Callable[[str], Awaitable[str]]
 ) -> None:
     # Unknown requested strings grant nothing and do not block the decision.
     agent_id = await self_register("capabilities:execute agents:read not-a:scope")
+    await _claim_as(integration_context, agent_id, OTHER)
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text
@@ -426,6 +539,7 @@ async def test_approve_without_requested_scopes_grants_and_audits_defaults(
     integration_context: Context, self_register: Callable[[str], Awaitable[str]]
 ) -> None:
     agent_id = await self_register("")
+    await _claim_as(integration_context, agent_id, OTHER)
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 200, resp.text

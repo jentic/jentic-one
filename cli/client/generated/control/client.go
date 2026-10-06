@@ -4907,6 +4907,12 @@ type ClientInterface interface {
 	//
 	// Approve a pending agent.
 	//
+	// Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
+	// who becomes its owner. Any other caller gets a 404, whatever the agent's
+	// status, so the response does not reveal agents outside the caller's
+	// ownership.
+	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4964,6 +4970,10 @@ type ClientInterface interface {
 	//
 	// Deny a pending agent.
 	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -4972,6 +4982,10 @@ type ClientInterface interface {
 	// DenyAgent Deny Agent
 	//
 	// Deny a pending agent.
+	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7897,6 +7911,12 @@ func (c *Client) ReplaceAgentScopes(ctx context.Context, agentId string, body Re
 //
 // Approve a pending agent.
 //
+// Allowed for the agent's owner or an “org:admin“. An agent with no owner
+// (an unclaimed self-registration) can be approved only by an “org:admin“,
+// who becomes its owner. Any other caller gets a 404, whatever the agent's
+// status, so the response does not reveal agents outside the caller's
+// ownership.
+//
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApproveAgentRequest(c.Server, agentId)
@@ -7984,6 +8004,10 @@ func (c *Client) ClaimAgent(ctx context.Context, agentId string, body ClaimAgent
 //
 // Deny a pending agent.
 //
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -8002,6 +8026,10 @@ func (c *Client) DenyAgentWithBody(ctx context.Context, agentId string, contentT
 // DenyAgent Deny Agent
 //
 // Deny a pending agent.
+//
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -20963,6 +20991,12 @@ type ClientWithResponsesInterface interface {
 	//
 	// Approve a pending agent.
 	//
+	// Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+	// (an unclaimed self-registration) can be approved only by an ``org:admin``,
+	// who becomes its owner. Any other caller gets a 404, whatever the agent's
+	// status, so the response does not reveal agents outside the caller's
+	// ownership.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
@@ -21022,6 +21056,10 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deny a pending agent.
 	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -21030,6 +21068,10 @@ type ClientWithResponsesInterface interface {
 	// DenyAgentWithResponse Deny Agent
 	//
 	// Deny a pending agent.
+	//
+	// Same authorization as approve: the agent's owner or an ``org:admin``, and
+	// only an ``org:admin`` for an agent with no owner. Any other caller gets a
+	// 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -37416,6 +37458,12 @@ func (c *ClientWithResponses) ReplaceAgentScopesWithResponse(ctx context.Context
 //
 // Approve a pending agent.
 //
+// Allowed for the agent's owner or an “org:admin“. An agent with no owner
+// (an unclaimed self-registration) can be approved only by an “org:admin“,
+// who becomes its owner. Any other caller gets a 404, whatever the agent's
+// status, so the response does not reveal agents outside the caller's
+// ownership.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
@@ -37493,6 +37541,10 @@ func (c *ClientWithResponses) ClaimAgentWithResponse(ctx context.Context, agentI
 //
 // Deny a pending agent.
 //
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /agents/{agent_id}:deny (the `DenyAgent` operationId).
@@ -37507,6 +37559,10 @@ func (c *ClientWithResponses) DenyAgentWithBodyWithResponse(ctx context.Context,
 // DenyAgentWithResponse Deny Agent
 //
 // Deny a pending agent.
+//
+// Same authorization as approve: the agent's owner or an “org:admin“, and
+// only an “org:admin“ for an agent with no owner. Any other caller gets a
+// 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

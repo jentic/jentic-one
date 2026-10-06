@@ -96,8 +96,11 @@ sequenceDiagram
    one **Ed25519** public key (`registration_service.py` rejects anything
    else, including any private-key material).
 2. **Wait for approval**: registration lands as a `PENDING` agent; a human
-   approves or denies it (`agent_service.py`). Until approval, token
-   exchange answers "pending", distinct from a rejected assertion.
+   approves or denies it (`agent_service.py`). Once the agent has an owner
+   (claimed), its owner or an `org:admin` decides; an unclaimed agent only an
+   `org:admin`, who becomes its owner on approval. Anyone else gets a 404.
+   Until approval, token exchange answers "pending", distinct from a rejected
+   assertion.
 3. **Exchange** (RFC 7523 JWT-bearer grant, `assertion_service.py`): the
    agent signs a short-lived assertion (≤ 5 minutes, single-use `jti`) with
    its private key; the auth surface verifies it against the registered
