@@ -61,17 +61,26 @@ export async function fetchActorDirectory(): Promise<ActorSummaryResponse[]> {
 
 /**
  * Resolve the given ids through `GET /actors/lookup`, splitting them into
- * calls of at most {@link ACTOR_LOOKUP_MAX_IDS}. Ids that match no actor are
- * absent from the result.
+ * calls of at most {@link ACTOR_LOOKUP_MAX_IDS}. Ids that match no actor the
+ * caller may see are absent from the result.
  */
 export async function lookupActors(ids: readonly string[]): Promise<ActorDirectoryEntry[]> {
+	const pages = await Promise.all(chunkIds(ids).map(lookupChunk));
+	return pages.flat();
+}
+
+/** Distinct ids split into groups of at most {@link ACTOR_LOOKUP_MAX_IDS}. */
+function chunkIds(ids: Iterable<string>): string[][] {
 	const unique = [...new Set(ids)];
 	const chunks: string[][] = [];
 	for (let i = 0; i < unique.length; i += ACTOR_LOOKUP_MAX_IDS) {
 		chunks.push(unique.slice(i, i + ACTOR_LOOKUP_MAX_IDS));
 	}
-	const pages = await Promise.all(chunks.map((id) => ActorsService.lookupActors({ id })));
-	return pages.flatMap((page) => page.data);
+	return chunks;
+}
+
+async function lookupChunk(id: string[]): Promise<ActorDirectoryEntry[]> {
+	return (await ActorsService.lookupActors({ id })).data;
 }
 
 interface Waiter {
@@ -86,16 +95,22 @@ async function flushPending(): Promise<void> {
 	const batch = pending;
 	pending = new Map();
 	flushScheduled = false;
-	try {
-		const found = new Map((await lookupActors([...batch.keys()])).map((a) => [a.id, a]));
-		for (const [id, waiters] of batch) {
-			for (const waiter of waiters) waiter.resolve(found.get(id) ?? null);
-		}
-	} catch (error) {
-		for (const waiters of batch.values()) {
-			for (const waiter of waiters) waiter.reject(error);
-		}
-	}
+	// Settle each chunk on its own, so one failed call never rejects ids that
+	// another call resolved.
+	await Promise.all(
+		chunkIds(batch.keys()).map(async (chunk) => {
+			try {
+				const found = new Map((await lookupChunk(chunk)).map((a) => [a.id, a]));
+				for (const id of chunk) {
+					for (const waiter of batch.get(id) ?? []) waiter.resolve(found.get(id) ?? null);
+				}
+			} catch (error) {
+				for (const id of chunk) {
+					for (const waiter of batch.get(id) ?? []) waiter.reject(error);
+				}
+			}
+		}),
+	);
 }
 
 /**

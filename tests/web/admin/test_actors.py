@@ -11,7 +11,7 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import AgentRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
-from jentic_one.admin.web.routers.actors import MAX_LOOKUP_IDS
+from jentic_one.admin.web.routers.actors import MAX_LOOKUP_ID_LENGTH, MAX_LOOKUP_IDS
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus
 
@@ -49,6 +49,58 @@ async def agent_id(web_context: Context, managed_user_id: str) -> AsyncGenerator
     async with web_context.admin_db.session() as session:
         await session.execute(delete(Agent).where(Agent.id == created))
         await session.commit()
+
+
+@pytest.fixture()
+async def outsider_agent_id(web_context: Context, admin_user_id: str) -> AsyncGenerator[str, None]:
+    """An agent owned by someone other than the member."""
+    async with web_context.admin_db.session() as session:
+        agent = await AgentRepository.create(
+            session,
+            name="lookup-outsider-agent",
+            owner_id=admin_user_id,
+            registered_by=admin_user_id,
+            created_by=admin_user_id,
+            status=ActorStatus.ACTIVE,
+        )
+        await session.commit()
+        created = agent.id
+    yield created
+    async with web_context.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.id == created))
+        await session.commit()
+
+
+def test_member_does_not_resolve_others_agents(
+    unauthed_client: TestClient,
+    authed_client: TestClient,
+    web_context: Context,
+    managed_user_id: str,
+    outsider_agent_id: str,
+) -> None:
+    params = {"id": outsider_agent_id}
+    resp = unauthed_client.get(
+        "/actors/lookup", params=params, headers=_member_headers(web_context, managed_user_id)
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"data": []}
+    # An admin resolves the same id.
+    resp = authed_client.get("/actors/lookup", params=params)
+    assert [a["id"] for a in resp.json()["data"]] == [outsider_agent_id]
+
+
+def test_lookup_rejects_overlong_id(
+    unauthed_client: TestClient, web_context: Context, managed_user_id: str
+) -> None:
+    headers = _member_headers(web_context, managed_user_id)
+    resp = unauthed_client.get(
+        "/actors/lookup", params={"id": "u" * (MAX_LOOKUP_ID_LENGTH + 1)}, headers=headers
+    )
+    assert resp.status_code == 422
+    resp = unauthed_client.get(
+        "/actors/lookup", params={"id": "u" * MAX_LOOKUP_ID_LENGTH}, headers=headers
+    )
+    assert resp.status_code == 200
 
 
 def test_member_resolves_names_by_id(

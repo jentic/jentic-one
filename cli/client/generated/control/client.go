@@ -3171,7 +3171,7 @@ type ListActorsParams struct {
 
 // LookupActorsParams defines parameters for LookupActors.
 type LookupActorsParams struct {
-	// Id Actor id to resolve; repeat the parameter for several ids (at most 100 per call).
+	// Id Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
 	Id []string `form:"id" json:"id"`
 }
 
@@ -4567,9 +4567,12 @@ type ClientInterface interface {
 	//
 	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
 	// asked for, so a caller without ``users:read`` can label the owners,
-	// approvers and actors it already sees by id. Ids that match no user or agent
-	// are left out of the response rather than reported as errors. Listing the
-	// whole directory stays behind ``users:read`` on ``GET /actors``.
+	// approvers and actors it already sees by id. Users resolve for any caller;
+	// agents only when the caller may see them (its own agents, itself, or with
+	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+	// Ids that match no visible user or agent are left out of the response
+	// rather than reported as errors. Listing the whole directory stays behind
+	// ``users:read`` on ``GET /actors``.
 	//
 	// Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 	LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7190,9 +7193,12 @@ func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEd
 //
 // Returns only “id“, “actor_type“, “name“ and “active“ for the ids
 // asked for, so a caller without “users:read“ can label the owners,
-// approvers and actors it already sees by id. Ids that match no user or agent
-// are left out of the response rather than reported as errors. Listing the
-// whole directory stays behind “users:read“ on “GET /actors“.
+// approvers and actors it already sees by id. Users resolve for any caller;
+// agents only when the caller may see them (its own agents, itself, or with
+// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
+// Ids that match no visible user or agent are left out of the response
+// rather than reported as errors. Listing the whole directory stays behind
+// “users:read“ on “GET /actors“.
 //
 // Corresponds with GET /actors/lookup (the `LookupActors` operationId).
 func (c *Client) LookupActors(ctx context.Context, params *LookupActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -20673,9 +20679,12 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
 	// asked for, so a caller without ``users:read`` can label the owners,
-	// approvers and actors it already sees by id. Ids that match no user or agent
-	// are left out of the response rather than reported as errors. Listing the
-	// whole directory stays behind ``users:read`` on ``GET /actors``.
+	// approvers and actors it already sees by id. Users resolve for any caller;
+	// agents only when the caller may see them (its own agents, itself, or with
+	// ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+	// Ids that match no visible user or agent are left out of the response
+	// rather than reported as errors. Listing the whole directory stays behind
+	// ``users:read`` on ``GET /actors``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -36996,9 +37005,12 @@ func (c *ClientWithResponses) ListActorsWithResponse(ctx context.Context, params
 //
 // Returns only “id“, “actor_type“, “name“ and “active“ for the ids
 // asked for, so a caller without “users:read“ can label the owners,
-// approvers and actors it already sees by id. Ids that match no user or agent
-// are left out of the response rather than reported as errors. Listing the
-// whole directory stays behind “users:read“ on “GET /actors“.
+// approvers and actors it already sees by id. Users resolve for any caller;
+// agents only when the caller may see them (its own agents, itself, or with
+// “owner:agents:read“ its owner's agents; every agent for “org:admin“).
+// Ids that match no visible user or agent are left out of the response
+// rather than reported as errors. Listing the whole directory stays behind
+// “users:read“ on “GET /actors“.
 //
 // Returns a wrapper object for the known response body format(s).
 //

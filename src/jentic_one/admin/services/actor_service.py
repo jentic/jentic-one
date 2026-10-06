@@ -5,9 +5,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorDirectoryRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.schemas.actors import ActorView
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
@@ -46,11 +49,26 @@ class ActorService:
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def lookup(self, ids: Sequence[str]) -> list[ActorView]:
-        """Resolve the given actor ids; ids that match no user or agent are omitted."""
+    async def lookup(self, ids: Sequence[str], *, identity: Identity) -> list[ActorView]:
+        """Resolve the given actor ids to display fields, scoped to the caller.
+
+        Agents are filtered by the caller's agent visibility
+        (``build_access_filters(identity, Agent)``): a non-admin resolves only
+        agents it may see, the same set ``GET /agents/{id}`` answers for, and
+        any other agent id is omitted exactly like an unknown id.
+
+        Users are deliberately NOT scoped: the caller sees user ids as the
+        owner, approver or registrar of agents and as the actor on events it
+        can read, and labelling those needs the user's display name. Only the
+        display fields are returned, for ids the caller already holds; there is
+        no listing or search, so this does not enumerate users.
+        """
         unique_ids = list(dict.fromkeys(ids))
+        agent_filters = build_access_filters(identity, Agent)
         async with self._ctx.admin_db.session() as session:
-            rows = await ActorDirectoryRepository.get_by_ids(session, unique_ids)
+            rows = await ActorDirectoryRepository.get_by_ids(
+                session, unique_ids, agent_filters=agent_filters
+            )
         return [_to_view(row) for row in rows]
 
 

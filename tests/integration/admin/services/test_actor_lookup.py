@@ -1,4 +1,8 @@
-"""Integration tests for resolving actors by id (``ActorService.lookup``)."""
+"""Integration tests for resolving actors by id (``ActorService.lookup``).
+
+Agents resolve only when the caller may see them (the admin agent scoping
+filter); users resolve for any caller.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +16,28 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentRepository, UserRepository
 from jentic_one.admin.services.actor_service import ActorService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState
+from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 pytestmark = pytest.mark.integration
+
+_ADMIN = Identity(sub="usr_lookup_admin", email="a@test.local", permissions=["org:admin"])
+_OUTSIDER = Identity(sub="usr_lookup_outsider", email="o@test.local", permissions=["agents:read"])
+
+
+def _owner(user_id: str) -> Identity:
+    return Identity(sub=user_id, email="ada@test.local", permissions=["agents:read"])
+
+
+def _agent(agent_id: str, owner_id: str, *permissions: str) -> Identity:
+    return Identity(
+        sub=agent_id,
+        permissions=list(permissions),
+        actor_type=ActorType.AGENT,
+        parent_actor_id=owner_id,
+    )
 
 
 @dataclass(frozen=True)
@@ -67,9 +89,9 @@ async def seed(integration_context: Context) -> AsyncGenerator[_Seed, None]:
         await session.commit()
 
 
-async def test_lookup_resolves_users_and_agents(integration_context: Context, seed: _Seed) -> None:
+async def test_admin_resolves_users_and_agents(integration_context: Context, seed: _Seed) -> None:
     views = await ActorService(integration_context).lookup(
-        [seed.user_id, seed.active_agent_id, seed.pending_agent_id]
+        [seed.user_id, seed.active_agent_id, seed.pending_agent_id], identity=_ADMIN
     )
     by_id = {v.id: v for v in views}
     assert set(by_id) == {seed.user_id, seed.active_agent_id, seed.pending_agent_id}
@@ -82,14 +104,50 @@ async def test_lookup_resolves_users_and_agents(integration_context: Context, se
     assert by_id[seed.pending_agent_id].active is False
 
 
+async def test_owner_resolves_own_agents(integration_context: Context, seed: _Seed) -> None:
+    views = await ActorService(integration_context).lookup(
+        [seed.user_id, seed.active_agent_id, seed.pending_agent_id], identity=_owner(seed.user_id)
+    )
+    assert {v.id for v in views} == {seed.user_id, seed.active_agent_id, seed.pending_agent_id}
+
+
+async def test_outsider_resolves_user_names_but_not_others_agents(
+    integration_context: Context, seed: _Seed
+) -> None:
+    views = await ActorService(integration_context).lookup(
+        [seed.user_id, seed.active_agent_id, seed.pending_agent_id], identity=_OUTSIDER
+    )
+    assert [(v.id, v.name) for v in views] == [(seed.user_id, "Ada Lovelace")]
+
+
+async def test_agent_resolves_itself_and_users_only(
+    integration_context: Context, seed: _Seed
+) -> None:
+    identity = _agent(seed.active_agent_id, seed.user_id, "agents:read")
+    views = await ActorService(integration_context).lookup(
+        [seed.user_id, seed.active_agent_id, seed.pending_agent_id], identity=identity
+    )
+    assert {v.id for v in views} == {seed.user_id, seed.active_agent_id}
+
+
+async def test_agent_with_owner_scope_resolves_owners_agents(
+    integration_context: Context, seed: _Seed
+) -> None:
+    identity = _agent(seed.active_agent_id, seed.user_id, "agents:read", OWNER_AGENTS_READ)
+    views = await ActorService(integration_context).lookup(
+        [seed.pending_agent_id], identity=identity
+    )
+    assert [v.id for v in views] == [seed.pending_agent_id]
+
+
 async def test_lookup_omits_unknown_and_collapses_duplicates(
     integration_context: Context, seed: _Seed
 ) -> None:
     views = await ActorService(integration_context).lookup(
-        [seed.user_id, "usr_does_not_exist", seed.user_id, "cred_not_an_actor"]
+        [seed.user_id, "usr_does_not_exist", seed.user_id, "cred_not_an_actor"], identity=_ADMIN
     )
     assert [v.id for v in views] == [seed.user_id]
 
 
 async def test_lookup_of_no_ids_is_empty(integration_context: Context) -> None:
-    assert await ActorService(integration_context).lookup([]) == []
+    assert await ActorService(integration_context).lookup([], identity=_ADMIN) == []

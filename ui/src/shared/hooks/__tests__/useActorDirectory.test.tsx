@@ -234,6 +234,32 @@ describe('useActorDirectory', () => {
 			]);
 		});
 
+		it('keeps the names one chunk resolved when another chunk fails', async () => {
+			worker.use(
+				http.get('/actors/lookup', ({ request }) => {
+					const ids = new URL(request.url).searchParams.getAll('id');
+					if (ids.includes('agnt_0')) {
+						return HttpResponse.json({ detail: 'boom' }, { status: 500 });
+					}
+					return HttpResponse.json({
+						data: ids.map((id) => lookupEntry(id, `name-${id}`)),
+					});
+				}),
+			);
+			const ids = Array.from({ length: ACTOR_LOOKUP_MAX_IDS + 5 }, (_, i) => `agnt_${i}`);
+			const { result } = renderHook(() => useActorDirectory(ids), {
+				wrapper: memberWrapper(['agents:read']),
+			});
+
+			// The failed chunk holds the first ACTOR_LOOKUP_MAX_IDS ids; the rest resolve.
+			await waitFor(() => {
+				expect(result.current.isError).toBe(true);
+				expect(result.current.byId.size).toBe(5);
+			});
+			expect(result.current.resolve('agnt_0')).toBeUndefined();
+			expect(result.current.resolve('agnt_104')).toBe('name-agnt_104');
+		});
+
 		it('falls back to raw ids (undefined names) when the lookup fails', async () => {
 			worker.use(createErrorHandler('get', '/actors/lookup', { status: 500 }));
 			const { result } = renderHook(() => useActorDirectory(['agnt_1']), {
