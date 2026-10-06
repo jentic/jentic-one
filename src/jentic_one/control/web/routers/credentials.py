@@ -46,6 +46,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
 from jentic_one.control.web.deps import (
     get_connect_service,
     get_connect_session_service,
+    get_credential_checker,
     get_credential_service,
 )
 from jentic_one.control.web.schemas.credentials import (
@@ -55,6 +56,7 @@ from jentic_one.control.web.schemas.credentials import (
     ConnectRequestBody,
     CredentialAgentListResponse,
     CredentialAgentResponse,
+    CredentialCheckResponse,
     CredentialCreateRequest,
     CredentialCreateResponse,
     CredentialListResponse,
@@ -80,6 +82,7 @@ from jentic_one.control.web.schemas.permission_rules import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.credential_check import CredentialCheckerProtocol, CredentialCheckResult
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.links import public_base_url
@@ -99,6 +102,15 @@ def _connect_callback_url(request: Request, ctx: Context) -> str:
     derived here because only the web layer sees the request origin.
     """
     return f"{public_base_url(ctx.config, request)}{OAUTH_CALLBACK_PATH}"
+
+
+def _to_check_response(result: CredentialCheckResult) -> CredentialCheckResponse:
+    return CredentialCheckResponse(
+        status=result.status,
+        reason=result.reason,
+        probe=result.probe,
+        upstream_status=result.upstream_status,
+    )
 
 
 def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedResponse:
@@ -160,8 +172,13 @@ async def create_credential(
     body: CredentialCreateRequest,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
+    checker: CredentialCheckerProtocol | None = Depends(get_credential_checker),
 ) -> CredentialCreateResponse:
-    """Create a new credential. The secret is returned once and never readable again."""
+    """Create a new credential. The secret is returned once and never readable again.
+
+    With `check: true` the response also carries one test call's verdict (see
+    `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
+    """
     payload = CredentialCreate(
         type=CredentialType(body.type),
         name=body.name,
@@ -192,6 +209,11 @@ async def create_credential(
         aws_service=getattr(body, "aws_service", None),
     )
     result = await svc.create(payload, identity=identity)
+    check = (
+        await svc.check(result.credential_id, identity=identity, checker=checker)
+        if body.check
+        else None
+    )
 
     redacted_api = APIReferenceResponse(
         vendor=result.api.vendor, name=result.api.name, version=result.api.version
@@ -211,6 +233,7 @@ async def create_credential(
     return CredentialCreateResponse(
         credential=redacted,
         secret=result.secret.model_dump(),
+        check=_to_check_response(check) if check else None,
     )
 
 
@@ -846,6 +869,31 @@ async def delete_credential(
     """Delete a credential."""
     await svc.delete(credential_id, identity=identity)
     return Response(status_code=204)
+
+
+@router.post(
+    "/credentials/{credential_id}:check",
+    operation_id="checkCredential",
+    summary="Check a credential with one test call",
+    responses=not_found(),
+)
+async def check_credential(
+    credential_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+    checker: CredentialCheckerProtocol | None = Depends(get_credential_checker),
+) -> CredentialCheckResponse:
+    """Make one read call with the stored credential and say whether it works.
+
+    The call is a GET with no required input, taken from the API's own spec and
+    sent through the broker's egress policy with a 5 second deadline. A failure
+    is named rather than collapsed into "invalid": `bad_key`, `expired`,
+    `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+    upstream body is returned. Use it after rotating a credential, or for one
+    saved before checks existed.
+    """
+    result = await svc.check(credential_id, identity=identity, checker=checker)
+    return _to_check_response(result)
 
 
 @router.post(

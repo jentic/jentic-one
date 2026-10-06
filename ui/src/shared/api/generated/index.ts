@@ -64,6 +64,8 @@ export type { CredentialBindingEntry } from './models/CredentialBindingEntry';
 export type { CredentialBindingListResponse } from './models/CredentialBindingListResponse';
 export type { CredentialBindingResponse } from './models/CredentialBindingResponse';
 export type { CredentialBindRequest } from './models/CredentialBindRequest';
+export type { CredentialCheckResponse } from './models/CredentialCheckResponse';
+export { CredentialCheckStatus } from './models/CredentialCheckStatus';
 export type { CredentialCreateResponse } from './models/CredentialCreateResponse';
 export type { CredentialListResponse } from './models/CredentialListResponse';
 export { CredentialLocation } from './models/CredentialLocation';

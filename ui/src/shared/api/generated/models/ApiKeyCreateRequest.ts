@@ -14,6 +14,10 @@ export type ApiKeyCreateRequest = {
      */
     api: APIReferenceRequest;
     /**
+     * After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+     */
+    check?: boolean;
+    /**
      * Header or query-parameter name carrying the key.
      */
     field_name: string;

@@ -10,7 +10,9 @@ in-process ``RegistryService``) onto the broker app, so the broker can resolve
 upstream URLs to operations without importing ``jentic_one.registry``; a
 ``CatalogAutoImportProtocol`` onto the control-plane app so the connect flow can
 auto-import a vendor's OpenAPI spec after a credential connects (broker requires
-a registered API before it can route); and carrying the ``/mcp`` mount
+a registered API before it can route); a ``CredentialCheckerProtocol`` onto the
+control-plane app so a saved credential can be checked with one test call
+(``jentic_one.credential_check``); and carrying the ``/mcp`` mount
 (``jentic_one.mcp``) onto control-plane app shapes via the container seam.
 Swapping an implementation later (e.g. an HTTP-backed resolver) is a change
 here only — the surfaces are unaffected.
@@ -25,6 +27,7 @@ import structlog
 from fastapi import FastAPI
 from sqlalchemy import select
 
+from jentic_one.credential_check import InProcessCredentialChecker
 from jentic_one.mcp.installer import (
     install_mcp_challenge_placeholder,
     install_mcp_mount,
@@ -180,6 +183,16 @@ def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:
     (the catalog reads live in the registry DB). The caller guards the call.
     """
     app.state.catalog_auto_importer = InProcessCatalogAutoImporter(ctx)
+
+
+def install_control_credential_checker(app: FastAPI, ctx: Context) -> None:
+    """Inject the credential checker onto the combined/control app state (#630).
+
+    Same gating as the catalog auto-importer: the check picks its test call from
+    the registry, so the caller installs it only when this process can read the
+    registry DB. Without it, a check answers ``untested`` and says why.
+    """
+    app.state.credential_checker = InProcessCredentialChecker(ctx)
 
 
 def build_default_container(ctx: Context) -> AppContainer:

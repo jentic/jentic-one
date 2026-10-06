@@ -10,6 +10,7 @@ import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateReques
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
+import type { CredentialCheckResponse } from '../models/CredentialCheckResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
@@ -65,6 +66,9 @@ export class CredentialsService {
     /**
      * Create credential
      * Create a new credential. The secret is returned once and never readable again.
+     *
+     * With `check: true` the response also carries one test call's verdict (see
+     * `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
      * @returns CredentialCreateResponse Successful Response
      * @throws ApiError
      */
@@ -531,6 +535,41 @@ export class CredentialsService {
                 403: `Forbidden`,
                 404: `Not Found`,
                 409: `Credential is not connectable`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Check a credential with one test call
+     * Make one read call with the stored credential and say whether it works.
+     *
+     * The call is a GET with no required input, taken from the API's own spec and
+     * sent through the broker's egress policy with a 5 second deadline. A failure
+     * is named rather than collapsed into "invalid": `bad_key`, `expired`,
+     * `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+     * upstream body is returned. Use it after rotating a credential, or for one
+     * saved before checks existed.
+     * @returns CredentialCheckResponse Successful Response
+     * @throws ApiError
+     */
+    public static checkCredential({
+        credentialId,
+    }: {
+        credentialId: string,
+    }): CancelablePromise<CredentialCheckResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/credentials/{credential_id}:check',
+            path: {
+                'credential_id': credentialId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

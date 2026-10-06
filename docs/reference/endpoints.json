@@ -2233,6 +2233,31 @@
       "typical_caller": "any"
     },
     {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "checkCredential",
+      "path": "/credentials/{credential_id}:check",
+      "public": false,
+      "required_scopes": [
+        "credentials:write"
+      ],
+      "summary": "Check a credential with one test call",
+      "surface": "credentials",
+      "typical_caller": "any"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -4608,5 +4633,5 @@
     ],
     "total": 27
   },
-  "total": 174
+  "total": 175
 }
