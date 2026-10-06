@@ -145,7 +145,7 @@ export function useCredential(id: string | undefined): UseQueryResult<Credential
  * Agents directly bound to a credential (`GET /credentials/{id}/agents`) —
  * the read-mostly "Bound agents" section on the credential edit sheet.
  * First page only (default 50): the section is a glanceable summary that
- * links out to each agent's own console for anything deeper. `enabled`
+ * links out to each agent on the Agents page for anything deeper. `enabled`
  * gates the read to when the host sheet is actually open.
  */
 export function useCredentialAgents(
@@ -542,6 +542,7 @@ export type { DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 export {
 	apiPickerKeys,
 	apiRowToSelected,
+	catalogToSelected,
 	workspaceApiFor,
 	useApis,
 	useAllApis,

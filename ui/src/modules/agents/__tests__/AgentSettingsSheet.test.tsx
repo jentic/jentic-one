@@ -14,6 +14,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
@@ -63,7 +64,7 @@ describe('AgentSettingsSheet — the dock Settings surface', () => {
 		renderPage('/?agent=agnt_active_1');
 		const dock = await findDock();
 
-		// A button, not a console link — the sheet IS the settings surface.
+		// A button, not a link — the sheet IS the settings surface.
 		const verb = dock.getByRole('button', { name: 'Settings' });
 		expect(dock.queryByRole('link', { name: /Settings/ })).not.toBeInTheDocument();
 		const label = within(verb).getByText('Settings');
@@ -73,8 +74,7 @@ describe('AgentSettingsSheet — the dock Settings surface', () => {
 		const sheet = within(await screen.findByTestId('sheet-primitive'));
 		expect(sheet.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
 		expect(sheet.getByText('support-agent')).toBeInTheDocument();
-		// The last console-only block rides along, so nothing forces a trip to
-		// `/agents/:id`.
+		// Provenance rides along, so every agent fact is on this surface.
 		expect(sheet.getByTestId('agent-provenance')).toBeInTheDocument();
 		// The flat surface stays underneath — the sheet did not navigate away.
 		expect(screen.getByRole('tablist', { name: 'Agents' })).toBeInTheDocument();
@@ -142,6 +142,69 @@ describe('AgentSettingsSheet — the dock Settings surface', () => {
 		await waitFor(() =>
 			expect(reopened.getByRole('button', { name: 'Save changes' })).toBeDisabled(),
 		);
+	});
+
+	it("shows the agent's attribution: registered, approved, and by whom", async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		expect(sheet.getByRole('heading', { name: 'Provenance' })).toBeInTheDocument();
+		const facts = within(sheet.getByTestId('agent-provenance'));
+		for (const label of ['Registered', 'Registered by', 'Approved', 'Approved by']) {
+			expect(facts.getByText(label)).toBeInTheDocument();
+		}
+		// The approver resolves through the actor directory, never a raw id.
+		expect(await facts.findByText('Admin User')).toBeInTheDocument();
+		expect(facts.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
+		// No owner on this agent → the row is omitted, not rendered empty.
+		expect(facts.queryByText('Owner')).not.toBeInTheDocument();
+	});
+
+	it('clears the description by sending an explicit null', async () => {
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
+			}),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		await user.clear(await sheet.findByLabelText('Description'));
+		await user.click(sheet.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		expect(patchBody).toEqual({ description: null });
+	});
+
+	it('does not expose an owner editor — ownership is not routine metadata', async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		await sheet.findByLabelText('Name');
+		// Reassigning the accountable human is an administrative act; the form
+		// deliberately only edits name + description.
+		expect(sheet.queryByLabelText('Owner')).not.toBeInTheDocument();
+	});
+
+	it('keeps the draft and toasts when the PATCH fails', async () => {
+		worker.use(createErrorHandler('patch', '/agents/:id', { status: 500 }));
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		const nameInput = await sheet.findByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'renamed-agent');
+		await user.click(sheet.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Failed to update the agent.')).toBeInTheDocument();
+		// The draft survives so the user can retry without retyping.
+		expect(nameInput).toHaveValue('renamed-agent');
 	});
 
 	it('danger zone Archive routes through the shared confirm and says archive', async () => {

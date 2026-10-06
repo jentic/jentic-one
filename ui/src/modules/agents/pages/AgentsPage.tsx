@@ -43,6 +43,9 @@ export default function AgentsPage() {
 	const filterRef = useRef<HTMLInputElement | null>(null);
 	useHotkey('/', () => filterRef.current?.focus());
 	useHotkey('n', () => setAgentCreateOpen(true));
+	// Reported by the section below, so the header steps back exactly while the
+	// zero-agents landing is on screen.
+	const [firstRun, setFirstRun] = useState(false);
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const inventoryParam = searchParams.get('credentials');
@@ -109,7 +112,8 @@ export default function AgentsPage() {
 								icon={<Filter className="h-3.5 w-3.5" />}
 								placeholder="Filter agents…"
 								aria-label="Filter agents"
-								className="w-40 lg:w-48"
+								// Narrower on a phone, so the header's buttons stay on screen at 390px.
+								className="w-28 sm:w-40 lg:w-48"
 							/>
 							{!agentFilter && (
 								<Kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 sm:inline-flex">
@@ -117,7 +121,15 @@ export default function AgentsPage() {
 								</Kbd>
 							)}
 						</div>
-						<Button size="sm" onClick={() => setAgentCreateOpen(true)}>
+						{/* Opens the New agent panel. Secondary while the landing is up: its
+						    register card is the recommended way in, and the panel opens on
+						    "Create here" there. */}
+						<Button
+							size="sm"
+							variant={firstRun ? 'outline' : 'primary'}
+							data-emphasis={firstRun ? 'secondary' : 'primary'}
+							onClick={() => setAgentCreateOpen(true)}
+						>
 							<Plus className="h-4 w-4" />
 							New agent
 						</Button>
@@ -172,6 +184,7 @@ export default function AgentsPage() {
 				createOpen={agentCreateOpen}
 				setCreateOpen={setAgentCreateOpen}
 				filter={agentFilter}
+				onLandingChange={setFirstRun}
 			/>
 
 			{/* The org-wide credential inventory — a page-level surface, since it is

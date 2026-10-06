@@ -300,10 +300,8 @@ export function useOptionalCurrentUser(): CurrentUserResponse | null {
 	return useContext(AuthContext)?.user ?? null;
 }
 
-/**
- * The auth status, or `null` when rendered outside an `AuthProvider`. Lets
- * optional-auth consumers tell "user still loading" from "no provider".
- */
-export function useOptionalAuthStatus(): AuthStatus | null {
-	return useContext(AuthContext)?.status ?? null;
+/** The auth context, or `null` outside an `AuthProvider` — for hooks that must
+ * tell "no provider" apart from "provider still loading the user". */
+export function useOptionalAuth(): AuthContextValue | null {
+	return useContext(AuthContext);
 }

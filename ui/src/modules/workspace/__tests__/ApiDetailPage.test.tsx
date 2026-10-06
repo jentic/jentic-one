@@ -7,23 +7,11 @@ import {
 	userEvent,
 	within,
 	checkA11y,
+	settleAnimations,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
-
-/** See WorkspacePage.test for why we settle the PageHeader entrance animation. */
-async function settleAnimations(container: HTMLElement): Promise<void> {
-	await waitFor(() => {
-		const faded = Array.from(container.querySelectorAll<HTMLElement>('*')).find((el) => {
-			if (el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true')
-				return false;
-			const opacity = Number.parseFloat(getComputedStyle(el).opacity);
-			return !Number.isNaN(opacity) && opacity > 0 && opacity < 1;
-		});
-		expect(faded).toBeUndefined();
-	});
-}
 
 const PATH = '/workspace/:vendor/:name/:version';
 

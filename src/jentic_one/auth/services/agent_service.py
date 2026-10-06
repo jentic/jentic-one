@@ -589,7 +589,9 @@ class AgentService:
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
                 summary=f"Credential {credential_id} bound to agent {agent_id}",
-                created_by=identity.sub,
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
@@ -660,7 +662,9 @@ class AgentService:
                 type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
                 severity=EventSeverity.INFO,
                 summary=f"Credential {credential_id} {verb} agent {agent_id}",
-                created_by=identity.sub,
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
@@ -711,7 +715,9 @@ class AgentService:
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
                 summary=f"Credential {credential_id} binding resumed for agent {agent_id}",
-                created_by=identity.sub,
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )

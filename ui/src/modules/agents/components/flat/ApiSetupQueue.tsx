@@ -10,10 +10,15 @@
  * component mounted meanwhile, and the edited batch is folded back in
  * ({@link reconcileQueue}) so progress survives the round trip. Bindings are created
  * with no rules — default-deny, so an added API cannot serve traffic yet.
+ *
+ * An API the agent already reaches is set up the same way: the pane names the
+ * credentials it has and offers only credentials not bound to it yet, so the item
+ * adds another credential rather than a 409.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
 import { Badge, Button, SheetPrimitive } from '@/shared/ui';
+import { apiIdentityTuple } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
@@ -28,7 +33,12 @@ import {
 	type CredentialChoice,
 } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
-import { defaultChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	addedViaLabel,
+	anotherCredentialWarning,
+	defaultChoice,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
@@ -119,7 +129,19 @@ export function ApiSetupQueue({
 	const importMutation = useImportCatalogEntry();
 	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
-	const active = useMemo(() => activeEntry(entries), [entries]);
+	// A credential this queue has bound can't be bound to the agent again (a 409),
+	// even when it also covers a later API — so it leaves every later pane.
+	const active = useMemo(() => {
+		const entry = activeEntry(entries);
+		if (!entry) return null;
+		const bound = new Set(
+			entries.flatMap((e) =>
+				e.status === 'added' && e.credentialId ? [e.credentialId] : [],
+			),
+		);
+		const covering = entry.covering.filter((c) => !bound.has(c.credential_id));
+		return covering.length === entry.covering.length ? entry : { ...entry, covering };
+	}, [entries]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
 	const formEntry = useMemo(
 		() => entries.find((e) => e.key === formKey) ?? null,
@@ -428,6 +450,7 @@ function ActivePane({
 	const wantsNew = count === 0 || selected?.kind === 'new';
 	/** A new credential for this API is one sign-in click — the tray established it. */
 	const newIsSignIn = entry.outcome === 'oauth';
+	const other = entry.existing.length > 0 ? ' other' : '';
 
 	return (
 		<section
@@ -449,8 +472,15 @@ function ActivePane({
 					<p className="text-foreground truncate text-sm font-medium">
 						{entry.api.label}
 					</p>
-					<p className="text-muted-foreground font-mono text-xs">
-						{entry.api.vendor}/{entry.api.name}
+					<p
+						data-testid="queue-active-identity"
+						className="text-muted-foreground font-mono text-xs"
+					>
+						{/* A catalog pick's name is its whole `api_id`, which already
+						    leads with the vendor (or is just the vendor). */}
+						{entry.api.name === entry.api.vendor
+							? entry.api.name
+							: apiIdentityTuple({ vendor: entry.api.vendor, name: entry.api.name })}
 					</p>
 				</div>
 				{working && (
@@ -461,13 +491,32 @@ function ActivePane({
 				)}
 			</div>
 
+			{entry.existing.length > 0 && (
+				<div className="space-y-1.5">
+					<p
+						data-testid="queue-existing-accounts"
+						className="text-muted-foreground text-xs"
+					>
+						{addedViaLabel(entry.existing)}. Pick another credential to add it to{' '}
+						{agentName}.
+					</p>
+					<p
+						data-testid="queue-ambiguity-warning"
+						className="text-foreground flex items-start gap-2 text-xs"
+					>
+						<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<span>{anotherCredentialWarning(entry.api.label)}</span>
+					</p>
+				</div>
+			)}
+
 			{count > 0 && (
 				<CredentialOptions
 					id={`queue-credential-${entry.key}`}
 					legend={
 						count === 1
-							? `You have 1 credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
-							: `You have ${count} credentials for ${entry.api.label}. Which should ${agentName} use?`
+							? `You have 1${other} credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
+							: `You have ${count}${other} credentials for ${entry.api.label}. Which should ${agentName} use?`
 					}
 					credentials={entry.covering}
 					selected={selected}

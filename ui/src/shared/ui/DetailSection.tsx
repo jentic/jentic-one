@@ -4,12 +4,12 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/shared/ui/Card';
 import { cn } from '@/shared/lib/utils';
 
 /**
- * DetailSection — the card shell every detail-console section renders inside
- * (agent console and friends): the shared `Card` family
+ * DetailSection — the card shell every entity-detail section renders inside
+ * (the agent dock sheets, Monitor's detail sheets, and friends): the shared `Card` family
  * with a header grammar (icon medallion + heading + right-slot) layered on
  * top, so section chrome stays one primitive across the product.
  *
- * Promoted to the shared library once more than one detail console needed
+ * Promoted to the shared library once more than one detail surface needed
  * the identical shell (library-first rule).
  */
 

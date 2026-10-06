@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import re
 from pathlib import Path
 
 import pytest
@@ -173,6 +174,31 @@ def test_admin_migration_seeds_no_credentials() -> None:
         # than the broad "values(" substring, which false-positives on benign
         # server_default / comment text.
         assert "insert into" not in lowered, f"{name} inserts seed rows; first run must stay empty"
+
+
+_DROP_EXTENSION = re.compile(r"\bdrop\s+extension\b", re.IGNORECASE)
+
+
+def test_no_migration_drops_a_postgres_extension() -> None:
+    """No migration may run ``DROP EXTENSION``.
+
+    Extensions are database-wide and can be shared with tables that these
+    migrations do not own (for example a deployment that keeps ``vector``
+    columns of its own). Dropping one either fails on the dependent objects or
+    on ownership (the migration role need not own the extension), and either
+    failure aborts the whole upgrade.
+    """
+    migrations_root = (
+        Path(__file__).resolve().parent.parent.parent / "src" / "jentic_one" / "migrations"
+    )
+    sources = sorted(migrations_root.glob("*/versions/*.py"))
+    assert sources, f"no migration sources found under {migrations_root}"
+    offenders = [
+        str(path.relative_to(migrations_root))
+        for path in sources
+        if _DROP_EXTENSION.search(path.read_text())
+    ]
+    assert not offenders, f"migrations drop a Postgres extension: {offenders}"
 
 
 # Canary corpus for the URL-index repair migration: representative templates

@@ -193,7 +193,12 @@ class WorkerLoop:
             return result
 
     async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
-        """Mark job completed and write result."""
+        """Mark job completed and write result.
+
+        Only an import job emits ``import.completed``: the event (and the spec
+        import telemetry derived from it) means a spec was imported, which no
+        other job kind does.
+        """
         async with self._db.transaction() as session:
             job = await session.get(Job, job_id)
             if job is None:
@@ -209,6 +214,8 @@ class WorkerLoop:
                 content_type=result.content_type,
             )
             session.add(job_result)
+            if kind != JobKind.IMPORT:
+                return
             try:
                 await emit_event(
                     session,

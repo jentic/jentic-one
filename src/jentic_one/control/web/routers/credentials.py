@@ -204,6 +204,7 @@ async def create_credential(
         catalog_api_id=result.catalog_api_id,
         provider=result.provider,
         active=result.active,
+        created_by=result.created_by,
         created_at=result.created_at,
         server_variables=result.server_variables,
     )

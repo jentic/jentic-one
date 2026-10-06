@@ -11,7 +11,8 @@
  * Sources, each its own query so one failing endpoint degrades only its rows:
  *   - agents awaiting approval      (`GET /agents?status=pending`, drained)
  *   - OAuth clients awaiting review (`GET /admin/oauth-clients?approval_status=pending`, org:admin)
- *   - unacknowledged action events  (`GET /events?requires_action=true&acknowledged=false`)
+ *   - unacknowledged action events  (`GET /events?requires_action=true&acknowledged=false`,
+ *                                    `events:read` — skipped, not failed, without it)
  *   - credentials whose OAuth sign-in never finished (joined from the credential list)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
@@ -33,6 +34,7 @@ import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIden
 import { adaptEvent, primaryDestinationFor, severityForWire } from '@/shared/lib/agentStream';
 import { useOptionalCurrentUser } from '@/shared/auth/AuthContext';
 import { ORG_ADMIN } from '@/shared/auth/usePermission';
+import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
 
 export type AttentionKind = 'agent' | 'oauth_client' | 'credential' | 'event';
 
@@ -80,11 +82,15 @@ export function useAttentionItems(): AttentionState {
 	// hook — the Activity rail — also renders in tests without an AuthProvider.
 	const isAdmin = useOptionalCurrentUser()?.permissions?.includes(ORG_ADMIN) ?? false;
 	const pendingAgents = usePendingAgentsCount();
+	// A caller who cannot read events has no event alerts to miss, so the source
+	// is off rather than reported as failed.
+	const canReadEvents = useCanReadEvents();
 
 	const events = useQuery({
 		queryKey: attentionKeys.events,
 		queryFn: () =>
 			EventsService.listEvents({ requiresAction: true, acknowledged: false, limit: 50 }),
+		enabled: canReadEvents,
 		staleTime: 30_000,
 		refetchInterval: REFETCH_MS,
 	});

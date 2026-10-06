@@ -26,8 +26,9 @@ _OWNER_MODELS: dict[type[Any], Any] = {
 }
 
 # Extra subject columns matched the same way as the owner column. An event names
-# its subject in ``created_by`` when nobody acted on the caller's behalf (e.g. an
-# OAuth grant the caller consented to, or a credential of theirs nearing expiry).
+# what it is about in ``created_by``: the credential owner on credential use and
+# health events, the agent on binding events, the consenting user on an OAuth
+# grant. ``actor_id`` stays whoever acted.
 _EXTRA_OWNER_COLUMNS: dict[type[Any], tuple[Any, ...]] = {
     Event: (Event.created_by,),
 }

@@ -21,6 +21,7 @@ import {
 	getExecution,
 	getJob,
 	getUsageStats,
+	isMonitorAccessDenied,
 	listActors,
 	listAudit,
 	listEvents,
@@ -199,8 +200,12 @@ const EVENT_FEED_PAGE = 50;
  * cursor ("Load older" appends a page). Live events arrive separately through
  * {@link useEventStream} and are merged on top by the view.
  */
-export function useEventFeed(params: Omit<ListEventsParams, 'cursor' | 'limit'>) {
+export function useEventFeed(
+	params: Omit<ListEventsParams, 'cursor' | 'limit'>,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
 	return useInfiniteQuery({
+		enabled,
 		queryKey: monitorKeys.eventFeed(params),
 		queryFn: ({ pageParam }) =>
 			listEvents({ ...params, cursor: pageParam, limit: EVENT_FEED_PAGE }),
@@ -240,7 +245,8 @@ export function useAcknowledgeEvent() {
 	});
 }
 
-export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error';
+/** `forbidden`: the server refused the stream (401/403) — nothing reconnects it. */
+export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error' | 'forbidden';
 
 /**
  * Subscribe to the live event SSE while `enabled`. Newest-first buffer, capped
@@ -249,7 +255,9 @@ export type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'error';
  *
  * Exposes `reconnect()` to force a re-subscribe after a stream error (the EU
  * surfaces this as a "Reconnect" affordance), and `clear()` to empty the
- * buffer. Toasts once when the stream errors so the failure isn't silent.
+ * buffer. Toasts once when the stream errors so the failure isn't silent. A
+ * refusal (401/403) reads `forbidden` instead of `error`, without a toast, so
+ * callers that reconnect on `error` leave it alone.
  */
 export function useEventStream(
 	params: ListEventsParams,
@@ -309,6 +317,10 @@ export function useEventStream(
 				onOpen: () => setStatus('live'),
 				onEvent: (event) => setEvents((prev) => [event, ...prev].slice(0, cap)),
 				onError: (error) => {
+					if (isMonitorAccessDenied(error)) {
+						setStatus('forbidden');
+						return;
+					}
 					setStatus('error');
 					if (!toastOnErrorRef.current) return;
 					toast({

@@ -11,6 +11,8 @@ import { AlertTriangle, ExternalLink, PauseCircle, Pencil, PlayCircle, X } from 
 import {
 	Badge,
 	Button,
+	CodeSnippet,
+	CopyButton,
 	DangerZone,
 	ErrorAlert,
 	SheetPrimitive,
@@ -19,6 +21,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import {
@@ -26,6 +29,8 @@ import {
 	type OpsApiReference,
 } from '@/shared/credentials/components/OperationImpactPreview';
 import { CredentialDeleteDialog } from '@/shared/credentials/components/CredentialDeleteDialog';
+import { SharedWithYouBadge } from '@/shared/credentials/components/CredentialCard';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
 	useAgentBindingPermissions,
@@ -37,6 +42,10 @@ import {
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import {
+	MultiCredentialNote,
+	credentialIdHeader,
+} from '@/modules/agents/components/flat/MultiCredentialNote';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
@@ -92,6 +101,9 @@ export interface ApiAccessSidebarProps {
 	/** Titles of the OTHER tiles sharing this binding — the blast radius. Rules are
 	 * keyed by (agent, credential), so editing them here affects all of them. */
 	siblingApiTitles: string[];
+	/** How many of the agent's bindings serve this tile's API — above 1, the panel
+	 * says how a call picks between the credentials. */
+	accountCount?: number;
 	open: boolean;
 	onClose: () => void;
 	/** DOM id for the panel content — the tile's `aria-controls` target. */
@@ -102,6 +114,7 @@ export function ApiAccessSidebar({
 	agent,
 	tile,
 	siblingApiTitles,
+	accountCount = 1,
 	open,
 	onClose,
 	sidebarId,
@@ -129,6 +142,13 @@ export function ApiAccessSidebar({
 	};
 
 	const credentialId = shown?.credentialId ?? null;
+	// A credential shared with the viewer is theirs to bind and use, not to edit or
+	// delete. An unreachable credential row leaves the owner unknown — keep the
+	// actions and let the server decide.
+	const viewer = useOptionalCurrentUser();
+	const credentialReadOnly =
+		shown?.credentialCreatedBy !== undefined &&
+		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
 
 	// The API this tile resolves to, for the rule editor's operation suggestions
@@ -380,14 +400,49 @@ export function ApiAccessSidebar({
 											)}
 										</p>
 									</div>
-									<Button
-										size="sm"
-										variant="secondary"
-										onClick={() => setEditOpen(true)}
-									>
-										<Pencil className="h-4 w-4" /> Edit credential
-									</Button>
+									{credentialReadOnly ? (
+										<SharedWithYouBadge />
+									) : (
+										<Button
+											size="sm"
+											variant="secondary"
+											onClick={() => setEditOpen(true)}
+										>
+											<Pencil className="h-4 w-4" /> Edit credential
+										</Button>
+									)}
 								</div>
+								{/* The full id, copyable: what a call names in
+								    Jentic-Credential-Id when the agent holds several. */}
+								<div
+									data-testid="credential-id-row"
+									className="flex min-w-0 items-center gap-2 text-xs"
+								>
+									<span className="text-muted-foreground shrink-0">ID</span>
+									<code className="text-foreground/90 min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
+										{shown.credentialId}
+									</code>
+									<CopyButton
+										value={shown.credentialId}
+										size="icon"
+										variant="ghost"
+										ariaLabel="Copy the credential ID"
+										toastMessage="Credential ID copied"
+									/>
+								</div>
+								{accountCount > 1 && (
+									<>
+										<MultiCredentialNote
+											apiTitle={shown.title}
+											count={accountCount}
+										/>
+										<CodeSnippet
+											label="Header that picks this credential"
+											code={credentialIdHeader(shown.credentialId)}
+											copyAriaLabel="Copy the Jentic-Credential-Id header"
+										/>
+									</>
+								)}
 							</section>
 
 							{/* Blast radius: rules are keyed by (credential, agent) —
@@ -493,15 +548,20 @@ export function ApiAccessSidebar({
 											ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
 											emphasis: 'outline',
 										},
-										{
-											key: 'delete',
-											title: 'Delete credential everywhere',
-											description:
-												'Removes the credential org-wide — every agent bound to it loses access.',
-											buttonLabel: 'Delete credential',
-											ariaLabel: `Delete credential ${shown.credentialName} org-wide`,
-											emphasis: 'solid',
-										},
+										// Only the owner or an admin can delete the credential itself.
+										...(credentialReadOnly
+											? []
+											: [
+													{
+														key: 'delete',
+														title: 'Delete credential everywhere',
+														description:
+															'Removes the credential org-wide — every agent bound to it loses access.',
+														buttonLabel: 'Delete credential',
+														ariaLabel: `Delete credential ${shown.credentialName} org-wide`,
+														emphasis: 'solid' as const,
+													},
+												]),
 									]}
 								/>
 							</section>

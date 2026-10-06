@@ -26,6 +26,7 @@ import {
 	resetCredentialsStore,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType } from '@/shared/credentials/api';
+import { AuthProvider } from '@/shared/auth';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 /** Surfaces the router's search string so specs can assert `?credentials` is spent. */
@@ -134,9 +135,7 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 		renderPage();
 
 		// No agents, no dock — but the org-wide inventory still opens.
-		expect(
-			await screen.findByRole('heading', { name: 'Set up your workspace' }),
-		).toBeInTheDocument();
+		expect(await screen.findByTestId('agents-empty-landing')).toBeInTheDocument();
 		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
 
 		await user.click(headerTrigger());
@@ -511,10 +510,10 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 			expect(slack).toHaveTextContent(/Any of these can be bound to an agent/);
 			// Two rows share a name, so the id tail is what sets them apart.
 			expect(slack).toHaveTextContent('Some share a name; rename one to tell them apart.');
-			expect(slack).toHaveTextContent('…lack_1');
-			expect(slack).toHaveTextContent('…lack_3');
+			expect(slack).toHaveTextContent('…ck_1');
+			expect(slack).toHaveTextContent('…ck_3');
 			// A name no other row shares needs no tail.
-			expect(slack).not.toHaveTextContent('…lack_2');
+			expect(slack).not.toHaveTextContent('…ck_2');
 			// The rows pin different revisions; each row says which.
 			const versions = within(slack)
 				.getAllByTestId('credential-row-api')
@@ -564,5 +563,89 @@ describe('CredentialInventorySheet — page-level org-wide inventory', () => {
 				name: 'Credentials',
 			}),
 		).toBeInTheDocument();
+	});
+});
+
+describe('CredentialInventorySheet — credentials shared with the viewer', () => {
+	const VIEWER = 'usr_viewer_1';
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetApisStore([]);
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				type: CredentialType.API_KEY,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_by: 'usr_someone_else',
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+		]);
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: VIEWER,
+					email: 'viewer@local',
+					first_name: 'View',
+					last_name: 'Er',
+					active: true,
+					permissions: [],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	});
+
+	it('a sharee sees the badge and no edit or delete on the shared card only', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<Toaster />
+			</AuthProvider>,
+			{ route: '/?agent=agnt_active_1' },
+		);
+		await screen.findByTestId('agent-dock');
+		await user.click(headerTrigger());
+		const sheet = within(await screen.findByRole('dialog'));
+		await sheet.findByText('Slack bot token');
+
+		const cardFor = (name: string): HTMLElement => {
+			const card = sheet
+				.getAllByTestId('credential-card')
+				.find((c) => within(c).queryByText(name));
+			if (!card) throw new Error(`no card for ${name}`);
+			return card;
+		};
+
+		const shared = within(cardFor('Slack bot token'));
+		expect(shared.getByText('Shared with you')).toBeInTheDocument();
+		expect(
+			shared.queryByRole('button', { name: 'Edit credential Slack bot token' }),
+		).not.toBeInTheDocument();
+		expect(
+			shared.queryByRole('button', { name: 'Delete credential Slack bot token' }),
+		).not.toBeInTheDocument();
+
+		const own = within(cardFor('GitHub PAT'));
+		expect(own.queryByText('Shared with you')).not.toBeInTheDocument();
+		expect(own.getByRole('button', { name: 'Edit credential GitHub PAT' })).toBeInTheDocument();
+		expect(
+			own.getByRole('button', { name: 'Delete credential GitHub PAT' }),
+		).toBeInTheDocument();
+
+		await sheetSettled();
+		await checkA11y(document.body, { modal: true });
 	});
 });

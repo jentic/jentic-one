@@ -21,7 +21,7 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { getToken, subscribeToken } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { useOptionalAuthStatus, useOptionalCurrentUser } from '@/shared/auth/AuthContext';
+import { useOptionalAuth } from '@/shared/auth/AuthContext';
 import { ORG_ADMIN } from '@/shared/auth/usePermission';
 import {
 	fetchActorDirectory,
@@ -70,9 +70,10 @@ function useHasToken(): boolean {
  * lookup.
  */
 export function useCanListActors(): boolean | undefined {
-	const status = useOptionalAuthStatus();
-	const permissions = useOptionalCurrentUser()?.permissions;
-	if (status === null) return true;
+	const auth = useOptionalAuth();
+	if (auth === null) return true;
+	const { status } = auth;
+	const permissions = auth.user?.permissions;
 	if (permissions == null) return status === 'loading' ? undefined : true;
 	return permissions.includes(USERS_READ) || permissions.includes(ORG_ADMIN);
 }
