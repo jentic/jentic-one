@@ -340,6 +340,7 @@ class CredentialService:
                 catalog_api_id=credential.catalog_api_id,
                 provider=credential.provider,
                 active=credential.active,
+                created_by=credential.created_by,
                 created_at=credential.created_at,
                 server_variables=credential.server_variables,
                 secret=secret,
