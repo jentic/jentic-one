@@ -321,6 +321,7 @@ async def test_first_decision_wins_and_later_decides_conflict(
     assert len(wins) == 1
     assert len(losses) == 1
     assert isinstance(losses[0], ExecutionApprovalAlreadyDecidedError)
+    assert f"already {wins[0].state}" in str(losses[0])
     expected_job = JobStatus.QUEUED if wins[0].state == "approved" else JobStatus.FAILED
     assert (await _job(ctx, hold.job_id)).status == expected_job
 
@@ -521,6 +522,7 @@ async def test_concurrent_decide_and_withdraw_settle_exactly_once(
         assert len(losses) == 1
         assert isinstance(losses[0], ExecutionApprovalAlreadyDecidedError)
         state = wins[0].state
+        assert f"already {state}" in str(losses[0])
         assert (await _approval(ctx, hold.approval_id)).state == state
         expected_job = {
             "approved": JobStatus.QUEUED,

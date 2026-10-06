@@ -157,8 +157,12 @@ class ExecutionApprovalService:
                 now=now,
             )
             if updated is None:
-                current = await ExecutionApprovalRepository.get_by_id(session, approval_id)
-                state = current.state if current is not None else visible.state
+                # Read the state from the database: the row loaded above is
+                # cached in this session and predates a concurrent settle.
+                state = (
+                    await ExecutionApprovalRepository.get_state(session, approval_id)
+                    or visible.state
+                )
                 if state == ExecutionApprovalState.PENDING:
                     state = ExecutionApprovalState.EXPIRED.value
                 raise ExecutionApprovalAlreadyDecidedError(
