@@ -690,7 +690,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await screen.findByText('1 access rule');
 
 		const dialog = await openSidebar('Slack');
-		const header = dialog.querySelector('header') as HTMLElement;
+		const header = dialog.querySelector('[data-sheet-header]') as HTMLElement;
 		expect(header).not.toBeNull();
 
 		// The reversible cut-off lives beside the title/status line, not in
@@ -738,7 +738,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		const chip = await inDialog.findByTestId('sidebar-status-chip');
 		expect(chip).toHaveTextContent('Suspended');
 		expect(chip).toHaveAttribute('data-status', 'suspended');
-		const header = dialog.querySelector('header') as HTMLElement;
+		const header = dialog.querySelector('[data-sheet-header]') as HTMLElement;
 		await user.click(
 			within(header).getByRole('button', { name: 'Resume binding for GitHub PAT' }),
 		);

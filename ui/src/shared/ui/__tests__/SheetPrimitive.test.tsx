@@ -208,7 +208,7 @@ describe('SheetPrimitive', () => {
 			</SheetPrimitive>,
 		);
 		const panel = screen.getByTestId('sheet-primitive');
-		expect(screen.getByTestId('slot-head').tagName).toBe('HEADER');
+		expect(screen.getByTestId('slot-head').tagName).toBe('DIV');
 		expect(screen.getByTestId('slot-foot').tagName).toBe('FOOTER');
 		expect(screen.getByTestId('slot-foot').className).toContain('bg-surface-sheet-foot');
 		expect(screen.getByTestId('slot-body').className).toContain('overflow-y-auto');
@@ -226,5 +226,19 @@ describe('SheetPrimitive', () => {
 		renderWithProviders(<SheetHarness />);
 		// Sheet portals to document.body, so scan the whole document.
 		await checkA11y(document.body, { modal: true });
+	});
+
+	it('its header band is not a landmark — no second banner inside the sheet', () => {
+		renderWithProviders(
+			<SheetPrimitive open onClose={() => {}} ariaLabel="Details">
+				<SheetHeader>
+					<h2>Title</h2>
+				</SheetHeader>
+			</SheetPrimitive>,
+		);
+		const dialog = screen.getByRole('dialog', { name: 'Details' });
+		expect(dialog.querySelector('header')).toBeNull();
+		expect(screen.queryAllByRole('banner')).toHaveLength(0);
+		expect(dialog.querySelector('[data-sheet-header]')).toHaveTextContent('Title');
 	});
 });

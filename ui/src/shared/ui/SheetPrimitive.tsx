@@ -400,10 +400,13 @@ type SlotProps = HTMLAttributes<HTMLElement>;
 /**
  * Top band of a sheet (identity + close). Borderless: the panel's tonal steps
  * separate the regions, not rules. Put it inside a `flex flex-col` panel.
+ * A plain `div`, not `<header>`: inside a dialog a `<header>` can surface as a
+ * second `banner` landmark beside the app's own.
  */
 export function SheetHeader({ className, ...props }: SlotProps): JSX.Element {
 	return (
-		<header
+		<div
+			data-sheet-header=""
 			className={cn('flex shrink-0 items-start gap-4 px-5 pt-5 pb-[18px]', className)}
 			{...props}
 		/>
