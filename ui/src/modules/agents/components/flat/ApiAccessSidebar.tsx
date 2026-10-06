@@ -246,9 +246,13 @@ export function ApiAccessSidebar({
 	};
 
 	// "1 agent" is this agent alone; anything more is the shared-secret warning
-	// the operator needs before editing or deleting.
-	const usedByLabel =
-		boundAgentRows.length === 1 ? 'this agent only' : `${boundAgentRows.length} agents`;
+	// the operator needs before editing or deleting. A viewer the credential is
+	// shared with sees only their own agents, so the count is "of your agents".
+	const usedByLabel = credentialReadOnly
+		? `${boundAgentRows.length} of your agents`
+		: boundAgentRows.length === 1
+			? 'this agent only'
+			: `${boundAgentRows.length} agents`;
 	const credentialAge = shown?.credentialUpdatedAt
 		? `updated ${timeAgo(shown.credentialUpdatedAt)}`
 		: shown?.credentialCreatedAt

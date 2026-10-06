@@ -141,3 +141,26 @@ describe('CredentialsList — readOnlyFor', () => {
 		}
 	});
 });
+
+describe('CredentialCard — usage of a shared credential', () => {
+	const noop = vi.fn();
+
+	it.each([
+		[false, 1, 'used by 1 agent'],
+		[false, 0, 'used by no agents'],
+		[true, 2, 'used by 2 of your agents'],
+		[true, 0, 'used by none of your agents'],
+	] as const)('readOnly=%s, %i bound → "%s"', (readOnly, count, copy) => {
+		renderWithProviders(
+			<CredentialCard
+				cred={makeMockCredential({ name: 'Team Slack token' })}
+				onEdit={noop}
+				onDelete={noop}
+				onConnect={noop}
+				usedByAgentCount={count}
+				readOnly={readOnly}
+			/>,
+		);
+		expect(screen.getByTestId('cred-used-by')).toHaveTextContent(copy);
+	});
+});

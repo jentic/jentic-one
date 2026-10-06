@@ -232,6 +232,7 @@ function CredentialRow({
 				<CredentialMetaLine
 					cred={cred}
 					usedByAgentCount={usage.usedByAgentCount}
+					yoursOnly={readOnly}
 					callsLast7d={usage.callsLast7d}
 					showIdTail={showIdTail}
 					className="mt-0.5"
