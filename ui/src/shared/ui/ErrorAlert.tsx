@@ -1,6 +1,6 @@
 import { AlertTriangle, Copy, Check, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { ApiError } from '@/shared/api';
+import { ApiError, problemDetailText } from '@/shared/api';
 import { Button } from '@/shared/ui/Button';
 import { cn } from '@/shared/lib/utils';
 
@@ -181,7 +181,10 @@ export function ErrorAlert({ message, className, onRetry, retrying }: ErrorAlert
 		message instanceof ApiError ? message : cause instanceof ApiError ? cause : null;
 	const apiData = (apiError ? apiError.body : null) as NoSchemeData | null;
 	const errorCode = apiData?.error as string | undefined;
-	const text = typeof message === 'string' ? message : message.message;
+	// Prefer the RFC 9457 problem `detail` over the transport's status text:
+	// "Bad Request" tells the operator nothing they can act on.
+	const problemText = problemDetailText(apiError?.body);
+	const text = typeof message === 'string' ? message : (problemText ?? message.message);
 
 	return (
 		<div

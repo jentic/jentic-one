@@ -4,7 +4,7 @@
  * pin what needs a rendered picker: rows that toggle instead of committing, a
  * tally that stays honest while the credential list drains, rows that only
  * describe the next step (no credential is chosen here), and an already-reached
- * API that cannot be queued twice.
+ * API that stays pickable to add another account.
  */
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -17,6 +17,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	settleAnimations,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
@@ -34,6 +35,7 @@ import type { PreflightItem } from '@/modules/agents/lib/apiPreflight';
 import type { CredentialBindingEntity } from '@/modules/agents/api/types';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
 import type { SelectedApi } from '@/shared/credentials/api';
+import { liveGithubCatalog } from '@/modules/agents/mocks/githubCatalog';
 
 /** Three workspace APIs, one per preflight class the tray has to distinguish. */
 const WORKSPACE_APIS = [
@@ -73,10 +75,14 @@ function makeBinding(over: Partial<CredentialBindingEntity> = {}): CredentialBin
  * selected agent live outside it, so a spec can dismiss, reopen and switch. */
 function TrayHarness({
 	bindings = [],
+	bindingsError = null,
+	onRetryBindings,
 	onContinue = (): void => {},
 	seed = null,
 }: {
 	bindings?: CredentialBindingEntity[];
+	bindingsError?: Error | null;
+	onRetryBindings?: () => void;
 	onContinue?: (items: PreflightItem[]) => void;
 	seed?: QueueBackSeed | null;
 }) {
@@ -96,6 +102,8 @@ function TrayHarness({
 				agentId={agentId}
 				agentName="Support bot"
 				bindings={bindings}
+				bindingsError={bindingsError}
+				onRetryBindings={onRetryBindings}
 				onContinue={onContinue}
 				seed={seed}
 			/>
@@ -226,6 +234,26 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await waitFor(() => expect(tallyLines()).toEqual(['1 API needs one sign-in click']));
 	});
 
+	it('holds on a failed bindings read: the error and its retry show, Continue stays off', async () => {
+		const onRetryBindings = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<TrayHarness bindingsError={new Error('boom')} onRetryBindings={onRetryBindings} />,
+		);
+
+		expect(
+			await screen.findByText(/Could not read which APIs Support bot already has/),
+		).toBeInTheDocument();
+		await user.click(await row(/Stripe/));
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		// No tally on a guessed binding set: every bound credential would look new.
+		expect(tallyLines()).toEqual([]);
+		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+		await user.click(screen.getByRole('button', { name: 'Try again' }));
+		expect(onRetryBindings).toHaveBeenCalledTimes(1);
+	});
+
 	it('withholds the tally until the whole credential list is read', async () => {
 		// A first-page-only list would classify an existing credential as
 		// "needs a new credential" and hide it from the queue's choice.
@@ -243,21 +271,73 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
 	});
 
-	it('an API the agent already reaches cannot be picked again', async () => {
-		renderWithProviders(<TrayHarness bindings={[makeBinding()]} />);
-
-		const slack = await row(/Slack/);
-		expect(slack).toBeDisabled();
-		// Presence, not visibility: the result rows stagger in from opacity 0.
-		expect(within(slack).getByText('Already added')).toBeInTheDocument();
-		expect(selectionRows()).toHaveLength(0);
-	});
-
-	it('a vendor-wildcard binding is caught by the preflight and excluded from the commit', async () => {
+	it('an API the agent already reaches stays pickable and names its account', async () => {
 		const onContinue = vi.fn();
 		const user = userEvent.setup();
-		// A wildcard binding cannot be enumerated as a row key, so the row stays
-		// pickable — the preflight is what has to catch it.
+		renderWithProviders(<TrayHarness bindings={[makeBinding()]} onContinue={onContinue} />);
+
+		const slack = await row(/Slack/);
+		expect(slack).toBeEnabled();
+		// Presence, not visibility: the result rows stagger in from opacity 0.
+		expect(
+			within(slack).getByText('Added via Slack bot token · add another credential'),
+		).toBeInTheDocument();
+
+		await user.click(slack);
+		await waitFor(() => expect(selectionRows()).toHaveLength(1));
+		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
+			'Added via Slack bot token — this adds another credential',
+		);
+		await waitFor(() =>
+			expect(tallyLines()).toEqual([
+				'1 API needs a new credential',
+				'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
+			]),
+		);
+
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({
+				key: 'slack-com/main',
+				outcome: 'form',
+				existing: [expect.objectContaining({ credentialId: 'cred_slack' })],
+			}),
+		]);
+	});
+
+	it('a covered API the agent already reaches offers only the credentials it lacks', async () => {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		const sandbox = makeMockCredential({
+			credential_id: 'cred_stripe_sandbox',
+			name: 'Stripe sandbox',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'stripe.com', name: 'main', version: '1.0.0' },
+		});
+		resetCredentialsStore([STRIPE_CREDENTIAL, sandbox]);
+		const bound = makeBinding({
+			credentialId: 'cred_stripe',
+			name: 'Stripe key',
+			serves: [{ vendor: 'stripe.com', name: 'main', version: null }],
+		});
+		renderWithProviders(<TrayHarness bindings={[bound]} onContinue={onContinue} />);
+
+		await user.click(await row(/Stripe/));
+		await waitFor(() =>
+			expect(within(selectionRows()[0]).getByTestId('tray-covering-count')).toHaveTextContent(
+				'1 of your credentials covers this API',
+			),
+		);
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		const [item] = onContinue.mock.calls[0][0] as PreflightItem[];
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_stripe_sandbox']);
+	});
+
+	it('a vendor-wildcard binding is named by the preflight once picked', async () => {
+		const onContinue = vi.fn();
+		const user = userEvent.setup();
+		// A wildcard binding cannot be enumerated as a row key, so the row carries
+		// no hint — the preflight is what names it.
 		const wildcard = makeBinding({
 			serves: [{ vendor: 'slack.com', name: null, version: null }],
 		});
@@ -265,19 +345,18 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 
 		await user.click(await row(/Slack/));
 		await waitFor(() => expect(selectionRows()).toHaveLength(1));
-		expect(
-			within(selectionRows()[0]).getByText('Already added via Slack bot token'),
-		).toBeVisible();
-		// Nothing actionable, so there is nothing to hand on.
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+		expect(within(selectionRows()[0]).getByTestId('tray-added-via')).toHaveTextContent(
+			'Added via Slack bot token',
+		);
 
 		await user.click(await row(/Stripe/));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
-		expect(screen.getByText('2 selected, 1 already added')).toBeInTheDocument();
+		expect(screen.getByText('2 selected')).toBeInTheDocument();
 
 		await user.click(screen.getByRole('button', { name: 'Continue' }));
 		expect(onContinue).toHaveBeenCalledTimes(1);
 		expect(onContinue.mock.calls[0][0]).toEqual([
+			expect.objectContaining({ key: 'slack-com/main' }),
 			expect.objectContaining({ key: 'stripe-com/main', outcome: 'choose' }),
 		]);
 		// Committing hands the picks to the queue, so the draft is spent.
@@ -340,6 +419,20 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		expect(
 			await screen.findByText('1 API will be imported into your Workspace.'),
 		).toBeInTheDocument();
+	});
+
+	it('an empty search lists only workspace APIs; "github" finds GitHub in the live catalog', async () => {
+		worker.use(liveGithubCatalog);
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+
+		// The picker never browses the catalog: blank search = workspace only.
+		expect(await row(/Stripe/)).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox', { name: /github/i })).toBeNull();
+
+		await user.type(screen.getByRole('textbox', { name: 'Search APIs' }), 'github');
+		expect(await row(/github\.com\/api\.github\.com/)).toBeInTheDocument();
+		expect(await row(/github\.com\/ghec/)).toBeInTheDocument();
 	});
 
 	it('a search that finds nothing offers the spec upload instead of a dead end', async () => {
@@ -466,6 +559,9 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await user.click(await row(/Slack/));
 		await waitFor(() => expect(tallyLines()).toHaveLength(2));
 
+		// The picker rows stagger in from opacity 0 and the sheet slides in; audit
+		// the settled frame, not a half-faded row.
+		await settleAnimations(document.body);
 		await checkA11y(document.body, { modal: true });
 	});
 

@@ -706,4 +706,30 @@ describe('seedFormFromSelectedApi', () => {
 		const next = seedFormFromSelectedApi({ ...EMPTY_FORM, name: 'Mine' }, pick, true);
 		expect(next.name).toBe('Mine');
 	});
+
+	it('seeds the slug a catalog pick registers under, keeping the verbatim id', () => {
+		// `POST /credentials` rejects a `/` in `api.name` as a spec path.
+		const next = seedFormFromSelectedApi(
+			{ ...EMPTY_FORM },
+			{
+				source: 'catalog',
+				vendor: 'github.com',
+				name: 'github.com/api.github.com',
+				version: '1.1.4',
+				label: 'GitHub',
+				apiId: 'github.com/api.github.com',
+			},
+		);
+		expect(next.apiName).toBe('github-com-api-github-com');
+		expect(next.catalogApiId).toBe('github.com/api.github.com');
+	});
+
+	it('sends a workspace pick name as-is', () => {
+		const next = seedFormFromSelectedApi(
+			{ ...EMPTY_FORM },
+			{ ...pick, source: 'local', name: 'My.API v2', apiId: undefined },
+		);
+		expect(next.apiName).toBe('My.API v2');
+		expect(next.catalogApiId).toBe('');
+	});
 });

@@ -19,6 +19,7 @@ import {
 	EventsService,
 	ApiError,
 	getToken,
+	problemDetailText,
 	type EventAcknowledgeRequest,
 	type EventListResponse,
 	type EventResponse,
@@ -44,7 +45,7 @@ export class RailApiError extends Error {
 
 export function toRailError(error: unknown, fallback: string): RailApiError {
 	if (error instanceof ApiError) {
-		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
+		const detail = problemDetailText(error.body) ?? error.message;
 		return new RailApiError(detail || fallback, error.status, error);
 	}
 	if (error instanceof Error) {

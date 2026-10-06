@@ -23,6 +23,18 @@ describe('CopyButton', () => {
 		expect(button.querySelector('svg')).toBeTruthy();
 	});
 
+	it('names the button by ariaLabel over the visible label, before and after a copy', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<CopyButton value="npx jentic" label="Copy" ariaLabel="Copy the command" />,
+		);
+		const button = screen.getByRole('button', { name: 'Copy the command' });
+		expect(button).toHaveTextContent('Copy');
+		await user.click(button);
+		await waitFor(() => expect(button).toHaveTextContent('Copied!'));
+		expect(button).toHaveAccessibleName('Copy the command');
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(<CopyButton value="test" label="Copy Key" />);
 		await checkA11y(container);

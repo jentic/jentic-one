@@ -24,6 +24,7 @@
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { findMockCredential } from '@/shared/credentials/mocks/handlers';
+import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -318,6 +319,19 @@ const PERMISSION_CATALOGUE: ReadonlyArray<{
 		implies: [],
 		grantable_by_caller: true,
 	},
+	{
+		name: 'catalog:import',
+		description: 'Import an API from the public catalog into the local registry',
+		implies: ['apis:read'],
+		grantable_by_caller: true,
+	},
+	{
+		name: 'credentials:connect',
+		description:
+			'Start and poll an integration connect session (agent-driven SSO). Cannot read tokens or manage other credentials.',
+		implies: [],
+		grantable_by_caller: true,
+	},
 ];
 
 /**
@@ -330,6 +344,30 @@ export function seedExtraAgents(
 ): void {
 	agents.push(...rows.map(seedAgent));
 }
+
+/** Mocked dev / e2e: a fresh org with no agents (the Agents page's first run). */
+export function clearAgentsStore(): void {
+	agents = [];
+}
+
+/**
+ * Mocked dev / e2e: what a `jentic register` leaves behind — a pending,
+ * self-registered agent, registered just now.
+ */
+export function selfRegisterAgent(
+	name: string,
+	over: Partial<Omit<AgentRow, 'id' | 'name' | 'status'>> = {},
+): string {
+	const id = genId('agnt');
+	agents.push(seedAgent({ id, name, status: 'pending', created_at: now(0), ...over }));
+	return id;
+}
+
+/** Mocked e2e/dev hooks for the agents store (aggregated in `mocks/handlers`). */
+export const agentsE2eHooks = {
+	clearAgentsStore,
+	selfRegisterAgent,
+};
 
 export function resetAgentsStore(): void {
 	agents = [
@@ -534,23 +572,6 @@ function genId(prefix: string): string {
  */
 const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
-/**
- * The default baseline `AgentService.create` grants when the payload carries
- * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES).
- */
-const DEFAULT_AGENT_SCOPES_MOCK = [
-	'capabilities:execute',
-	'capabilities:read',
-	'apis:read',
-	'catalog:import',
-	'executions:read',
-	'jobs:read',
-	'events:read',
-	'owner:resources:read',
-	'owner:agents:read',
-	'owner:credentials:read',
-] as const;
-
 /** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
 const NON_GRANTABLE_SCOPES = new Set(
 	PERMISSION_CATALOGUE.filter((p) => !p.grantable_by_caller).map((p) => p.name),
@@ -600,7 +621,7 @@ function findActor(id: string): AgentRow | undefined {
 }
 
 /**
- * Per-actor usage fixture for the detail page's KPI strip + Activity chart
+ * Per-actor usage fixture for the stat strip + the Activity sheet's chart
  * (`GET /monitoring/usage?agent_id=…`). Buckets are relative (spread over the
  * trailing week at request time); actors without an entry are genuinely idle.
  * Totals roughly echo the fleet-table fixture in the monitor module so the
@@ -790,7 +811,7 @@ function auditRow(opts: {
 
 /**
  * Per-actor audit fixture (`GET /audit?target_type=…&target_id=…`) — the
- * detail console's "Recent changes" panel. Only for ids in THIS store; other
+ * Activity sheet's "Recent changes" section. Only for ids in THIS store; other
  * targets fall through to the monitor module's org-wide fixture.
  */
 const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
@@ -888,9 +909,9 @@ export const agentsHandlers = [
 	// ---- Platform permission catalogue (#615) ----
 	http.get('/permissions', () => HttpResponse.json({ data: PERMISSION_CATALOGUE })),
 
-	// ---- Per-actor monitoring enrichment (detail page KPI strip + Activity) ----
+	// ---- Per-actor monitoring enrichment (stat strip + Activity sheet) ----
 	//
-	// The detail page reads the same admin-gated monitoring endpoints Monitor
+	// The Agents page reads the same admin-gated monitoring endpoints Monitor
 	// does, filtered to one actor. These interceptors answer ONLY for ids that
 	// live in THIS module's store and return undefined otherwise, falling
 	// through to the monitor module's own `/monitoring/usage` + `/executions`
@@ -984,6 +1005,10 @@ export const agentsHandlers = [
 		if (!res.ok) return new HttpResponse(null, { status: res.status });
 		res.row.approved_by = ADMIN;
 		res.row.approved_at = now();
+		// `AgentService.approve` grants DEFAULT_AGENT_SCOPES to an agent holding
+		// no grants; a non-empty request (recognised or not) is left as-is.
+		if ((actorScopes[res.row.id] ?? []).length === 0)
+			actorScopes[res.row.id] = [...DEFAULT_AGENT_SCOPES];
 		return HttpResponse.json(res.row);
 	}),
 	http.post('/agents/:id\\:deny', async ({ params, request }) => {
@@ -1053,7 +1078,7 @@ export const agentsHandlers = [
 		actorScopes[row.id] =
 			Array.isArray(body.scopes) && body.scopes.length > 0
 				? [...new Set(body.scopes)]
-				: [...DEFAULT_AGENT_SCOPES_MOCK];
+				: [...DEFAULT_AGENT_SCOPES];
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	// Partial in-place edit — name / description / owner_id. Mirrors

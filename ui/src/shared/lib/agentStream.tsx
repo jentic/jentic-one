@@ -1197,8 +1197,10 @@ const NAV = {
 		ev.tokens.job_id
 			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
+	// Agent events open the agent as selected on the Agents page — the shape of
+	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
-		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
 	// Catalog/overlay events deep-link to the affected API's Workspace detail
 	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
 	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
@@ -1220,7 +1222,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	if (ev.requiresAction && !ev.acknowledged) {
 		if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
 			// A self-registered agent awaits approval — route the operator to the
-			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
+			// agent on the Agents page (where approve/deny lives) instead of a bare
+			// Acknowledge.
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (ev.type === 'oauth_client.registered') {
@@ -1259,8 +1262,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
 		}
 	} else if (ev.kind === 'oauth' && ev.tokens.agent_id) {
-		// Grant lifecycle rows deep-link to the bound agent, whose "Connected
-		// clients" panel lists (and can revoke) the grant (§4.8).
+		// Grant lifecycle rows deep-link to the bound agent, whose Permissions
+		// sheet's "Connected clients" card lists (and can revoke) the grant.
 		actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
@@ -1330,8 +1333,8 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'catalog':
 			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
 		case 'oauth':
-			// Grant rows go to the bound agent's console (its Connected-clients
-			// panel); client registration/approval rows go to the Settings queue.
+			// Grant rows go to the bound agent (its Permissions sheet's Connected
+			// clients); client registration/approval rows go to the Settings queue.
 			return ev.tokens.grant_id && ev.tokens.agent_id ? NAV.agent(ev) : NAV.oauthQueue();
 		default:
 			return NAV.trace(ev);
