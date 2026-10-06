@@ -228,7 +228,9 @@ describe('a credential binding governed by a shared rule set', () => {
 		// The inline editor takes over, and the empty inline list is now the truth.
 		expect(await inDialog.findByText('No rules yet — add one below.')).toBeInTheDocument();
 		expect(inDialog.queryByTestId('binding-rule-set-panel')).not.toBeInTheDocument();
-		expect(await tileSummary('Stripe')).toHaveTextContent('No rules — all calls blocked');
+		await waitFor(async () => {
+			expect(await tileSummary('Stripe')).toHaveTextContent('No rules — all calls blocked');
+		});
 	});
 
 	it('the confirm lists the non-empty inline rules a detach makes live', async () => {
@@ -249,8 +251,11 @@ describe('a credential binding governed by a shared rule set', () => {
 		expect(confirm).not.toHaveTextContent('every call is blocked');
 		await user.click(within(confirm).getByRole('button', { name: 'Detach rule set' }));
 
-		// The dormant rule is now the binding's live policy.
-		expect(await tileSummary('Stripe')).toHaveTextContent(/^1 access rule$/);
+		// The dormant rule is now the binding's live policy, once the refetch lands.
+		expect(await screen.findByText('Rule set detached')).toBeInTheDocument();
+		await waitFor(async () => {
+			expect(await tileSummary('Stripe')).toHaveTextContent(/^1 access rule$/);
+		});
 	});
 
 	it('a refused detach surfaces the error and keeps the set attached', async () => {
