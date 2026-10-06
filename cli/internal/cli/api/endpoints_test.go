@@ -83,6 +83,9 @@ func TestParseEndpointsRejectsUnknownSchema(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("parseEndpoints error = %v, want a *ux.CodedError", err)
 	}
+	if ce.Code != ux.CodeServerIncompatible {
+		t.Errorf("Code = %q, want %q", ce.Code, ux.CodeServerIncompatible)
+	}
 	if !strings.Contains(ce.Msg, "jentic.endpoint-scope-tree/v1") {
 		t.Errorf("Msg = %q, want it to name the server's schema", ce.Msg)
 	}

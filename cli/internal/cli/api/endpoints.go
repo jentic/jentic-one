@@ -119,11 +119,10 @@ func parseEndpoints(body []byte) ([]endpoint, error) {
 	}
 	if doc.Schema != endpointReferenceSchema {
 		return nil, &ux.CodedError{
-			Code: ux.CodeInternalError,
+			Code: ux.CodeServerIncompatible,
 			Msg: fmt.Sprintf("the server's endpoint reference uses schema %q; this CLI reads %q",
 				doc.Schema, endpointReferenceSchema),
-			Actionable: "Keep the CLI on the same release as the server: run `jenticctl update`, " +
-				"or ask your operator which release the server runs.",
+			Actionable: serverIncompatibleRemedy,
 		}
 	}
 	eps := doc.Endpoints

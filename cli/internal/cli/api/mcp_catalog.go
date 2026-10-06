@@ -271,8 +271,7 @@ func (s *mcpServer) trackImportJob(ctx context.Context, client *catalogClient, j
 // catalog entry (rediscover via search_catalog — the identity is fine); a
 // control-plane 403 on THIS route is a missing catalog:import permission, and
 // the recovery is asking the operator to grant the permission (skill wording),
-// not
-// get_started.
+// not get_started.
 func (s *mcpServer) importAPIError(ctx context.Context, apiID string, err error) *mcp.CallToolResult {
 	s.logger.Warn("import_api failed", "api_id", apiID, "error", redactedErr(err))
 	var he *HTTPError
@@ -397,8 +396,7 @@ func (s *mcpServer) catalogToolSpecs() []mcpToolSpec {
 					"converges (idempotent) and finishes the promotion. Requires the catalog:import " +
 					"permission (agents hold it by default); on a denial, ask your operator to grant it — " +
 					"do not guess other permissions. Importing makes an API discoverable but does NOT " +
-					"grant access to call " +
-					"it: check whoami for a credential binding serving it — never execute just to probe — and " +
+					"grant access to call it: check whoami for a credential binding serving it — never execute just to probe — and " +
 					"ask your operator to connect a credential and bind you if nothing serves it.",
 				InputSchema: importAPISchema,
 				Annotations: &mcp.ToolAnnotations{IdempotentHint: true},

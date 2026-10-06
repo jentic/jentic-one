@@ -9,6 +9,12 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
+// serverIncompatibleRemedy is the actionable step for every SERVER_INCOMPATIBLE
+// guard: the CLI and server must run the same release, and either side may be
+// the one that is behind.
+const serverIncompatibleRemedy = "Match the CLI and server releases: upgrade the server, or install the " +
+	"CLI release that matches it (ask your operator which release the server runs)."
+
 // getMe fetches the caller's identity via GET /me and returns the AGENT variant.
 //
 // GET /me returns a discriminated union (MeUser | MeAgent)
@@ -49,10 +55,9 @@ func (a *app) getMe(ctx context.Context) (*control.MeAgent, error) {
 	// has. Refuse instead, and say why.
 	if probe.Permissions == nil && probe.Scopes != nil {
 		return nil, &ux.CodedError{
-			Code: ux.CodeInternalError,
-			Msg:  "the server's GET /me reports `scopes`; this CLI reads `permissions` (the server is on an older release)",
-			Actionable: "Keep the CLI on the same release as the server: ask your operator to upgrade the " +
-				"server, or install the CLI release that matches it.",
+			Code:       ux.CodeServerIncompatible,
+			Msg:        "the server's GET /me reports `scopes`; this CLI reads `permissions` (the server is on an older release)",
+			Actionable: serverIncompatibleRemedy,
 		}
 	}
 	var agent control.MeAgent

@@ -52,6 +52,9 @@ func TestGetMeRejectsPreRenameServer(t *testing.T) {
 	if !errors.As(err, &ce) {
 		t.Fatalf("getMe error = %v, want a *ux.CodedError", err)
 	}
+	if ce.Code != ux.CodeServerIncompatible {
+		t.Errorf("Code = %q, want %q", ce.Code, ux.CodeServerIncompatible)
+	}
 	if !strings.Contains(ce.Msg, "older release") {
 		t.Errorf("Msg = %q, want it to name the older server release", ce.Msg)
 	}

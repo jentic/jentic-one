@@ -241,7 +241,7 @@ func TestConnect_403IsOperatorScopeGrant(t *testing.T) {
 		t.Errorf("code = %q, want %q", coded.Code, ux.CodeBrokerDenied)
 	}
 	if !strings.Contains(coded.Actionable, "credentials:connect") || !strings.Contains(coded.Actionable, "jentic logout") {
-		t.Errorf("actionable %q must name the credentials:connect scope and the token re-mint", coded.Actionable)
+		t.Errorf("actionable %q must name the credentials:connect permission and the token re-mint", coded.Actionable)
 	}
 }
 
