@@ -21,6 +21,7 @@ __all__ = [
     "AsyncQueuedResponseLinks",
     "ExecuteRequestContext",
     "HeldApprovalResponse",
+    "HeldExecutionLinks",
     "HeldExecutionResponse",
 ]
 
@@ -50,6 +51,14 @@ class HeldApprovalResponse(BaseModel):
     )
 
 
+class HeldExecutionLinks(AsyncQueuedResponseLinks):
+    """Links on a held execution: the job to poll and the route that abandons it."""
+
+    withdraw: str = Field(
+        description="`POST` here to withdraw the approval and cancel the held job."
+    )
+
+
 class HeldExecutionResponse(AsyncQueuedResponse):
     """202 body for an execution held for human approval.
 
@@ -57,6 +66,7 @@ class HeldExecutionResponse(AsyncQueuedResponse):
     ``_links.self`` polls it exactly like any other async execution.
     """
 
+    links: HeldExecutionLinks = Field(serialization_alias="_links")
     status: Literal["held"] = "held"
     approval: HeldApprovalResponse
     agent_directive: str

@@ -120,4 +120,39 @@ export class ExecutionApprovalsService {
             },
         });
     }
+    /**
+     * Withdraw a held execution
+     * Abandon a held execution — the identity that filed the hold only.
+     *
+     * The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
+     * never runs and no result is written. Any other caller gets ``404``, as if
+     * the approval did not exist; an approval that is no longer pending (decided,
+     * expired or already withdrawn) answers ``409``. It acts only on held
+     * executions: owners and admins use ``:decide`` with ``deny`` instead.
+     * @returns ExecutionApprovalResponse Successful Response
+     * @throws ApiError
+     */
+    public static withdrawExecutionApproval({
+        approvalId,
+    }: {
+        approvalId: string,
+    }): CancelablePromise<ExecutionApprovalResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/executions/approvals/{approval_id}:withdraw',
+            path: {
+                'approval_id': approvalId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
 }

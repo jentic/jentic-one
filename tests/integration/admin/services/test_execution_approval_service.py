@@ -425,6 +425,112 @@ async def test_jobs_cancel_refuses_a_held_job_and_leaves_its_approval_pending(
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
 
+async def _job_result_count(ctx: Context, job_id: str) -> int:
+    async with ctx.admin_db.session() as session:
+        rows = await session.execute(select(JobResult).where(JobResult.job_id == job_id))
+        return len(rows.scalars().all())
+
+
+async def test_withdraw_cancels_the_held_job_without_a_result_with_audit_and_event(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    view = await ExecutionApprovalService(ctx).withdraw(hold.approval_id, identity=actors.agent)
+    assert view.state == "withdrawn"
+    assert view.decided_by == actors.agent.sub
+    assert view.decided_at is not None
+    assert (await _approval(ctx, hold.approval_id)).state == "withdrawn"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.CANCELLED
+    assert await _job_result_count(ctx, hold.job_id) == 0
+    async with ctx.admin_db.session() as session:
+        audit = (
+            await session.execute(
+                select(AuditEntry).where(AuditEntry.target_id == hold.approval_id)
+            )
+        ).scalar_one()
+        events = (
+            (await session.execute(select(Event).where(Event.job_id == hold.job_id)))
+            .scalars()
+            .all()
+        )
+    assert audit.action == "withdraw"
+    assert audit.actor_id == actors.agent.sub
+    (event,) = [e for e in events if e.type == EventType.EXECUTION_APPROVAL_WITHDRAWN]
+    assert event.data["approval_id"] == hold.approval_id
+    assert "body" not in json.dumps(event.data)
+    with pytest.raises(ExecutionApprovalAlreadyDecidedError):
+        await ExecutionApprovalService(ctx).decide(
+            hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
+        )
+
+
+async def test_only_the_filing_identity_may_withdraw(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    svc = ExecutionApprovalService(ctx)
+    for caller in (actors.owner, actors.admin, actors.outsider, actors.ownerless_agent):
+        with pytest.raises(ExecutionApprovalNotFoundError):
+            await svc.withdraw(hold.approval_id, identity=caller)
+    with pytest.raises(ExecutionApprovalNotFoundError):
+        await svc.withdraw("exap_missing", identity=actors.agent)
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
+
+
+async def test_withdraw_conflicts_once_the_approval_is_settled(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    svc = ExecutionApprovalService(ctx)
+    denied = await _hold(ctx, actors.agent, path="/v1/denied")
+    await svc.decide(
+        denied.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
+    )
+    approved = await _hold(ctx, actors.agent, path="/v1/approved")
+    await svc.decide(
+        approved.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
+    )
+    withdrawn = await _hold(ctx, actors.agent, path="/v1/withdrawn")
+    await svc.withdraw(withdrawn.approval_id, identity=actors.agent)
+
+    for hold, state in ((denied, "denied"), (approved, "approved"), (withdrawn, "withdrawn")):
+        with pytest.raises(ExecutionApprovalAlreadyDecidedError, match=f"already {state}"):
+            await svc.withdraw(hold.approval_id, identity=actors.agent)
+    assert (await _job(ctx, denied.job_id)).status == JobStatus.FAILED
+    assert (await _job(ctx, approved.job_id)).status == JobStatus.QUEUED
+
+
+async def test_concurrent_decide_and_withdraw_settle_exactly_once(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    for decision in (ApprovalDecision.APPROVE, ApprovalDecision.DENY):
+        hold = await _hold(ctx, actors.agent, path=f"/v1/race/{decision.value}")
+        svc = ExecutionApprovalService(ctx)
+        outcomes = await asyncio.gather(
+            svc.decide(hold.approval_id, DecideInput(decision=decision), identity=actors.owner),
+            svc.withdraw(hold.approval_id, identity=actors.agent),
+            return_exceptions=True,
+        )
+        wins = [o for o in outcomes if not isinstance(o, BaseException)]
+        losses = [o for o in outcomes if isinstance(o, BaseException)]
+        assert len(wins) == 1
+        assert len(losses) == 1
+        assert isinstance(losses[0], ExecutionApprovalAlreadyDecidedError)
+        state = wins[0].state
+        assert (await _approval(ctx, hold.approval_id)).state == state
+        expected_job = {
+            "approved": JobStatus.QUEUED,
+            "denied": JobStatus.FAILED,
+            "withdrawn": JobStatus.CANCELLED,
+        }[state]
+        assert (await _job(ctx, hold.job_id)).status == expected_job
+        assert await _job_result_count(ctx, hold.job_id) == (1 if state == "denied" else 0)
+
+
 async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     integration_context: Context, actors: _Actors
 ) -> None:
@@ -461,3 +567,59 @@ async def test_jobs_cancel_route_answers_409_for_a_held_job(
     assert resp.headers["content-type"].startswith("application/problem+json")
     assert resp.json()["type"].endswith("job_held")
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
+
+
+async def test_withdraw_route_withdraws_for_the_filing_agent(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == hold.approval_id
+    assert body["state"] == "withdrawn"
+    assert body["_links"]["job"].endswith(f"/jobs/{hold.job_id}")
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.CANCELLED
+    assert await _job_result_count(ctx, hold.job_id) == 0
+
+
+async def test_withdraw_route_rejects_an_unauthenticated_caller(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, None) as client:
+        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+    assert resp.status_code == 401
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
+
+
+async def test_withdraw_route_answers_404_to_anyone_but_the_filer(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    for caller in (actors.outsider, actors.ownerless_agent, actors.owner, actors.admin):
+        async with _client(ctx, caller) as client:
+            resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+        assert resp.status_code == 404, caller.sub
+        assert resp.headers["content-type"].startswith("application/problem+json")
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
+
+
+async def test_withdraw_route_answers_409_once_settled(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    await ExecutionApprovalService(ctx).decide(
+        hold.approval_id, DecideInput(decision=ApprovalDecision.DENY), identity=actors.owner
+    )
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(f"/executions/approvals/{hold.approval_id}:withdraw")
+    assert resp.status_code == 409
+    assert resp.json()["type"].endswith("execution_approval_already_decided")
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.FAILED

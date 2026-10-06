@@ -124,6 +124,10 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     assert envelope["agent_directive"] == HELD_AGENT_DIRECTIVE
     assert envelope["_links"]["self"].endswith(f"/jobs/{envelope['job_id']}")
     approval = envelope["approval"]
+    assert set(envelope["_links"]) == {"self", "withdraw"}
+    assert envelope["_links"]["withdraw"].endswith(
+        f"/executions/approvals/{approval['id']}:withdraw"
+    )
     assert set(approval) == {"id", "review_url", "expires_at"}
     assert approval["review_url"].endswith(f"/app/approvals/{approval['id']}")
 

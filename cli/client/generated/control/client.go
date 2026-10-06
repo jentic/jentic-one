@@ -6189,6 +6189,19 @@ type ClientInterface interface {
 	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
 	DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// WithdrawExecutionApproval Withdraw a held execution
+	//
+	// Abandon a held execution — the identity that filed the hold only.
+	//
+	// The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
+	// never runs and no result is written. Any other caller gets ``404``, as if
+	// the approval did not exist; an approval that is no longer pending (decided,
+	// expired or already withdrawn) answers ``409``. It acts only on held
+	// executions: owners and admins use ``:decide`` with ``deny`` instead.
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
+	WithdrawExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetExecution Get Execution
 	//
 	// Get an execution record by ID.
@@ -10200,6 +10213,29 @@ func (c *Client) DecideExecutionApprovalWithBody(ctx context.Context, approvalId
 // Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
 func (c *Client) DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDecideExecutionApprovalRequest(c.Server, approvalId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WithdrawExecutionApproval Withdraw a held execution
+//
+// Abandon a held execution — the identity that filed the hold only.
+//
+// The approval becomes “withdrawn“ and its held job “cancelled“; the call
+// never runs and no result is written. Any other caller gets “404“, as if
+// the approval did not exist; an approval that is no longer pending (decided,
+// expired or already withdrawn) answers “409“. It acts only on held
+// executions: owners and admins use “:decide“ with “deny“ instead.
+//
+// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
+func (c *Client) WithdrawExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWithdrawExecutionApprovalRequest(c.Server, approvalId)
 	if err != nil {
 		return nil, err
 	}
@@ -18322,6 +18358,40 @@ func NewDecideExecutionApprovalRequestWithBody(server string, approvalId string,
 	return req, nil
 }
 
+// NewWithdrawExecutionApprovalRequest constructs an http.Request for the WithdrawExecutionApproval method
+func NewWithdrawExecutionApprovalRequest(server string, approvalId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/approvals/%s:withdraw", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetExecutionRequest constructs an http.Request for the GetExecution method
 func NewGetExecutionRequest(server string, executionId string) (*http.Request, error) {
 	var err error
@@ -22831,6 +22901,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
 	DecideExecutionApprovalWithResponse(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error)
+
+	// WithdrawExecutionApprovalWithResponse Withdraw a held execution
+	//
+	// Abandon a held execution — the identity that filed the hold only.
+	//
+	// The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
+	// never runs and no result is written. Any other caller gets ``404``, as if
+	// the approval did not exist; an approval that is no longer pending (decided,
+	// expired or already withdrawn) answers ``409``. It acts only on held
+	// executions: owners and admins use ``:decide`` with ``deny`` instead.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
+	WithdrawExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*WithdrawExecutionApprovalHTTPResp, error)
 
 	// GetExecutionWithResponse Get Execution
 	//
@@ -33049,6 +33134,103 @@ func (r DecideExecutionApprovalHTTPResp) ContentType() string {
 	return ""
 }
 
+type WithdrawExecutionApprovalHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionApprovalResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r WithdrawExecutionApprovalHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WithdrawExecutionApprovalHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WithdrawExecutionApprovalHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WithdrawExecutionApprovalHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetExecutionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -40315,6 +40497,27 @@ func (c *ClientWithResponses) DecideExecutionApprovalWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseDecideExecutionApprovalHTTPResp(rsp)
+}
+
+// WithdrawExecutionApprovalWithResponse Withdraw a held execution
+//
+// Abandon a held execution — the identity that filed the hold only.
+//
+// The approval becomes “withdrawn“ and its held job “cancelled“; the call
+// never runs and no result is written. Any other caller gets “404“, as if
+// the approval did not exist; an approval that is no longer pending (decided,
+// expired or already withdrawn) answers “409“. It acts only on held
+// executions: owners and admins use “:decide“ with “deny“ instead.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
+func (c *ClientWithResponses) WithdrawExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*WithdrawExecutionApprovalHTTPResp, error) {
+	rsp, err := c.WithdrawExecutionApproval(ctx, approvalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWithdrawExecutionApprovalHTTPResp(rsp)
 }
 
 // GetExecutionWithResponse Get Execution
@@ -49425,6 +49628,88 @@ func ParseDecideExecutionApprovalHTTPResp(rsp *http.Response) (*DecideExecutionA
 	}
 
 	response := &DecideExecutionApprovalHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionApprovalResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWithdrawExecutionApprovalHTTPResp parses an HTTP response from a WithdrawExecutionApprovalWithResponse call
+func ParseWithdrawExecutionApprovalHTTPResp(rsp *http.Response) (*WithdrawExecutionApprovalHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WithdrawExecutionApprovalHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

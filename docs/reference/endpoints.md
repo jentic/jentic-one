@@ -294,6 +294,7 @@ _Total endpoints: **178**._
 | GET | `/executions/approvals` | _any authenticated_ | any | List execution approvals |
 | GET | `/executions/approvals/{approval_id}` | _any authenticated_ | any | Get an execution approval |
 | POST | `/executions/approvals/{approval_id}:decide` | _any authenticated_ | any | Approve or deny an execution approval |
+| POST | `/executions/approvals/{approval_id}:withdraw` | _any authenticated_ | any | Withdraw a held execution |
 
 ### `governed-hosts`
 

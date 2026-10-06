@@ -60,6 +60,7 @@ from jentic_one.broker.core.schemas import (
     AsyncQueuedResponseLinks,
     ExecuteRequestContext,
     HeldApprovalResponse,
+    HeldExecutionLinks,
     HeldExecutionResponse,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
@@ -1019,15 +1020,17 @@ async def _handle_hold(
         joined=hold.joined,
         method=ctx_req.method,
     )
-    base = ctx.config.broker.jobs_api_base_url
-    job_url = f"{base}/jobs/{hold.job_id}" if base else f"/jobs/{hold.job_id}"
+    base = ctx.config.broker.jobs_api_base_url or ""
     resp_body = HeldExecutionResponse(
         job_id=hold.job_id,
         approval=HeldApprovalResponse(
             id=hold.approval_id, review_url=review_url, expires_at=hold.expires_at
         ),
         agent_directive=HELD_AGENT_DIRECTIVE,
-        links=AsyncQueuedResponseLinks(self_link=job_url),
+        links=HeldExecutionLinks(
+            self_link=f"{base}/jobs/{hold.job_id}",
+            withdraw=f"{base}/executions/approvals/{hold.approval_id}:withdraw",
+        ),
     )
     return Response(
         content=resp_body.model_dump_json(by_alias=True),

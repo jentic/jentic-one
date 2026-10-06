@@ -132,15 +132,24 @@ type HealthResponseStatus string
 // approves or denies it on `approval.review_url`, or the approval
 // expires. Poll `_links.self` until the job is terminal — `completed`
 // (it ran), `failed` (denied, expired, or the run failed; the result is
-// the problem body) or `cancelled` (withdrawn with `POST /jobs/{id}:cancel`).
-// Never re-send the call: an identical call while one is pending joins
-// the same job.
+// the problem body) or `cancelled` (withdrawn by the calling agent).
+// To abandon the call, `POST` to `_links.withdraw`
+// (`/executions/approvals/{approval.id}:withdraw`); `POST
+// /jobs/{id}:cancel` refuses a held job. Never re-send the call: an
+// identical call while one is pending joins the same job.
 type HeldExecutionResponse struct {
 	UnderscoreLinks struct {
 		// Self Control-plane job record to poll.
 		//
 		// Examples: https://control.your-instance.example/jobs/job_abc123
 		Self string `json:"self"`
+
+		// Withdraw `POST` here to withdraw the approval and cancel the held job
+		// (only the agent that made the call may). The call never runs.
+		//
+		//
+		// Examples: https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
+		Withdraw string `json:"withdraw"`
 	} `json:"_links"`
 
 	// AgentDirective What the calling agent should do next.

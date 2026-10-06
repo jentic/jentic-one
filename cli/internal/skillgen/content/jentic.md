@@ -210,7 +210,11 @@ envelope** (`{job_id, status, …}`). A call held for human approval answers
 status is terminal (`completed` ran it; `failed` with a permission-denied
 problem means denied or expired; `cancelled` means withdrawn) — and **never
 re-send the original call while a job is pending**: approval happens
-out-of-band, and re-sending duplicates the side effect.
+out-of-band, and re-sending duplicates the side effect. To abandon a held
+call instead, `POST` its `_links.withdraw`
+(`/executions/approvals/{approval.id}:withdraw`; CLI `jentic api POST …`):
+the job ends `cancelled` and the call never runs. A held job cannot be
+cancelled through `/jobs`.
 
 A denied or failed execute carries a coded recovery (the CLI's stderr
 `agent_directive` + exit codes; MCP's coded error envelopes). Follow the

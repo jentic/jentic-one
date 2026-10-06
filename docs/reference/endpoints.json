@@ -2438,6 +2438,24 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "withdrawExecutionApproval",
+      "path": "/executions/approvals/{approval_id}:withdraw",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Withdraw a held execution",
+      "surface": "executions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Agent-facing (typically an agent)",
       "implied_scopes": {
         "executions:read": []

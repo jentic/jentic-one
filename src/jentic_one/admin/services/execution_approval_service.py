@@ -1,10 +1,11 @@
-"""Execution approval service — list, read, and decide on held executions.
+"""Execution approval service — list, read, decide on and withdraw held executions.
 
 Visibility follows jobs (``build_access_filters``): ``org:admin`` sees every
 approval, a user sees approvals filed by agents they own, an agent sees its
 own. Deciding needs that same reviewer visibility — the agent's owner or an
 ``org:admin``; an ownerless agent's approvals are admin-only — and is refused
-outright for any agent caller, whatever its scopes.
+outright for any agent caller, whatever its scopes. Withdrawing is open only
+to the identity that filed the hold.
 """
 
 from __future__ import annotations
@@ -231,6 +232,81 @@ class ExecutionApprovalService:
             "execution_approval_decided",
             approval_id=approval_id,
             decision=body.decision.value,
+            actor_id=identity.sub,
+        )
+        return view
+
+    async def withdraw(self, approval_id: str, *, identity: Identity) -> ExecutionApprovalView:
+        """Withdraw a pending approval — only the identity that filed the hold.
+
+        A compare-and-set on ``pending``: in one transaction the approval
+        becomes ``withdrawn`` and its held job ``cancelled``, with no result
+        written. Any other caller gets ``ExecutionApprovalNotFoundError``, as
+        if the row did not exist; an approval that is no longer pending gets
+        ``ExecutionApprovalAlreadyDecidedError``. The withdrawal is
+        audit-logged and emits ``execution.approval_withdrawn``.
+        """
+        now = datetime.now(UTC)
+        async with self._ctx.admin_db.transaction() as session:
+            row = await ExecutionApprovalRepository.get_by_id(session, approval_id)
+            if row is None or row.created_by != identity.sub:
+                raise ExecutionApprovalNotFoundError(approval_id)
+            updated = await ExecutionApprovalRepository.withdraw(
+                session, approval_id, created_by=identity.sub, now=now
+            )
+            if updated is None:
+                state = await ExecutionApprovalRepository.get_state(session, approval_id)
+                raise ExecutionApprovalAlreadyDecidedError(
+                    f"Execution approval '{approval_id}' is already {state or row.state}"
+                )
+            await JobRepository.transition(
+                session,
+                updated.job_id,
+                from_status=JobStatus.HELD,
+                to_status=JobStatus.CANCELLED,
+            )
+            await AuditRepository.record(
+                session,
+                action=AuditAction.WITHDRAW,
+                target_type=AuditTargetType.EXECUTION_APPROVAL,
+                target_id=approval_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"state": ExecutionApprovalState.PENDING.value},
+                after={"state": ExecutionApprovalState.WITHDRAWN.value},
+            )
+            await emit_event_best_effort(
+                session,
+                type=EventType.EXECUTION_APPROVAL_WITHDRAWN,
+                severity=EventSeverity.INFO,
+                summary=f"Execution approval {approval_id} withdrawn",
+                job_id=updated.job_id,
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "approval_id": approval_id,
+                    "agent_id": updated.agent_id,
+                    "method": updated.method,
+                    "path": updated.path,
+                },
+            )
+            try:
+                async with session.begin_nested():
+                    await settle_actionable_events(
+                        session,
+                        event_type=EventType.EXECUTION_APPROVAL_REQUESTED,
+                        acknowledged_by=identity.sub,
+                        acknowledgement_note="Approval withdrawn",
+                        data_match={"approval_id": approval_id},
+                    )
+            except Exception:
+                logger.warning("approval_event_settle_failed", approval_id=approval_id)
+            view = ExecutionApprovalView.model_validate(updated)
+        logger.info(
+            "execution_approval_withdrawn",
+            approval_id=approval_id,
+            job_id=view.job_id,
             actor_id=identity.sub,
         )
         return view

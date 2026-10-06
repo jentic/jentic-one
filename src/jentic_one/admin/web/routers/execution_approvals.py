@@ -1,8 +1,9 @@
-"""Execution approvals router — review and decide executions held by require-approval rules.
+"""Execution approvals router — review, decide and withdraw require-approval holds.
 
 The routes need only a signed-in caller: who may see or decide an approval is
-reviewer visibility (the agent's owner or ``org:admin``), applied by the
-service, not a scope.
+reviewer visibility (the agent's owner or ``org:admin``), and who may withdraw
+one is the identity that filed the hold, both applied by the service, not a
+scope.
 """
 
 from __future__ import annotations
@@ -135,4 +136,27 @@ async def decide_execution_approval(
         DecideInput(decision=body.decision, reason=body.reason),
         identity=identity,
     )
+    return _approval_response(view, request)
+
+
+@router.post(
+    "/executions/approvals/{approval_id}:withdraw",
+    summary="Withdraw a held execution",
+    responses=with_responses(not_found(), conflict()),
+)
+async def withdraw_execution_approval(
+    approval_id: str,
+    request: Request,
+    identity: Identity = get_current_identity(),
+    svc: ExecutionApprovalService = Depends(get_execution_approval_service),
+) -> ExecutionApprovalResponse:
+    """Abandon a held execution — the identity that filed the hold only.
+
+    The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
+    never runs and no result is written. Any other caller gets ``404``, as if
+    the approval did not exist; an approval that is no longer pending (decided,
+    expired or already withdrawn) answers ``409``. It acts only on held
+    executions: owners and admins use ``:decide`` with ``deny`` instead.
+    """
+    view = await svc.withdraw(approval_id, identity=identity)
     return _approval_response(view, request)

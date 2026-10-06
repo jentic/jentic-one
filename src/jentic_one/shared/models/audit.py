@@ -20,6 +20,7 @@ class AuditAction(StrEnum):
     LOGOUT = "logout"
     APPROVE = "approve"
     DENY = "deny"
+    WITHDRAW = "withdraw"
     ARCHIVE = "archive"
     ROTATE = "rotate"
     REFRESH = "refresh"

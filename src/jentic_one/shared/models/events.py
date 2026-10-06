@@ -134,6 +134,10 @@ class EventType:
     # held execution. Settles the matching approval_requested prompt.
     EXECUTION_APPROVAL_DECIDED = "execution.approval_decided"
 
+    # Emitted by the admin withdraw path when the agent that filed a hold
+    # abandons it. Settles the matching approval_requested prompt.
+    EXECUTION_APPROVAL_WITHDRAWN = "execution.approval_withdrawn"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -175,6 +179,7 @@ class EventType:
             OAUTH_GRANT_REVOKED,
             EXECUTION_APPROVAL_REQUESTED,
             EXECUTION_APPROVAL_DECIDED,
+            EXECUTION_APPROVAL_WITHDRAWN,
         }
     )
 
@@ -409,6 +414,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_DECIDED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),

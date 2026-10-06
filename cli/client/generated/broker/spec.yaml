@@ -785,9 +785,11 @@ components:
         approves or denies it on `approval.review_url`, or the approval
         expires. Poll `_links.self` until the job is terminal — `completed`
         (it ran), `failed` (denied, expired, or the run failed; the result is
-        the problem body) or `cancelled` (withdrawn with `POST /jobs/{id}:cancel`).
-        Never re-send the call: an identical call while one is pending joins
-        the same job.
+        the problem body) or `cancelled` (withdrawn by the calling agent).
+        To abandon the call, `POST` to `_links.withdraw`
+        (`/executions/approvals/{approval.id}:withdraw`); `POST
+        /jobs/{id}:cancel` refuses a held job. Never re-send the call: an
+        identical call while one is pending joins the same job.
       required:
         - job_id
         - status
@@ -828,13 +830,20 @@ components:
           description: What the calling agent should do next.
         _links:
           type: object
-          required: [self]
+          required: [self, withdraw]
           properties:
             self:
               type: string
               description: Control-plane job record to poll.
               examples:
                 - https://control.your-instance.example/jobs/job_abc123
+            withdraw:
+              type: string
+              description: |
+                `POST` here to withdraw the approval and cancel the held job
+                (only the agent that made the call may). The call never runs.
+              examples:
+                - https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
     HealthResponse:
       type: object
       title: HealthResponse
@@ -1032,6 +1041,7 @@ components:
                   get_execution_result with job_id until it is terminal. Do not re-send the call.
                 _links:
                   self: https://control.your-instance.example/jobs/job_abc123
+                  withdraw: https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

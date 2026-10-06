@@ -95,3 +95,38 @@ class ExecutionApprovalRepository:
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def withdraw(
+        session: AsyncSession,
+        approval_id: str,
+        *,
+        created_by: str,
+        now: datetime,
+    ) -> ExecutionApproval | None:
+        """Compare-and-set a pending approval filed by ``created_by`` to ``withdrawn``.
+
+        Returns the updated row, or None when the row is missing, filed by
+        someone else, or no longer pending.
+        """
+        stmt = (
+            update(ExecutionApproval)
+            .where(
+                ExecutionApproval.id == approval_id,
+                ExecutionApproval.created_by == created_by,
+                ExecutionApproval.state == _PENDING,
+            )
+            .values(state="withdrawn", decided_at=now, decided_by=created_by)
+            .returning(ExecutionApproval)
+            .execution_options(synchronize_session=False, populate_existing=True)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_state(session: AsyncSession, approval_id: str) -> str | None:
+        """The approval's current ``state`` read from the database, or None when missing."""
+        result = await session.execute(
+            select(ExecutionApproval.state).where(ExecutionApproval.id == approval_id)
+        )
+        return result.scalar_one_or_none()
