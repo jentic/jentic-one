@@ -4,21 +4,24 @@ import { cn } from '@/shared/lib/utils';
 export type Variant = 'default' | 'success' | 'warning' | 'danger' | 'pending' | 'neutral';
 
 // A soft borderless pill: the hue tints the fill (10%) and the word; the word
-// carries the meaning, so the tint is only a secondary cue. `warning` is a
-// neutral tonal chip — a caution is a state to note, not an alarm, so only
-// its (optional) dot is warm; `pending` (a person must act) keeps the
-// stronger desaturated ochre.
+// carries the meaning, so the tint is only a secondary cue. The warm states
+// never tint the word or fill: `warning` (a state to note) and `pending` (a
+// person must act) are neutral tonal chips, only their (optional) dot warm —
+// `pending`'s a step stronger so the two stay apart.
 const variantClasses: Record<Variant, string> = {
 	default: 'bg-primary/10 text-primary',
 	success: 'bg-success/10 text-success',
 	warning: 'bg-surface-tonal text-foreground-lighter',
 	danger: 'bg-danger/10 text-danger',
-	pending: 'bg-warning/10 text-warning',
+	pending: 'bg-surface-tonal text-foreground-lighter',
 	// Neither good nor bad (e.g. a draft): grey, one step lighter than its surface.
 	neutral: 'bg-surface-field text-foreground-sub',
 };
 
-const badgeDotClasses: Partial<Record<Variant, string>> = { warning: 'bg-caution' };
+const badgeDotClasses: Partial<Record<Variant, string>> = {
+	warning: 'bg-caution',
+	pending: 'bg-warning',
+};
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 	variant?: Variant;
