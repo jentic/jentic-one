@@ -93,6 +93,7 @@
 	--color-accent-teal: hsl(var(--accent-green)); /* alias — no distinct teal in the palette */
 	--color-accent-pink: hsl(var(--accent-pink));
 	--color-accent-blue: hsl(var(--accent-blue));
+	--color-accent-yellow: hsl(var(--accent-yellow));
 	--color-accent-amber: hsl(
 		var(--warning)
 	); /* alias — status amber is the desaturated warning ochre */
@@ -174,6 +175,8 @@
 	--accent-green: 162 66% 62%; /* #5EDEB9 */
 	--accent-pink: 358 64% 80%; /* #EDADAF */
 	--accent-blue: 203 78% 67%; /* #68BAEC */
+	/* Syntax only: the program name in a shown command (`jentic …`). */
+	--accent-yellow: 52 78% 75%; /* #F1E38B */
 
 	/* ======================================================================
 	   SEMANTIC MAPPINGS
