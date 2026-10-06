@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import uuid as uuid_mod
+from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import ip_address
 from typing import Any
@@ -177,6 +178,166 @@ def broker_request_url(scheme: str, host: str, upstream: str, *, broker_relative
 def _error_origin(headers: httpx.Headers) -> str:
     value: str = headers.get("Jentic-Error-Origin", "")
     return value.strip().lower()
+
+
+def _flatten_validation_errors(errors: Any) -> str:
+    """Render a validation error array to a string (Go: ``flattenValidationErrors``).
+
+    The broker's 422 carries its field errors as ``errors`` (``[{loc, msg}, …]``,
+    sanitized of submitted input); each message is prefixed with its dotted
+    location and the messages are ``"; "``-joined. Any other shape yields ``""``.
+    """
+    if not isinstance(errors, list):
+        return ""
+    msgs: list[str] = []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        msg = item.get("msg")
+        if not isinstance(msg, str) or not msg:
+            continue
+        loc = item.get("loc")
+        if isinstance(loc, list) and loc:
+            msgs.append(".".join(str(seg) for seg in loc) + ": " + msg)
+        else:
+            msgs.append(msg)
+    return "; ".join(msgs)
+
+
+def _flatten_detail(detail: Any) -> str:
+    """Render a problem+json ``detail`` member to a string (Go: ``flattenDetail``).
+
+    A string verbatim, or a validation array via
+    :func:`_flatten_validation_errors`. Any other shape yields ``""``.
+    """
+    if isinstance(detail, str):
+        return detail
+    return _flatten_validation_errors(detail)
+
+
+def _status_text(status: int) -> str:
+    """The standard reason phrase for ``status`` (Go: ``http.StatusText``), else ``""``."""
+    try:
+        return HTTPStatus(status).phrase
+    except ValueError:
+        return ""
+
+
+def _problem_reason(problem: dict[str, Any], status: int) -> str:
+    """Human-readable reason from a broker problem body (Go: ``problemReason``).
+
+    ``detail`` first (a conformant RFC 9457 body), else ``title`` (where the
+    broker's own ``problem_body`` puts the message), else the status phrase —
+    with the flattened ``errors`` array appended so a validation 422 names WHICH
+    field was wrong instead of only "Request validation failed".
+    """
+    title = problem.get("title")
+    reason = (
+        _flatten_detail(problem.get("detail"))
+        or (title if isinstance(title, str) else "")
+        or _status_text(status)
+    )
+    if field_errors := _flatten_validation_errors(problem.get("errors")):
+        reason += f" ({field_errors})"
+    return reason
+
+
+# The wire types the broker emits when a Jentic-Credential-Id/Name header names a
+# credential it cannot resolve for the caller (broker/services/credentials/
+# orchestrator.py). Matched exactly (Go: ``brokerCredentialProblemTypes``): a
+# substring test would silently re-route any future type that merely mentions
+# "credential".
+_BROKER_CREDENTIAL_PROBLEM_TYPES = frozenset(
+    {"credential_id_not_found", "credential_name_not_found"}
+)
+
+
+def _broker_error_next_tool(status: int, problem_type: str) -> str:
+    """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``
+    over ``agentops.BrokerErrorRecoveryFor``).
+
+    A 404 or ``operation_not_found`` needs search_apis; a known
+    credential-resolution type gets whoami; any other broker 4xx — a contract or
+    payload error — points at inspect_operation, never an identity-check loop
+    that cannot fix a malformed request.
+    """
+    if status == 404 or problem_type == "operation_not_found":
+        return "search_apis"
+    if problem_type in _BROKER_CREDENTIAL_PROBLEM_TYPES:
+        return "whoami"
+    return "inspect_operation"
+
+
+def _broker_error_actionable(next_tool: str) -> str:
+    """MCP-lane recovery prose for a broker resolve failure, keyed on next_tool
+    (Go: ``brokerErrorToolHint``) so the two never disagree."""
+    if next_tool == "search_apis":
+        return (
+            "The broker has no such operation registered. Call search_apis to find the right "
+            "operation, confirm it with inspect_operation, then execute that one — do not retry "
+            "this call."
+        )
+    if next_tool == "whoami":
+        return (
+            "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker "
+            "could not resolve for this operation. Pick a valid id from details.candidates when "
+            "present (else call whoami to see your credential bindings) and re-issue the call "
+            "naming one bound to this operation — do not retry the same header."
+        )
+    return (
+        "The broker rejected the request before it reached the upstream API. Call "
+        "inspect_operation to re-read the operation's contract — the method, revision pin, payload "
+        "size, idempotency key, or a required header is wrong — and fix the request rather than "
+        "retrying it."
+    )
+
+
+def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:
+    """Broker resolve-failure classification (Go: ``agentops.BrokerError``), #1429.
+
+    A broker-origin 4xx that is not a denial (an unknown credential id or name,
+    an unregistered operation, a malformed request) never reached the upstream,
+    so it is a RESOLVE_FAILED error, not a normal result. The origin must say
+    ``broker`` explicitly: 400/404/422 are what an upstream answers on a call
+    that ran, so a missing header keeps the pass-through reading.
+
+    Two broker-origin statuses stay pass-through, because RESOLVE_FAILED means
+    "change the ask, don't retry" and both are retryable as sent: 429
+    (``rate_limit_exceeded``, with Retry-After) and every 5xx (#1531).
+    """
+    if not 400 <= status < 500 or status == 429 or status in _DENIAL_STATUSES:
+        return None
+    if _error_origin(headers) != "broker":
+        return None
+    problem: dict[str, Any] = {}
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            problem = parsed
+    except ValueError:
+        pass
+    reason = _problem_reason(problem, status)
+    raw_type = problem.get("type")
+    problem_type = raw_type if isinstance(raw_type, str) else ""
+    details: dict[str, Any] = {"http_status": status, "origin": "broker"}
+    if problem_type:
+        details["problem_type"] = problem_type
+    # The broker embeds the caller's own covering credentials on an unknown
+    # Jentic-Credential-Id/Name (orchestrator._resolve_mapped); relay them so the
+    # agent need not issue a follow-up whoami just to learn which ids exist.
+    candidates = problem.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        details["candidates"] = candidates
+    next_tool = _broker_error_next_tool(status, problem_type)
+    return ToolError(
+        CODE_RESOLVE_FAILED,
+        "the broker could not resolve this call, so it never reached the upstream API "
+        f"(HTTP {status}): {reason}",
+        actionable=_broker_error_actionable(next_tool),
+        details=details,
+        next_tool=next_tool,
+        extra={"retryable": False},
+    )
 
 
 def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:

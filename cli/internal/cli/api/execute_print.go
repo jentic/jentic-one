@@ -21,6 +21,9 @@ import (
 // the UX side: which stream, which format, and the recovery rendering.
 func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agentops.ExecuteResult) error {
 	denial := agentops.Classify(res)
+	// A broker-origin error that is not a denial (unknown credential, unregistered
+	// operation) also means the call never reached the upstream (#1429).
+	brokerErr := agentops.BrokerError(res)
 
 	if opts.raw {
 		// Redact before streaming, so --raw matches the redaction guarantee of
@@ -32,6 +35,9 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 		}
 		if denial != nil {
 			return denial.Err()
+		}
+		if brokerErr != nil {
+			return brokerErr
 		}
 		return nil
 	}
@@ -65,6 +71,13 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 			a.printSynthesizedDenialRecovery(cmd.Context(), denial.Status)
 		}
 		return denial.Err()
+	}
+	// A broker resolve failure carries its recovery (and any relayed candidate
+	// credentials) in Actionable, which the root error reporter renders once on
+	// stderr: a styled "Next Step" for humans, actionable_step in the agent
+	// envelope.
+	if brokerErr != nil {
+		return brokerErr
 	}
 	return nil
 }
