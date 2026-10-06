@@ -528,10 +528,10 @@ export function evaluateTemplateOp(
 	op: { method: string; path: string; operation_id: string | null },
 ): TemplateEvaluation {
 	for (const rule of rules) {
-		// Skip condition-less allow rules (backend rejects saving them,
-		// but paranoid mirror of the enforce-time matcher).
+		// Skip condition-less allow / require-approval rules (backend rejects
+		// saving them, but paranoid mirror of the enforce-time matcher).
 		if (
-			rule.effect === 'allow' &&
+			rule.effect !== 'deny' &&
 			!(rule.methods && rule.methods.length > 0) &&
 			(rule.path == null || rule.path === '') &&
 			!(rule.operations && rule.operations.length > 0)

@@ -66,7 +66,7 @@ export interface AgentBindingPermissionsEditorProps {
  */
 function toPreviewRule(rule: PermissionRuleInput): PreviewPermissionRule {
 	return {
-		effect: rule.effect === 'deny' ? 'deny' : 'allow',
+		effect: rule.effect,
 		methods: rule.methods ?? null,
 		path: rule.path ?? null,
 		match_mode: (rule.match_mode as PreviewPermissionRule['match_mode']) ?? undefined,

@@ -34,6 +34,27 @@ describe('isUnrestrictedAllow', () => {
 	});
 });
 
+describe('require-approval rules', () => {
+	it('flags a condition-less require-approval as unrestricted', () => {
+		const holdAll = {
+			effect: 'require-approval' as const,
+			methods: null,
+			path: null,
+			operations: null,
+		};
+		expect(isUnrestrictedAllow(holdAll)).toBe(true);
+		expect(ruleSummary([holdAll])).toContain('Holds ANY request for approval');
+	});
+
+	it('summarises a constrained require-approval as a hold', () => {
+		const summary = ruleSummary([
+			{ effect: 'require-approval', methods: ['POST'], path: null, operations: null },
+		]);
+		expect(summary).toContain('Holds for approval');
+		expect(summary).toContain('POST');
+	});
+});
+
 describe('ruleSummary', () => {
 	it('describes an empty rule set as unrestricted', () => {
 		expect(ruleSummary([])).toBe('No operation restrictions — full access to the resource.');

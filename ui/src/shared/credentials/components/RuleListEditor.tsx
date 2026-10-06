@@ -186,10 +186,7 @@ function RulePreviewRow({
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
 }) {
-	const effectClass =
-		rule.effect === 'allow'
-			? 'bg-success/10 text-success border-success/40'
-			: 'bg-danger/10 text-danger border-danger/40';
+	const effectClass = EFFECT_BADGE_CLASS[rule.effect];
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
 	const validityIssue = ruleValidityIssue(rule);
@@ -352,7 +349,7 @@ function swap<T>(items: T[], i: number, j: number): T[] {
  * {@link ruleFromDraft}.
  */
 interface RuleDraft {
-	effect: 'allow' | 'deny';
+	effect: PermissionRule['effect'];
 	methods: Set<string>;
 	path: string;
 	matchMode: 'regex' | 'prefix' | 'exact';
@@ -361,6 +358,27 @@ interface RuleDraft {
 	/** Carried verbatim from the source rule — never edited here. */
 	comment?: string | null;
 }
+
+/** Every effect the editor offers, in the order the effect picker shows them. */
+const RULE_EFFECTS: readonly PermissionRule['effect'][] = ['allow', 'require-approval', 'deny'];
+
+const EFFECT_LABEL: Record<PermissionRule['effect'], string> = {
+	allow: 'allow',
+	'require-approval': 'require approval',
+	deny: 'deny',
+};
+
+const EFFECT_BADGE_CLASS: Record<PermissionRule['effect'], string> = {
+	allow: 'bg-success/10 text-success border-success/40',
+	'require-approval': 'bg-warning/10 text-warning border-warning/40',
+	deny: 'bg-danger/10 text-danger border-danger/40',
+};
+
+const EFFECT_SELECTED_CLASS: Record<PermissionRule['effect'], string> = {
+	allow: 'bg-success/15 text-success border-success/50',
+	'require-approval': 'bg-warning/15 text-warning border-warning/50',
+	deny: 'bg-danger/15 text-danger border-danger/50',
+};
 
 const EMPTY_RULE_DRAFT: RuleDraft = {
 	effect: 'allow',
@@ -406,8 +424,8 @@ function validateDraft(draft: RuleDraft): string | null {
 	const hasMethods = draft.methods.size > 0;
 	const hasPath = draft.path.trim().length > 0;
 	const hasOperations = (draft.operations?.length ?? 0) > 0;
-	if (draft.effect === 'allow' && !hasMethods && !hasPath && !hasOperations) {
-		return 'An "allow" rule must constrain at least one of methods or path.';
+	if (draft.effect !== 'deny' && !hasMethods && !hasPath && !hasOperations) {
+		return `A "${EFFECT_LABEL[draft.effect]}" rule must constrain at least one of methods or path.`;
 	}
 	return null;
 }
@@ -501,20 +519,19 @@ function RuleFormBody({
 			<div className="flex items-center gap-2">
 				<Label className="text-[11px]">Effect</Label>
 				<div className="flex gap-1">
-					{(['allow', 'deny'] as const).map((e) => (
+					{RULE_EFFECTS.map((e) => (
 						<button
 							key={e}
 							type="button"
+							aria-pressed={draft.effect === e}
 							onClick={(): void => onChange({ ...draft, effect: e })}
 							className={`rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase ${
 								draft.effect === e
-									? e === 'allow'
-										? 'bg-success/15 text-success border-success/50'
-										: 'bg-danger/15 text-danger border-danger/50'
+									? EFFECT_SELECTED_CLASS[e]
 									: 'text-muted-foreground border-border'
 							}`}
 						>
-							{e}
+							{EFFECT_LABEL[e]}
 						</button>
 					))}
 				</div>

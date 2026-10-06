@@ -212,7 +212,7 @@ export function PermissionRuleEditor({
 							>
 								#{index + 1}
 							</span>
-							<span className="w-[5.5rem] shrink-0">
+							<span className="w-[9.5rem] shrink-0">
 								<Select
 									aria-label="Effect"
 									value={rule.effect}
@@ -334,25 +334,31 @@ export function PermissionRuleEditor({
 								<span className="flex items-start gap-1.5">
 									<AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
 									<span>
-										An Allow rule must constrain at least one method, path, or
-										operation.
+										{rule.effect === 'require-approval'
+											? 'A Require approval rule'
+											: 'An Allow rule'}{' '}
+										must constrain at least one method, path, or operation.
 									</span>
 								</span>
 								{/* The fix, not the instruction for it. It sets the mode as well as the
-								    path: `.*` grants everything only under `regex`. */}
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={() =>
-										update(index, {
-											path: ALLOW_ALL_PATH,
-											match_mode: REGEX_MATCH_MODE,
-										})
-									}
-									className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
-								>
-									Use <code className="font-mono">.*</code> to allow everything
-								</Button>
+								    path: `.*` grants everything only under `regex`. Offered for allow
+								    only — holding every call for review is what the guard prevents. */}
+								{rule.effect !== 'require-approval' && (
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={() =>
+											update(index, {
+												path: ALLOW_ALL_PATH,
+												match_mode: REGEX_MATCH_MODE,
+											})
+										}
+										className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
+									>
+										Use <code className="font-mono">.*</code> to allow
+										everything
+									</Button>
+								)}
 							</div>
 						)}
 					</div>

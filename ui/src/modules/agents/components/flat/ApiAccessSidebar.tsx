@@ -516,7 +516,7 @@ export function ApiAccessSidebar({
 										rules={(effective.rules ?? [])
 											.filter((r) => !r._system)
 											.map((r) => ({
-												effect: r.effect === 'deny' ? 'deny' : 'allow',
+												effect: r.effect,
 												methods: r.methods ?? null,
 												path: r.path ?? null,
 												match_mode:

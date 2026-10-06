@@ -143,7 +143,7 @@ function matcherMatches(m: PathMatcher, requestPath: string): boolean {
 }
 
 interface CompiledRule {
-	effect: 'allow' | 'deny';
+	effect: PermissionRule['effect'];
 	methods: Set<string> | null;
 	path: PathMatcher | null;
 	operations: Set<string> | null;
@@ -180,8 +180,9 @@ function ruleMatches(
 
 /**
  * Evaluate an ordered rule list against a request triple. Returns
- * ``true`` iff a matching ``allow`` rule fires before any matching
- * ``deny``. Default-deny when nothing matches.
+ * ``true`` iff a matching ``allow`` rule fires first — a matching
+ * ``deny`` refuses and a matching ``require-approval`` holds the call for a
+ * reviewer, so neither runs it outright. Default-deny when nothing matches.
  */
 export function evaluateRules(
 	rules: readonly PermissionRule[],
@@ -189,7 +190,7 @@ export function evaluateRules(
 ): boolean {
 	for (const raw of rules) {
 		const compiled = compileRule(raw);
-		if (isConditionLess(compiled) && compiled.effect === 'allow') continue;
+		if (isConditionLess(compiled) && compiled.effect !== 'deny') continue;
 		if (ruleMatches(compiled, req)) return compiled.effect === 'allow';
 	}
 	return false;

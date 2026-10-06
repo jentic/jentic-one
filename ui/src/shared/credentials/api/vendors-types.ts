@@ -61,12 +61,12 @@ export interface ReviewSession {
  * four match conditions being ``null`` means "match anything for this
  * field"; ``match_mode`` picks how ``path`` is interpreted.
  *
- * Backend model-validator forbids a condition-less ``allow`` — a rule
- * with ``effect=allow`` MUST constrain at least one of methods, path, or
- * operations.
+ * Backend model-validator forbids a condition-less ``allow`` or
+ * ``require-approval`` — such a rule MUST constrain at least one of
+ * methods, path, or operations.
  */
 export interface PermissionRule {
-	effect: 'allow' | 'deny';
+	effect: 'allow' | 'deny' | 'require-approval';
 	methods?: string[] | null;
 	path?: string | null;
 	match_mode?: 'regex' | 'prefix' | 'exact';

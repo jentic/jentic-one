@@ -39,9 +39,10 @@ export interface PermissionRule {
  * True when a rule is an UNRESTRICTED allow (or require-approval) — effect
  * `allow` / `require-approval` with no methods, path, or operations to
  * constrain it. Under the broker's first-match-wins, default-deny evaluation
- * such a rule matches every request. The API now rejects these (a
- * condition-less `allow` or `require-approval` is a 422), but a reviewer can
- * still encounter one on a historical binding, so the UI flags it loudly.
+ * such a rule matches every request. The API rejects these (a condition-less
+ * `allow` or `require-approval` is a 422), but a reviewer can still encounter
+ * one on a binding stored before that validation existed, so the UI flags it
+ * loudly.
  */
 export function isUnrestrictedAllow(rule: PermissionRule): boolean {
 	return (
@@ -70,7 +71,11 @@ export function ruleSummary(rules: PermissionRule[]): string {
 	const parts = ordered.map((rule) => {
 		// An unrestricted allow matches everything — surface that danger plainly
 		// instead of the bland "Allows all requests".
-		if (isUnrestrictedAllow(rule)) return 'Allows ANY request (unrestricted)';
+		if (isUnrestrictedAllow(rule)) {
+			return rule.effect === 'require-approval'
+				? 'Holds ANY request for approval (unrestricted)'
+				: 'Allows ANY request (unrestricted)';
+		}
 		const verb =
 			rule.effect === 'allow'
 				? 'Allows'

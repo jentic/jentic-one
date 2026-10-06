@@ -6,6 +6,7 @@ import { PermissionRuleEditor, isEmptyAllowRule, type PermissionRuleInput } from
 type Effect = PermissionRuleInput['effect'];
 const ALLOW = 'allow' as Effect;
 const DENY = 'deny' as Effect;
+const HOLD = 'require-approval' as Effect;
 
 /** Terse rule factory keeping the `effect`-enum casts out of each test case. */
 function rule(over: Partial<PermissionRuleInput> & { effect: Effect }): PermissionRuleInput {
@@ -53,12 +54,34 @@ describe('isEmptyAllowRule', () => {
 		expect(isEmptyAllowRule(rule({ effect: ALLOW, operations: ['op'] }))).toBe(false);
 	});
 
+	it('flags a condition-less require-approval and accepts a constrained one', () => {
+		expect(isEmptyAllowRule(rule({ effect: HOLD }))).toBe(true);
+		expect(isEmptyAllowRule(rule({ effect: HOLD, methods: ['POST'] }))).toBe(false);
+	});
+
 	it('never flags a deny (a condition-less deny is a valid catch-all)', () => {
 		expect(isEmptyAllowRule(rule({ effect: DENY }))).toBe(false);
 	});
 });
 
 describe('PermissionRuleEditor', () => {
+	it('offers require-approval and keeps it through edits', async () => {
+		const user = userEvent.setup();
+		render(<Harness initial={[rule({ effect: ALLOW, methods: ['POST'] })]} />);
+
+		await user.selectOptions(screen.getByLabelText('Effect'), 'require-approval');
+
+		const rules = JSON.parse(screen.getByTestId('state').textContent ?? '[]');
+		expect(rules[0]).toMatchObject({ effect: 'require-approval', methods: ['POST'] });
+		expect(screen.getByRole('option', { name: 'Require approval' })).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('alerts on a require-approval rule with no constraints', () => {
+		render(<Harness initial={[rule({ effect: HOLD })]} />);
+		expect(screen.getByRole('alert')).toHaveTextContent(/must constrain at least one/i);
+	});
+
 	it('"Allow all operations" emits a constrained catch-all (path ".*"), not a condition-less allow', async () => {
 		const user = userEvent.setup();
 		render(<Harness />);
