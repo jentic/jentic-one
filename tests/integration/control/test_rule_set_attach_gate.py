@@ -260,11 +260,16 @@ async def _seed_users(ctx: Context) -> None:
 async def test_curation_lists_cross_owner_attachments_only(
     integration_context: Context, svc: CredentialService, cleanup: None
 ) -> None:
-    """A binding on another user's non-curated set is reported; own and curated sets are not."""
+    """Reported: another user's non-curated set, also on an ownerless agent.
+
+    Not reported: the agent's owner's set, a curated set, a set the agent created.
+    """
     await _seed_users(integration_context)
     cross = await _binding(integration_context, svc, _BOB, "cross", owned=True)
     own = await _binding(integration_context, svc, _ALICE, "same", owned=True)
     on_curated = await _binding(integration_context, svc, _BOB, "oncurated", owned=True)
+    ownerless = await _binding(integration_context, svc, _BOB, "ownerless")
+    self_made = await _binding(integration_context, svc, _BOB, "selfmade")
     alice_set, _ = await svc.create_rule_set(
         name="alice-shared", description=None, rules=_RULES, identity=_ALICE
     )
@@ -275,13 +280,21 @@ async def test_curation_lists_cross_owner_attachments_only(
     await _attach(svc, cross, alice_set.id, _ADMIN)
     await _attach(svc, own, alice_set.id, _ALICE)
     await _attach(svc, on_curated, admin_set.id, _BOB)
+    await _attach(svc, ownerless, alice_set.id, _ADMIN)
+    async with integration_context.control_db.transaction() as session:
+        agent_set = await PermissionRuleSetRepository.create(
+            session, name="curation-agent-made", description=None, created_by=self_made.agent_id
+        )
+    await _attach(svc, self_made, agent_set.id, _ADMIN)
 
     result = await RuleSetCurationService(integration_context).mark_existing()
 
-    mine = {cross.agent_id, own.agent_id, on_curated.agent_id}
-    found = [a for a in result.cross_owner if a.agent_id in mine]
-    assert len(found) == 1
-    attachment = found[0]
+    mine = {b.agent_id for b in (cross, own, on_curated, ownerless, self_made)}
+    found = sorted((a for a in result.cross_owner if a.agent_id in mine), key=lambda a: a.agent_id)
+    assert result.cross_owner_error is None
+    assert [a.agent_id for a in found] == sorted([cross.agent_id, ownerless.agent_id])
+    attachment = next(a for a in found if a.agent_id == cross.agent_id)
+    assert next(a for a in found if a.agent_id == ownerless.agent_id).owner_id is None
     assert attachment == CrossOwnerAttachment(
         binding_id=attachment.binding_id,
         agent_id=cross.agent_id,

@@ -35,7 +35,9 @@ The contract is the same on every install shape; only the commands differ.
    run such as `--db control` — is reported by a `--check` that covers the
    control and admin databases (the default) as a
    `STATUS upgrade-step:<name> pending` line and `OVERALL pending` (exit
-   `3`), once every database is at head; a full run clears it. The run
+   `3`), once every database is at head; a full run clears it. If the
+   schemas are at head but the step ledger cannot be read, `--check` prints
+   `OVERALL unknown` and exits `5`. The run
    lock these steps take is a Postgres session-level advisory lock, so point
    the migration at the database directly, not through a transaction-mode
    pooler (pgbouncer `pool_mode=transaction`).
@@ -91,21 +93,29 @@ Only a shared permission rule set's creator or an `org:admin` may attach a
 set that is not curated, because the creator can edit its rules — and so the
 policy of every binding attached to it. An attachment made before that rule
 existed, or one an `org:admin` made, is left in place. Every full upgrade
-lists each one as
-`==> WARNING (rule_sets_mark_curated)` lines on stderr: a summary with the
-remediation, then one line per binding naming the binding, agent (id and
-name), the agent's owner, the credential, the rule set (id and name) and
-the set's creator. The `cross_owner_bindings` count is in the step's JSON
+lists each binding on a non-curated set created by someone other than the
+agent or its owner as `==> WARNING (rule_sets_mark_curated)` lines on
+stderr: a summary with the remediation, then one line per binding (the
+first 50, then `...and N more`) naming the binding, agent (id and name), the
+agent's owner, the credential, the rule set (id and name) and the set's
+creator. The full count is `cross_owner_bindings` in the step's JSON
 summary. Nothing is detached automatically; resolve each binding with one of:
 
 - the agent's owner attaches a set they created or a curated set, or
   detaches the set so the binding's inline rules apply;
 - an `org:admin` attaches a curated set (one an `org:admin` created);
 - an `org:admin` marks the set curated, after which only an `org:admin` can
-  edit it (control DB):
-  `UPDATE permission_rule_sets SET curated = true WHERE id = '<rule set id>';`
+  edit it. There is no API for this; in the control database (`control` is
+  your control `schema_name`; drop the prefix on SQLite):
+  `UPDATE control.permission_rule_sets SET curated = true WHERE id = '<rule set id>';`
+  A raw-SQL change leaves no audit record — note it in your change log.
 
-The warning repeats on each full upgrade until no such binding remains.
+For an agent with no owner only the `org:admin` options apply. The warning
+repeats on each full upgrade until no such binding remains. If the listing
+itself fails (for example a query error on the admin database), the step
+still marks the sets, prints one `could not list cross-owner bindings`
+warning, and reports `cross_owner_bindings: null`; the upgrade does not
+fail on it.
 
 ## Where the commands live, per install
 

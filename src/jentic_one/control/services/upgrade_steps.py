@@ -11,8 +11,8 @@ Registered steps:
 
 - ``rule_sets_mark_curated`` (repeatable) marks the shared permission rule
   sets created by a system actor or an ``org:admin`` as curated, and warns
-  about each binding attached to a non-curated set its agent's owner did not
-  create
+  about each binding attached to a non-curated set neither its agent nor the
+  agent's owner created
   (:class:`~jentic_one.control.services.rule_set_curation.RuleSetCurationService`).
 
 The theme-5 steps (``theme5_retire_toolkit_keys``,
@@ -53,6 +53,7 @@ from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
 from jentic_one.control.services.rule_set_curation import (
     CrossOwnerAttachment,
+    RuleSetCurationResult,
     RuleSetCurationService,
 )
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
@@ -102,40 +103,63 @@ RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
 #: Leads the per-binding warnings of ``rule_sets_mark_curated``.
 CROSS_OWNER_RULE_SET_WARNING = (
     "{count} agent credential binding(s) use a non-curated shared rule set created by "
-    "someone other than the agent's owner; that creator can still edit the rules that "
-    "govern the agent. Left attached. To resolve one: the agent's owner attaches a set "
-    "they created or a curated set, or detaches to the binding's inline rules; or an "
-    "org:admin re-attaches a curated set, or marks the set curated (control DB: UPDATE "
-    "permission_rule_sets SET curated = true WHERE id = '<rule set id>'), after which "
-    "only an org:admin can edit it. The bindings:"
+    "someone other than the agent or its owner; that creator can still edit the rules "
+    "that govern the agent. Left attached. To resolve one: the agent's owner attaches a "
+    "set they created or a curated set, or detaches to the binding's inline rules; or an "
+    "org:admin re-attaches a curated set, or marks the set curated, after which only an "
+    "org:admin can edit it: UPDATE control.permission_rule_sets SET curated = true WHERE "
+    "id = '<rule set id>' (control is your control schema_name; no prefix on SQLite). A "
+    "raw-SQL change leaves no audit record. The bindings:"
 )
+
+#: Per-binding warning lines printed before the rest are summarised as a count.
+CROSS_OWNER_WARNING_LIMIT = 50
 
 
 def _cross_owner_line(a: CrossOwnerAttachment) -> str:
-    return (
-        f"binding {a.binding_id}: agent {a.agent_id} ({a.agent_name!r}) owned by "
-        f"{a.owner_id or 'no owner'}, credential {a.credential_id}, rule set "
-        f"{a.rule_set_id} ({a.rule_set_name!r}) created by {a.rule_set_creator}"
+    owner = (
+        f"owned by {a.owner_id}"
+        if a.owner_id is not None
+        else "with no owner (only the org:admin remediations apply)"
     )
+    return (
+        f"binding {a.binding_id}: agent {a.agent_id} ({a.agent_name!r}) {owner}, "
+        f"credential {a.credential_id}, rule set {a.rule_set_id} ({a.rule_set_name!r}) "
+        f"created by {a.rule_set_creator}"
+    )
+
+
+def _cross_owner_warnings(result: RuleSetCurationResult) -> tuple[str, ...]:
+    if result.cross_owner_error is not None:
+        return (
+            f"could not list cross-owner bindings: {result.cross_owner_error}. The marking "
+            "is done; the listing runs again on the next full upgrade.",
+        )
+    found = result.cross_owner
+    if not found:
+        return ()
+    lines = [CROSS_OWNER_RULE_SET_WARNING.format(count=len(found))]
+    lines += [_cross_owner_line(a) for a in found[:CROSS_OWNER_WARNING_LIMIT]]
+    if len(found) > CROSS_OWNER_WARNING_LIMIT:
+        lines.append(f"...and {len(found) - CROSS_OWNER_WARNING_LIMIT} more")
+    return tuple(lines)
 
 
 async def _mark_curated_rule_sets(ctx: Context) -> UpgradeStepOutcome:
     result = await RuleSetCurationService(ctx).mark_existing()
-    warnings: tuple[str, ...] = ()
-    if result.cross_owner:
-        warnings = (
-            CROSS_OWNER_RULE_SET_WARNING.format(count=len(result.cross_owner)),
-            *(_cross_owner_line(a) for a in result.cross_owner),
-        )
+    summary: dict[str, Any] = {
+        "marked": result.marked,
+        "admin_creators": result.admin_creators,
+        # ``None`` when the listing could not run (the warning says why).
+        "cross_owner_bindings": (
+            None if result.cross_owner_error is not None else len(result.cross_owner)
+        ),
+    }
     return UpgradeStepOutcome(
         name=RULE_SETS_MARK_CURATED,
         action="performed",
-        summary={
-            "marked": result.marked,
-            "admin_creators": result.admin_creators,
-            "cross_owner_bindings": len(result.cross_owner),
-        },
-        warnings=warnings,
+        summary=summary,
+        warnings=_cross_owner_warnings(result),
     )
 
 

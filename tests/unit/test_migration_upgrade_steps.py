@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from jentic_one.control.services import rule_set_curation as curation_mod
 from jentic_one.control.services import upgrade_steps as steps_mod
 from jentic_one.control.services.upgrade_steps import UpgradeStepOutcome, UpgradeStepSpec
 from jentic_one.migrations import run as run_mod
@@ -128,7 +129,9 @@ def _seed_041_data(stack: Path) -> dict[str, str]:
     """Users, an org:admin grant, rule sets and bindings as a 0.41 install holds them.
 
     Returns the rule set ids by label. Bob's agent is attached to Alice's set
-    (cross-owner) and to the admin's set; Alice's agent to her own set.
+    (cross-owner) and to the admin's set; Alice's agent to her own set; an
+    ownerless agent to Alice's set (cross-owner); a self-registered agent to
+    the set it created itself (not cross-owner).
     """
     admin_db, control_db = stack / "admin.db", stack / "control.db"
     for uid in (_ADMIN_USER, _ALICE, _BOB):
@@ -143,24 +146,35 @@ def _seed_041_data(stack: Path) -> dict[str, str]:
         "VALUES ('perm_up_admin', ?, 'org:admin')",
         (_ADMIN_USER,),
     )
-    sets = {"admin": ("prs_up_admin", _ADMIN_USER), "alice": ("prs_up_alice", _ALICE)}
+    sets = {
+        "admin": ("prs_up_admin", _ADMIN_USER),
+        "alice": ("prs_up_alice", _ALICE),
+        "self": ("prs_up_self", "agnt_up_self"),
+    }
     for label, (set_id, creator) in sets.items():
         _execute(
             control_db,
             "INSERT INTO permission_rule_sets (id, name, created_by) VALUES (?, ?, ?)",
             (set_id, f"up-{label}", creator),
         )
-    for agent_id, owner in (("agnt_up_alice", _ALICE), ("agnt_up_bob", _BOB)):
+    for agent_id, owner in (
+        ("agnt_up_alice", _ALICE),
+        ("agnt_up_bob", _BOB),
+        ("agnt_up_orphan", None),
+        ("agnt_up_self", None),
+    ):
         _execute(
             admin_db,
             "INSERT INTO agents (id, name, owner_id, registered_by, status, created_by) "
             "VALUES (?, ?, ?, ?, 'approved', ?)",
-            (agent_id, f"{agent_id}-name", owner, owner, owner),
+            (agent_id, f"{agent_id}-name", owner, owner or agent_id, owner or agent_id),
         )
     for binding_id, agent_id, credential_id, set_id in (
         ("acb_up_alice_own", "agnt_up_alice", "cred_up_a", "prs_up_alice"),
         ("acb_up_bob_cross", "agnt_up_bob", "cred_up_b", "prs_up_alice"),
         ("acb_up_bob_admin", "agnt_up_bob", "cred_up_c", "prs_up_admin"),
+        ("acb_up_orphan", "agnt_up_orphan", "cred_up_d", "prs_up_alice"),
+        ("acb_up_self", "agnt_up_self", "cred_up_e", "prs_up_self"),
     ):
         _execute(
             admin_db,
@@ -190,24 +204,87 @@ def _step_warnings(err: str) -> list[str]:
 def test_upgrade_from_041_curates_admin_sets_and_warns_on_cross_owner_bindings(
     sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """From the 0.41.0 heads: admin sets marked, only the cross-owner binding listed."""
+    """From the 0.41.0 heads: admin sets marked, only the cross-owner bindings listed.
+
+    Not listed: an agent on its owner's set, on a curated set, or on a set the
+    agent created itself. Listed: another user's set, and an ownerless agent.
+    """
     _migrate_to_041_heads()
     ids = _seed_041_data(sqlite_stack)
     capsys.readouterr()
 
     assert run_mod.main([]) == 0
 
-    assert _curated(sqlite_stack) == {ids["admin"]: True, ids["alice"]: False}
+    assert _curated(sqlite_stack) == {ids["admin"]: True, ids["alice"]: False, ids["self"]: False}
     captured = capsys.readouterr()
     assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in captured.out
-    assert '"cross_owner_bindings": 1' in captured.out
+    assert '"cross_owner_bindings": 2' in captured.out
+    assert '"warning_count": 3' in captured.out
     header, *lines = _step_warnings(captured.err)
-    assert header.startswith("1 agent credential binding(s) use a non-curated shared rule set")
-    assert "UPDATE permission_rule_sets SET curated = true" in header
+    assert header.startswith("2 agent credential binding(s) use a non-curated shared rule set")
+    assert "UPDATE control.permission_rule_sets SET curated = true" in header
+    assert "no audit record" in header
     assert lines == [
         "binding acb_up_bob_cross: agent agnt_up_bob ('agnt_up_bob-name') owned by "
-        f"{_BOB}, credential cred_up_b, rule set {ids['alice']} ('up-alice') created by {_ALICE}"
+        f"{_BOB}, credential cred_up_b, rule set {ids['alice']} ('up-alice') created by {_ALICE}",
+        "binding acb_up_orphan: agent agnt_up_orphan ('agnt_up_orphan-name') with no owner "
+        "(only the org:admin remediations apply), credential cred_up_d, rule set "
+        f"{ids['alice']} ('up-alice') created by {_ALICE}",
     ]
+
+
+def test_cross_owner_warnings_are_capped(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past the cap the warning summarises the rest; the JSON line carries no binding lines.
+
+    A small batch size makes the listing walk many binding pages.
+    """
+    monkeypatch.setattr(curation_mod, "_BATCH", 7)
+    _migrate_to_041_heads()
+    _seed_041_data(sqlite_stack)
+    extra = steps_mod.CROSS_OWNER_WARNING_LIMIT + 3
+    for n in range(extra):
+        _execute(
+            sqlite_stack / "admin.db",
+            "INSERT INTO agent_credential_bindings (id, agent_id, credential_id, rule_set_id) "
+            "VALUES (?, 'agnt_up_bob', ?, 'prs_up_alice')",
+            (f"acb_up_many_{n:03d}", f"cred_up_many_{n:03d}"),
+        )
+    capsys.readouterr()
+
+    assert run_mod.main([]) == 0
+
+    captured = capsys.readouterr()
+    total = extra + 2
+    assert f'"cross_owner_bindings": {total}' in captured.out
+    assert "acb_up_many" not in captured.out
+    header, *lines = _step_warnings(captured.err)
+    assert header.startswith(f"{total} agent credential binding(s)")
+    assert len(lines) == steps_mod.CROSS_OWNER_WARNING_LIMIT + 1
+    assert lines[-1] == f"...and {total - steps_mod.CROSS_OWNER_WARNING_LIMIT} more"
+
+
+def test_cross_owner_listing_failure_warns_and_keeps_the_marking(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A listing that cannot run is a warning; the step still performs and exits 0."""
+    _migrate_to_041_heads()
+    ids = _seed_041_data(sqlite_stack)
+    assert run_mod.main(["--skip-upgrade-steps"]) == 0
+    # A real query failure: the binding table the listing reads is gone.
+    _execute(sqlite_stack / "admin.db", "ALTER TABLE agent_credential_bindings RENAME TO acb_moved")
+    capsys.readouterr()
+
+    assert run_mod.main([]) == 0
+
+    assert _curated(sqlite_stack)[ids["admin"]] is True
+    captured = capsys.readouterr()
+    assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in captured.out
+    assert '"cross_owner_bindings": null' in captured.out
+    (warning,) = _step_warnings(captured.err)
+    assert warning.startswith("could not list cross-owner bindings: ")
+    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
 
 
 def test_curation_rerun_marks_a_set_created_after_the_first_run(
@@ -284,6 +361,19 @@ def test_check_reports_a_pending_step_after_a_roll_forward_without_it(
     out = capsys.readouterr().out
     assert "upgrade-step" not in out
     assert "OVERALL current" in out
+
+
+def test_check_reports_unknown_when_the_ledger_cannot_be_read(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run_mod.main([]) == 0
+    _execute(sqlite_stack / "control.db", "DROP TABLE upgrade_steps")
+    capsys.readouterr()
+
+    assert run_mod.main(["--check"]) == run_mod.CHECK_EXIT_UNKNOWN
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[-1] == "OVERALL unknown"
+    assert "could not read the upgrade-step ledger" in captured.err
 
 
 def test_check_on_a_schema_behind_head_lists_no_steps(

@@ -133,6 +133,12 @@ STATE_UNINITIALIZED = "uninitialized"
 # itself failed" (bad config, database unreachable) and not act on a non-answer.
 CHECK_EXIT_NEEDS_MIGRATION = 3
 
+# Verdict and exit code for ``--check`` when every schema is at head but the
+# upgrade-step ledger could not be read, so whether a step is pending is not
+# known. Distinct from 3 (work needed) and 1 (the check crashed outright).
+STATE_UNKNOWN = "unknown"
+CHECK_EXIT_UNKNOWN = 5
+
 
 def status(db_name: str) -> tuple[str, list[str], list[str]]:
     """Report a database's schema state without modifying it.
@@ -252,7 +258,8 @@ def _run_check(order: list[str]) -> int:
     ``STATUS upgrade-step:<name> pending`` line and makes the verdict
     ``pending``: the schema is current, but the data step a full upgrade runs
     has not. A schema that is not current already yields a non-current verdict,
-    and the full upgrade it calls for runs the steps too.
+    and the full upgrade it calls for runs the steps too. When the ledger cannot
+    be read the verdict is ``OVERALL unknown`` (exit :data:`CHECK_EXIT_UNKNOWN`).
     """
     # The overall verdict is the state demanding the most caution, which is
     # ``pending`` — NOT the "worst-looking" one. The caller responds to these
@@ -276,7 +283,17 @@ def _run_check(order: list[str]) -> int:
         if caution[state] > caution[verdict]:
             verdict = state
     if verdict == STATE_CURRENT and _UPGRADE_STEP_DBS.issubset(order):
-        for name in pending_upgrade_steps():
+        try:
+            pending = pending_upgrade_steps()
+        except Exception as exc:
+            print(
+                f"==> could not read the upgrade-step ledger ({type(exc).__name__}: {exc})",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(f"OVERALL {STATE_UNKNOWN}", flush=True)
+            return CHECK_EXIT_UNKNOWN
+        for name in pending:
             print(f"STATUS upgrade-step:{name} {STATE_PENDING}", flush=True)
             verdict = STATE_PENDING
     print(f"OVERALL {verdict}", flush=True)
@@ -312,7 +329,10 @@ async def _run_upgrade_steps_async(skip: Collection[str]) -> int:
     failed = False
     for outcome in outcomes:
         print(f"==> upgrade step {outcome.name}: {outcome.action}", flush=True)
-        print(json.dumps(asdict(outcome)), flush=True)
+        # The warnings follow as their own lines; the JSON line carries their count.
+        record = asdict(outcome)
+        record["warning_count"] = len(record.pop("warnings"))
+        print(json.dumps(record), flush=True)
         for warning in outcome.warnings:
             print(f"==> WARNING ({outcome.name}): {warning}", file=sys.stderr, flush=True)
         failed = failed or outcome.failed
@@ -376,7 +396,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report each database's schema state and exit without changing "
         f"anything. Exits {CHECK_EXIT_NEEDS_MIGRATION} if any database is not at head "
-        "or, when control and admin are both checked, if an upgrade step has never run.",
+        "or, when control and admin are both checked, if an upgrade step has never run "
+        f"({CHECK_EXIT_UNKNOWN} with OVERALL unknown if the step ledger cannot be read).",
     )
     parser.add_argument(
         "--skip-upgrade-steps",
