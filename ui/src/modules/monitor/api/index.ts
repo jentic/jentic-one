@@ -37,7 +37,7 @@ export {
 	ACTIVITY_SOURCES,
 	toExecutionStatus,
 	toJobStatus,
-	isCancellableJobStatus,
+	isCancellableJob,
 	isTerminalJobStatus,
 } from '@/modules/monitor/api/types';
 export type {

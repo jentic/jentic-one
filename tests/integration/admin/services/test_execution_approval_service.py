@@ -426,14 +426,14 @@ async def test_jobs_cancel_refuses_a_held_job_and_leaves_its_approval_pending(
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
 
-async def test_jobs_cancel_cancels_a_held_job_with_no_execution_approval(
+async def test_jobs_cancel_cancels_a_held_job_of_another_kind(
     integration_context: Context, actors: _Actors
 ) -> None:
-    """Only approval-backed holds are refused; any other held job cancels normally."""
+    """Only held executions are refused; a held job of any other kind cancels normally."""
     ctx = integration_context
     async with ctx.admin_db.transaction() as session:
         job = Job(
-            kind="execution",
+            kind="import",
             status=JobStatus.HELD,
             payload={},
             created_by=actors.agent.sub,

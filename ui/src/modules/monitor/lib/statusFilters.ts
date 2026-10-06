@@ -55,11 +55,11 @@ export const CALL_STATUS_WIRE: Record<Exclude<CallStatus, 'all'>, string[]> = {
 	failed: ['failed'],
 };
 
-// The backend's JobStatus StrEnum: queued/running/completed/failed/cancelled/
-// dead_letter. "In progress" = not yet terminal; "failed" includes the
+// The backend's JobStatus StrEnum: queued/running/held/completed/failed/
+// cancelled/dead_letter. "In progress" = not yet terminal; "failed" includes the
 // dead-letter (exhausted-retries) bucket so a poison job still surfaces.
 export const JOB_STATUS_WIRE: Record<Exclude<JobStatusFilter, 'all'>, string[]> = {
-	active: ['queued', 'running'],
+	active: ['queued', 'running', 'held'],
 	completed: ['completed'],
 	failed: ['failed', 'dead_letter'],
 };

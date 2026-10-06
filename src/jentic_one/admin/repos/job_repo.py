@@ -127,7 +127,7 @@ class JobRepository:
         """Cancel a job if active (queued, running or held).
 
         Returns None if already terminal or not matched by ``filters``. Callers
-        refuse jobs held by an execution approval before calling this.
+        refuse held executions (which await approval) before calling this.
         """
         stmt = (
             update(Job)

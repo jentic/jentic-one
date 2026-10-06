@@ -204,7 +204,7 @@ class JobNotCancellableError(AdminServiceError):
 
 
 class JobAwaitingApprovalError(JobNotCancellableError):
-    """Raised when ``:cancel`` targets a job held by a pending execution approval.
+    """Raised when ``:cancel`` targets a held execution, which awaits its approval.
 
     Such a job settles only through its approval (decide, withdraw or expiry).
     """

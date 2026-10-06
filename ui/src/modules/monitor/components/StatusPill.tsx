@@ -26,6 +26,7 @@ export function ExecutionStatusPill({ status }: { status: ExecutionStatusUi }) {
 const JOB_VARIANT: Record<JobStatusUi, BadgeVariant> = {
 	queued: 'default',
 	running: 'pending',
+	held: 'pending',
 	completed: 'success',
 	failed: 'danger',
 	cancelled: 'warning',

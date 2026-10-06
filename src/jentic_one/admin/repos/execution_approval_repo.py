@@ -124,14 +124,6 @@ class ExecutionApprovalRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def exists_for_job(session: AsyncSession, job_id: str) -> bool:
-        """Whether an execution approval row references ``job_id``."""
-        result = await session.execute(
-            select(ExecutionApproval.id).where(ExecutionApproval.job_id == job_id).limit(1)
-        )
-        return result.scalar_one_or_none() is not None
-
-    @staticmethod
     async def get_state(session: AsyncSession, approval_id: str) -> str | None:
         """The approval's current ``state`` read from the database, or None when missing."""
         result = await session.execute(
