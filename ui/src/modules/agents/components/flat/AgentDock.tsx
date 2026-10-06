@@ -3,8 +3,9 @@
  * shared `FooterActionBar` pill. Its verbs are agent-scoped; the org credential
  * inventory opens from the page header instead.
  *
- * `pending` renders Approve in the toggle position, `rejected` has no serving
- * verb, and `archived` keeps only the read affordances.
+ * `pending` renders Approve in the toggle position (a waiting note for a
+ * caller without `agents:write`), `rejected` has no serving verb, and
+ * `archived` keeps only the read affordances.
  */
 import { useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Button, FooterActionBar, McpIcon, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
 
 /** The dock surfaces a verb can open (hosted by the flat surface's sheets).
@@ -162,11 +164,22 @@ function ServingVerb({
 	onApprove: () => void;
 	approvePending: boolean;
 }) {
+	const canApprove = useCanAccess(AGENTS_WRITE);
 	switch (agent.status) {
 		case 'active':
 		case 'disabled':
 			return <ServingToggle agent={agent} />;
 		case 'pending':
+			if (!canApprove) {
+				return (
+					<span
+						className="text-muted-foreground px-1 text-xs"
+						data-testid="dock-state-note"
+					>
+						Waiting for approval
+					</span>
+				);
+			}
 			// A pending agent's lifecycle verb IS approval. Shares the mutation with the
 			// panel banner, so the two buttons load together.
 			return (

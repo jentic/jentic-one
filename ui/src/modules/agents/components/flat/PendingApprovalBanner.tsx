@@ -4,12 +4,14 @@
  *
  * One banner names the longest-waiting pending agent with a live elapsed wait; the
  * rest fold into "and N more waiting". While the list is still a floor the count
- * hedges as "N+". Nothing pending renders NOTHING.
+ * hedges as "N+". Nothing pending renders NOTHING. Approve and Deny show only
+ * to a caller who may decide (`agents:write` or `org:admin`); Review stays.
  */
 import { useEffect, useReducer } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ActorStatusBadge, Button } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ACTION_LABEL, ACTION_VARIANT, type AgentEntity } from '@/modules/agents/api';
 
 interface PendingApprovalBannerProps {
@@ -48,6 +50,7 @@ export function PendingApprovalBanner({
 	approvePendingId,
 }: PendingApprovalBannerProps) {
 	const reducedMotion = useReducedMotion();
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	// Trust but verify: the query asks for `status=pending`, and the filter keeps a
 	// stale response from ever naming a non-pending agent.
@@ -120,25 +123,31 @@ export function PendingApprovalBanner({
 							>
 								Review
 							</Button>
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.approve}
-								disabled={busy}
-								loading={busy}
-								onClick={() => onApprove(longest.id)}
-								aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
-							>
-								{ACTION_LABEL.approve}
-							</Button>
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.deny}
-								disabled={busy}
-								onClick={() => onDeny({ id: longest.id, name: longest.name })}
-								aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
-							>
-								{ACTION_LABEL.deny}
-							</Button>
+							{canDecide && (
+								<>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.approve}
+										disabled={busy}
+										loading={busy}
+										onClick={() => onApprove(longest.id)}
+										aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
+									>
+										{ACTION_LABEL.approve}
+									</Button>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.deny}
+										disabled={busy}
+										onClick={() =>
+											onDeny({ id: longest.id, name: longest.name })
+										}
+										aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</>
+							)}
 						</span>
 					</div>
 				</motion.section>

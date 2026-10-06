@@ -2,6 +2,18 @@ import { QueryClient } from '@tanstack/react-query';
 import { isClientError } from '@/shared/api';
 
 /**
+ * An HTTP 4xx, whether it is the generated `ApiError` itself or a module's
+ * sentinel error (`MonitorApiError`, `AgentsApiError`, …) that wraps one and
+ * carries its numeric `status`.
+ */
+export function isClientErrorLike(error: unknown): boolean {
+	if (isClientError(error)) return true;
+	if (!(error instanceof Error) || !('status' in error)) return false;
+	const { status } = error as { status: unknown };
+	return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
  * Shared QueryClient.
  *
  * Client errors (HTTP 4xx — expired/invalid token, missing permission, bad
@@ -14,7 +26,7 @@ export function createQueryClient(): QueryClient {
 		defaultOptions: {
 			queries: {
 				retry: (failureCount, error) => {
-					if (isClientError(error)) return false;
+					if (isClientErrorLike(error)) return false;
 					return failureCount < 2;
 				},
 				staleTime: 30_000,

@@ -63,7 +63,7 @@ import {
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
@@ -529,6 +529,13 @@ function StateBanner({
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
+	// Approving or denying needs `agents:write` (or `org:admin`); anyone else
+	// reads the state without the verbs.
+	const canDecide = useCanAccess(AGENTS_WRITE);
+	const detail =
+		status === 'pending' && !canDecide
+			? 'Not serving traffic. Someone who can manage agents needs to approve it.'
+			: NON_ACTIVE_COPY[status].detail;
 	return (
 		<div
 			role="status"
@@ -549,7 +556,7 @@ function StateBanner({
 					{NON_ACTIVE_COPY[status].title}
 				</p>
 				<p className="text-muted-foreground text-xs leading-snug">
-					{NON_ACTIVE_COPY[status].detail}
+					{detail}
 					{status === 'rejected' && denialReason && <> Reason: {denialReason}</>}
 					{status === 'rejected' && deniedBy && (
 						<>
@@ -559,7 +566,7 @@ function StateBanner({
 					)}
 				</p>
 			</div>
-			{status === 'pending' && (
+			{status === 'pending' && canDecide && (
 				// The banner pins the longest-waiting agent only; any OTHER pending
 				// agent is decided here, so both verbs sit on its own panel.
 				<span className="flex shrink-0 items-center gap-2">

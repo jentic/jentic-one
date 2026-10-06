@@ -9,11 +9,15 @@
  * without a manual refresh. Clicking a row opens the job in the detail pane,
  * which carries the Cancel action (org:admin only). Jobs carry no actor on
  * the wire, so the record resolves "who" from the audit log by `job_id`.
+ *
+ * A caller without `jobs:read` (or `org:admin`) reads nothing and sees a plain
+ * "No access" state; a 401/403 from the read lands there too.
  */
 import { useMemo } from 'react';
-import { ChevronRight, ListChecks } from 'lucide-react';
+import { ChevronRight, ListChecks, ShieldX } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert, SkeletonRows } from '@/shared/ui';
-import { toJobStatus, useJobs } from '@/modules/monitor/api';
+import { JOBS_READ, useCanAccess } from '@/shared/auth';
+import { isMonitorAccessDenied, toJobStatus, useJobs } from '@/modules/monitor/api';
 import { CursorPager } from '@/modules/monitor/components/CursorPager';
 import { groupByDay, LogDay, LogList, LogRow } from '@/modules/monitor/components/LogList';
 import { LogLayout } from '@/modules/monitor/components/LogDetailPane';
@@ -28,6 +32,13 @@ import {
 	useStatusFilter,
 	type JobStatusFilter,
 } from '@/modules/monitor/lib/statusFilters';
+
+/** The "No access" state for a caller who cannot read the job queue. */
+const JOBS_FORBIDDEN_COPY = {
+	title: 'No access to jobs',
+	description:
+		"Your account doesn't have permission to view background jobs. An organisation admin can grant jobs:read.",
+} as const;
 
 /** Re-poll cadence while the newest page still has non-terminal jobs. */
 const ACTIVE_POLL_MS = 5_000;
@@ -44,10 +55,12 @@ export function JobsTab() {
 	const filters = useMonitorFilters();
 	const filterKey = JSON.stringify({ status, from: filters.from, to: filters.to });
 	const pager = useCursorStack(filterKey);
+	const canReadJobs = useCanAccess(JOBS_READ);
 	const query = useJobs(
 		{ status, from: filters.from, to: filters.to, cursor: pager.cursor },
-		{ pollWhileActive: pager.hasPrev ? false : ACTIVE_POLL_MS },
+		{ pollWhileActive: pager.hasPrev ? false : ACTIVE_POLL_MS, enabled: canReadJobs },
 	);
+	const forbidden = !canReadJobs || isMonitorAccessDenied(query.error);
 	const rows = useMemo(() => query.data?.data ?? [], [query.data]);
 	const days = useMemo(() => groupByDay(rows, (r) => Date.parse(r.created_at)), [rows]);
 	const showEmpty = rows.length === 0 && !query.isLoading && !query.isFetching;
@@ -60,7 +73,13 @@ export function JobsTab() {
 			renderDetail={(d, frame) => <RecordDetail detail={d} frame={frame} />}
 		>
 			<div className="space-y-3">
-				{query.isError ? (
+				{forbidden ? (
+					<EmptyState
+						icon={<ShieldX className="h-8 w-8" />}
+						title={JOBS_FORBIDDEN_COPY.title}
+						description={JOBS_FORBIDDEN_COPY.description}
+					/>
+				) : query.isError ? (
 					<ErrorAlert
 						message={
 							query.error instanceof Error ? query.error : 'Failed to load jobs.'
@@ -150,7 +169,7 @@ export function JobsTab() {
 					</LogList>
 				)}
 
-				{!query.isError && !showEmpty && (
+				{!forbidden && !query.isError && !showEmpty && (
 					<CursorPager
 						hasMore={query.data?.has_more ?? false}
 						hasPrev={pager.hasPrev}

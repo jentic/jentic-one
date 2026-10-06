@@ -20,7 +20,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { AUDIT_READ, ORG_ADMIN, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
 import {
 	approveAgent,
@@ -796,12 +796,15 @@ export function useReplaceAgentScopes() {
 /**
  * One actor's usage stats + volume buckets (trailing 7 days) for the Agents
  * page's stat strip and the Activity sheet's chart. Under its own `agents-usage` root, so
- * agent lifecycle invalidations don't re-aggregate the window. `null` on 403.
+ * agent lifecycle invalidations don't re-aggregate the window. `null` on 403,
+ * and `null` without a request for a caller who isn't `org:admin` (the
+ * aggregate's only permission).
  */
 export function useActorUsageDetail(actorId: string | null) {
+	const allowed = useCanAccess(ORG_ADMIN);
 	return useQuery<ActorUsageDetail | null>({
-		queryKey: ['agents-usage', 'detail', actorId],
-		queryFn: () => fetchActorUsageDetail(actorId as string),
+		queryKey: ['agents-usage', 'detail', actorId, { allowed }],
+		queryFn: () => (allowed ? fetchActorUsageDetail(actorId as string) : null),
 		enabled: actorId != null,
 		// Matches useActorExecutions below: the volume chart and the
 		// recent-executions feed render side by side and must go stale
@@ -814,12 +817,14 @@ export function useActorUsageDetail(actorId: string | null) {
 
 /**
  * Call volume per credential over the trailing 7 days. Same `agents-usage` root
- * and `null`-on-403 contract as {@link useActorUsageDetail}.
+ * and `null` contract (403, or no request without `org:admin`) as
+ * {@link useActorUsageDetail}.
  */
 export function useCredentialUsageTotals(enabled: boolean) {
+	const allowed = useCanAccess(ORG_ADMIN);
 	return useQuery<CredentialUsageTotals | null>({
-		queryKey: ['agents-usage', 'credential-totals'],
-		queryFn: () => fetchCredentialUsageTotals(),
+		queryKey: ['agents-usage', 'credential-totals', { allowed }],
+		queryFn: () => (allowed ? fetchCredentialUsageTotals() : null),
 		enabled,
 		staleTime: 60 * 1000,
 		retry: false,
@@ -906,14 +911,15 @@ export function useRevokeOauthGrant(agentId: string | null) {
 
 /**
  * Actor-scoped audit trail for the Activity sheet's "Recent changes" section —
- * the lifecycle events recorded against this agent as the TARGET. Non-admins resolve
- * to an empty list (the client maps 401/403), so the panel renders its
- * graceful "no entries" state instead of erroring.
+ * the lifecycle events recorded against this agent as the TARGET. A caller
+ * without `audit:read` (or `org:admin`) resolves to an empty list without a
+ * request, and a 401/403 maps to one too, so the panel never errors on access.
  */
 export function useActorAudit(actorId: string | null) {
+	const allowed = useCanAccess(AUDIT_READ);
 	return useQuery<ActorAuditEntry[]>({
-		queryKey: ['agents', 'audit', 'agent', actorId],
-		queryFn: () => listActorAudit(actorId as string),
+		queryKey: ['agents', 'audit', 'agent', actorId, { allowed }],
+		queryFn: () => (allowed ? listActorAudit(actorId as string) : []),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 	});

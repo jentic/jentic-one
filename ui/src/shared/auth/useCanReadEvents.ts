@@ -3,24 +3,14 @@
  * `/events/stream`): `events:read` or `org:admin` in their effective
  * permissions (`GET /users/me`). Surfaces that read events gate their requests
  * on this so a caller without access gets a clear state instead of a stream
- * that is refused over and over.
- *
- * A UI gate only: the server still enforces access. While the
- * provider is still loading the user the answer is `false`, so nothing is
- * requested before the permissions are known. Outside an `AuthProvider` (shell
- * chrome in tests) the viewer is unknown and the answer is `true`: the request
- * goes out and the server decides.
+ * that is refused over and over. Loading and no-provider behave as
+ * {@link useCanAccess}.
  */
-import { useOptionalAuth } from '@/shared/auth/AuthContext';
-import { ORG_ADMIN } from '@/shared/auth/usePermission';
+import { useCanAccess } from '@/shared/auth/useCanAccess';
 
 /** The permission that grants reads of the event feed. */
 export const EVENTS_READ = 'events:read';
 
 export function useCanReadEvents(): boolean {
-	const auth = useOptionalAuth();
-	if (!auth) return true;
-	if (!auth.user) return false;
-	const permissions = auth.user.permissions ?? [];
-	return permissions.includes(EVENTS_READ) || permissions.includes(ORG_ADMIN);
+	return useCanAccess(EVENTS_READ);
 }
