@@ -178,6 +178,27 @@ function ruleMatches(
 	return true;
 }
 
+/** The effect an ordered rule list resolves to for one request. */
+export type RuleOutcome = PermissionRule['effect'];
+
+/**
+ * Evaluate an ordered rule list against a request triple and return the
+ * effect of the first matching rule: ``allow`` runs the call, ``deny``
+ * refuses it, ``require-approval`` holds it for a reviewer. Default-deny
+ * when nothing matches.
+ */
+export function evaluateRuleEffect(
+	rules: readonly PermissionRule[],
+	req: { method: string; path: string; operation_id: string | null },
+): RuleOutcome {
+	for (const raw of rules) {
+		const compiled = compileRule(raw);
+		if (isConditionLess(compiled) && compiled.effect !== 'deny') continue;
+		if (ruleMatches(compiled, req)) return compiled.effect;
+	}
+	return 'deny';
+}
+
 /**
  * Evaluate an ordered rule list against a request triple. Returns
  * ``true`` iff a matching ``allow`` rule fires first — a matching
@@ -188,12 +209,7 @@ export function evaluateRules(
 	rules: readonly PermissionRule[],
 	req: { method: string; path: string; operation_id: string | null },
 ): boolean {
-	for (const raw of rules) {
-		const compiled = compileRule(raw);
-		if (isConditionLess(compiled) && compiled.effect !== 'deny') continue;
-		if (ruleMatches(compiled, req)) return compiled.effect === 'allow';
-	}
-	return false;
+	return evaluateRuleEffect(rules, req) === 'allow';
 }
 
 /**

@@ -1,8 +1,9 @@
 /**
  * Operation-impact preview: renders a vendor's operations grouped by
  * first path segment, each op tagged with an ``allow`` / ``partial`` /
- * ``deny`` verdict computed from the caller's rule set via the
- * template-aware matcher (parity-tested against the Python side).
+ * ``require-approval`` / ``deny`` verdict computed from the caller's rule
+ * set via the template-aware matcher (parity-tested against the Python
+ * side).
  *
  * Shared between the credentials connect-flow rules page and the
  * Agents page's bindings editor so users author + review rules against
@@ -34,9 +35,9 @@ export interface OpsApiReference {
 interface EvaluatedOp {
 	op: VendorOperation;
 	// Sample-and-classify coverage across concrete instances of the op
-	// template. Verdict is ``allow`` / ``deny`` / ``partial``; the
-	// ``partial`` case carries concrete allowed + denied sample paths so
-	// the leaf row can expand to show what's really covered.
+	// template. Verdict is ``allow`` / ``require-approval`` / ``deny`` /
+	// ``partial``; the ``partial`` case carries concrete sample paths per
+	// outcome so the leaf row can expand to show what's really covered.
 	coverage: OpCoverage;
 }
 
@@ -46,8 +47,51 @@ interface OpGroup {
 	prefix: string;
 	ops: EvaluatedOp[];
 	allowedCount: number;
+	approvalCount: number;
 	deniedCount: number;
 }
+
+type HeaderBucket = 'allowed' | 'approval' | 'denied';
+
+/**
+ * The group-header bucket an op counts towards: a partial op with any
+ * allowed slice counts as allowed, one whose only reachable slice is held
+ * counts as needing approval.
+ */
+function headerBucket(coverage: OpCoverage): HeaderBucket {
+	switch (coverage.verdict) {
+		case 'allow':
+			return 'allowed';
+		case 'require-approval':
+			return 'approval';
+		case 'deny':
+			return 'denied';
+		case 'partial':
+			return coverage.allowedSamples.length > 0 ? 'allowed' : 'approval';
+	}
+}
+
+/** Leaf sort rank: allowed → partial → needs approval → denied. */
+const VERDICT_RANK: Record<OpCoverage['verdict'], number> = {
+	allow: 3,
+	partial: 2,
+	'require-approval': 1,
+	deny: 0,
+};
+
+const VERDICT_PILL: Record<OpCoverage['verdict'], string> = {
+	allow: 'bg-success/10 text-success border-success/40',
+	partial: 'bg-warning/10 text-warning border-warning/40',
+	'require-approval': 'bg-accent-blue/10 text-accent-blue border-accent-blue/40',
+	deny: 'bg-danger/10 text-danger border-danger/40',
+};
+
+const VERDICT_LABEL: Record<OpCoverage['verdict'], string> = {
+	allow: 'allow',
+	partial: 'partial',
+	'require-approval': 'needs approval',
+	deny: 'deny',
+};
 
 /** First path segment or ``/`` when the path has no segments. */
 function firstPathSegment(path: string): string {
@@ -97,25 +141,29 @@ export function OperationImpactPreview({
 			if (bucket) bucket.push(entry);
 			else byPrefix.set(key, [entry]);
 		}
-		const opRank = (op: EvaluatedOp): number =>
-			op.coverage.verdict === 'allow' ? 2 : op.coverage.verdict === 'partial' ? 1 : 0;
 		const out: OpGroup[] = [];
 		for (const [prefix, entries] of byPrefix) {
-			entries.sort((a, b) => opRank(b) - opRank(a));
-			const allowedCount = entries.filter((e) => e.coverage.verdict !== 'deny').length;
+			entries.sort(
+				(a, b) => VERDICT_RANK[b.coverage.verdict] - VERDICT_RANK[a.coverage.verdict],
+			);
+			const counts: Record<HeaderBucket, number> = { allowed: 0, approval: 0, denied: 0 };
+			for (const e of entries) counts[headerBucket(e.coverage)] += 1;
 			out.push({
 				prefix,
 				ops: entries,
-				allowedCount,
-				deniedCount: entries.length - allowedCount,
+				allowedCount: counts.allowed,
+				approvalCount: counts.approval,
+				deniedCount: counts.denied,
 			});
 		}
 		out.sort((a, b) => {
-			// Groups with any allowed ops before all-denied groups.
-			if (a.allowedCount > 0 !== b.allowedCount > 0) {
-				return a.allowedCount > 0 ? -1 : 1;
-			}
+			// Groups an agent can reach at all (allowed or held) before
+			// all-denied groups, then the most allowed, then the most held.
+			const aReach = a.allowedCount + a.approvalCount > 0;
+			const bReach = b.allowedCount + b.approvalCount > 0;
+			if (aReach !== bReach) return aReach ? -1 : 1;
 			if (a.allowedCount !== b.allowedCount) return b.allowedCount - a.allowedCount;
+			if (a.approvalCount !== b.approvalCount) return b.approvalCount - a.approvalCount;
 			return a.prefix.localeCompare(b.prefix);
 		});
 		return out;
@@ -150,8 +198,9 @@ export function OperationImpactPreview({
 
 /**
  * One top-level path-prefix group. Starts collapsed — the aggregate
- * ``X allowed / Y denied`` counts on the header let the user skim
- * without expanding. Ops inside are sorted allowed → partial → denied.
+ * ``X allowed / Y need approval / Z denied`` counts on the header let
+ * the user skim without expanding. Ops inside are sorted allowed →
+ * partial → needs approval → denied.
  */
 function OperationImpactGroup({ group }: { group: OpGroup }) {
 	const [open, setOpen] = useState(false);
@@ -177,6 +226,14 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 							{group.allowedCount} allowed
 						</span>
 					)}
+					{group.approvalCount > 0 && (
+						<span
+							className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${VERDICT_PILL['require-approval']}`}
+						>
+							{group.approvalCount}{' '}
+							{group.approvalCount === 1 ? 'needs approval' : 'need approval'}
+						</span>
+					)}
 					{group.deniedCount > 0 && (
 						<span className="bg-danger/10 text-danger border-danger/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
 							{group.deniedCount} denied
@@ -197,10 +254,10 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 
 /**
  * Leaf op row rendered inside a group's expanded body. Verdict pill is
- * one of ``allow`` / ``partial`` / ``deny``.
+ * one of ``allow`` / ``partial`` / ``needs approval`` / ``deny``.
  *
  * ``partial`` rows carry a caret and start COLLAPSED — clicking the row
- * expands two follow-up lines with one concrete sample per bucket:
+ * expands follow-up lines with one concrete sample per outcome:
  *   ``ALLOW e.g. /repos/jentic/jentic-one/commits``
  *   ``DENY  e.g. /repos/example-owner/example-repo/commits``
  * Inline-expanded partial detail dominated the group; hiding it behind
@@ -210,16 +267,13 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
  */
 function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
 	const [expanded, setExpanded] = useState(false);
-	const verdictPill =
-		coverage.verdict === 'allow'
-			? 'bg-success/10 text-success border-success/40'
-			: coverage.verdict === 'partial'
-				? 'bg-warning/10 text-warning border-warning/40'
-				: 'bg-danger/10 text-danger border-danger/40';
-	const verdictLabel = coverage.verdict;
+	const verdictPill = VERDICT_PILL[coverage.verdict];
+	const verdictLabel = VERDICT_LABEL[coverage.verdict];
 	const allowExample = coverage.allowedSamples[0];
+	const approvalExample = coverage.approvalSamples[0];
 	const denyExample = coverage.deniedSamples[0];
-	const canExpand = coverage.verdict === 'partial' && Boolean(allowExample || denyExample);
+	const canExpand =
+		coverage.verdict === 'partial' && Boolean(allowExample || approvalExample || denyExample);
 	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-muted/40 transition-colors' : '';
 	return (
 		<div
@@ -258,6 +312,17 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 							</span>
 							<span className="text-muted-foreground">e.g.</span>
 							<span className="text-foreground/80 truncate">{allowExample}</span>
+						</div>
+					)}
+					{approvalExample && (
+						<div className="flex items-center gap-1.5">
+							<span
+								className={`rounded border px-1 py-0 text-[9px] uppercase ${VERDICT_PILL['require-approval']}`}
+							>
+								needs approval
+							</span>
+							<span className="text-muted-foreground">e.g.</span>
+							<span className="text-foreground/80 truncate">{approvalExample}</span>
 						</div>
 					)}
 					{denyExample && (

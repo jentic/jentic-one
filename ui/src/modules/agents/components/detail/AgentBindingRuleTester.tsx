@@ -63,21 +63,31 @@ function resolveMatch(
 	};
 }
 
-/** Shared chip shell so allow and deny read as the same kind of answer. */
-function VerdictChip({ allowed, children }: { allowed: boolean; children: React.ReactNode }) {
+/** What the dry-run answers: the call runs, is held for a reviewer, or is refused. */
+type VerdictOutcome = 'allowed' | 'approval' | 'denied';
+
+const VERDICT_CHIP: Record<VerdictOutcome, { label: string; className: string }> = {
+	allowed: { label: 'Allowed', className: 'bg-success/15 text-success' },
+	approval: { label: 'Needs approval', className: 'bg-accent-blue/15 text-accent-blue' },
+	denied: { label: 'Denied', className: 'bg-danger/15 text-danger' },
+};
+
+/** Shared chip shell so every outcome reads as the same kind of answer. */
+function VerdictChip({
+	outcome,
+	children,
+}: {
+	outcome: VerdictOutcome;
+	children: React.ReactNode;
+}) {
+	const chip = VERDICT_CHIP[outcome];
 	return (
 		<p
 			className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
 			data-testid="rule-verdict"
 		>
-			<span
-				className={
-					allowed
-						? 'bg-success/15 text-success rounded-md px-2 py-0.5 text-xs font-semibold'
-						: 'bg-danger/15 text-danger rounded-md px-2 py-0.5 text-xs font-semibold'
-				}
-			>
-				{allowed ? 'Allowed' : 'Denied'}
+			<span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${chip.className}`}>
+				{chip.label}
 			</span>{' '}
 			<span className="text-muted-foreground min-w-0">{children}</span>
 		</p>
@@ -92,13 +102,18 @@ function Verdict({
 	savedRules: BindingPermissionRule[];
 }) {
 	if (!result.matched) {
-		return <VerdictChip allowed={false}>— no rule matched (default deny)</VerdictChip>;
+		return <VerdictChip outcome="denied">— no rule matched (default deny)</VerdictChip>;
 	}
-	const allowed = result.allowed;
+	const outcome: VerdictOutcome = result.allowed
+		? 'allowed'
+		: result.effect === 'require-approval'
+			? 'approval'
+			: 'denied';
 	const { anchor, summary } = resolveMatch(result, savedRules);
-	const effectWord = allowed ? 'allow' : 'deny';
+	const effectWord =
+		outcome === 'allowed' ? 'allow' : outcome === 'approval' ? 'require-approval' : 'deny';
 	return (
-		<VerdictChip allowed={allowed}>
+		<VerdictChip outcome={outcome}>
 			{result.is_system ? (
 				<>— matched a platform system safety rule</>
 			) : anchor != null ? (

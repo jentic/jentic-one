@@ -251,6 +251,51 @@ describe('classifyOpCoverage', () => {
 		}
 	});
 
+	it('reports "require-approval" when a held rule fully covers the op', () => {
+		const result = classifyOpCoverage(
+			[
+				{
+					effect: 'require-approval',
+					methods: ['POST'],
+					path: '/repos',
+					match_mode: 'prefix',
+				},
+			],
+			{ method: 'POST', path: '/repos/{owner}/{repo}/issues', operation_id: null },
+		);
+		expect(result).toEqual({
+			verdict: 'require-approval',
+			allowedSamples: [],
+			approvalSamples: [],
+			deniedSamples: [],
+		});
+	});
+
+	it('reports "partial" with per-outcome samples when a hold covers a slice', () => {
+		const result = classifyOpCoverage(
+			[
+				{
+					effect: 'require-approval',
+					methods: null,
+					path: '/repos/jentic/jentic-one',
+					match_mode: 'prefix',
+				},
+				{ effect: 'allow', methods: ['GET'], path: '/repos/octocat', match_mode: 'prefix' },
+			],
+			{ method: 'GET', path: '/repos/{owner}/{repo}/commits', operation_id: null },
+		);
+		expect(result.verdict).toBe('partial');
+		expect(result.approvalSamples.length).toBeGreaterThan(0);
+		for (const s of result.approvalSamples) {
+			expect(s.startsWith('/repos/jentic/jentic-one/')).toBe(true);
+		}
+		for (const s of result.allowedSamples) {
+			expect(s.startsWith('/repos/octocat/')).toBe(true);
+		}
+		expect(result.allowedSamples.length).toBeGreaterThan(0);
+		expect(result.deniedSamples.length).toBeGreaterThan(0);
+	});
+
 	it('reports "deny" when no rule applies', () => {
 		const result = classifyOpCoverage([], {
 			method: 'GET',
