@@ -35,6 +35,9 @@ _NEW_UNIQUE = "uq_actor_permission_grants_actor_permission"
 #: renaming the table leaves it behind. Nothing reads it — SQLAlchemy does not
 #: name primary keys and autogenerate does not diff them — but it is the last
 #: ``actor_scope_grants`` string in the schema, visible to anyone running ``\d``.
+#: ``_rename_pg_primary_key`` renames whatever PK the table actually carries to
+#: this target name, so a non-standard or already-renamed PK can't abort the
+#: migration; these constants are the expected before/after names only.
 #: SQLite needs no equivalent: its batch rebuild emits an inline, unnamed
 #: ``PRIMARY KEY (id)``.
 _OLD_PKEY = "actor_scope_grants_pkey"
@@ -74,6 +77,42 @@ _INDEXES: tuple[tuple[str, list[str], str, list[str]], ...] = (
 )
 
 
+def _rename_pg_primary_key(*, table: str, new_pkey: str) -> None:
+    """Rename *table*'s primary key constraint to *new_pkey* on Postgres, safely.
+
+    The old blind ``ALTER TABLE … RENAME CONSTRAINT actor_scope_grants_pkey …``
+    assumed the PK still carried the name Postgres derived from the original
+    table. That is only true for a schema this project's own migrations built:
+    a database restored from a ``pg_dump`` with ``--no-privileges`` quirks, one
+    created with an explicitly-named PK, or one already partway through this
+    rename, can carry a different (or the already-renamed) name — and the blind
+    ALTER would raise ``undefined_object`` and abort the whole migration.
+
+    Nothing in the codebase reads the PK by name (SQLAlchemy neither names nor
+    diffs primary keys), so the rename is pure hygiene. Discover the real name
+    from the catalog and rename only when it both exists and differs from the
+    target; if the PK is already ``new_pkey`` (a re-run) or somehow absent,
+    this is a no-op rather than a failure.
+    """
+    bind = op.get_bind()
+    current_pkey = bind.execute(
+        sa.text(
+            "SELECT conname FROM pg_constraint "
+            "WHERE contype = 'p' AND conrelid = CAST(:table AS regclass)"
+        ),
+        {"table": table},
+    ).scalar_one_or_none()
+
+    if current_pkey is None or current_pkey == new_pkey:
+        # No primary key found (nothing to rename), or it is already the target
+        # name (idempotent re-run) — either way, leave the schema untouched.
+        return
+
+    # Identifiers can't be bound as parameters; both sides come from the
+    # catalog or our own module constants, never user input.
+    op.execute(f'ALTER TABLE {table} RENAME CONSTRAINT "{current_pkey}" TO "{new_pkey}"')
+
+
 def _rename_column_and_constraints(
     *,
     table: str,
@@ -82,7 +121,6 @@ def _rename_column_and_constraints(
     old_unique: str,
     new_unique: str,
     unique_columns: list[str],
-    old_pkey: str,
     new_pkey: str,
 ) -> None:
     """Rename one column and re-name the constraints tied to the old table name.
@@ -98,7 +136,7 @@ def _rename_column_and_constraints(
         op.alter_column(table, old_column, new_column_name=new_column)
         op.drop_constraint(old_unique, table, type_="unique")
         op.create_unique_constraint(new_unique, table, unique_columns)
-        op.execute(f"ALTER TABLE {table} RENAME CONSTRAINT {old_pkey} TO {new_pkey}")
+        _rename_pg_primary_key(table=table, new_pkey=new_pkey)
         return
 
     with op.batch_alter_table(table) as batch:
@@ -127,7 +165,6 @@ def upgrade() -> None:
         old_unique=_OLD_UNIQUE,
         new_unique=_NEW_UNIQUE,
         unique_columns=["actor_id", "permission"],
-        old_pkey=_OLD_PKEY,
         new_pkey=_NEW_PKEY,
     )
 
@@ -148,7 +185,6 @@ def downgrade() -> None:
         old_unique=_NEW_UNIQUE,
         new_unique=_OLD_UNIQUE,
         unique_columns=["actor_id", "scope"],
-        old_pkey=_NEW_PKEY,
         new_pkey=_OLD_PKEY,
     )
 

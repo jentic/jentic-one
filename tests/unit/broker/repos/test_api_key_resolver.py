@@ -113,12 +113,18 @@ def _agent_then_grant_table_db(
     return seen
 
 
-def _op_error(msg: str) -> OperationalError:
-    return OperationalError(msg, {}, Exception(msg))
+def _op_error(msg: str, *, pgcode: str | None = None) -> OperationalError:
+    orig = Exception(msg)
+    if pgcode is not None:
+        orig.pgcode = pgcode  # type: ignore[attr-defined]
+    return OperationalError(msg, {}, orig)
 
 
-def _prog_error(msg: str) -> ProgrammingError:
-    return ProgrammingError(msg, {}, Exception(msg))
+def _prog_error(msg: str, *, pgcode: str | None = None) -> ProgrammingError:
+    orig = Exception(msg)
+    if pgcode is not None:
+        orig.pgcode = pgcode  # type: ignore[attr-defined]
+    return ProgrammingError(msg, {}, orig)
 
 
 @pytest.mark.asyncio
@@ -126,7 +132,9 @@ def _prog_error(msg: str) -> ProgrammingError:
     "missing_table_error",
     [
         _op_error("no such table: actor_permission_grants"),  # sqlite
-        _prog_error('relation "actor_permission_grants" does not exist'),  # postgres
+        _prog_error(
+            'relation "actor_permission_grants" does not exist', pgcode="42P01"
+        ),  # postgres (SQLSTATE 42P01)
     ],
     ids=["sqlite-OperationalError", "postgres-ProgrammingError"],
 )
@@ -177,6 +185,58 @@ async def test_load_permissions_fails_closed_when_both_grant_tables_missing(
 
     assert identity is not None and identity.sub == "agnt_live"
     assert identity.permissions == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transient_error",
+    [
+        _op_error("database is locked"),  # sqlite lock — no pgcode, not a missing table
+        _op_error("connection timed out"),  # dropped/slow connection
+        _prog_error("syntax error at or near", pgcode="42601"),  # genuine query bug
+        _op_error("deadlock detected", pgcode="40P01"),  # postgres deadlock
+    ],
+    ids=["sqlite-locked", "connection-timeout", "syntax-error", "pg-deadlock"],
+)
+async def test_load_permissions_reraises_non_missing_table_errors(
+    resolver: ApiKeyResolver, admin_db: MagicMock, transient_error: Exception
+) -> None:
+    """A transient/real DB fault must PROPAGATE, never be swallowed into an
+    empty permission set. Swallowing a lock, a dropped connection, or a syntax
+    bug would silently strip an authenticated agent's permissions to [] — a
+    silent authz drop. Only a genuinely-missing grant table is tolerated."""
+    agent_row = AgentRow(agent_id="agnt_live", status="active", owner_id="usr_owner")
+    _agent_then_grant_table_db(
+        admin_db,
+        agent_row=agent_row,
+        permission_rows_by_sql={},
+        raise_on={"actor_permission_grants": transient_error},
+    )
+
+    with pytest.raises((OperationalError, ProgrammingError)):
+        await resolver.resolve("jak_transient_db_fault")
+
+
+@pytest.mark.asyncio
+async def test_load_permissions_reraises_when_legacy_table_read_errors(
+    resolver: ApiKeyResolver, admin_db: MagicMock
+) -> None:
+    """The new table is genuinely missing (tolerated → fall back), but the
+    legacy read then hits a lock. That lock must propagate too — the fallback
+    path is not a license to swallow a real fault on the second table."""
+    agent_row = AgentRow(agent_id="agnt_live", status="active", owner_id="usr_owner")
+    _agent_then_grant_table_db(
+        admin_db,
+        agent_row=agent_row,
+        permission_rows_by_sql={},
+        raise_on={
+            "actor_permission_grants": _op_error("no such table: actor_permission_grants"),
+            "actor_scope_grants": _op_error("database is locked"),
+        },
+    )
+
+    with pytest.raises(OperationalError, match="database is locked"):
+        await resolver.resolve("jak_legacy_locked")
 
 
 def _single_row_db(admin_db: MagicMock, row: AgentRow | None) -> list[int]:

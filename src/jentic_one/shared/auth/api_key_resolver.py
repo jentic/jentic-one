@@ -40,6 +40,42 @@ def is_retired_service_account_key(token: str) -> bool:
     return token.startswith(RETIRED_SERVICE_ACCOUNT_KEY_PREFIX)
 
 
+#: Postgres SQLSTATE for ``undefined_table`` (``relation ... does not exist``).
+_PG_UNDEFINED_TABLE = "42P01"
+
+
+def _is_missing_table_error(exc: OperationalError | ProgrammingError) -> bool:
+    """Whether *exc* is specifically a "table does not exist" error.
+
+    Narrow by design: only a genuinely-missing grant table may be swallowed
+    (so a mid-migration request falls through to the legacy table name).
+    Everything else an ``OperationalError``/``ProgrammingError`` can mean —
+    a lock (``database is locked``), a connection drop/timeout, a syntax bug —
+    must propagate, or key auth would silently blank an agent's permissions to
+    ``[]`` on a transient fault.
+
+    - Postgres: the driver exposes ``exc.orig.pgcode``; ``42P01`` is
+      ``undefined_table``.
+    - SQLite: ``aiosqlite``/``pysqlite`` has no SQLSTATE, so match the stable
+      ``no such table`` text on the driver message.
+    """
+    orig = getattr(exc, "orig", None)
+
+    # Postgres (asyncpg/psycopg): authoritative SQLSTATE on the wrapped error.
+    pgcode = getattr(orig, "pgcode", None)
+    if pgcode is not None:
+        return bool(pgcode == _PG_UNDEFINED_TABLE)
+    sqlstate = getattr(orig, "sqlstate", None)
+    if sqlstate is not None:
+        return bool(sqlstate == _PG_UNDEFINED_TABLE)
+
+    # SQLite: no SQLSTATE — fall back to the driver's stable message text.
+    # Also covers a Postgres driver that didn't surface pgcode on ``orig``
+    # (older wrappers): ``relation "..." does not exist`` is its 42P01 text.
+    message = (str(orig) if orig is not None else str(exc)).lower()
+    return "no such table" in message or "does not exist" in message
+
+
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
 # authenticating as its successor agent for the same reason (digest copied into
 # ``agent_credentials``). The prefix is DEPRECATED (see
@@ -217,9 +253,15 @@ class ApiKeyResolver:
                         {"actor_id": actor_id, "actor_type": actor_type.value},
                     )
                     return [row.permission for row in result.all()]
-            except (OperationalError, ProgrammingError):
-                # SQLite raises OperationalError and Postgres ProgrammingError
-                # (UndefinedTable) for a missing grant table; fall through to the
-                # legacy name.
-                continue
+            except (OperationalError, ProgrammingError) as exc:
+                # Only a genuinely-missing grant table may be swallowed (fall
+                # through to the legacy name during a rolling upgrade). SQLite
+                # raises OperationalError and Postgres ProgrammingError
+                # (UndefinedTable, SQLSTATE 42P01) for that. Any OTHER such
+                # error — a lock, a dropped/timed-out connection, a syntax bug —
+                # must propagate: swallowing it would strip the agent's
+                # permissions to [] on a transient fault (a silent authz drop).
+                if _is_missing_table_error(exc):
+                    continue
+                raise
         return []

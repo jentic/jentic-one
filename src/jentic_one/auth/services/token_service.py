@@ -20,6 +20,7 @@ from jentic_one.admin.repos import (
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.verify import scopes_to_permissions
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorStatus, ActorType, OAuthClientApprovalStatus
@@ -651,7 +652,11 @@ class TokenService:
         return Identity(
             sub=at.actor_id,
             actor_type=ActorType(at.actor_type),
-            permissions=scopes,
+            # Cross the OAuth2→internal boundary at the named seam: the resolved
+            # token scopes become the identity's permissions. Identity today,
+            # but routed through the one function so a future divergence has a
+            # single site to change.
+            permissions=scopes_to_permissions(scopes),
             expires_at=at.expires_at,
             active=active,
             parent_actor_id=parent_actor_id,

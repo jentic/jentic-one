@@ -250,3 +250,37 @@ def test_rename_round_trips(admin_target: _Target) -> None:
     _assert_new_shape(admin_target)
     assert _rows(admin_target, _NEW_TABLE, "permission") == set(_SEED)
     _assert_upsert_is_idempotent(admin_target)
+
+
+def test_rename_tolerates_non_standard_primary_key_name(admin_target: _Target) -> None:
+    """The PK rename must not assume the constraint still carries the name
+    Postgres derived from the original table.
+
+    A database restored from a dump, created with an explicitly-named PK, or
+    partway through this rename can carry a different PK name. The old blind
+    ``ALTER TABLE … RENAME CONSTRAINT actor_scope_grants_pkey …`` would raise
+    ``undefined_object`` and abort the whole migration. Rename the PK to a
+    non-standard name on the pre-rename schema, then assert the migration still
+    completes and normalizes the PK to ``actor_permission_grants_pkey``.
+    (Postgres only — SQLite's batch rebuild emits an unnamed inline PK.)
+    """
+    if not admin_target.postgres:
+        pytest.skip("named primary-key constraints are a Postgres concern")
+
+    command.upgrade(admin_target.alembic, _BEFORE)
+    _seed_old(admin_target)
+    # Simulate a non-standard PK name the blind rename would have choked on.
+    _run(
+        admin_target,
+        f"ALTER TABLE {admin_target.qualified(_OLD_TABLE)} "
+        "RENAME CONSTRAINT actor_scope_grants_pkey TO asg_legacy_restored_pk",
+    )
+    assert _shape(admin_target, _OLD_TABLE)["pk"] == "asg_legacy_restored_pk"
+
+    # Must not abort despite the unexpected PK name.
+    command.upgrade(admin_target.alembic, _RENAME)
+
+    _assert_new_shape(admin_target)
+    assert _shape(admin_target, _NEW_TABLE)["pk"] == "actor_permission_grants_pkey"
+    assert _rows(admin_target, _NEW_TABLE, "permission") == set(_SEED)
+    _assert_upsert_is_idempotent(admin_target)

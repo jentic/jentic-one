@@ -848,8 +848,12 @@ it out.
   (including the service-account variant) reports `permissions` /
   `token_permissions` instead of `scopes` / `token_scopes`. The endpoint
   reference emits `required_permissions` under schema
-  `jentic.endpoint-permission-tree/v1`. Audit rows keep their `scopes` payload
-  key and `reason` strings.
+  `jentic.endpoint-permission-tree/v1`. New audit entries write the
+  `permissions` payload key and the `replace_permissions` /
+  `default_permissions` reason strings (replacing the pre-rename `scopes` key
+  and `replace_scopes` / `default_scopes` reasons); reconciliation and the
+  service-account verification queries tolerate the historical `scopes` /
+  `replace_scopes` records already in the log, so no backfill is required.
 - **CLI and Go SDK.** `jentic endpoints --scope` is now `--permission`.
   The generated control client renames `AgentScopesRequest`/`Response` to
   `AgentPermissionsRequest`/`Response`, and `MeAgent` exposes
