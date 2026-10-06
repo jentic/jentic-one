@@ -34,6 +34,7 @@ import { monitorHref } from '@/modules/monitor/lib/links';
 import { DEFAULT_WINDOW, useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { AUTO_REFRESH_MS, useUsageOverview } from '@/modules/monitor/lib/useUsageOverview';
 import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
+import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 
 /**
  * Pre-redesign `?tab=` values → what replaces them. `expand` opens the full
@@ -63,12 +64,14 @@ function windowLabel(days: number): string {
 export default function MonitorPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const isAdmin = usePermission(ORG_ADMIN);
+	const canReadAudit = useCanAccess(AUDIT_READ);
 	const filters = useMonitorFilters();
 
 	const tabParam = searchParams.get('tab');
 	const showParam = searchParams.get('show');
-	// The Audit log is org:admin; anyone else asking for it lands on Everything.
-	const sources = isAdmin ? ACTIVITY_SOURCES : ACTIVITY_SOURCES.filter((s) => s !== 'audit');
+	// The Audit log needs `audit:read` (or `org:admin`); without it the source is
+	// not offered, and a link asking for it lands on Everything.
+	const sources = canReadAudit ? ACTIVITY_SOURCES : ACTIVITY_SOURCES.filter((s) => s !== 'audit');
 	const source: ActivitySource =
 		isActivitySource(showParam) && sources.includes(showParam) ? showParam : 'all';
 	const expanded = !isAdmin || searchParams.get('view') === 'activity' || source !== 'all';

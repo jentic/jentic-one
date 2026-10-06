@@ -3,9 +3,10 @@
  * shared `FooterActionBar` pill. Its verbs are agent-scoped; the org credential
  * inventory opens from the page header instead.
  *
- * `pending` renders Approve in the toggle position (a waiting note for a
- * caller without `agents:write`), `rejected` has no serving verb, and
- * `archived` keeps only the read affordances.
+ * `pending` renders Approve in the toggle position, `rejected` has no serving
+ * verb, and `archived` keeps only the read affordances. The lifecycle verbs
+ * (Approve, the serving toggle, Archive) need `agents:write` or `org:admin`;
+ * anyone else reads the state as a note and keeps the read affordances.
  */
 import { useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
@@ -53,6 +54,7 @@ export function AgentDock({
 }: AgentDockProps) {
 	const reducedMotion = useReducedMotion();
 	const isArchived = agent.status === 'archived';
+	const canManage = useCanAccess(AGENTS_WRITE);
 
 	return (
 		// Anchored to the page content column, not the viewport: the shell's collapsible
@@ -100,7 +102,7 @@ export function AgentDock({
 					onClick={() => onOpenSurface('settings')}
 				/>
 
-				{!isArchived && (
+				{!isArchived && canManage && (
 					<>
 						<DockDivider />
 						<Tooltip content="Archive this agent (irreversible)" interactiveChild>
@@ -164,13 +166,25 @@ function ServingVerb({
 	onApprove: () => void;
 	approvePending: boolean;
 }) {
-	const canApprove = useCanAccess(AGENTS_WRITE);
+	const canManage = useCanAccess(AGENTS_WRITE);
 	switch (agent.status) {
 		case 'active':
 		case 'disabled':
+			if (!canManage) {
+				return (
+					<span
+						className="text-muted-foreground px-1 text-xs"
+						data-testid="dock-state-note"
+					>
+						{agent.status === 'active'
+							? 'Serving traffic'
+							: 'Disabled — not serving traffic'}
+					</span>
+				);
+			}
 			return <ServingToggle agent={agent} />;
 		case 'pending':
-			if (!canApprove) {
+			if (!canManage) {
 				return (
 					<span
 						className="text-muted-foreground px-1 text-xs"

@@ -28,11 +28,13 @@ import { formatTimestamp } from '@/modules/monitor/lib/format';
 import { monitorHref } from '@/modules/monitor/lib/links';
 import { formatSpan, jobKindLabel, jobSentence } from '@/modules/monitor/lib/logVocabulary';
 import { ORG_ADMIN, usePermission } from '@/modules/monitor/lib/usePermission';
+import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 
 export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameContext }) {
 	const query = useJob(jobId);
 	const isAdmin = usePermission(ORG_ADMIN);
-	const { actor } = useActorForJob(jobId, { canReadAudit: isAdmin });
+	const canReadAudit = useCanAccess(AUDIT_READ);
+	const { actor } = useActorForJob(jobId, { canReadAudit });
 	const cancel = useCancelJob();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 

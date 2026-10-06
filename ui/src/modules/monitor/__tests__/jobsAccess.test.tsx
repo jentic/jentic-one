@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, checkA11y } from '@/__tests__/test-utils';
+import { render, screen, checkA11y, waitFor, within } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { createQueryClient } from '@/shared/app';
@@ -115,5 +115,60 @@ describe('Monitor Jobs — read access', () => {
 		// Past the default retry backoff (1s, then 2s).
 		await new Promise((r) => setTimeout(r, 3500));
 		expect(calls.list).toBe(1);
+	});
+});
+
+describe('Monitor Audit log — read access', () => {
+	beforeEach(() => {
+		setToken('mock-access-token');
+		worker.use(...monitorHandlers);
+		return () => worker.events.removeAllListeners();
+	});
+
+	function renderAudit() {
+		return render(
+			<QueryClientProvider client={createQueryClient()}>
+				<AuthProvider>
+					<MemoryRouter initialEntries={['/app/monitor?show=audit']}>
+						<MonitorPage />
+					</MemoryRouter>
+				</AuthProvider>
+			</QueryClientProvider>,
+		);
+	}
+
+	it.each([
+		['admin', ['org:admin'], true],
+		['member with defaults', MEMBER_DEFAULTS, true],
+		['member without agents:write', without('agents:write'), true],
+		['member without events:read', without('events:read'), true],
+		['member without jobs:read', without('jobs:read'), true],
+		['member without audit:read', without('audit:read'), false],
+	] as const)('%s', async (_label, permissions, canRead) => {
+		worker.use(http.get('/users/me', () => HttpResponse.json(viewer(permissions))));
+		const calls = { audit: 0 };
+		worker.events.on('request:start', ({ request }) => {
+			if (new URL(request.url).pathname === '/audit') calls.audit += 1;
+		});
+		renderAudit();
+
+		const sources = await screen.findByRole('group', { name: 'Activity source' });
+		if (canRead) {
+			expect(
+				await within(sources).findByRole('button', { name: 'Audit log' }),
+			).toHaveAttribute('aria-pressed', 'true');
+			await waitFor(() => expect(calls.audit).toBeGreaterThan(0));
+		} else {
+			// The source is not offered, and ?show=audit lands on Everything.
+			await waitFor(() =>
+				expect(within(sources).getByRole('button', { name: 'Everything' })).toHaveAttribute(
+					'aria-pressed',
+					'true',
+				),
+			);
+			expect(within(sources).queryByRole('button', { name: 'Audit log' })).toBeNull();
+			await new Promise((r) => setTimeout(r, 500));
+			expect(calls.audit).toBe(0);
+		}
 	});
 });

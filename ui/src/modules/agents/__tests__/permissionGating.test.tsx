@@ -2,8 +2,9 @@
  * The Agents surface offers only the verbs the caller's permissions allow, and
  * sends no request the server would refuse them:
  *
- * - Approve / Deny (banner, the selected agent's state banner, the dock) and
- *   "Create here" need `agents:write` or `org:admin`.
+ * - Approve / Deny (banner, the selected agent's state banner, the dock), the
+ *   dock's serving toggle and Archive, and "Create here" need `agents:write`
+ *   or `org:admin`.
  * - The usage aggregate (`/monitoring/usage`: stat strip, credential inventory)
  *   needs `org:admin`.
  * - "Recent changes" (`/audit`) needs `audit:read` or `org:admin`.
@@ -123,6 +124,42 @@ describe('approval verbs follow agents:write', () => {
 				'Waiting for approval',
 			);
 		}
+	});
+});
+
+describe("the dock's serving toggle and Archive follow agents:write", () => {
+	it.each(Object.entries(VIEWERS))('%s', async (_label, permissions) => {
+		const canManage = permissions.includes('agents:write') || permissions.includes('org:admin');
+		seedViewer(permissions);
+		renderPage('/?agent=agnt_active_1');
+		const dock = await screen.findByTestId('agent-dock');
+		// The read affordances stay for everyone.
+		expect(within(dock).getByRole('button', { name: 'Activity' })).toBeInTheDocument();
+
+		if (canManage) {
+			expect(await within(dock).findByTestId('dock-serving-toggle')).toBeInTheDocument();
+			expect(
+				within(dock).getByRole('button', { name: 'Archive support-agent' }),
+			).toBeInTheDocument();
+		} else {
+			expect(await within(dock).findByTestId('dock-state-note')).toHaveTextContent(
+				'Serving traffic',
+			);
+			expect(within(dock).queryByTestId('dock-serving-toggle')).toBeNull();
+			expect(
+				within(dock).queryByRole('button', { name: 'Archive support-agent' }),
+			).toBeNull();
+		}
+	});
+
+	it('a disabled agent reads as a note without agents:write', async () => {
+		seedViewer(without('agents:write'));
+		renderPage('/?agent=agnt_disabled_1');
+		const dock = await screen.findByTestId('agent-dock');
+		expect(await within(dock).findByTestId('dock-state-note')).toHaveTextContent(
+			'Disabled — not serving traffic',
+		);
+		expect(within(dock).queryByTestId('dock-serving-toggle')).toBeNull();
 	});
 });
 
