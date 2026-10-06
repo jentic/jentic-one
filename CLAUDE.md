@@ -97,11 +97,10 @@ src/jentic_one/
     ├── tracing.py    # Tracing facade
     ├── redaction.py  # Secret/PII redaction helpers
     ├── pagination.py # Shared pagination primitives
-    ├── scopes.py     # Scope/permission constants
     ├── url.py        # URL utilities (server-variable substitution)
     ├── url_validation.py # Upstream URL validation (SSRF guard)
     ├── audit/        # Audit-log helpers
-    ├── auth/         # Shared auth primitives (JWKS, tokens)
+    ├── auth/         # Shared auth primitives (JWKS, tokens, permission catalogue)
     ├── broker/       # Shared broker protocols
     ├── crypto/       # Encryption facade
     ├── events/       # Event/SSE plumbing

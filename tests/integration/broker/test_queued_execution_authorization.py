@@ -15,7 +15,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, update
 
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.users import User
@@ -24,11 +24,11 @@ from jentic_one.broker.repos.actor_status import ActorStatusResolver
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
 from jentic_one.shared.models import StoredCredentialType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
@@ -45,7 +45,7 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
     async def _truncate() -> None:
         async with ctx.admin_db.session() as session:
             await session.execute(delete(AgentCredentialBinding))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(Agent))
             await session.commit()
         async with ctx.control_db.session() as session:
@@ -93,7 +93,9 @@ async def _seed_bound_agent(ctx: Context) -> tuple[str, str]:
             )
         )
         session.add(
-            ActorScopeGrant(actor_id=agent.id, actor_type="agent", scope=BROKER_EXECUTE_SCOPE)
+            ActorPermissionGrant(
+                actor_id=agent.id, actor_type="agent", permission=BROKER_EXECUTE_PERMISSION
+            )
         )
         await session.commit()
         agent_id = agent.id
@@ -162,7 +164,9 @@ async def test_execute_scope_revoked_after_enqueue_is_denied(
 ) -> None:
     agent_id, credential_id = await _seed_bound_agent(integration_context)
     async with integration_context.admin_db.session() as session:
-        await session.execute(delete(ActorScopeGrant).where(ActorScopeGrant.actor_id == agent_id))
+        await session.execute(
+            delete(ActorPermissionGrant).where(ActorPermissionGrant.actor_id == agent_id)
+        )
         await session.commit()
 
     verdict = await build_queued_execution_authorizer(integration_context).authorize(
@@ -291,13 +295,15 @@ async def test_actor_status_resolver_refuses_retired_service_account_actors(
     ctx = integration_context
     async with ctx.admin_db.session() as session:
         session.add(
-            ActorScopeGrant(
-                actor_id="sva_queued", actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+            ActorPermissionGrant(
+                actor_id="sva_queued",
+                actor_type="service_account",
+                permission=BROKER_EXECUTE_PERMISSION,
             )
         )
         await session.commit()
     resolver = ActorStatusResolver(ctx.admin_db)
     assert await resolver.is_active(actor_id="sva_queued", actor_type="service_account") is False
-    assert not await resolver.holds_scope(
-        actor_id="sva_queued", actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
+    assert not await resolver.holds_permission(
+        actor_id="sva_queued", actor_type="service_account", permission=BROKER_EXECUTE_PERMISSION
     )

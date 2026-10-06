@@ -40,7 +40,7 @@ import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	useAgentApiKeyInfo,
-	useAgentScopes,
+	useAgentPermissions,
 	usePermissionCatalogue,
 	type AgentEntity,
 } from '@/modules/agents/api';
@@ -50,7 +50,11 @@ import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agen
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
-import { approvalGrant, scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
+import {
+	approvalGrant,
+	permissionRisk,
+	type PermissionRisk,
+} from '@/modules/agents/lib/requestedPermissions';
 import {
 	commandText,
 	registerCommandTokens,
@@ -563,13 +567,13 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
-	// Approval makes the requested scopes live (or the defaults, when there are
-	// none), so Approve waits until what it grants is read and on screen — the
-	// catalogue included, since it tells which requested scopes count.
-	const scopes = useAgentScopes(agent.id);
+	// Approval makes the requested permissions live (or the defaults, when there
+	// are none), so Approve waits until what it grants is read and on screen — the
+	// catalogue included, since it tells which requested permissions count.
+	const permissions = useAgentPermissions(agent.id);
 	const catalogue = usePermissionCatalogue();
-	const scopesUnread =
-		scopes.isPending || scopes.isError || catalogue.isPending || catalogue.isError;
+	const permissionsUnread =
+		permissions.isPending || permissions.isError || catalogue.isPending || catalogue.isError;
 	// Approve and Deny need `agents:write` (or `org:admin`).
 	const canDecide = useCanAccess(AGENTS_WRITE);
 
@@ -603,7 +607,7 @@ export function AgentDetails({
 			<AgentFacts
 				agent={agent}
 				selfRegistered={selfRegistered}
-				scopes={scopes}
+				permissions={permissions}
 				catalogue={catalogue}
 			/>
 
@@ -632,7 +636,7 @@ export function AgentDetails({
 									<Button
 										variant={ACTION_VARIANT.approve}
 										loading={approvePending}
-										disabled={scopesUnread}
+										disabled={permissionsUnread}
 										onClick={onApprove}
 										aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
 									>
@@ -649,12 +653,13 @@ export function AgentDetails({
 									</Button>
 								</div>
 							)}
-							{canDecide && scopesUnread && (
+							{canDecide && permissionsUnread && (
 								<p
-									data-testid="approve-waits-for-scopes"
+									data-testid="approve-waits-for-permissions"
 									className="text-muted-foreground mt-2 text-xs"
 								>
-									Approve is available once the scopes it would grant are read.
+									Approve is available once the permissions it would grant are
+									read.
 								</p>
 							)}
 						</div>
@@ -742,18 +747,18 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 /**
  * What the API says about where the agent came from — only the facts it has.
- * A self-registration carries no owner, no API key and usually no scopes, so
- * most rows only show for an agent someone set up.
+ * A self-registration carries no owner, no API key and usually no permissions,
+ * so most rows only show for an agent someone set up.
  */
 function AgentFacts({
 	agent,
 	selfRegistered,
-	scopes,
+	permissions,
 	catalogue,
 }: {
 	agent: AgentEntity;
 	selfRegistered: boolean;
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
@@ -818,24 +823,24 @@ function AgentFacts({
 				</Fact>
 			)}
 			{agent.description && <Fact label="Description">{agent.description}</Fact>}
-			<RequestedScopes scopes={scopes} catalogue={catalogue} />
+			<RequestedPermissions permissions={permissions} catalogue={catalogue} />
 		</dl>
 	);
 }
 
-const RISK_VARIANT: Record<ScopeRisk, 'danger' | 'warning'> = {
+const RISK_VARIANT: Record<PermissionRisk, 'danger' | 'warning'> = {
 	admin: 'danger',
 	write: 'warning',
 };
 
-const RISK_LABEL: Record<ScopeRisk, string> = {
+const RISK_LABEL: Record<PermissionRisk, string> = {
 	admin: 'administers the organisation',
 	write: 'can change data',
 };
 
-/** One scope as a badge, flagged when it changes data or administers the org. */
-function ScopeBadge({ scope }: { scope: string }) {
-	const risk = scopeRisk(scope);
+/** One permission as a badge, flagged when it changes data or administers the org. */
+function PermissionBadge({ permission }: { permission: string }) {
+	const risk = permissionRisk(permission);
 	return (
 		<li className="max-w-full">
 			<Badge
@@ -844,7 +849,7 @@ function ScopeBadge({ scope }: { scope: string }) {
 				className="max-w-full [overflow-wrap:anywhere]"
 			>
 				{risk && <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden="true" />}
-				{scope}
+				{permission}
 				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
 			</Badge>
 		</li>
@@ -852,27 +857,27 @@ function ScopeBadge({ scope }: { scope: string }) {
 }
 
 /**
- * Every scope approval grants, in full: they go live at once, so none may hide
- * behind an ellipsis. An agent that requests none gets the default agent
- * scopes; requested strings outside the permission catalogue grant nothing and
- * are listed apart, and they don't bring the defaults back — so a request made
- * only of those approves an agent with no scopes, which the card says. Scopes
- * that change data or administer the organisation are flagged; an unread list
- * says so rather than reading as "no scopes".
+ * Every permission approval grants, in full: they go live at once, so none may
+ * hide behind an ellipsis. An agent that requests none gets the default agent
+ * permissions; requested strings outside the permission catalogue grant nothing
+ * and are listed apart, and they don't bring the defaults back — so a request
+ * made only of those approves an agent with no permissions, which the card says.
+ * Permissions that change data or administer the organisation are flagged; an
+ * unread list says so rather than reading as "no permissions".
  */
-function RequestedScopes({
-	scopes,
+function RequestedPermissions({
+	permissions,
 	catalogue,
 }: {
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
-	const failed = scopes.isError ? scopes : catalogue.isError ? catalogue : null;
+	const failed = permissions.isError ? permissions : catalogue.isError ? catalogue : null;
 	let body: ReactNode;
-	if (scopes.isPending || catalogue.isPending) {
+	if (permissions.isPending || catalogue.isPending) {
 		body = (
 			<span aria-busy="true" className="flex flex-wrap gap-1.5">
-				<span className="sr-only">Reading the scopes it requests…</span>
+				<span className="sr-only">Reading the permissions it requests…</span>
 				<Skeleton className="h-5 w-24 rounded-full" />
 				<Skeleton className="h-5 w-32 rounded-full" />
 			</span>
@@ -881,8 +886,8 @@ function RequestedScopes({
 		body = (
 			<ErrorAlert
 				message={
-					failed === scopes
-						? 'Could not read the scopes this agent requests.'
+					failed === permissions
+						? 'Could not read the permissions this agent requests.'
 						: 'Could not read the permission catalogue.'
 				}
 				onRetry={() => void failed.refetch()}
@@ -891,10 +896,12 @@ function RequestedScopes({
 		);
 	} else {
 		const grant = approvalGrant(
-			scopes.data ?? [],
+			permissions.data ?? [],
 			(catalogue.data ?? []).map((p) => p.name),
 		);
-		const risky = grant.granted.filter((scope) => scopeRisk(scope) != null).length;
+		const risky = grant.granted.filter(
+			(permission) => permissionRisk(permission) != null,
+		).length;
 		const riskNote =
 			risky === 0
 				? null
@@ -904,17 +911,21 @@ function RequestedScopes({
 		body = (
 			<>
 				{grant.kind === 'defaults' ? (
-					<p className="mb-1.5">Requests none, so it gets the default agent scopes:</p>
+					<p className="mb-1.5">
+						Requests none, so it gets the default agent permissions:
+					</p>
 				) : null}
 				{grant.granted.length > 0 && (
 					<ul
 						aria-label={
-							grant.kind === 'defaults' ? 'Default agent scopes' : 'Requested scopes'
+							grant.kind === 'defaults'
+								? 'Default agent permissions'
+								: 'Requested permissions'
 						}
 						className="flex flex-wrap gap-1.5"
 					>
-						{grant.granted.map((scope) => (
-							<ScopeBadge key={scope} scope={scope} />
+						{grant.granted.map((permission) => (
+							<PermissionBadge key={permission} permission={permission} />
 						))}
 					</ul>
 				)}
@@ -923,20 +934,23 @@ function RequestedScopes({
 						{riskNote}
 						{riskNote && ' '}
 						{grant.kind === 'defaults'
-							? 'Approving grants the default agent scopes.'
-							: 'Approving grants the recognised scopes listed.'}
+							? 'Approving grants the default agent permissions.'
+							: 'Approving grants the recognised permissions listed.'}
 					</p>
 				)}
 				{grant.unrecognised.length > 0 && (
-					<div data-testid="unrecognised-scopes" className="mt-2.5">
+					<div data-testid="unrecognised-permissions" className="mt-2.5">
 						<p className="text-muted-foreground mb-1.5">
 							Not recognised — won&apos;t be granted:
 						</p>
-						<ul aria-label="Unrecognised scopes" className="flex flex-wrap gap-1.5">
-							{grant.unrecognised.map((scope) => (
-								<li key={scope} className="max-w-full">
+						<ul
+							aria-label="Unrecognised permissions"
+							className="flex flex-wrap gap-1.5"
+						>
+							{grant.unrecognised.map((permission) => (
+								<li key={permission} className="max-w-full">
 									<Badge className="bg-muted text-muted-foreground border-border max-w-full [overflow-wrap:anywhere]">
-										{scope}
+										{permission}
 									</Badge>
 								</li>
 							))}
@@ -945,13 +959,13 @@ function RequestedScopes({
 				)}
 				{grant.kind === 'requested' && grant.granted.length === 0 && (
 					<p
-						data-testid="no-scopes-warning"
+						data-testid="no-permissions-warning"
 						className="text-foreground mt-2 flex items-start gap-2"
 					>
 						<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
 						<span>
-							None of these are recognised, so the agent will get no scopes. A request
-							that names any scope gets no defaults.
+							None of these are recognised, so the agent will get no permissions. A
+							request that names any permission gets no defaults.
 						</span>
 					</p>
 				)}
@@ -959,9 +973,9 @@ function RequestedScopes({
 		);
 	}
 	return (
-		<div data-testid="requested-scopes" className="col-span-full min-w-0">
+		<div data-testid="requested-permissions" className="col-span-full min-w-0">
 			<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
-				Scopes
+				Permissions
 			</dt>
 			<dd className="text-foreground/90 mt-1 text-xs">{body}</dd>
 		</div>

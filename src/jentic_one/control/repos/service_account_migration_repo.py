@@ -7,8 +7,8 @@ binding twins, token revocation, the stamp, the sweep, and the pre-drop
 verification queries). The control module must not import admin ORM
 models, so every admin-side statement
 here is raw SQL (F1 is also served by this: successor creation must never go
-through ``AgentService.create()``/``approve()``, whose empty-scope default is
-``DEFAULT_AGENT_SCOPES``).
+through ``AgentService.create()``/``approve()``, whose empty-permission default is
+``DEFAULT_AGENT_PERMISSIONS``).
 
 Concurrency (H-A x F6): the caller wraps each SA in one admin transaction
 (``BEGIN IMMEDIATE`` on SQLite via ``DatabaseSession.transaction``);
@@ -50,8 +50,9 @@ SKIPPED_STAMP = "skipped"
 
 #: Scopes retired by theme 8 itself (Phase 2): stored SA grants carrying them
 #: get no successor twin — they are left behind for the sweep, never carried.
-#: E2 cross-reference: every member is also in ``shared.scopes.RETIRED_SCOPES``
-#: (Phase 2 retired them) — pinned by ``test_retired_scopes.py``.
+#: E2 cross-reference: every member is also in
+#: ``shared.auth.permission_catalog.RETIRED_PERMISSIONS`` (Phase 2 retired them)
+#: — pinned by ``tests/unit/shared/test_retired_permissions.py``.
 THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
     {
         "service-accounts:read",
@@ -239,7 +240,7 @@ class ServiceAccountMigrationRepository:
         first); a fresh one is generated when omitted.
 
         Raw SQL, NEVER ``AgentService.create()``/``approve()`` (F1) — both
-        default-grant ``DEFAULT_AGENT_SCOPES`` on empty scope sets, and a
+        default-grant ``DEFAULT_AGENT_PERMISSIONS`` on empty permission sets, and a
         zero-grant SA must yield a zero-grant successor. ``status`` is
         ``active`` or ``disabled`` (OQ-1) — never ``pending``. The digest is
         a COPY: the SA-side digest stays live until the sweep (F6/H-B). A
@@ -609,8 +610,8 @@ class ServiceAccountMigrationRepository:
         Rows: ``service_account_id, successor_agent_id, scope, post_stamp``.
         """
         # E2: bound parameters, never f-string interpolation, even for a
-        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_SCOPES is pinned by
-        # tests/unit/shared/test_retired_scopes.py.
+        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_PERMISSIONS is pinned
+        # by tests/unit/shared/test_retired_permissions.py.
         scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_SCOPES))}
         placeholders = ", ".join(f":{name}" for name in scope_params)
         rows = await session.execute(
@@ -722,6 +723,10 @@ class ServiceAccountMigrationRepository:
         purge (a ``revoke`` row on ``credential_binding`` keyed by the
         credential id, parent = the agent). A soft unbind keeps the row, so it
         is never a gap in the first place.
+
+        Only the pre-rename ``replace_scopes`` / ``scopes`` spelling is read:
+        this runs inside the service-account retirement, with the admin schema
+        before ``e2f3a4b5c6d7``, so no ``replace_permissions`` row can exist yet.
         """
         ids = sorted(set(agent_ids))
         if not ids:

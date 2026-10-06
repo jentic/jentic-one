@@ -287,22 +287,22 @@ export async function postCredentialRaw(
 }
 
 /**
- * PUT /agents/{id}/scopes → 200. Replaces ALL scopes for an agent (bulk
- * replace, see replaceAgentScopes). This is the public-API path that landed
- * with #517 — it is what lets a DCR agent acquire `capabilities:execute`
- * without a direct DB write. Returns the resulting scope list.
+ * PUT /agents/{id}/permissions → 200. Replaces ALL permissions for an agent
+ * (bulk replace — there is no partial grant/revoke endpoint). This is the
+ * public-API path that landed with #517 — it is what lets a DCR agent acquire
+ * `capabilities:execute` without a direct DB write. Returns the resulting list.
  */
-export async function replaceAgentScopes(
+export async function replaceAgentPermissions(
 	request: APIRequestContext,
 	agentId: string,
-	scopes: string[],
+	permissions: string[],
 ): Promise<string[]> {
-	const res = await request.put(`/agents/${agentId}/scopes`, {
+	const res = await request.put(`/agents/${agentId}/permissions`, {
 		headers: authHeaders(),
-		data: { scopes },
+		data: { permissions },
 	});
-	expect(res.status(), `replaceAgentScopes failed: ${await res.text()}`).toBe(200);
-	return (await res.json()).scopes;
+	expect(res.status(), `replaceAgentPermissions failed: ${await res.text()}`).toBe(200);
+	return (await res.json()).permissions;
 }
 
 /** POST /agents/{id}/credentials → 201. Binds a credential directly to an agent. Returns the binding id. */

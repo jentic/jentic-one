@@ -1,7 +1,7 @@
 /**
- * AgentPermissionsSheet — the dock's Permissions surface: scopes
- * and connected clients behind one verb. The cards' own suites cover their
- * internals; here the mutations must carry the SELECTED agent's id.
+ * AgentPermissionsSheet — the dock's Permissions surface: platform
+ * permissions and connected clients behind one verb. The cards' own suites
+ * cover their internals; here the mutations must carry the SELECTED agent's id.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -78,62 +78,65 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		expect(sheet.getByText('support-agent')).toBeInTheDocument();
 
 		// The copy names the two permission models users conflate —
-		// platform scopes vs. what the agent may call upstream (the tiles).
+		// platform (control-plane) permissions vs. what the agent may call
+		// upstream (the tiles).
 		expect(sheet.getByText(/control plane/)).toBeInTheDocument();
 		expect(sheet.getByText(/API tiles on the main screen/)).toBeInTheDocument();
 
-		// ScopesCard: agnt_active_1's seeded platform grants render as chips.
-		const scopeList = await sheet.findByRole('list', { name: 'Granted scopes' });
+		// PermissionsCard: agnt_active_1's seeded platform grants render as chips.
+		const scopeList = await sheet.findByRole('list', { name: 'Granted permissions' });
 		expect(within(scopeList).getByText('capabilities:execute')).toBeInTheDocument();
 
 		// ConnectedClientsCard: the live consent→agent grant.
 		expect(await sheet.findByText('Cursor')).toBeInTheDocument();
 	});
 
-	it("scopes edit round-trips: the PUT carries the selected agent's id", async () => {
+	it("permissions edit round-trips: the PUT carries the selected agent's id", async () => {
 		let putId: string | undefined;
-		let putBody: { scopes?: string[] } | undefined;
+		let putBody: { permissions?: string[] } | undefined;
 		worker.use(
-			http.put('/agents/:id/scopes', async ({ params, request }) => {
+			http.put('/agents/:id/permissions', async ({ params, request }) => {
 				putId = params.id as string;
-				putBody = (await request.json()) as { scopes?: string[] };
-				return HttpResponse.json({ scopes: putBody.scopes });
+				putBody = (await request.json()) as { permissions?: string[] };
+				return HttpResponse.json({ permissions: putBody.permissions });
 			}),
 		);
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
 
-		await sheet.findByRole('list', { name: 'Granted scopes' });
-		await user.click(sheet.getByRole('button', { name: 'Edit scopes for support-agent' }));
-		const dialog = await screen.findByRole('dialog', { name: /Edit scopes — support-agent/ });
+		await sheet.findByRole('list', { name: 'Granted permissions' });
+		await user.click(sheet.getByRole('button', { name: 'Edit permissions for support-agent' }));
+		const dialog = await screen.findByRole('dialog', {
+			name: /Edit permissions — support-agent/,
+		});
 
-		// Grant one more scope; the card's own suite covers the editor's
+		// Grant one more permission; the card's own suite covers the editor's
 		// internals — this proves the sheet wired the card to the right agent.
-		await user.type(within(dialog).getByLabelText('Search scopes'), 'credentials:read');
+		await user.type(within(dialog).getByLabelText('Search permissions'), 'credentials:read');
 		await user.click(await within(dialog).findByRole('checkbox', { name: 'credentials:read' }));
-		await user.click(within(dialog).getByRole('button', { name: 'Save scopes' }));
+		await user.click(within(dialog).getByRole('button', { name: 'Save permissions' }));
 
 		await waitFor(() => expect(putId).toBe('agnt_active_1'));
-		expect(putBody?.scopes).toContain('credentials:read');
+		expect(putBody?.permissions).toContain('credentials:read');
 	});
 
 	// Real (CDP-driven) Escape: a native <dialog>'s close request only fires
 	// for trusted key events — same pattern as the other dock-sheet specs.
-	it('Escape closes the edit-scopes dialog first, then the sheet, and restores focus', async () => {
+	it('Escape closes the edit-permissions dialog first, then the sheet, and restores focus', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
 
-		await sheet.findByRole('list', { name: 'Granted scopes' });
-		await user.click(sheet.getByRole('button', { name: 'Edit scopes for support-agent' }));
-		await screen.findByRole('dialog', { name: /Edit scopes — support-agent/ });
+		await sheet.findByRole('list', { name: 'Granted permissions' });
+		await user.click(sheet.getByRole('button', { name: 'Edit permissions for support-agent' }));
+		await screen.findByRole('dialog', { name: /Edit permissions — support-agent/ });
 
 		// First Escape reaches the native dialog only; the sheet survives.
 		await browserUser.keyboard('{Escape}');
 		await waitFor(() =>
 			expect(
-				screen.queryByRole('dialog', { name: /Edit scopes — support-agent/ }),
+				screen.queryByRole('dialog', { name: /Edit permissions — support-agent/ }),
 			).not.toBeInTheDocument(),
 		);
 		expect(screen.getByRole('heading', { name: 'Permissions' })).toBeInTheDocument();
@@ -159,11 +162,11 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		renderPage('/?agent=agnt_archived_1');
 		const sheet = await openSheet(user);
 
-		// The copy names the sweep; the scope editor is gated off.
-		expect(sheet.getByText(/swept this agent.s scope grants/)).toBeInTheDocument();
-		expect(await sheet.findByText('No scopes granted.')).toBeInTheDocument();
+		// The copy names the sweep; the permission editor is gated off.
+		expect(sheet.getByText(/swept this agent.s permission grants/)).toBeInTheDocument();
+		expect(await sheet.findByText('No permissions granted.')).toBeInTheDocument();
 		expect(
-			sheet.queryByRole('button', { name: /Edit scopes for retired-bot/ }),
+			sheet.queryByRole('button', { name: /Edit permissions for retired-bot/ }),
 		).not.toBeInTheDocument();
 	});
 
@@ -171,7 +174,7 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
-		await sheet.findByRole('list', { name: 'Granted scopes' });
+		await sheet.findByRole('list', { name: 'Granted permissions' });
 		// Wait out the backdrop's opacity transition: axe measures contrast
 		// against the half-faded overlay otherwise and flags the page beneath.
 		await waitFor(() => {
@@ -192,7 +195,7 @@ describe('AgentPermissionsSheet — the dock Permissions surface', () => {
 		const sheet = await openSheet(user);
 
 		expect(sheet.getByRole('heading', { name: 'Permissions' })).toBeInTheDocument();
-		expect(await sheet.findByRole('list', { name: 'Granted scopes' })).toBeInTheDocument();
+		expect(await sheet.findByRole('list', { name: 'Granted permissions' })).toBeInTheDocument();
 		expect(await sheet.findByText('Cursor')).toBeInTheDocument();
 	});
 });

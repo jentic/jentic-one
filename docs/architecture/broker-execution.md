@@ -187,5 +187,5 @@ incidents each emit typed events into the monitor.
   always runs alone, and how its runner stack is assembled at startup.
 - [Identity and authorization](identity-and-authorization.md) — the token
   kinds the broker's composite validator accepts.
-- [`docs/reference/endpoints.md`](../reference/endpoints.md) — the scope
+- [`docs/reference/endpoints.md`](../reference/endpoints.md) — the permission
   each route requires.

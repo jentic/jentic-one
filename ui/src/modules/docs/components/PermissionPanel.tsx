@@ -1,13 +1,13 @@
 /**
- * ScopePanel — the authorization block for a single operation, the way
+ * PermissionPanel — the authorization block for a single operation, the way
  * GitHub/Google/Stripe surface required permissions.
  *
  * Rendered in our own React tree (the companion panel), so it takes a typed
  * `ReferenceEndpoint` straight from `/reference/endpoints.json` — no Vue→React
  * bridge, no shape-guessing. Returns the public notice when the endpoint needs
- * no auth, otherwise the required scopes, advisory caller, note, and implied
- * scope closure — laid out as a clear, labelled card so the access rules read
- * at a glance.
+ * no auth, otherwise the required permissions, advisory caller, note, and
+ * implied-permission closure — laid out as a clear, labelled card so the access
+ * rules read at a glance.
  */
 import { Globe, Lock, ArrowRight } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -27,12 +27,18 @@ const ACTOR_LABEL: Record<string, string> = {
 	agent: 'Agent',
 };
 
-export interface ScopePanelProps {
+export interface PermissionPanelProps {
 	endpoint: ReferenceEndpoint;
 }
 
-/** A monospace scope token, the visual anchor of the panel. */
-function ScopeChip({ scope, tone = 'primary' }: { scope: string; tone?: 'primary' | 'muted' }) {
+/** A monospace permission token, the visual anchor of the panel. */
+function PermissionChip({
+	permission,
+	tone = 'primary',
+}: {
+	permission: string;
+	tone?: 'primary' | 'muted';
+}) {
 	return (
 		<code
 			className={cn(
@@ -42,7 +48,7 @@ function ScopeChip({ scope, tone = 'primary' }: { scope: string; tone?: 'primary
 					: 'bg-muted/60 text-foreground/70',
 			)}
 		>
-			{scope}
+			{permission}
 		</code>
 	);
 }
@@ -59,10 +65,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 	);
 }
 
-export function ScopePanel({ endpoint }: ScopePanelProps) {
+export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 	if (!endpoint.authenticated) {
 		return (
-			<section className="jentic-scope-panel border-success/40 bg-success/10 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm">
+			<section className="jentic-permission-panel border-success/40 bg-success/10 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm">
 				<Globe className="text-success h-4 w-4 shrink-0" aria-hidden="true" />
 				<span className="text-foreground">
 					<span className="text-success font-semibold">Public</span> — no authentication
@@ -74,39 +80,41 @@ export function ScopePanel({ endpoint }: ScopePanelProps) {
 
 	// Defensive reads: the reference is untyped JSON, so a malformed-but-200
 	// payload may omit these. Default to empty rather than throwing (which would
-	// blank the whole reference) so one bad field degrades to "no scopes".
-	const impliedEntries = Object.entries(endpoint.implied_scopes ?? {}).filter(
+	// blank the whole reference) so one bad field degrades to "no permissions".
+	const impliedEntries = Object.entries(endpoint.implied_permissions ?? {}).filter(
 		([, v]) => Array.isArray(v) && v.length > 0,
 	);
-	const scopes = endpoint.required_scopes ?? [];
+	const permissions = endpoint.required_permissions ?? [];
 	const actors = endpoint.actor_types ?? [];
 	const ALL_ACTORS = ['user', 'agent'];
 	const allActors =
 		actors.length >= ALL_ACTORS.length && ALL_ACTORS.every((a) => actors.includes(a));
 
 	return (
-		<section className="jentic-scope-panel border-border bg-card/40 overflow-hidden rounded-lg border text-sm">
+		<section className="jentic-permission-panel border-border bg-card/40 overflow-hidden rounded-lg border text-sm">
 			{/* Header — states the gate in one line. */}
 			<header className="border-border/60 bg-muted/20 flex items-center gap-2 border-b px-3 py-2">
 				<Lock className="text-foreground/55 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 				<span className="text-foreground/80 text-[13px] font-semibold">Authorization</span>
-				<span className="text-foreground/60 ml-auto text-[11px]">Scopes are the gate</span>
+				<span className="text-foreground/60 ml-auto text-[11px]">
+					Permissions are the gate
+				</span>
 			</header>
 
 			<dl className="divide-border/40 divide-y">
-				<Row label="Scopes">
-					{scopes.length === 0 ? (
+				<Row label="Permissions">
+					{permissions.length === 0 ? (
 						<span className="text-foreground/65">
-							Any authenticated caller — no specific scope required.
+							Any authenticated caller — no specific permission required.
 						</span>
 					) : (
 						<span className="flex flex-wrap items-center gap-1.5">
-							{scopes.map((scope, i) => (
-								<span key={scope} className="flex items-center gap-1.5">
+							{permissions.map((permission, i) => (
+								<span key={permission} className="flex items-center gap-1.5">
 									{i > 0 && (
 										<span className="text-foreground/60 text-[11px]">or</span>
 									)}
-									<ScopeChip scope={scope} />
+									<PermissionChip permission={permission} />
 								</span>
 							))}
 						</span>
@@ -156,15 +164,18 @@ export function ScopePanel({ endpoint }: ScopePanelProps) {
 				{impliedEntries.length > 0 && (
 					<Row label="Implies">
 						<ul className="space-y-1.5">
-							{impliedEntries.map(([scope, implied]) => (
-								<li key={scope} className="flex flex-wrap items-center gap-1.5">
-									<ScopeChip scope={scope} />
+							{impliedEntries.map(([permission, implied]) => (
+								<li
+									key={permission}
+									className="flex flex-wrap items-center gap-1.5"
+								>
+									<PermissionChip permission={permission} />
 									<ArrowRight
 										className="text-foreground/35 h-3 w-3 shrink-0"
 										aria-hidden="true"
 									/>
-									{implied.map((s) => (
-										<ScopeChip key={s} scope={s} tone="muted" />
+									{implied.map((p) => (
+										<PermissionChip key={p} permission={p} tone="muted" />
 									))}
 								</li>
 							))}

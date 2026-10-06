@@ -72,6 +72,7 @@ from jentic_one.control.services.credentials.schemas.permission_test import Perm
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -80,7 +81,6 @@ from jentic_one.shared.models.credentials import CredentialType, StoredCredentia
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.permissions.matching import compile_matcher
-from jentic_one.shared.scopes import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()

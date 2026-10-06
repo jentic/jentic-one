@@ -280,7 +280,7 @@ func (a *app) waitForConnectSession(
 // connectCoded maps the connect route's failure surface onto the coded
 // taxonomy — the CLI twin of requestConnectionError (mcp_request_connection.go):
 // 404 unknown vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 403 → the missing
-// credentials:connect scope (operator grant), 429 → the per-actor rate limit,
+// credentials:connect permission (operator grant), 429 → the per-actor rate limit,
 // 503 → the vendor's OAuth client is not configured (operator action).
 func connectCoded(vendor string, err error) *ux.CodedError {
 	var he *HTTPError
@@ -297,10 +297,10 @@ func connectCoded(vendor string, err error) *ux.CodedError {
 		case http.StatusForbidden:
 			return &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
-				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect scope: %v", err),
+				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect permission: %v", err),
 				Actionable: "Ask your human operator to grant this agent the credentials:connect " +
-					"scope in the dashboard. Once they confirm, run `jentic logout` (clears only the cached " +
-					"token) so the next call mints a token carrying the scope, then retry `jentic connect`.",
+					"permission in the dashboard. Once they confirm, run `jentic logout` (clears only the cached " +
+					"token) so the next call mints a token carrying the permission, then retry `jentic connect`.",
 			}
 		case http.StatusTooManyRequests:
 			return &ux.CodedError{

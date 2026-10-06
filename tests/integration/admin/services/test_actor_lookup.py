@@ -17,9 +17,9 @@ from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import AgentRepository, UserRepository
 from jentic_one.admin.services.actor_service import ActorService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState
-from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 pytestmark = pytest.mark.integration
 

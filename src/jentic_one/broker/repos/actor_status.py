@@ -1,9 +1,9 @@
-"""Actor liveness and scope lookup for work that runs after the request is gone.
+"""Actor liveness and permission lookup for work that runs after the request is gone.
 
 The sync execute path learns whether its caller is still active — and still
-holds the execute scope — from credential resolution (``InProcessTokenResolver``
+holds the execute permission — from credential resolution (``InProcessTokenResolver``
 / ``ApiKeyResolver`` re-read the actor row and, for agents, the live
-``actor_scope_grants`` on every resolve). A queued execution
+``actor_permission_grants`` on every resolve). A queued execution
 has no credential to resolve when the worker picks it up, so this answers the
 same questions directly from the actor rows, with the same semantics:
 
@@ -25,9 +25,9 @@ from jentic_one.shared.models import ActorType
 
 _AGENT_STATUS = text("SELECT status FROM agents WHERE id = :actor_id")
 _USER_ACTIVE = text("SELECT active FROM users WHERE id = :actor_id").columns(active=Boolean)
-_SCOPE_GRANTED = text(
-    "SELECT 1 FROM actor_scope_grants"
-    " WHERE actor_id = :actor_id AND actor_type = :actor_type AND scope = :scope"
+_PERMISSION_GRANTED = text(
+    "SELECT 1 FROM actor_permission_grants"
+    " WHERE actor_id = :actor_id AND actor_type = :actor_type AND permission = :permission"
 )
 
 
@@ -53,11 +53,11 @@ class ActorStatusResolver:
             return bool(active)
         return False
 
-    async def holds_scope(self, *, actor_id: str, actor_type: str, scope: str) -> bool:
-        """Whether the actor still holds ``scope``, where scopes are live grants.
+    async def holds_permission(self, *, actor_id: str, actor_type: str, permission: str) -> bool:
+        """Whether the actor still holds ``permission``, where permissions are live grants.
 
-        Agents → the ``actor_scope_grants`` row must exist (a revoked grant
-        fails closed). Users → ``True``: their scopes ride on the user's own
+        Agents → the ``actor_permission_grants`` row must exist (a revoked grant
+        fails closed). Users → ``True``: their permissions ride on the user's own
         token, which the worker does not hold, so there is no run-time grant to
         re-read (their liveness is still checked by :meth:`is_active`). Any
         other actor type (the retired ``toolkit`` / ``service_account``
@@ -70,8 +70,8 @@ class ActorStatusResolver:
         async with self._admin_db.session() as session:
             row = (
                 await session.execute(
-                    _SCOPE_GRANTED,
-                    {"actor_id": actor_id, "actor_type": actor_type, "scope": scope},
+                    _PERMISSION_GRANTED,
+                    {"actor_id": actor_id, "actor_type": actor_type, "permission": permission},
                 )
             ).first()
         return row is not None

@@ -18,8 +18,8 @@ from jentic_one.broker.services.auth import (
 from jentic_one.broker.services.auth.token_validation import _LOG_FIELD_MAXLEN
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 _SECRET = "test-secret"  # pragma: allowlist secret
 
@@ -44,7 +44,7 @@ def _opaque_resolution() -> Identity:
     return Identity(
         sub="agnt_opaque",
         actor_type=ActorType.AGENT,
-        permissions=[BROKER_EXECUTE_SCOPE],
+        permissions=[BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=True,
     )
@@ -91,14 +91,14 @@ async def test_dispatcher_routes_jwt_to_verifier_without_lookup() -> None:
             "sub": "agnt_jwt",
             "exp": exp,
             "actor_type": ActorType.AGENT.value,
-            "scopes": [BROKER_EXECUTE_SCOPE],
+            "scopes": [BROKER_EXECUTE_PERMISSION],
         }
     )
 
     resolved = await dual.validate(token)
 
     assert resolved.sub == "agnt_jwt"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
     assert resolver.calls == []  # no opaque DB lookup for a JWT
 
 

@@ -2,7 +2,7 @@
  * AgentDockPanels — the dock's sheet surfaces, each hosting one agent panel (the
  * API key's metadata-always, plaintext-once rule lives in its panel). An archived
  * agent can never authenticate, so for it the MCP sheet drops the connect
- * invitation and Permissions drops the scope editor — both keep the history.
+ * invitation and Permissions drops the permission editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
 import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
@@ -13,7 +13,7 @@ import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPa
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvenance';
 import { McpPanel, McpSessionsCard } from '@/modules/agents/components/detail/McpPanel';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 
 /** Shared chrome: header with title/subtitle + close, scrollable body. */
@@ -128,7 +128,7 @@ export function AgentPermissionsSheet({
 	onClose: () => void;
 }) {
 	const headingId = 'agent-permissions-sheet-title';
-	// Archive sweeps this agent's scope grants and OAuth consents, so for an
+	// Archive sweeps this agent's permission grants and OAuth consents, so for an
 	// archived agent the sheet is a record, never a grant invite.
 	const isArchived = agent.status === 'archived';
 	return (
@@ -145,21 +145,25 @@ export function AgentPermissionsSheet({
 				onClose={onClose}
 			>
 				<div className="space-y-4">
-					{/* Platform scopes and upstream API access are different permission models
+					{/* Platform permissions and upstream API access are different models
 					    and users conflate them — the copy must name the difference. */}
 					<p className="text-muted-foreground text-sm">
-						Scopes govern what {agent.name} may do on the Jentic control plane itself —
-						they have nothing to do with any upstream API. What it may call upstream is
-						set by the API tiles on the main screen (each tile&rsquo;s credential and
-						rules).
+						Permissions govern what {agent.name} may do on the Jentic control plane
+						itself — they have nothing to do with any upstream API. What it may call
+						upstream is set by the API tiles on the main screen (each tile&rsquo;s
+						credential and rules).
 					</p>
 					{isArchived && (
 						<p className="text-muted-foreground text-sm">
-							Archiving swept this agent&rsquo;s scope grants and OAuth consents —
-							what remains below is history.
+							Archiving swept this agent&rsquo;s permission grants and OAuth consents
+							— what remains below is history.
 						</p>
 					)}
-					<ScopesCard actorId={agent.id} actorName={agent.name} canEdit={!isArchived} />
+					<PermissionsCard
+						actorId={agent.id}
+						actorName={agent.name}
+						canEdit={!isArchived}
+					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>
 			</DockSheetFrame>

@@ -1600,9 +1600,10 @@ describe('AgentsPage — flat agents surface', () => {
 		await checkA11y(container);
 	});
 
-	// --- Create sheet (New agent lives at the strip's end) -------------------
+	// --- Create sheet (New agent lives at the strip's end; carries optional
+	//     initial permissions) ----------------------------------------------
 
-	it('creates an agent with initial scopes included in the POST body', async () => {
+	it('creates an agent with initial permissions included in the POST body', async () => {
 		const user = userEvent.setup();
 		let postBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -1624,22 +1625,25 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findAllByText('inbox-triage-bot');
 
 		const sheet = await openCreateHere(user);
-		await user.type(within(sheet).getByLabelText('Name'), 'scoped-agent');
+		await user.type(within(sheet).getByLabelText('Name'), 'granted-agent');
 
-		// The scopes section is an optional, collapsed disclosure.
-		await user.click(within(sheet).getByRole('button', { name: /Initial scopes/ }));
-		await user.click(await within(sheet).findByRole('button', { name: /Capabilities scopes/ }));
+		// The permissions section is an optional, collapsed disclosure.
+		await user.click(within(sheet).getByRole('button', { name: /Initial permissions/ }));
+		// Expand the Capabilities group, then tick one grantable permission.
+		await user.click(
+			await within(sheet).findByRole('button', { name: /Capabilities permissions/ }),
+		);
 		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
 
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		expect(postBody).toMatchObject({
-			name: 'scoped-agent',
-			scopes: ['capabilities:execute'],
+			name: 'granted-agent',
+			permissions: ['capabilities:execute'],
 		});
 	});
 
-	it('omits scopes from the POST body when none are selected', async () => {
+	it('omits permissions from the POST body when none are selected', async () => {
 		const user = userEvent.setup();
 		let postBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -1664,8 +1668,8 @@ describe('AgentsPage — flat agents surface', () => {
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
-		// The client normalises an empty selection to `scopes: null`.
-		expect(postBody).toMatchObject({ name: 'plain-agent', scopes: null });
+		// The client normalises an empty selection to `permissions: null`.
+		expect(postBody).toMatchObject({ name: 'plain-agent', permissions: null });
 	});
 
 	it('creating an agent flows straight into picking its APIs', async () => {

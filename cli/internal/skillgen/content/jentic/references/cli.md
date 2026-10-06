@@ -44,7 +44,7 @@ context).
 
 ## Step 2 — access
 
-See your own identity, status, scopes, and credential bindings (with the
+See your own identity, status, permissions, and credential bindings (with the
 APIs each one serves):
 
 ```
@@ -74,12 +74,12 @@ For APIs outside the registry, **report the gap to your operator in
 one complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
 rules, and why. Approval is always a human action, and so are binding an
-existing credential and scope grants: the operator acts in the Jentic One
+existing credential and permission grants: the operator acts in the Jentic One
 dashboard. Bindings take effect live — once your operator confirms, just
-retry the `execute` that was blocked. Newly granted **scopes** bake into
-your token at mint time, so after a scope grant run `jentic logout` (it
+retry the `execute` that was blocked. Newly granted **permissions** bake into
+your token at mint time, so after a permission grant run `jentic logout` (it
 clears only the cached token, not your identity) before retrying — the next
-call mints a fresh token that carries the scope.
+call mints a fresh token that carries the permission.
 
 ### The reactive path: denial directives
 
@@ -143,10 +143,10 @@ MCP mount reports the same duplicate as an `already_imported` success — a
 surface difference, not a state difference.)
 
 If `import` unexpectedly fails with `403 … requires one of: catalog:import`
-— e.g. you were approved before `catalog:import` became a default scope and
-weren't re-granted — ask your operator to grant the `catalog:import` scope
+— e.g. you were approved before `catalog:import` became a default permission and
+weren't re-granted — ask your operator to grant the `catalog:import` permission
 to this agent in the dashboard. Once they confirm, run `jentic logout` so
-the next call mints a fresh token carrying the scope, then retry:
+the next call mints a fresh token carrying the permission, then retry:
 
 ```
 jentic catalog import googleapis.com/sheets

@@ -32,9 +32,9 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import OWNER_AGENTS_READ
 from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration

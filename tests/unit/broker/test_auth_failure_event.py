@@ -45,7 +45,7 @@ def _clear_counters() -> None:
 
 
 def _create_test_app(*, threshold: int = 3) -> TestClient:
-    """Build a test client that rejects scope checks (triggers auth failure tracking)."""
+    """Build a test client that rejects permission checks (triggers auth failure tracking)."""
     router = APIRouter()
 
     @router.post("/execute")

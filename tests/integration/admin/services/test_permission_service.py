@@ -30,9 +30,9 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS, RETIRED_PERMISSIONS
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, RETIRED_SCOPES
 
 pytestmark = pytest.mark.integration
 
@@ -133,7 +133,7 @@ async def test_list_catalogue_includes_org_admin_for_admin(
     assert ORG_ADMIN in names
 
 
-async def test_list_catalogue_grantable_follows_agent_scope_ceiling(
+async def test_list_catalogue_grantable_follows_agent_permission_ceiling(
     integration_context: Context, regular_user: str, admin_user: str
 ) -> None:
     """``grantable_by_caller`` mirrors what ``POST /agents`` accepts from the caller.
@@ -157,7 +157,7 @@ async def test_list_catalogue_grantable_follows_agent_scope_ceiling(
     assert grantable[USERS_WRITE] is True
     assert grantable[USERS_READ] is True
     assert grantable["agents:read"] is True
-    for scope in DEFAULT_AGENT_SCOPES:
+    for scope in DEFAULT_AGENT_PERMISSIONS:
         assert grantable[scope] is True, scope
     assert grantable[EVENTS_WRITE] is False
     assert grantable[CREDENTIALS_WRITE] is False
@@ -193,14 +193,14 @@ async def test_validate_grants_org_admin_forbidden_for_non_admin(
 async def test_validate_grants_tolerates_retired_scopes(
     integration_context: Context, admin_user: str
 ) -> None:
-    """Every ``RETIRED_SCOPES`` member is accepted and skipped (never a 422).
+    """Every ``RETIRED_PERMISSIONS`` member is accepted and skipped (never a 422).
 
     A stored grant set written before a scope retirement (theme-5 toolkit
     scopes, theme-7 ``owner:access-requests:read``) must re-submit unchanged;
     the retired string is stored as-is and grants nothing.
     """
     service = PermissionService(integration_context)
-    await service.validate_grants(admin_user, sorted(RETIRED_SCOPES))  # must not raise
+    await service.validate_grants(admin_user, sorted(RETIRED_PERMISSIONS))  # must not raise
 
 
 async def test_set_assigned(integration_context: Context, admin_user: str) -> None:

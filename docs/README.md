@@ -75,7 +75,7 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 - [Composition and processes](architecture/composition-and-processes.md) — boot sequence, `JENTIC__APPS`, deployment topologies, background work
 - [Broker execution](architecture/broker-execution.md) — the life of a brokered call: pipeline, resilience, egress, credential injection
 - [Data model](architecture/data-model.md) — three databases, no cross-database foreign keys, immutable revisions
-- [Identity and authorization](architecture/identity-and-authorization.md) — actors, tokens, scopes, and the default-deny chain
+- [Identity and authorization](architecture/identity-and-authorization.md) — actors, tokens, permissions (and the OAuth2 scopes they travel as), and the default-deny chain
 
 ## Develop
 
@@ -93,5 +93,5 @@ Agent runbook: [use](agent/use.md) — discover → check access → execute, as
 ## Reference (generated — never hand-edit)
 
 - [Configuration](reference/config.md) — every config key, default, and env var (`make config-reference`)
-- [Endpoints & scopes](reference/endpoints.md) — every HTTP route and its required scope (`make endpoints`)
+- [Endpoints & permissions](reference/endpoints.md) — every HTTP route and its required permission (`make endpoints`)
 - [reference/README.md](reference/README.md) — how the generated material works
