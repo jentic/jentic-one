@@ -299,3 +299,11 @@ export function useAuth(): AuthContextValue {
 export function useOptionalCurrentUser(): CurrentUserResponse | null {
 	return useContext(AuthContext)?.user ?? null;
 }
+
+/**
+ * The auth status, or `null` when rendered outside an `AuthProvider`. Lets
+ * optional-auth consumers tell "user still loading" from "no provider".
+ */
+export function useOptionalAuthStatus(): AuthStatus | null {
+	return useContext(AuthContext)?.status ?? null;
+}

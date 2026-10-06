@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -63,5 +64,15 @@ class ActorDirectoryRepository:
         elif cursor_ts is not None:
             stmt = stmt.where(subq.c.created_at < cursor_ts)
 
+        result = await session.execute(stmt)
+        return list(result.all())
+
+    @staticmethod
+    async def get_by_ids(session: AsyncSession, ids: Sequence[str]) -> list[Any]:
+        """Return the directory rows whose id is in ``ids``; unknown ids are skipped."""
+        if not ids:
+            return []
+        subq = _build_union().subquery()
+        stmt = select(subq).where(subq.c.id.in_(list(ids))).order_by(subq.c.id)
         result = await session.execute(stmt)
         return list(result.all())

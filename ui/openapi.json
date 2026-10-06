@@ -94,6 +94,67 @@
         "title": "ActorListResponse",
         "type": "object"
       },
+      "ActorLookupEntryResponse": {
+        "description": "Display fields of one actor resolved by id.",
+        "properties": {
+          "active": {
+            "description": "False for a disabled user or a non-active agent.",
+            "title": "Active",
+            "type": "boolean"
+          },
+          "actor_type": {
+            "$ref": "#/components/schemas/ActorType",
+            "description": "Whether the actor is a user or an agent."
+          },
+          "id": {
+            "description": "Actor id (`usr_…` or `agnt_…`).",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "Display name: a user's full name or an agent's name.",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor_type",
+          "name",
+          "active"
+        ],
+        "title": "ActorLookupEntryResponse",
+        "type": "object"
+      },
+      "ActorLookupResponse": {
+        "description": "Actors resolved by id; ids that match no actor are omitted.",
+        "examples": [
+          {
+            "data": [
+              {
+                "active": true,
+                "actor_type": "user",
+                "id": "usr_2abc",
+                "name": "Ada Lovelace"
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ActorLookupEntryResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ActorLookupResponse",
+        "type": "object"
+      },
       "ActorSummaryResponse": {
         "description": "Single actor entry in the actors list.",
         "properties": {
@@ -9726,6 +9787,159 @@
           }
         ],
         "summary": "List Actors",
+        "tags": [
+          "Actors"
+        ]
+      }
+    },
+    "/actors/lookup": {
+      "get": {
+        "description": "Resolve user and agent ids to display names for any signed-in caller.\n\nReturns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids\nasked for, so a caller without ``users:read`` can label the owners,\napprovers and actors it already sees by id. Ids that match no user or agent\nare left out of the response rather than reported as errors. Listing the\nwhole directory stays behind ``users:read`` on ``GET /actors``.",
+        "operationId": "lookupActors",
+        "parameters": [
+          {
+            "description": "Actor id to resolve; repeat the parameter for several ids (at most 100 per call).",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Actor id to resolve; repeat the parameter for several ids (at most 100 per call).",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "title": "Id",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorLookupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Resolve actor names by id",
         "tags": [
           "Actors"
         ]

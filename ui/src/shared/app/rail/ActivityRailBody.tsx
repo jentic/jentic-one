@@ -104,9 +104,13 @@ export function ActivityRailBody({
 		loadingOlder,
 	} = useScopedActivity();
 	const navigate = useNavigate();
-	const directory = useActorDirectory();
 	const reduce = useReducedMotion();
 	const routeAgent = useRouteAgentId();
+	const directory = useActorDirectory([
+		routeAgent,
+		scope?.actorId,
+		...events.map((ev) => ev.actorId),
+	]);
 	const routeAgentName = routeAgent ? directory.resolve(routeAgent) : undefined;
 	const suggestion =
 		routeAgent && routeAgentName && scope?.actorId !== routeAgent
