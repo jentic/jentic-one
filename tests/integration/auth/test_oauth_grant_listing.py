@@ -33,6 +33,8 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import ActorType
+from jentic_one.shared.scopes import OWNER_AGENTS_READ
 from tests.integration.auth import seeds
 
 pytestmark = pytest.mark.integration
@@ -68,8 +70,10 @@ async def _force_created_at(ctx: Context, grant_ids: list[str], created_at: date
 async def test_list_grants_for_agent_owner_or_admin_matrix(
     integration_context: Context, clean_grants: None
 ) -> None:
-    """Owner OK; stranger 403-mapped; each admin read permission OK; unknown
-    agent 404-mapped — mirroring the ``:revoke`` semantics on the read side."""
+    """Owner OK; each admin read permission OK; a stranger who cannot see the
+    agent and an unknown agent both 404-mapped; a caller who can see the
+    agent without owning it (the agent itself, a delegated sibling agent)
+    403-mapped — mirroring the ``:revoke`` semantics on the read side."""
     owner_id = await _seed_user(integration_context, "usr_l_owner")
     stranger_id = await _seed_user(integration_context, "usr_l_stranger")
     admin_id = await _seed_user(integration_context, "usr_l_admin")
@@ -86,10 +90,30 @@ async def test_list_grants_for_agent_owner_or_admin_matrix(
             "agt_missing", identity=Identity(sub=owner_id, email="")
         )
 
-    with pytest.raises(OAuthGrantAccessDeniedError):
-        await grant_svc.list_grants_for_agent(
-            agent_id, identity=Identity(sub=stranger_id, email="")
-        )
+    # A stranger, even one holding agents:read, cannot see the agent: the
+    # same not-found as a missing agent.
+    for permissions in ([], ["agents:read"]):
+        with pytest.raises(ActorNotFoundError):
+            await grant_svc.list_grants_for_agent(
+                agent_id, identity=Identity(sub=stranger_id, email="", permissions=permissions)
+            )
+
+    # Visible but not owned: the agent itself, and a sibling agent reading
+    # through owner delegation.
+    sibling_id = await _seed_agent(integration_context, owner_id=owner_id, scopes=[])
+    visible_non_owners = [
+        Identity(sub=agent_id, email="", actor_type=ActorType.AGENT, parent_actor_id=owner_id),
+        Identity(
+            sub=sibling_id,
+            email="",
+            permissions=[OWNER_AGENTS_READ],
+            actor_type=ActorType.AGENT,
+            parent_actor_id=owner_id,
+        ),
+    ]
+    for identity in visible_non_owners:
+        with pytest.raises(OAuthGrantAccessDeniedError):
+            await grant_svc.list_grants_for_agent(agent_id, identity=identity)
 
     page = await grant_svc.list_grants_for_agent(
         agent_id, identity=Identity(sub=owner_id, email="")
