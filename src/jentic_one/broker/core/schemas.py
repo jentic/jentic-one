@@ -9,7 +9,8 @@ surface and stay here.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ __all__ = [
     "AsyncQueuedResponse",
     "AsyncQueuedResponseLinks",
     "ExecuteRequestContext",
+    "HeldApprovalResponse",
     "HeldExecutionResponse",
 ]
 
@@ -36,20 +38,25 @@ class AsyncQueuedResponse(BaseModel):
     links: AsyncQueuedResponseLinks = Field(serialization_alias="_links")
 
 
-class HeldExecutionResponse(AsyncQueuedResponse):
-    """Response body for a 202 held-for-approval execution.
+class HeldApprovalResponse(BaseModel):
+    """The approval a held execution waits on."""
 
-    ``state`` is always ``"held"`` — disambiguates from a plain async 202.
-    ``approval_id`` is the ``execution_approvals`` row primary key so the agent
-    can correlate a later ``get_execution_result`` call back to this hold.
-    ``review_url`` is the admin review page URL; populated once the approval
-    surface (phase 4) is wired; None until then.
+    id: str = Field(description="Approval id (`exap_…`).")
+    review_url: str = Field(
+        description="Review page a signed-in reviewer opens to approve or deny the call."
+    )
+    expires_at: datetime = Field(
+        description="When the approval expires undecided and the job fails."
+    )
+
+
+class HeldExecutionResponse(AsyncQueuedResponse):
+    """202 body for an execution held for human approval.
+
+    Extends the async-queued shape, so a client reading only ``job_id`` and
+    ``_links.self`` polls it exactly like any other async execution.
     """
 
-    state: Literal["held"] = "held"
-    approval_id: str
-    review_url: str | None = None
-    # Structured guidance for the agent: instruction (human-readable step) and
-    # parameters (job_id, approval_id, review_url) so the agent can relay the
-    # approval context to the operator and poll for completion.
-    agent_directive: dict[str, Any] | None = None
+    status: Literal["held"] = "held"
+    approval: HeldApprovalResponse
+    agent_directive: str

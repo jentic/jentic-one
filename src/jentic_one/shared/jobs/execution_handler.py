@@ -45,6 +45,7 @@ from jentic_one.shared.events import (
 )
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
+from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
@@ -68,11 +69,6 @@ logger = structlog.get_logger(__name__)
 # injects after the job passed the run-time ``ExecutionAuthorizer`` re-check
 # (which includes the actor-still-active check), so it is always True here.
 _WORKER_IDENTITY_ACTIVE = True
-
-# Payload key that signals the dict is an encryption envelope.  When this key
-# is present the handler decrypts before reading any other field.  Only held
-# jobs (require-approval path) have their payload encrypted at rest.
-_ENC_MARKER = "_enc"
 
 
 class ExecutionHandler:
@@ -117,15 +113,14 @@ class ExecutionHandler:
         if payload is None:
             payload = {}
 
-        # Held-job payloads are encrypted at rest.  Decrypt before reading any
-        # field so the rest of the path sees the plain dict regardless of
-        # whether the job was a held approval or a regular async execution.
-        if _ENC_MARKER in payload:
+        # Held-job payloads are encrypted at rest with the platform key; decrypt
+        # before reading any field.
+        if ENCRYPTED_PAYLOAD_KEY in payload:
             if self._encryption is None:
                 raise RuntimeError(
                     "Encrypted execution payload found but no EncryptionService is configured"
                 )
-            payload = json.loads(self._encryption.decrypt(str(payload[_ENC_MARKER])))
+            payload = json.loads(self._encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")

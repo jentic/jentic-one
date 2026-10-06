@@ -774,6 +774,67 @@ components:
               description: Absolute URL of the control-plane job record. Poll this for status and result links.
               examples:
                 - https://control.your-instance.example/jobs/job_abc123
+    HeldExecutionResponse:
+      type: object
+      title: HeldExecutionResponse
+      summary: Handle returned when a permission rule holds the call for human approval.
+      description: |
+        Returned as the `202` body when the call matches a permission rule
+        with `effect: require-approval`. The call has not run: it waits as
+        a `held` job until a reviewer (the agent's owner or an `org:admin`)
+        approves or denies it on `approval.review_url`, or the approval
+        expires. Poll `_links.self` until the job is terminal — `completed`
+        (it ran), `failed` (denied, expired, or the run failed; the result is
+        the problem body) or `cancelled` (withdrawn with `POST /jobs/{id}:cancel`).
+        Never re-send the call: an identical call while one is pending joins
+        the same job.
+      required:
+        - job_id
+        - status
+        - approval
+        - agent_directive
+        - _links
+      properties:
+        job_id:
+          type: string
+          description: The held job. Matches the `job_id` reported by the control plane.
+          examples:
+            - job_abc123
+        status:
+          type: string
+          enum: [held]
+          description: Always `held`.
+        approval:
+          type: object
+          required: [id, review_url, expires_at]
+          properties:
+            id:
+              type: string
+              description: Approval id.
+              examples:
+                - exap_abc123
+            review_url:
+              type: string
+              format: uri
+              description: Review page; the reviewer signs in to decide. Carries no credential.
+              examples:
+                - https://your-instance.example/app/approvals/exap_abc123
+            expires_at:
+              type: string
+              format: date-time
+              description: When the approval expires undecided and the job fails.
+        agent_directive:
+          type: string
+          description: What the calling agent should do next.
+        _links:
+          type: object
+          required: [self]
+          properties:
+            self:
+              type: string
+              description: Control-plane job record to poll.
+              examples:
+                - https://control.your-instance.example/jobs/job_abc123
     HealthResponse:
       type: object
       title: HealthResponse
@@ -905,7 +966,9 @@ components:
                 explicit: false
     ExecuteAsync:
       description: |
-        Execution queued. Follow `_links.self` to the control plane
+        Execution queued — or held for human approval when a
+        `require-approval` permission rule matched (`status: held`; see
+        `HeldExecutionResponse`). Follow `_links.self` to the control plane
         to poll the job and collect the upstream response body once
         `status` is `completed`. The body is delivered once and then
         evicted from the platform's pickup buffer.
@@ -945,12 +1008,28 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AsyncQueuedResponse"
+            oneOf:
+              - $ref: "#/components/schemas/AsyncQueuedResponse"
+              - $ref: "#/components/schemas/HeldExecutionResponse"
           examples:
             queued:
               summary: Freshly queued async execution.
               value:
                 job_id: job_abc123
+                _links:
+                  self: https://control.your-instance.example/jobs/job_abc123
+            held:
+              summary: Call held for human approval by a require-approval rule.
+              value:
+                job_id: job_abc123
+                status: held
+                approval:
+                  id: exap_abc123
+                  review_url: https://your-instance.example/app/approvals/exap_abc123
+                  expires_at: "2026-10-06T12:00:00Z"
+                agent_directive: >-
+                  This call needs human approval. Show the user the review_url, then poll
+                  get_execution_result with job_id until it is terminal. Do not re-send the call.
                 _links:
                   self: https://control.your-instance.example/jobs/job_abc123
     BadRequest:

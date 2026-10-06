@@ -36,7 +36,7 @@ from jentic_one.shared.broker.protocols import (
     RuleVerdict,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.jobs.hold import get_approved_by_job_id
+from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
@@ -66,25 +66,6 @@ def _insufficient_scope_problem(instance: str) -> dict[str, object]:
         "title": "Forbidden",
         "status": 403,
         "detail": f"Insufficient scope: '{BROKER_EXECUTE_SCOPE}' required",
-        "instance": instance,
-    }
-
-
-def _approval_denied_problem(instance: str) -> dict[str, object]:
-    """Returned when a require-approval rule fires at run time with no approved row.
-
-    A job that reaches the worker with a require-approval verdict and no
-    approved execution_approvals row was never properly released — fail it
-    with the same permission-denied shape as a sync denial.
-    """
-    return {
-        "type": "action_denied",
-        "title": "Forbidden",
-        "status": 403,
-        "detail": (
-            "The execution was not approved. Approve or deny it via the "
-            "execution approvals surface before the worker claims it."
-        ),
         "instance": instance,
     }
 
@@ -195,12 +176,11 @@ class QueuedExecutionAuthorizer:
             return QueuedExecutionVerdict(allowed=False, problem=broker_error_problem(exc))
 
         if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
-            # Rule still requires approval at run time. The job is only
-            # allowed to proceed if a human reviewer approved it — look up
-            # the execution_approvals row linked to this job.
+            # A require-approval verdict at run time passes only for the job a
+            # reviewer approved; the worker never files a second hold.
             approved = False
             if request.job_id:
-                async with self._admin_db.transaction() as session:
+                async with self._admin_db.session() as session:
                     row = await get_approved_by_job_id(session, request.job_id)
                     approved = row is not None
             if not approved:
@@ -212,7 +192,7 @@ class QueuedExecutionAuthorizer:
                     actor_type=request.actor_type,
                 )
                 return QueuedExecutionVerdict(
-                    allowed=False, problem=_approval_denied_problem(instance)
+                    allowed=False, problem=approval_required_problem(instance)
                 )
             logger.info(
                 "queued_execution_approved_by_row",

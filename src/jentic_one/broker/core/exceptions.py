@@ -194,6 +194,10 @@ class ActionDeniedError(BrokerError):
     """The request was denied by a permission rule on the caller's binding (403)."""
 
 
+class ApprovalPendingLimitError(BrokerError):
+    """The agent already holds the configured maximum of pending approvals (403)."""
+
+
 class CredentialIdentityMismatchError(BrokerError):
     """Bound, but no bound credential's identity covers this API (403).
 
@@ -505,5 +509,22 @@ def direct_action_denied_directive() -> AgentDirective:
             "forbid this specific call — ask your operator to adjust the "
             "binding's permission rules. This is not something you can grant "
             "yourself."
+        ),
+    )
+
+
+def approval_pending_limit_directive(*, pending: int, limit: int) -> AgentDirective:
+    """Directive for the ``approval_pending_limit_reached`` 403.
+
+    The call matched a require-approval rule, but the agent already has
+    ``limit`` calls waiting on a reviewer. Only a human decision frees a slot.
+    """
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={"pending": pending, "limit": limit},
+        human_readable_instruction=(
+            "This call needs human approval, but you already have the maximum number of "
+            "calls waiting for review. Ask the user to review your pending approvals, then "
+            "send the call again once one is decided."
         ),
     )

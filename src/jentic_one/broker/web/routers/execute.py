@@ -30,12 +30,14 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.core.exceptions import (
+    ApprovalPendingLimitError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
     PayloadTooLargeError,
     UpgradeNotSupportedError,
     UpstreamUrlNotAllowedError,
+    approval_pending_limit_directive,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.execution import mint_execution_id
@@ -57,6 +59,7 @@ from jentic_one.broker.core.schemas import (
     AsyncQueuedResponse,
     AsyncQueuedResponseLinks,
     ExecuteRequestContext,
+    HeldApprovalResponse,
     HeldExecutionResponse,
 )
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
@@ -101,16 +104,17 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import (
+    MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event_best_effort,
     mint_trace_id,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.hold import (
-    compute_execution_fingerprint,
-    count_pending_by_agent,
-    get_pending_by_fingerprint,
-    hold_execution,
+    ENCRYPTED_PAYLOAD_KEY,
+    HELD_AGENT_DIRECTIVE,
+    PendingApprovalLimitError,
+    file_hold,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
@@ -125,6 +129,7 @@ from jentic_one.shared.tracing import (
 from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.links import build_link
 from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 logger = structlog.get_logger(__name__)
@@ -902,6 +907,21 @@ def _async_job_payload(
     return payload
 
 
+def _review_url(ctx: Context, request: Request, approval_id: str) -> str:
+    """Absolute URL of the approval's review page in the web UI.
+
+    The UI is served under ``/app`` beside the admin API, so the admin API's
+    public origin (``broker.jobs_api_base_url``) wins, then this deployment's
+    ``server.public_base_url``, then the request's own origin (combined
+    deployment). The URL carries no credential: the reviewer signs in.
+    """
+    path = f"/app/approvals/{approval_id}"
+    base = ctx.config.broker.jobs_api_base_url or ctx.config.server.public_base_url
+    if base:
+        return f"{base.rstrip('/')}{path}"
+    return build_link(request, path)
+
+
 async def _handle_hold(
     request: Request,
     ctx_req: ExecuteRequestContext,
@@ -909,177 +929,114 @@ async def _handle_hold(
     identity: Identity,
     authorization: ExecutionAuthorization,
 ) -> Response:
-    """Hold an execution that matched a require-approval rule.
+    """File (or join) a require-approval hold and answer the 202 held envelope.
 
-    Creates a Job row (status=HELD) and an ExecutionApproval row atomically,
-    emits ``execution.approval_requested``, and returns a 202 with the held
-    envelope so the agent can relay the approval context to the operator.
+    The held job's payload is the async-job payload encrypted with the platform
+    key — it can sit for the whole approval TTL — and the worker decrypts it on
+    claim. Filing, the approval row and ``execution.approval_requested`` share
+    one admin-DB transaction; an identical pending request joins its existing
+    hold, and an agent at its pending cap is denied before anything is written.
     """
-    ea_cfg = ctx.config.execution_approvals
-    ttl = ea_cfg.ttl_seconds
-    max_pending = ea_cfg.max_pending_per_agent
-
-    # Pre-check fingerprint and cap *before* reading the body — both are fast
-    # DB reads and let us short-circuit without buffering the payload.
-    fp = compute_execution_fingerprint(
-        agent_id=identity.sub,
-        credential_id=authorization.selected_credential.credential_id,
-        method=ctx_req.method,
-        path=urlparse(ctx_req.upstream_url).path,
-    )
-    async with ctx.admin_db.transaction() as pre_session:
-        existing = await get_pending_by_fingerprint(pre_session, fp)
-        if existing is not None:
-            # Identical retry — return the existing hold instead of creating a new one.
-            existing_job_id = str(existing.job_id)
-            existing_approval_id = str(existing.id)
-            metadata = _metadata_headers(ctx_req, ctx_req.trace_id)
-            base = ctx.config.broker.jobs_api_base_url
-            job_url = f"{base}/jobs/{existing_job_id}" if base else f"/jobs/{existing_job_id}"
-            admin_base = base.rstrip("/") if base else None
-            review_url: str | None = (
-                f"{admin_base}/app/approvals/{existing_approval_id}" if admin_base else None
-            )
-            directive_params_dup: dict[str, str] = {
-                "job_id": existing_job_id,
-                "approval_id": existing_approval_id,
-            }
-            if review_url:
-                directive_params_dup["review_url"] = review_url
-            resp_dup = HeldExecutionResponse(
-                job_id=existing_job_id,
-                approval_id=existing_approval_id,
-                review_url=review_url,
-                links=AsyncQueuedResponseLinks(self_link=job_url),
-                agent_directive={
-                    "instruction": (
-                        "This execution is held pending human approval. "
-                        "Relay the approval context (job_id and approval_id) to the operator "
-                        "so they can approve or deny it in the admin panel. "
-                        "Poll get_execution_result with the job_id to check the outcome — "
-                        "do not re-send the execute call."
-                    ),
-                    "parameters": directive_params_dup,
-                },
-            )
-            return Response(
-                content=resp_dup.model_dump_json(by_alias=True),
-                status_code=202,
-                media_type="application/json",
-                headers={**metadata, "Preference-Applied": "respond-async"},
-            )
-
-        pending_count = await count_pending_by_agent(pre_session, identity.sub)
-    if pending_count >= max_pending:
-        raise ProblemDetailException(
-            status_code=429,
-            type="approval_cap_exceeded",
-            title="Too Many Pending Approvals",
-            detail=(
-                f"Agent has {pending_count} pending approval(s) — the cap is "
-                f"{max_pending}. Wait for existing approvals to be decided before "
-                "submitting more operations that require approval."
-            ),
-            instance=str(request.url),
-        )
-
+    cfg = ctx.config.execution_approvals
+    credential_id = authorization.selected_credential.credential_id
+    path = urlparse(ctx_req.upstream_url).path
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
-
     raw_payload = _async_job_payload(
         ctx_req,
         execution_id=execution_id,
         origin=identity.origin.value,
-        selected_credential_id=authorization.selected_credential.credential_id,
+        selected_credential_id=credential_id,
         allowed_credential_ids=authorization.allowed_credential_ids,
         body=body,
     )
-
-    # Encrypt the payload at rest if a platform key is configured.  Held jobs
-    # may sit in the database for up to the TTL (default 24 h), so encrypting
-    # keeps credentials and request bodies out of plaintext storage.
-    if ctx.config.credentials.encryption.entries:
-        blob = ctx.encryption.encrypt(json.dumps(raw_payload))
-        payload: dict[str, object] = {"_enc": blob}
-    else:
-        payload = raw_payload
+    payload: dict[str, object] = {
+        ENCRYPTED_PAYLOAD_KEY: ctx.encryption.encrypt(json.dumps(raw_payload))
+    }
 
     async with ctx.admin_db.transaction() as session:
-        job_id, approval_id = await hold_execution(
-            session,
-            execution_id=execution_id,
-            agent_id=identity.sub,
-            credential_id=authorization.selected_credential.credential_id,
-            matched_rule_id=authorization.matched_rule_id,
-            api_vendor=ctx_req.api_vendor or "",
-            api_name=ctx_req.api_name or "",
-            api_version=ctx_req.api_version or "",
-            operation_id=ctx_req.operation_id,
-            method=ctx_req.method,
-            path=urlparse(ctx_req.upstream_url).path,
-            trace_id=ctx_req.trace_id,
-            created_by=identity.sub,
-            actor_type=str(identity.actor_type),
-            ttl_seconds=ttl,
-            payload=payload,
-        )
-        await emit_event_best_effort(
-            session,
-            type=EventType.EXECUTION_APPROVAL_REQUESTED,
-            severity=EventSeverity.INFO,
-            summary=(
-                f"Execution held pending approval: "
-                f"{ctx_req.method} {ctx_req.api_vendor}/{ctx_req.api_name}"
-            ),
-            created_by=identity.sub,
-            actor_id=identity.sub,
-            actor_type=identity.actor_type.value,
-            requires_action=True,
-            data={
-                "approval_id": approval_id,
-                "job_id": job_id,
-                "method": ctx_req.method,
-                "api_vendor": ctx_req.api_vendor,
-                "api_name": ctx_req.api_name,
-                "api_version": ctx_req.api_version,
-            },
-        )
+        try:
+            hold = await file_hold(
+                session,
+                agent_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                credential_id=credential_id,
+                matched_rule_id=authorization.matched_rule_id,
+                api_vendor=ctx_req.api_vendor or "",
+                api_name=ctx_req.api_name or "",
+                api_version=ctx_req.api_version or "",
+                operation_id=ctx_req.operation_id,
+                method=ctx_req.method,
+                path=path,
+                body=body,
+                trace_id=valid_trace_id_or_none(ctx_req.trace_id),
+                execution_id=execution_id,
+                payload=payload,
+                ttl_seconds=cfg.ttl_seconds,
+                max_pending=cfg.max_pending_per_agent,
+            )
+        except PendingApprovalLimitError as exc:
+            raise ApprovalPendingLimitError(
+                f"Agent '{identity.sub}' already has {exc.pending} executions pending "
+                f"approval (limit {exc.limit})",
+                type="approval_pending_limit_reached",
+                extra={"pending": exc.pending, "limit": exc.limit},
+                directive=approval_pending_limit_directive(pending=exc.pending, limit=exc.limit),
+                instance=request.url.path,
+            ) from exc
+        review_url = _review_url(ctx, request, hold.approval_id)
+        if not hold.joined:
+            summary_path = path[:MAX_EVENT_SUMMARY_FIELD_LEN]
+            await emit_event_best_effort(
+                session,
+                type=EventType.EXECUTION_APPROVAL_REQUESTED,
+                severity=EventSeverity.WARNING,
+                summary=f"Agent {identity.sub} wants to {ctx_req.method} {summary_path}",
+                requires_action=True,
+                trace_id=valid_trace_id_or_none(ctx_req.trace_id),
+                execution_id=execution_id,
+                job_id=hold.job_id,
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "approval_id": hold.approval_id,
+                    "agent_id": identity.sub,
+                    "method": ctx_req.method,
+                    "path": path,
+                    "api_vendor": ctx_req.api_vendor,
+                    "api_name": ctx_req.api_name,
+                    "api_version": ctx_req.api_version,
+                    "review_url": review_url,
+                    "expires_at": hold.expires_at.isoformat(),
+                },
+            )
 
-    metadata = _metadata_headers(ctx_req, execution_id)
+    logger.info(
+        "execution_held",
+        approval_id=hold.approval_id,
+        job_id=hold.job_id,
+        joined=hold.joined,
+        method=ctx_req.method,
+    )
     base = ctx.config.broker.jobs_api_base_url
-    job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
-
-    admin_base_main = base.rstrip("/") if base else None
-    review_url_main: str | None = (
-        f"{admin_base_main}/app/approvals/{approval_id}" if admin_base_main else None
-    )
-    directive_params: dict[str, str] = {
-        "job_id": job_id,
-        "approval_id": approval_id,
-    }
-    if review_url_main is not None:
-        directive_params["review_url"] = review_url_main
-    instruction = (
-        "This execution is held pending human approval. "
-        "Relay the approval context (job_id and approval_id) to the operator "
-        "so they can approve or deny it in the admin panel. "
-        "Poll get_execution_result with the job_id to check the outcome — "
-        "do not re-send the execute call."
-    )
-    agent_directive = {"instruction": instruction, "parameters": directive_params}
-
+    job_url = f"{base}/jobs/{hold.job_id}" if base else f"/jobs/{hold.job_id}"
     resp_body = HeldExecutionResponse(
-        job_id=job_id,
-        approval_id=approval_id,
-        review_url=review_url_main,
+        job_id=hold.job_id,
+        approval=HeldApprovalResponse(
+            id=hold.approval_id, review_url=review_url, expires_at=hold.expires_at
+        ),
+        agent_directive=HELD_AGENT_DIRECTIVE,
         links=AsyncQueuedResponseLinks(self_link=job_url),
-        agent_directive=agent_directive,
     )
     return Response(
         content=resp_body.model_dump_json(by_alias=True),
         status_code=202,
         media_type="application/json",
-        headers={**metadata, "Preference-Applied": "respond-async"},
+        headers={
+            **_metadata_headers(ctx_req, hold.execution_id or execution_id),
+            "Preference-Applied": "respond-async",
+        },
     )
 
 

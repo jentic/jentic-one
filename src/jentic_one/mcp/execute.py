@@ -530,21 +530,20 @@ def _cap_headers(headers: dict[str, str], budget: int) -> tuple[dict[str, str], 
     return capped, True
 
 
-def _held_envelope_directive(parsed_body: Any) -> dict[str, Any] | None:
-    """Extract the ``agent_directive`` from a held (202) broker response body.
+def held_envelope(status: int, parsed_body: Any) -> dict[str, Any] | None:
+    """The broker's held (202) envelope, or ``None`` for any other response.
 
-    Returns the directive dict when the body signals a held execution (``state
-    == "held"``), or ``None`` for any other response. Lifting it to the
-    top-level payload mirrors how denial directives ride the ``extra`` field so
-    the model sees the instruction at the same nesting depth regardless of
-    whether the outcome is a denial or a hold.
+    A held envelope is a 202 whose body carries ``status: "held"`` plus the
+    ``job_id`` to poll and the ``approval`` (id, review_url, expires_at).
     """
-    if not isinstance(parsed_body, dict) or parsed_body.get("state") != "held":
+    if status != 202 or not isinstance(parsed_body, dict):
         return None
-    directive = parsed_body.get("agent_directive")
-    if not isinstance(directive, dict):
+    if parsed_body.get("status") != "held" or not isinstance(parsed_body.get("job_id"), str):
         return None
-    return directive
+    approval = parsed_body.get("approval")
+    if not isinstance(approval, dict) or not isinstance(approval.get("review_url"), str):
+        return None
+    return parsed_body
 
 
 def execute_result_payload(
@@ -581,10 +580,6 @@ def execute_result_payload(
         payload["body"] = body[:MAX_RESULT_BYTES].decode("utf-8", errors="ignore")
         payload["truncated"] = True
         payload["total_bytes"] = len(body)
-    # Lift the held-execution directive to the payload root so the model sees
-    # it at the same nesting depth as denial directives in the extra field.
-    if (directive := _held_envelope_directive(parsed_body)) is not None:
-        payload["agent_directive"] = directive
     return payload
 
 
