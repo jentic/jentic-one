@@ -1,14 +1,13 @@
 /**
  * Approvals list page — `/app/approvals`.
  *
- * Shows pending (and optionally historical) execution approvals that the
- * current user can review. Clicking a row navigates to the detail page.
+ * Lists the execution approvals the signed-in reviewer may see (the agent's
+ * owner, or an org admin), pending first by default. A row opens the detail.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CheckSquare } from 'lucide-react';
 import {
-	Badge,
 	Button,
 	DataTable,
 	EmptyState,
@@ -20,39 +19,19 @@ import {
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 import { useApprovals } from '@/modules/approvals/api/hooks';
+import { ApprovalStateBadge } from '@/modules/approvals/components/ApprovalStateBadge';
+import { ApprovalsHelp } from '@/modules/approvals/components/ApprovalsHelp';
+import { APPROVAL_STATE_OPTIONS } from '@/modules/approvals/lib/approvalState';
 import type {
 	ExecutionApprovalResponse,
 	ListApprovalsParams,
 } from '@/modules/approvals/api/client';
 
-const STATE_OPTIONS = [
-	{ value: '', label: 'All states' },
-	{ value: 'pending', label: 'Pending' },
-	{ value: 'approved', label: 'Approved' },
-	{ value: 'denied', label: 'Denied' },
-	{ value: 'expired', label: 'Expired' },
-	{ value: 'withdrawn', label: 'Withdrawn' },
-];
-
-function stateVariant(state: string): 'warning' | 'success' | 'danger' | 'default' {
-	switch (state) {
-		case 'pending':
-			return 'warning';
-		case 'approved':
-			return 'success';
-		case 'denied':
-		case 'expired':
-			return 'danger';
-		default:
-			return 'default';
-	}
-}
-
 const COLUMNS: Column<ExecutionApprovalResponse>[] = [
 	{
 		key: 'state',
 		header: 'State',
-		render: (row) => <Badge variant={stateVariant(row.state)}>{row.state}</Badge>,
+		render: (row) => <ApprovalStateBadge state={row.state} />,
 	},
 	{
 		key: 'api_vendor',
@@ -102,32 +81,41 @@ const COLUMNS: Column<ExecutionApprovalResponse>[] = [
 export default function ApprovalsPage() {
 	const navigate = useNavigate();
 	const [stateFilter, setStateFilter] = useState<string>('pending');
+	// Cursors of the pages before the current one (keyset pagination).
+	const [cursors, setCursors] = useState<string[]>([]);
+	const cursor = cursors.length ? cursors[cursors.length - 1] : null;
 
 	const { data, isLoading, error, refetch } = useApprovals({
 		state: (stateFilter || null) as ListApprovalsParams['state'],
+		cursor,
 	});
 
 	return (
 		<PageShell>
 			<PageHeader
-				title="Execution Approvals"
-				subtitle="Review and decide on held executions awaiting human approval."
-				icon={<CheckSquare className="h-6 w-6" />}
+				title="Approvals"
+				subtitle="Agent calls held by a require-approval rule, waiting for a reviewer."
 				actions={
-					<Button variant="outline" size="sm" onClick={() => refetch()}>
-						Refresh
-					</Button>
+					<>
+						<Button variant="outline" size="sm" onClick={() => refetch()}>
+							Refresh
+						</Button>
+						<ApprovalsHelp />
+					</>
 				}
 			/>
 
 			<div className="flex items-center gap-3">
 				<Select
 					value={stateFilter}
-					onChange={(e) => setStateFilter(e.target.value)}
+					onChange={(e) => {
+						setStateFilter(e.target.value);
+						setCursors([]);
+					}}
 					aria-label="Filter by state"
 					className="w-40"
 				>
-					{STATE_OPTIONS.map((opt) => (
+					{APPROVAL_STATE_OPTIONS.map((opt) => (
 						<option key={opt.value} value={opt.value}>
 							{opt.label}
 						</option>
@@ -162,11 +150,27 @@ export default function ApprovalsPage() {
 				/>
 			)}
 
-			{data?.has_more && (
-				<div className="flex justify-center pt-2">
-					<span className="text-muted-foreground text-sm">
-						More results available — use the cursor API to paginate.
-					</span>
+			{(cursors.length > 0 || data?.has_more) && (
+				<div className="flex justify-center gap-3 pt-2">
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={cursors.length === 0}
+						onClick={() => setCursors((c) => c.slice(0, -1))}
+					>
+						Previous
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={!data?.has_more || !data.next_cursor}
+						onClick={() => {
+							const next = data?.next_cursor;
+							if (next) setCursors((c) => [...c, next]);
+						}}
+					>
+						Next
+					</Button>
 				</div>
 			)}
 		</PageShell>

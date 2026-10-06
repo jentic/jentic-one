@@ -17,6 +17,7 @@ import {
 import type { DecideRequest, ExecutionApprovalResponse } from '@/shared/api';
 
 export { ApprovalDecision, ExecutionApprovalState } from '@/shared/api';
+export { ApprovalsApiError } from '@/modules/approvals/api/client';
 
 /** Stable query-key roots for precise cache invalidation. */
 export const approvalsKeys = {
