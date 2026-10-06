@@ -1,16 +1,18 @@
-"""UpgradeStep ORM model — the ledger of one-shot post-migration data steps.
+"""UpgradeStep ORM model — the ledger of post-migration data steps.
 
 Some upgrades need a data step that spans databases and therefore cannot live
-inside a single Alembic tree (the toolkit flattening reads the control DB and
-writes the admin DB). The migration runner (``python -m
-jentic_one.migrations.run``) performs those steps once every tree is at head,
-and records each completed step here by name.
+inside a single Alembic tree (e.g. one that reads the control DB and the admin
+DB). The migration runner (``python -m jentic_one.migrations.run``) performs
+those steps once every tree is at head, and records each completed step here
+by name.
 
-A step runs **at most once per install**. That is a correctness property, not
-an optimisation: re-running the flattening on a later upgrade would re-derive
-direct bindings from the retained toolkit rows and silently restore access an
-operator has since purged. ``name`` is unique so two concurrent runners collide
-on the insert instead of both recording (and both performing) the step.
+A one-shot step runs **at most once per install**. That is a correctness
+property, not an optimisation: a step that re-derives data from rows an
+operator has since changed would silently undo that change on a later upgrade.
+A repeatable step (``UpgradeStepSpec.repeatable``) runs on every full upgrade
+and overwrites its row with its latest run. ``name`` is unique so two
+concurrent runners collide on the insert instead of both recording (and both
+performing) a one-shot step.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""One-shot post-migration data steps, run by the migration runner.
+"""Post-migration data steps, run by the migration runner.
 
 ``python -m jentic_one.migrations.run`` calls :meth:`UpgradeStepService.run`
 once every database is at head. A step spans the control and admin databases,
@@ -9,8 +9,10 @@ the new version serves traffic.
 
 Registered steps:
 
-- ``rule_sets_mark_curated`` marks the shared permission rule sets created by
-  a system actor or an ``org:admin`` as curated
+- ``rule_sets_mark_curated`` (repeatable) marks the shared permission rule
+  sets created by a system actor or an ``org:admin`` as curated, and warns
+  about each binding attached to a non-curated set neither its agent nor the
+  agent's owner created
   (:class:`~jentic_one.control.services.rule_set_curation.RuleSetCurationService`).
 
 The theme-5 steps (``theme5_retire_toolkit_keys``,
@@ -22,10 +24,18 @@ A step is a coroutine taking the :class:`Context` and returning an
 
 - skips a step the operator named in ``--skip-upgrade-step`` (not ledgered —
   it runs on the next full upgrade);
-- reports ``already_done`` for a step the ledger already records (each
-  registered step runs **at most once** per install);
-- runs the step; a ``performed`` or ``skipped`` outcome is ledgered, a
-  ``failed`` one (or a raised exception) is not, so the next run retries it.
+- reports ``already_done`` for a one-shot step the ledger already records
+  (a one-shot step runs **at most once** per install);
+- runs a **repeatable** step on every full upgrade, whether or not the ledger
+  records it. A repeatable step must be idempotent; it exists for data a
+  release older than the step's can still write against the newer schema
+  (an older release redeployed on it), which a single run would miss;
+- runs the step; a ``performed`` or ``skipped`` outcome is ledgered (a
+  repeatable step's row is overwritten with its latest run), a ``failed`` one
+  (or a raised exception) is not, so the next run retries it.
+
+:meth:`UpgradeStepService.pending` lists the registered steps the ledger does
+not record — what ``migrations.run --check`` reports as pending.
 
 The whole run holds the upgrade-steps run lock so concurrent runners never
 interleave.
@@ -41,7 +51,11 @@ import structlog
 
 from jentic_one import __version__
 from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
-from jentic_one.control.services.rule_set_curation import RuleSetCurationService
+from jentic_one.control.services.rule_set_curation import (
+    CrossOwnerAttachment,
+    RuleSetCurationResult,
+    RuleSetCurationService,
+)
 from jentic_one.control.services.run_lock import UPGRADE_STEPS_LOCK_KEY, hold_run_lock
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -51,7 +65,7 @@ logger = structlog.get_logger(__name__)
 #: ``created_by`` for ledger rows — attributable to the runner, not a user.
 _LEDGER_ACTOR = "system:upgrade-steps"
 
-#: Outcome actions that complete a step (ledgered, never run again).
+#: Outcome actions that complete a step (ledgered; a one-shot step never runs again).
 _COMPLETING_ACTIONS = frozenset({"performed", "skipped"})
 
 
@@ -79,23 +93,79 @@ class UpgradeStepSpec:
 
     name: str
     run: StepFn
+    #: Run on every full upgrade instead of once (see the module docstring).
+    repeatable: bool = False
 
 
 RULE_SETS_MARK_CURATED = "rule_sets_mark_curated"
 
 
+#: Leads the per-binding warnings of ``rule_sets_mark_curated``.
+CROSS_OWNER_RULE_SET_WARNING = (
+    "{count} agent credential binding(s) use a non-curated shared rule set created by "
+    "someone other than the agent or its owner; that creator can still edit the rules "
+    "that govern the agent. Left attached. To resolve one: the agent's owner attaches a "
+    "set they created or a curated set, or detaches to the binding's inline rules; or an "
+    "org:admin re-attaches a curated set, or marks the set curated, after which only an "
+    "org:admin can edit it: UPDATE control.permission_rule_sets SET curated = true WHERE "
+    "id = '<rule set id>' (control is your control schema_name; no prefix on SQLite). A "
+    "raw-SQL change leaves no audit record. The bindings:"
+)
+
+#: Per-binding warning lines printed before the rest are summarised as a count.
+CROSS_OWNER_WARNING_LIMIT = 50
+
+
+def _cross_owner_line(a: CrossOwnerAttachment) -> str:
+    owner = (
+        f"owned by {a.owner_id}"
+        if a.owner_id is not None
+        else "with no owner (only the org:admin remediations apply)"
+    )
+    return (
+        f"binding {a.binding_id}: agent {a.agent_id} ({a.agent_name!r}) {owner}, "
+        f"credential {a.credential_id}, rule set {a.rule_set_id} ({a.rule_set_name!r}) "
+        f"created by {a.rule_set_creator}"
+    )
+
+
+def _cross_owner_warnings(result: RuleSetCurationResult) -> tuple[str, ...]:
+    if result.cross_owner_error is not None:
+        return (
+            f"could not list cross-owner bindings: {result.cross_owner_error}. The marking "
+            "is done; the listing runs again on the next full upgrade.",
+        )
+    found = result.cross_owner
+    if not found:
+        return ()
+    lines = [CROSS_OWNER_RULE_SET_WARNING.format(count=len(found))]
+    lines += [_cross_owner_line(a) for a in found[:CROSS_OWNER_WARNING_LIMIT]]
+    if len(found) > CROSS_OWNER_WARNING_LIMIT:
+        lines.append(f"...and {len(found) - CROSS_OWNER_WARNING_LIMIT} more")
+    return tuple(lines)
+
+
 async def _mark_curated_rule_sets(ctx: Context) -> UpgradeStepOutcome:
     result = await RuleSetCurationService(ctx).mark_existing()
+    summary: dict[str, Any] = {
+        "marked": result.marked,
+        "admin_creators": result.admin_creators,
+        # ``None`` when the listing could not run (the warning says why).
+        "cross_owner_bindings": (
+            None if result.cross_owner_error is not None else len(result.cross_owner)
+        ),
+    }
     return UpgradeStepOutcome(
         name=RULE_SETS_MARK_CURATED,
         action="performed",
-        summary={"marked": result.marked, "admin_creators": result.admin_creators},
+        summary=summary,
+        warnings=_cross_owner_warnings(result),
     )
 
 
 #: Every step, in run order.
 STEPS: tuple[UpgradeStepSpec, ...] = (
-    UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets),
+    UpgradeStepSpec(name=RULE_SETS_MARK_CURATED, run=_mark_curated_rule_sets, repeatable=True),
 )
 
 #: Names of deleted steps that ``--skip-upgrade-step`` still accepts (as a
@@ -129,10 +199,22 @@ class UpgradeStepService:
                 outcomes.append(await self._run_one(step))
             return outcomes
 
+    async def pending(self) -> list[str]:
+        """Registered steps the ledger does not record, in run order.
+
+        A repeatable step counts as done once recorded: the next full upgrade
+        reruns it regardless, so its row alone says it has run on this schema.
+        """
+        if not self._steps:
+            return []
+        async with self._ctx.control_db.session() as session:
+            done = await UpgradeStepRepository.list_names(session)
+        return [step.name for step in self._steps if step.name not in done]
+
     async def _run_one(self, step: UpgradeStepSpec) -> UpgradeStepOutcome:
         async with self._ctx.control_db.session() as session:
             done = await UpgradeStepRepository.get(session, step.name)
-        if done is not None:
+        if done is not None and not step.repeatable:
             return UpgradeStepOutcome(
                 name=step.name, action="already_done", summary=done.summary or {}
             )
@@ -148,16 +230,18 @@ class UpgradeStepService:
                 failed=True,
             )
         if outcome.action in _COMPLETING_ACTIONS and not outcome.failed:
-            await self._record(step.name, outcome.summary)
+            await self._record(step, outcome.summary)
         logger.info("upgrade_step", step=step.name, action=outcome.action)
         return outcome
 
-    async def _record(self, name: str, summary: dict[str, Any]) -> None:
+    async def _record(self, step: UpgradeStepSpec, summary: dict[str, Any]) -> None:
+        repo = UpgradeStepRepository
+        write = repo.record_run if step.repeatable else repo.record
         try:
             async with self._ctx.control_db.transaction() as session:
-                await UpgradeStepRepository.record(
+                await write(
                     session,
-                    name=name,
+                    name=step.name,
                     tool_version=__version__,
                     summary=summary,
                     created_by=_LEDGER_ACTOR,
@@ -165,7 +249,7 @@ class UpgradeStepService:
         except DatabaseIntegrityError:
             # A concurrent runner recorded the step first (SQLite has no run
             # lock); a registered step must be idempotent, so its record stands.
-            logger.info("upgrade_step_already_recorded", step=name)
+            logger.info("upgrade_step_already_recorded", step=step.name)
 
 
 def _skipped(name: str, reason: str) -> UpgradeStepOutcome:

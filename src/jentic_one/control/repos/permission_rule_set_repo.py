@@ -106,6 +106,16 @@ class PermissionRuleSetRepository:
         return [str(row) for row in result.scalars().all()]
 
     @staticmethod
+    async def list_uncurated_with_creator(session: AsyncSession) -> list[tuple[str, str, str]]:
+        """``(id, name, created_by)`` of every set not marked curated that has a creator."""
+        result = await session.execute(
+            select(PermissionRuleSet.id, PermissionRuleSet.name, PermissionRuleSet.created_by)
+            .where(PermissionRuleSet.curated.is_(False), PermissionRuleSet.created_by.is_not(None))
+            .order_by(PermissionRuleSet.id)
+        )
+        return [(str(row[0]), str(row[1]), str(row[2])) for row in result.all()]
+
+    @staticmethod
     async def mark_curated(
         session: AsyncSession, *, creators: Collection[str], creator_prefix: str
     ) -> int:
