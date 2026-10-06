@@ -34,6 +34,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -73,8 +74,16 @@ var executeParams = []paramSpec{
 // the job — folding them would silently poll the wrong resource.
 var jobIDSpec = paramSpec{name: "job_id", aliases: []string{"id", "job"}, kind: paramString}
 
+// waitSecondsSpec is get_execution_result's optional bounded wait: absent or
+// zero polls once and answers at once; otherwise the tool re-polls until the
+// job is terminal or the wait (capped at maxPollWaitSeconds) lapses.
+var waitSecondsSpec = paramSpec{name: "wait_seconds", kind: paramInt}
+
+// maxPollWaitSeconds caps get_execution_result's wait_seconds.
+const maxPollWaitSeconds = 30
+
 // getExecutionResultParams declares the poll tool's argument table.
-var getExecutionResultParams = []paramSpec{jobIDSpec}
+var getExecutionResultParams = []paramSpec{jobIDSpec, waitSecondsSpec}
 
 // resolveMCPBrokerTarget resolves the broker scheme/host for the MCP execute
 // path. Precedence is a strict subset of executeE's: the environment's
@@ -618,8 +627,6 @@ func headerCost(k, v string) int64 {
 // re-send the execute.
 func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.noteClient(req.ClientInfo())
-	cctx, cancel := s.callContext(ctx)
-	defer cancel()
 
 	args, err := normalizeToolArgs(req.Params.Arguments, getExecutionResultParams)
 	if err != nil {
@@ -630,12 +637,56 @@ func (s *mcpServer) handleGetExecutionResult(ctx context.Context, req *mcp.CallT
 		return nil, invalidParams(errors.New(`get_execution_result requires "job_id" (aliases: "id", "job"): ` +
 			`the job id from a held (202) execute response`))
 	}
+	waitSeconds, _ := args["wait_seconds"].(int)
+	wait := time.Duration(min(max(waitSeconds, 0), maxPollWaitSeconds)) * time.Second
 
-	payload, soft := s.jobPollPayload(cctx, jobID)
+	// The call deadline covers the wait on top of the control-plane budget,
+	// so a full wait still leaves room for the last poll.
+	cctx, cancel := context.WithTimeout(ctx, mcpCallTimeout+wait)
+	defer cancel()
+
+	payload, soft := s.pollJobUntilTerminal(cctx, jobID, wait)
 	if soft != nil {
 		return soft, nil
 	}
 	return s.result(cctx, payload), nil
+}
+
+// pollJobUntilTerminal polls the job, re-polling every heldWaitPoll until it
+// is terminal or wait lapses; a zero wait polls exactly once. A failed poll
+// comes back as the soft-error result to return instead.
+func (s *mcpServer) pollJobUntilTerminal(
+	ctx context.Context, jobID string, wait time.Duration,
+) (map[string]any, *mcp.CallToolResult) {
+	interval := s.heldWaitPoll
+	if interval <= 0 {
+		interval = heldWaitPoll
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		payload, soft := s.jobPollPayload(ctx, jobID)
+		if soft != nil || isTerminalJobStatus(payload["status"]) {
+			return payload, soft
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return payload, nil
+		}
+		select {
+		case <-ctx.Done():
+			return payload, nil
+		case <-time.After(min(interval, remaining)):
+		}
+	}
+}
+
+// isTerminalJobStatus reports whether a polled job status is final.
+func isTerminalJobStatus(status any) bool {
+	switch status {
+	case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
+		return true
+	}
+	return false
 }
 
 // jobPollPayload polls one job — GET /jobs/{id}, plus GET /jobs/{id}/result
@@ -782,6 +833,13 @@ var getExecutionResultSchema = map[string]any{
 			"description": "The job to poll (required; \"id\" and \"job\" are accepted aliases), from a held (202) " +
 				"execute response.",
 		},
+		"wait_seconds": map[string]any{
+			"type":    "integer",
+			"minimum": 0,
+			"maximum": maxPollWaitSeconds,
+			"description": "Optional. Wait up to this many seconds (max 30) for the job to finish, re-polling " +
+				"and returning as soon as it is terminal. Omit (or 0) to return the current status at once.",
+		},
 	},
 }
 
@@ -843,7 +901,9 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"response, then poll with the job id it carries until the status is terminal " +
 					"(completed, failed, cancelled, dead_letter) — NEVER re-send the execute while a job is " +
 					"pending; approval happens out-of-band and re-sending duplicates the call. " +
-					`Example: {"job_id": "job_abc123"}. While pending/running, wait briefly and poll again.`,
+					`Example: {"job_id": "job_abc123", "wait_seconds": 30}. Pass wait_seconds (up to 30) to wait ` +
+					"for the outcome in one call, returning early once it is terminal; while still held or " +
+					"running after that, call again.",
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},

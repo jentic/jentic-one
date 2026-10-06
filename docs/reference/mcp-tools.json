@@ -157,12 +157,18 @@
     {
       "name": "get_execution_result",
       "title": "Poll a held or asynchronous execution",
-      "description": "Poll a job by id: returns {job_id, kind, status, ...} and, once terminal, the result document — the upstream response when \"completed\", the problem when a held call \"failed\" (denied or expired approval, or a failed run). Use it when execute returns a 202 HELD response (human approval required): show the user the review_url from that response, then poll with the job id it carries until the status is terminal (completed, failed, cancelled, dead_letter) — NEVER re-send the execute while a job is pending; approval happens out-of-band and re-sending duplicates the call. Example: {\"job_id\": \"job_abc123\"}. While pending/running, wait briefly and poll again.",
+      "description": "Poll a job by id: returns {job_id, kind, status, ...} and, once terminal, the result document — the upstream response when \"completed\", the problem when a held call \"failed\" (denied or expired approval, or a failed run). Use it when execute returns a 202 HELD response (human approval required): show the user the review_url from that response, then poll with the job id it carries until the status is terminal (completed, failed, cancelled, dead_letter) — NEVER re-send the execute while a job is pending; approval happens out-of-band and re-sending duplicates the call. Example: {\"job_id\": \"job_abc123\", \"wait_seconds\": 30}. Pass wait_seconds (up to 30) to wait for the outcome in one call, returning early once it is terminal; while still held or running after that, call again.",
       "input_schema": {
         "properties": {
           "job_id": {
             "description": "The job to poll (required; \"id\" and \"job\" are accepted aliases), from a held (202) execute response.",
             "type": "string"
+          },
+          "wait_seconds": {
+            "description": "Optional. Wait up to this many seconds (max 30) for the job to finish, re-polling and returning as soon as it is terminal. Omit (or 0) to return the current status at once.",
+            "maximum": 30,
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "type": "object"

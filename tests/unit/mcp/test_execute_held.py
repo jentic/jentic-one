@@ -234,3 +234,36 @@ def test_front_door_selection() -> None:
         approvals.front_door({"extensions": {"io.modelcontextprotocol/tasks": {}}})
         == approvals.FRONT_DOOR_HELD_RESULT
     )
+
+
+async def _get_result(env: CallEnv, **extra: Any) -> Any:
+    return await dispatch_mcp_tool_call(
+        env, "get_execution_result", {"job_id": "job_held1", **extra}
+    )
+
+
+async def test_get_execution_result_without_wait_polls_once(
+    job_polls: Callable[[list[str]], list[str]],
+) -> None:
+    polled = job_polls(["held", "completed"])
+    payload = _json(await _get_result(_env()))
+    assert payload["status"] == "held"
+    assert polled == ["job_held1"]
+
+
+async def test_get_execution_result_wait_returns_early_once_terminal(
+    job_polls: Callable[[list[str]], list[str]],
+) -> None:
+    polled = job_polls(["held", "queued", "completed"])
+    payload = _json(await _get_result(_env(), wait_seconds=30))
+    assert payload["status"] == "completed"
+    assert len(polled) == 3
+
+
+async def test_get_execution_result_negative_wait_answers_at_once(
+    job_polls: Callable[[list[str]], list[str]],
+) -> None:
+    polled = job_polls(["held"])
+    payload = _json(await _get_result(_env(), wait_seconds=-5))
+    assert payload["status"] == "held"
+    assert polled == ["job_held1"]

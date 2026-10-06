@@ -1169,13 +1169,24 @@ def _header_kvs(obj: dict[str, Any] | None) -> list[tuple[str, str]]:
 
 # ── get_execution_result ──────────────────────────────────────────────────────
 
-_GET_EXECUTION_RESULT_PARAMS = [ParamSpec("job_id", "string", ("id", "job"))]
+_GET_EXECUTION_RESULT_PARAMS = [
+    ParamSpec("job_id", "string", ("id", "job")),
+    ParamSpec("wait_seconds", "int"),
+]
+
+#: Cap on get_execution_result's ``wait_seconds`` (Go: ``maxPollWaitSeconds``).
+MAX_POLL_WAIT_SECONDS = 30
 
 
 async def handle_get_execution_result(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
-    """GET /jobs/{id} (+ /result) in-process (Go: ``handleGetExecutionResult``)."""
+    """GET /jobs/{id} (+ /result) in-process (Go: ``handleGetExecutionResult``).
+
+    ``wait_seconds`` absent or zero polls once and answers at once; otherwise
+    the job is re-polled until terminal or the wait (capped at
+    ``MAX_POLL_WAIT_SECONDS``) lapses.
+    """
     args = normalize_tool_args(arguments, _GET_EXECUTION_RESULT_PARAMS)
     job_id = args.get("job_id", "")
     if not job_id:
@@ -1183,7 +1194,21 @@ async def handle_get_execution_result(
             'get_execution_result requires "job_id" (aliases: "id", "job"): the job id '
             "from a held (202) execute response"
         )
-    return tool_result(env.ctx, await job_poll_payload(env, job_id))
+    wait = min(max(int(args.get("wait_seconds", 0)), 0), MAX_POLL_WAIT_SECONDS)
+    return tool_result(env.ctx, await _poll_job_until_terminal(env, job_id, float(wait)))
+
+
+async def _poll_job_until_terminal(env: CallEnv, job_id: str, wait: float) -> dict[str, Any]:
+    """Poll the job, re-polling until terminal or ``wait`` lapses; zero polls once."""
+    deadline = time.monotonic() + wait
+    while True:
+        payload = await job_poll_payload(env, job_id)
+        if payload.get("status") in approvals.TERMINAL_JOB_STATUSES:
+            return payload
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return payload
+        await asyncio.sleep(min(approvals.SHORT_WAIT_POLL_SECONDS, remaining))
 
 
 async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:

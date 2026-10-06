@@ -254,8 +254,7 @@ func (s *mcpServer) heldShortWait(ctx context.Context, jobID string) map[string]
 		if soft != nil {
 			return nil
 		}
-		switch payload["status"] {
-		case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
+		if isTerminalJobStatus(payload["status"]) {
 			return payload
 		}
 		remaining := time.Until(deadline)

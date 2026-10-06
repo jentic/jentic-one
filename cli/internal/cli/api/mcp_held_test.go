@@ -162,3 +162,40 @@ func TestHeldFrontDoor(t *testing.T) {
 		t.Error("elicitation.url must get the URL elicitation")
 	}
 }
+
+func TestMCPGetExecutionResult_NoWaitPollsOnce(t *testing.T) {
+	srv, _, polls := heldServers(t, "held", "completed")
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
+		callToolRequest("get_execution_result", `{"job_id":"job_9"}`))
+	if err != nil || res.IsError {
+		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
+	}
+	if payload := decodeToolJSON(t, res); payload["status"] != "held" || polls.Load() != 1 {
+		t.Fatalf("status=%v polls=%d, want the current status from exactly one poll", payload["status"], polls.Load())
+	}
+}
+
+func TestMCPGetExecutionResult_WaitReturnsEarlyOnceTerminal(t *testing.T) {
+	srv, _, polls := heldServers(t, "held", "queued", "completed")
+	s := heldTestServer(t)
+	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
+		callToolRequest("get_execution_result", `{"job_id":"job_9","wait_seconds":30}`))
+	if err != nil || res.IsError {
+		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
+	}
+	if payload := decodeToolJSON(t, res); payload["status"] != "completed" || polls.Load() != 3 {
+		t.Fatalf("status=%v polls=%d, want completed after three polls", payload["status"], polls.Load())
+	}
+}
+
+func TestMCPGetExecutionResult_NegativeWaitAnswersAtOnce(t *testing.T) {
+	srv, _, polls := heldServers(t, "held")
+	s := heldTestServer(t)
+	ctx := activeCtxWithBroker(srv.URL, srv.URL)
+	res, err := s.handleGetExecutionResult(ctx,
+		callToolRequest("get_execution_result", `{"job_id":"job_9","wait_seconds":-5}`))
+	if err != nil || res.IsError || polls.Load() != 1 {
+		t.Fatalf("negative wait: err=%v polls=%d, want one poll and an immediate answer", err, polls.Load())
+	}
+}
