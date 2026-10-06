@@ -11,14 +11,18 @@ declares on THIS request (``_meta["io.modelcontextprotocol/clientCapabilities"]`
   read again (terminal → the result; still held → the short wait, then the
   held result). The elicitation ``accept`` is consent to open the link, never
   a decision — only a signed-in reviewer's ``:decide`` releases the job.
-- otherwise → the **short wait** (poll the job up to ``SHORT_WAIT_SECONDS``),
-  then the **held result**: the envelope as a normal tool result, which the
-  model polls with ``get_execution_result``.
+- otherwise → the **held result** at once: the envelope as a normal tool
+  result, so the model relays the review link straight away and polls with
+  ``get_execution_result``. Nobody can approve a call before seeing its
+  review link, so waiting on the first call would only delay the link.
+
+The short wait (poll the job up to ``SHORT_WAIT_SECONDS``) runs only on the
+URL-elicitation retry, after the client has sent the user to the review page.
 
 Form-mode elicitation is never used for approvals (an ``accept`` there is
 client-authored data). Tasks are not offered: no task front door is served,
 so a client declaring the Tasks extension gets the URL elicitation (when it
-declares ``elicitation.url``) or the short wait and held result.
+declares ``elicitation.url``) or the held result.
 """
 
 from __future__ import annotations
@@ -47,7 +51,7 @@ TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "dead_let
 REVIEW_INPUT_KEY = "review_approval"
 
 FRONT_DOOR_URL_ELICITATION = "url_elicitation"
-FRONT_DOOR_SHORT_WAIT = "short_wait"
+FRONT_DOOR_HELD_RESULT = "held_result"
 
 _STATE_VERSION = 1
 
@@ -68,7 +72,7 @@ def declares_url_elicitation(caps: dict[str, Any]) -> bool:
 
 def front_door(caps: dict[str, Any]) -> str:
     """The held-call front door this request's capabilities allow."""
-    return FRONT_DOOR_URL_ELICITATION if declares_url_elicitation(caps) else FRONT_DOOR_SHORT_WAIT
+    return FRONT_DOOR_URL_ELICITATION if declares_url_elicitation(caps) else FRONT_DOOR_HELD_RESULT
 
 
 def seal_request_state(encryption: Any, *, envelope: dict[str, Any], agent_id: str) -> str:

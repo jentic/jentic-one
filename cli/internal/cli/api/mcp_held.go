@@ -11,13 +11,18 @@ package api
 //     (terminal → the result; still held → the short wait, then the held
 //     result). The elicitation accept is consent to open the link, never a
 //     decision — only a signed-in reviewer's :decide releases the job.
-//   - otherwise → the short wait (poll the job up to heldWaitBudget), then the
-//     held result: the broker's envelope as a normal tool result, which the
-//     model polls with get_execution_result.
+//   - otherwise → the held result at once: the broker's envelope as a normal
+//     tool result, so the model relays the review link straight away and
+//     polls with get_execution_result. Nobody can approve a call before seeing
+//     its review link, so waiting on the first call would only delay the link.
+//
+// The short wait (poll the job up to heldWaitBudget) runs only on the
+// URL-elicitation retry, after the client has sent the user to the review
+// page.
 //
 // Form-mode elicitation is never used for approvals. No task front door is
 // served, so a client declaring the Tasks extension gets the URL elicitation
-// (with elicitation.url) or the short wait and held result. Kept in parity
+// (with elicitation.url) or the held result. Kept in parity
 // with the mounted app's src/jentic_one/mcp/approvals.py.
 
 import (
@@ -48,7 +53,7 @@ const (
 	heldStateTTL = 10 * time.Minute
 
 	frontDoorURLElicitation = "url_elicitation"
-	frontDoorShortWait      = "short_wait"
+	frontDoorHeldResult     = "held_result"
 )
 
 // heldAgentDirective mirrors the broker's directive for a held call.
@@ -119,7 +124,7 @@ func heldFrontDoor(caps *mcp.ClientCapabilities) string {
 	if caps != nil && caps.Elicitation != nil && caps.Elicitation.URL != nil {
 		return frontDoorURLElicitation
 	}
-	return frontDoorShortWait
+	return frontDoorHeldResult
 }
 
 func sealHeldState(st heldState) (string, error) {
@@ -169,7 +174,7 @@ func heldReviewMessage(method, path string) string {
 }
 
 // answerHeld shapes a held execute: URL elicitation for clients declaring
-// it, otherwise the short wait and then the held result (payload).
+// it, otherwise the held result (payload) at once.
 func (s *mcpServer) answerHeld(
 	ctx context.Context, req *mcp.CallToolRequest, agent string,
 	envelope, payload map[string]any, method, path string,
@@ -201,9 +206,6 @@ func (s *mcpServer) answerHeld(
 			},
 			RequestState: token,
 		}, nil
-	}
-	if terminal := s.heldShortWait(ctx, jobID); terminal != nil {
-		return s.result(ctx, terminal), nil
 	}
 	return s.result(ctx, payload), nil
 }

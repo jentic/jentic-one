@@ -1,8 +1,8 @@
 """Unit tests for held (require-approval) executions on the mount.
 
 The broker leg is an in-process mock transport and the job poll is stubbed:
-these pin the per-request front doors — the short wait then the held result
-for every client, and the URL elicitation (multi-round-trip) for clients
+these pin the per-request front doors — the held result at once for every
+client, and the URL elicitation (multi-round-trip) for clients
 declaring ``elicitation.url`` — plus the sealed retry state.
 """
 
@@ -128,39 +128,26 @@ async def _execute(env: CallEnv) -> Any:
     )
 
 
-async def test_held_call_without_capabilities_waits_then_returns_the_held_envelope(
-    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]], monkeypatch
+async def test_held_call_without_capabilities_returns_the_held_envelope_at_once(
+    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
 ) -> None:
-    monkeypatch.setattr(approvals, "SHORT_WAIT_SECONDS", 0.0)
-    polled = job_polls(["held"])
+    polled = job_polls(["held", "queued", "completed"])
     result = await _execute(_env())
     assert isinstance(result, mcp_types.CallToolResult)
     assert not result.is_error
     payload = _json(result)
     assert payload["status"] == 202
     assert payload["body"] == _ENVELOPE
-    assert polled == ["job_held1"]
+    assert polled == []
 
 
 async def test_form_only_elicitation_does_not_qualify_for_the_url_door(
-    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]], monkeypatch
+    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
 ) -> None:
-    monkeypatch.setattr(approvals, "SHORT_WAIT_SECONDS", 0.0)
     job_polls(["held"])
     result = await _execute(_env({"elicitation": {}}))
     assert isinstance(result, mcp_types.CallToolResult)
     assert _json(result)["body"]["status"] == "held"
-
-
-async def test_short_wait_returns_the_result_when_the_decision_lands(
-    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
-) -> None:
-    polled = job_polls(["held", "queued", "completed"])
-    result = await _execute(_env())
-    payload = _json(result)
-    assert payload["status"] == "completed"
-    assert payload["job_id"] == "job_held1"
-    assert len(polled) == 3
 
 
 async def test_url_elicitation_client_gets_an_input_required_result(
@@ -207,6 +194,21 @@ async def test_url_elicitation_retry_reads_the_job_and_never_resends(
     assert len(held_broker) == 1
 
 
+async def test_url_elicitation_retry_waits_briefly_for_the_decision(
+    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
+) -> None:
+    """The short wait runs on the retry, after the user was sent to the review page."""
+    env = _env({"elicitation": {"url": {}}})
+    first = await _execute(env)
+    assert isinstance(first, mcp_types.InputRequiredResult)
+    polled = job_polls(["held", "queued", "completed"])
+    retry = await _execute(replace(env, request_state=first.request_state))
+    payload = _json(retry)
+    assert payload["status"] == "completed"
+    assert len(polled) == 3
+    assert len(held_broker) == 1
+
+
 async def test_forged_or_foreign_request_state_is_refused(
     held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
 ) -> None:
@@ -222,13 +224,13 @@ async def test_forged_or_foreign_request_state_is_refused(
 
 
 def test_front_door_selection() -> None:
-    assert approvals.front_door({}) == approvals.FRONT_DOOR_SHORT_WAIT
-    assert approvals.front_door({"elicitation": {}}) == approvals.FRONT_DOOR_SHORT_WAIT
-    assert approvals.front_door({"elicitation": {"form": {}}}) == approvals.FRONT_DOOR_SHORT_WAIT
+    assert approvals.front_door({}) == approvals.FRONT_DOOR_HELD_RESULT
+    assert approvals.front_door({"elicitation": {}}) == approvals.FRONT_DOOR_HELD_RESULT
+    assert approvals.front_door({"elicitation": {"form": {}}}) == approvals.FRONT_DOOR_HELD_RESULT
     assert (
         approvals.front_door({"elicitation": {"url": {}}}) == approvals.FRONT_DOOR_URL_ELICITATION
     )
     assert (
         approvals.front_door({"extensions": {"io.modelcontextprotocol/tasks": {}}})
-        == approvals.FRONT_DOOR_SHORT_WAIT
+        == approvals.FRONT_DOOR_HELD_RESULT
     )

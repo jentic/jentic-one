@@ -64,8 +64,8 @@ func executeRequestWithCaps(caps string) *mcp.CallToolRequest {
 	return req
 }
 
-func TestMCPExecuteHeld_ShortWaitThenHeldEnvelope(t *testing.T) {
-	srv, executes, polls := heldServers(t, "held")
+func TestMCPExecuteHeld_HeldEnvelopeAtOnce(t *testing.T) {
+	srv, executes, polls := heldServers(t, "held", "completed")
 	s := heldTestServer(t)
 	res, err := s.handleExecute(activeCtxWithBroker(srv.URL, srv.URL), executeRequestWithCaps(""))
 	if err != nil || res.IsError {
@@ -82,26 +82,21 @@ func TestMCPExecuteHeld_ShortWaitThenHeldEnvelope(t *testing.T) {
 	if approval, _ := body["approval"].(map[string]any); approval["review_url"] == nil {
 		t.Errorf("approval = %v, want the review_url", body["approval"])
 	}
-	if executes.Load() != 1 || polls.Load() < 1 {
-		t.Errorf("executes=%d polls=%d, want one execute and the short-wait polls", executes.Load(), polls.Load())
+	if executes.Load() != 1 || polls.Load() != 0 {
+		t.Errorf("executes=%d polls=%d, want one execute and no job poll before the held result", executes.Load(), polls.Load())
 	}
 }
 
-func TestMCPExecuteHeld_ShortWaitReturnsTheDecision(t *testing.T) {
-	srv, _, _ := heldServers(t, "held", "failed")
+func TestMCPExecuteHeld_FormOnlyElicitationGetsTheHeldResult(t *testing.T) {
+	srv, _, polls := heldServers(t, "held", "failed")
 	s := heldTestServer(t)
-	s.heldWaitBudget = time.Second
 	res, err := s.handleExecute(activeCtxWithBroker(srv.URL, srv.URL), executeRequestWithCaps(`{"elicitation":{}}`))
 	if err != nil || res.IsError {
 		t.Fatalf("handleExecute: err=%v", err)
 	}
-	payload := decodeToolJSON(t, res)
-	if payload["status"] != "failed" {
-		t.Fatalf("payload = %v, want the terminal job poll (form-only elicitation gets the short wait)", payload)
-	}
-	result, _ := payload["result"].(map[string]any)
-	if result["type"] != "approval_denied" {
-		t.Errorf("result = %v, want the failed job's problem body", payload["result"])
+	body, _ := decodeToolJSON(t, res)["body"].(map[string]any)
+	if body["status"] != "held" || polls.Load() != 0 {
+		t.Fatalf("body = %v polls = %d, want the held envelope at once (form-only elicitation)", body, polls.Load())
 	}
 }
 
@@ -156,10 +151,10 @@ func TestMCPExecuteHeld_ForgedRequestStateIsRefused(t *testing.T) {
 }
 
 func TestHeldFrontDoor(t *testing.T) {
-	if heldFrontDoor(nil) != frontDoorShortWait {
-		t.Error("no capabilities must get the short wait")
+	if heldFrontDoor(nil) != frontDoorHeldResult {
+		t.Error("no capabilities must get the held result")
 	}
-	if heldFrontDoor(&mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{}}) != frontDoorShortWait {
+	if heldFrontDoor(&mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{}}) != frontDoorHeldResult {
 		t.Error("form-only elicitation must not qualify")
 	}
 	caps := &mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapabilities{URL: &mcp.URLElicitationCapabilities{}}}

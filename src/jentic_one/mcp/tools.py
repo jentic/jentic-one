@@ -1102,7 +1102,7 @@ async def _execute_tool(
 async def _answer_held(
     env: CallEnv, envelope: dict[str, Any], payload: dict[str, Any], method: str, path: str
 ) -> ToolCallResult:
-    """Shape a held (202) call for this client: URL elicitation, or short wait then held result."""
+    """Shape a held (202) call for this client: URL elicitation, else the held result at once."""
     door = approvals.front_door(env.client_capabilities)
     _log_front_door(env, door, envelope)
     if door == approvals.FRONT_DOOR_URL_ELICITATION:
@@ -1114,9 +1114,6 @@ async def _answer_held(
             message=approvals.review_message(method, path),
             request_state=state,
         )
-    terminal = await approvals.short_wait(_poller(env), envelope["job_id"])
-    if terminal is not None:
-        return tool_result(env.ctx, terminal)
     return tool_result(env.ctx, payload)
 
 
