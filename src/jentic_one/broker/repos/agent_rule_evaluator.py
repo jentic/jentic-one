@@ -131,7 +131,8 @@ def _match_rule(
         effect = rule.effect.lower()
         if _is_condition_less(rule) and effect in _CONDITION_REQUIRED_EFFECTS:
             _logger.warning(
-                "Ignoring misconfigured condition-less permission rule "
+                "Ignoring misconfigured condition-less 'allow' or 'require-approval' "
+                "permission rule "
                 "(matches all requests); skipping to next rule",
                 effect=effect,
                 binding=binding,

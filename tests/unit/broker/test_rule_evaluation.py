@@ -267,6 +267,16 @@ def test_condition_less_allow_warning_names_the_binding() -> None:
     assert entry["binding"] == "agnt_1:cred_1"
 
 
+def test_condition_less_require_approval_warning_names_the_binding() -> None:
+    """A condition-less require-approval is skipped with the same named warning."""
+    rules = [PermissionRule(effect="require-approval", methods=None, path=None, operations=None)]
+    with structlog.testing.capture_logs() as logs:
+        evaluate_rules(rules, method="GET", path="/x", operation_id=None, binding="agnt_1:cred_1")
+    (entry,) = [e for e in logs if "condition-less" in e["event"]]
+    assert entry["effect"] == "require-approval"
+    assert entry["binding"] == "agnt_1:cred_1"
+
+
 def test_condition_less_deny_still_matches_all() -> None:
     """A condition-less `deny` keeps its legitimate match-all (catch-all) behaviour."""
     rules = [
