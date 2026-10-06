@@ -867,8 +867,9 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
 					"error result with recovery directions instead. A 202 response with status \"held\" means " +
 					"the call is HELD for human approval: show the user its approval.review_url (a reviewer " +
-					"signs in there to approve or deny it), then poll get_execution_result with the job_id it " +
-					"carries until the job is terminal — never re-send the execute. Large bodies are truncated " +
+					"signs in there to approve or deny it), then call get_execution_result once with the job_id " +
+					"it carries and wait_seconds: 30; if it is still held, tell the user and end your turn " +
+					"(call it again when they return) — never re-send the execute. Large bodies are truncated " +
 					"({truncated: true, total_bytes}); narrow the call (query parameters, pagination) to see " +
 					"the rest. Prefer execute_read for pure reads — it is approved more readily.",
 				InputSchema: executeInputSchema(true),
@@ -898,12 +899,13 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"result document — the upstream response when \"completed\", the problem when a held call " +
 					"\"failed\" (denied or expired approval, or a failed run). Use it when execute returns a " +
 					"202 HELD response (human approval required): show the user the review_url from that " +
-					"response, then poll with the job id it carries until the status is terminal " +
-					"(completed, failed, cancelled, dead_letter) — NEVER re-send the execute while a job is " +
-					"pending; approval happens out-of-band and re-sending duplicates the call. " +
-					`Example: {"job_id": "job_abc123", "wait_seconds": 30}. Pass wait_seconds (up to 30) to wait ` +
-					"for the outcome in one call, returning early once it is terminal; while still held or " +
-					"running after that, call again.",
+					"response, then call this once with the job id it carries and wait_seconds: 30 (it returns " +
+					"early once the status is terminal: completed, failed, cancelled, dead_letter). If it is " +
+					"still held, tell the user it is waiting for approval and end your turn; call it again when " +
+					"they return. NEVER re-send the execute while a job is pending; approval happens " +
+					"out-of-band and re-sending duplicates the call. " +
+					`Example: {"job_id": "job_abc123", "wait_seconds": 30}. Omit wait_seconds to read the ` +
+					"current status at once.",
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},
