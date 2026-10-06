@@ -112,6 +112,6 @@ describe('credentialSiblingHint', () => {
 		expect(credentialSiblingHint(c, [c, d])).toBe('v1');
 		const e = cred('cred_eeeeee', '');
 		const f = cred('cred_ffffff', '');
-		expect(credentialSiblingHint(e, [e, f])).toBe('…eeeeee');
+		expect(credentialSiblingHint(e, [e, f])).toBe('…eeee');
 	});
 });

@@ -19,6 +19,7 @@ import type {
 	ApiImportResponse,
 	ApiListResponse,
 	ApiResponse,
+	CatalogEntryResponse,
 	CatalogListResponse,
 } from '@/shared/api';
 import { toast } from '@/shared/ui';
@@ -82,6 +83,32 @@ export interface SelectedApi {
 	securitySchemeTypes?: string[];
 	/** Human display name (falls back to vendor/name). */
 	label: string;
+}
+
+/** A public-catalog entry as a pick. */
+export function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
+	// The identity a catalog import registers: vendor is the entry's `vendor`, and
+	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
+	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
+	// from this pick must carry that same identity — the broker only finds a
+	// credential whose name matches the registered API's — so this mirrors the
+	// import rather than splitting the slug itself.
+	//
+	// The label reads from `api_id` through the shared helper the workspace rows
+	// use, so one API never titles two ways. Version isn't on the catalog entry;
+	// a credential leaves it unpinned anyway.
+	const slug = entry.api_id;
+	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
+	return {
+		source: 'catalog',
+		vendor,
+		name: slug,
+		version: '1.0.0',
+		apiId: slug,
+		specUrl: entry.spec_url ?? undefined,
+		registered: entry.registered,
+		label: apiRefDisplayName({ catalogApiId: slug, vendor, name: slug }),
+	};
 }
 
 /** A workspace `/apis` row as a pick. */

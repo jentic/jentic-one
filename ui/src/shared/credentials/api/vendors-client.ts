@@ -11,6 +11,7 @@ import {
 	AgentsService,
 	CredentialsService,
 	getToken,
+	problemDetailText,
 	type AgentListResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
@@ -54,21 +55,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	}
 	if (!response.ok) {
 		// Errors are RFC 9457 problem+json ({type, title, detail, instance, …});
-		// prefer the human-readable ``detail``, fall back to ``title``.
-		let detail: string | undefined;
+		// prefer the human-readable ``detail`` over the status text.
+		let detail: string | null = null;
 		try {
-			const body = await response.json();
-			detail =
-				typeof body?.detail === 'string'
-					? body.detail
-					: typeof body?.title === 'string'
-						? body.title
-						: undefined;
+			detail = problemDetailText(await response.json());
 		} catch {
 			// ignore parse failure — fall back to statusText
 		}
 		throw new IntegrationsApiError(
-			detail ?? response.statusText ?? `HTTP ${response.status}`,
+			detail ?? (response.statusText || `HTTP ${response.status}`),
 			response.status,
 		);
 	}

@@ -69,6 +69,7 @@ export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agent
 export {
 	titleFromApiId,
 	apiRefDisplayName,
+	apiIdentityTuple,
 	workspaceApiTitle,
 	vendorIconPropsFor,
 	formatApiVersion,

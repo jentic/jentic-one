@@ -260,6 +260,31 @@ export function formatApiVersion(version: string | null | undefined): string | n
 }
 
 /**
+ * Raw machine-identity subtitle. The persisted catalog slug wins verbatim —
+ * it IS the machine identity (`nytimes.com/article_search`) and is what the
+ * user saw when they picked the API. Legacy rows join `vendor/name`, dropping
+ * a leading vendor repeat when `name` is itself a `vendor/name`-shaped tuple
+ * (so it can't render `posthog-com/posthog-com/…`). Returns whichever single
+ * field exists when the others are absent, or `''` when all are.
+ */
+export function apiIdentityTuple(input: {
+	catalogApiId?: string | null;
+	vendor?: string | null;
+	name?: string | null;
+}): string {
+	const apiId = input.catalogApiId?.trim();
+	if (apiId) return apiId;
+	const vendor = input.vendor ?? '';
+	const rawName = input.name ?? '';
+	let name = rawName;
+	if (vendor && rawName.toLowerCase().startsWith(`${vendor.toLowerCase()}/`)) {
+		name = rawName.slice(vendor.length + 1);
+	}
+	if (vendor && name) return `${vendor}/${name}`;
+	return vendor || name;
+}
+
+/**
  * The title of one workspace API — the SAME rule on every surface that names
  * it (Library panel rows, workspace tiles, the hub heading, its dialogs):
  * {@link apiRefDisplayName} (display name → catalog slug → humanised

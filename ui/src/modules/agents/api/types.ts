@@ -51,7 +51,7 @@ export const ACTION_LABEL: Record<AgentAction, string> = {
 
 /**
  * Button variant per lifecycle action — one source of truth so the destructive
- * emphasis is identical on the roster and the detail page.
+ * emphasis is identical on every surface that offers the action.
  */
 export const ACTION_VARIANT: Record<AgentAction, 'primary' | 'secondary' | 'danger' | 'outline'> = {
 	approve: 'primary',
@@ -250,8 +250,8 @@ export interface InstanceIdentityEntity {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth consent grants — the detail console's "Connected
-// clients" panel: which OAuth clients hold a live consent→agent grant.
+// OAuth consent grants — the Permissions sheet's "Connected
+// clients" card: which OAuth clients hold a live consent→agent grant.
 // ---------------------------------------------------------------------------
 
 /**

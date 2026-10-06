@@ -1,6 +1,6 @@
 /**
  * Compact rule-list editor shared between the credentials connect-flow
- * rules page and the agent-detail per-binding editor. Owns the row list
+ * rules page and the Agents page's per-binding editor. Owns the row list
  * (edit-in-place / delete / reorder), the "add rule" affordance, and
  * the shared draft form + validation.
  *

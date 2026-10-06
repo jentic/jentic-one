@@ -6,7 +6,6 @@
  */
 export {
 	useAgents,
-	useAgent,
 	usePendingAgents,
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
@@ -27,7 +26,6 @@ export {
 	useApproveAgent,
 	useDenyAgent,
 	useDisableAgent,
-	useEnableAgent,
 	useSetAgentServing,
 	useArchiveAgent,
 	useCreateAgent,

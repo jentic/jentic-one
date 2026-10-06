@@ -1,7 +1,7 @@
 /**
  * Permission-rule DISPLAY primitives — the typed shape of a broker permission
  * rule plus the shared humanising helpers every rules surface renders with
- * (the agent-detail binding permissions editor and rule tester).
+ * (the Agents page's binding permissions editor and rule tester).
  *
  * Broker rules are ordered, first-match-wins, default-deny, keyed on the
  * `(agent, credential)` binding. These helpers only DESCRIBE rules; parsing,

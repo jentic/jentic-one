@@ -5,10 +5,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	accountLabels,
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	distinctApiCount,
 	isOrphanBinding,
+	multiAccountApis,
 	partitionBindings,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
@@ -341,6 +344,77 @@ describe('tileStats / agentSetupGapCount', () => {
 		});
 	});
 
+	it('counts an API with two credentials once, and its operations once', () => {
+		const apis = [
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 1021 }),
+			makeApi({ vendor: 'slack.com', display_name: 'Slack', operation_count: 100 }),
+		];
+		const credentials = [
+			makeCredential({ credential_id: 'cred_a' }),
+			makeCredential({ credential_id: 'cred_b' }),
+		];
+		const github = [{ vendor: 'github.com', name: null, version: null }];
+		const bindings = [
+			makeBinding({ id: 'acb_a', credentialId: 'cred_a', serves: github }),
+			makeBinding({ id: 'acb_b', credentialId: 'cred_b', serves: github }),
+			makeBinding({ id: 'acb_s', credentialId: 'cred_a' }),
+		];
+		const tiles = composeApiTiles(bindings, credentials, apis);
+		expect(tiles).toHaveLength(3);
+		expect(distinctApiCount(tiles)).toBe(2);
+		expect(tileStats(tiles)).toEqual({
+			configured: 2,
+			needsSetup: 0,
+			operations: 1121,
+			operationsAtLeast: false,
+			blocked: 0,
+		});
+	});
+
+	it('counts an API configured when one of its credentials is, and its sign-ins per credential', () => {
+		const apis = [
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 1021 }),
+		];
+		const waiting = {
+			type: CredentialType.OAUTH2,
+			details: { grant_type: 'authorization_code', connected: false },
+		};
+		const credentials = [
+			makeCredential({ credential_id: 'cred_ok' }),
+			makeCredential({ credential_id: 'cred_w1', ...waiting }),
+			makeCredential({ credential_id: 'cred_w2', ...waiting }),
+		];
+		const github = [{ vendor: 'github.com', name: null, version: null }];
+		const bindings = ['cred_ok', 'cred_w1', 'cred_w2'].map((credentialId, i) =>
+			makeBinding({ id: `acb_${i}`, credentialId, serves: github }),
+		);
+		expect(tileStats(composeApiTiles(bindings, credentials, apis))).toEqual({
+			configured: 1,
+			needsSetup: 2,
+			operations: 1021,
+			operationsAtLeast: false,
+			blocked: 0,
+		});
+	});
+
+	it('counts an API whose one credential is paused as configured, without its operations', () => {
+		const apis = [
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 1021 }),
+		];
+		const github = [{ vendor: 'github.com', name: null, version: null }];
+		const bindings = [
+			makeBinding({ id: 'acb_a', serves: github, suspended: true }),
+			makeBinding({ id: 'acb_b', credentialId: 'cred_2', serves: github }),
+		];
+		expect(tileStats(composeApiTiles(bindings, [makeCredential()], apis))).toEqual({
+			configured: 1,
+			needsSetup: 0,
+			operations: 1021,
+			operationsAtLeast: false,
+			blocked: 0,
+		});
+	});
+
 	it('counts a multi-API credential as one setup gap', () => {
 		const credentials = [
 			makeCredential({
@@ -395,20 +469,19 @@ describe('agentApiCount', () => {
 		makeApi({ vendor: 'slack.com', name: 'admin', display_name: 'Slack Admin' }),
 	];
 
-	it('counts exactly what the grid renders, without the credential join', () => {
-		// The band's count and the grid must never disagree, so the count runs
-		// the same identity/dedup pass as the tiles — it just needs no
+	it('counts exactly the APIs the grid renders, without the credential join', () => {
+		// The band's count and the grid's heading must never disagree, so the
+		// count runs the same identity/dedup pass as the tiles — it just needs no
 		// credential to do it.
 		const bindings = [makeBinding()];
 		expect(agentApiCount(bindings, apis)).toBe(
-			composeApiTiles(bindings, [makeCredential()], apis).length,
+			distinctApiCount(composeApiTiles(bindings, [makeCredential()], apis)),
 		);
 	});
 
-	it('counts one API twice when two credentials serve it, and an unknown API once', () => {
-		// A tile is an API *through a credential* — two credentials serving the
-		// same API are two tiles with their own rules, so two is the count the
-		// grid shows. Within one binding a repeated serves entry still collapses.
+	it('counts an API once however many credentials serve it, and an unknown API once', () => {
+		// Two credentials serving the same API are two tiles with their own
+		// rules, but one API. Within one binding a repeated serves entry collapses.
 		const shared = [
 			makeBinding({ serves: [{ vendor: 'slack.com', name: 'admin', version: null }] }),
 			makeBinding({
@@ -417,10 +490,10 @@ describe('agentApiCount', () => {
 				serves: [{ vendor: 'slack.com', name: 'admin', version: null }],
 			}),
 		];
-		expect(agentApiCount(shared, apis)).toBe(2);
-		expect(agentApiCount(shared, apis)).toBe(
-			composeApiTiles(shared, [makeCredential()], apis).length,
-		);
+		const sharedTiles = composeApiTiles(shared, [makeCredential()], apis);
+		expect(sharedTiles).toHaveLength(2);
+		expect(agentApiCount(shared, apis)).toBe(1);
+		expect(distinctApiCount(sharedTiles)).toBe(1);
 
 		const duplicated = makeBinding({
 			serves: [
@@ -430,8 +503,15 @@ describe('agentApiCount', () => {
 		});
 		expect(agentApiCount([duplicated], apis)).toBe(1);
 
-		// Not in the registry — still one API this agent can reach.
+		// Not in the registry — still one API this agent can reach, and two
+		// credentials for it still count once.
 		expect(agentApiCount([makeBinding()], [])).toBe(1);
+		expect(
+			agentApiCount(
+				[makeBinding(), makeBinding({ id: 'acb_2', credentialId: 'cred_2' })],
+				[],
+			),
+		).toBe(1);
 	});
 
 	it('is zero for an agent with no bindings', () => {
@@ -516,5 +596,43 @@ describe('orphan bindings (credential deleted, #1426)', () => {
 		);
 		expect(live).toEqual([a, b]);
 		expect(orphans).toEqual([]);
+	});
+});
+
+describe('multiAccountApis / accountLabels', () => {
+	const apis = [makeApi({ vendor: 'slack.com', display_name: 'Slack' })];
+
+	it('flags an API served by two bindings, and labels each tile by its account', () => {
+		const tiles = composeApiTiles(
+			[
+				makeBinding(),
+				makeBinding({ id: 'acb_2', credentialId: 'cred_2', name: 'Slack — ops' }),
+			],
+			[makeCredential(), makeCredential({ credential_id: 'cred_2', name: 'Slack — ops' })],
+			apis,
+		);
+		expect([...multiAccountApis(tiles).values()]).toEqual([{ title: 'Slack', count: 2 }]);
+		expect([...accountLabels(tiles).values()].sort()).toEqual([
+			'Slack — ops',
+			'Test credential',
+		]);
+	});
+
+	it('adds the four-character id tail (as the broker lists it) when two accounts share a name', () => {
+		const tiles = composeApiTiles(
+			[makeBinding(), makeBinding({ id: 'acb_2', credentialId: 'cred_abcdef123456' })],
+			[makeCredential(), makeCredential({ credential_id: 'cred_abcdef123456' })],
+			apis,
+		);
+		expect([...accountLabels(tiles).values()].sort()).toEqual([
+			'Test credential · …3456',
+			'Test credential · …ed_1',
+		]);
+	});
+
+	it('a single-account API is not flagged', () => {
+		const tiles = composeApiTiles([makeBinding()], [makeCredential()], apis);
+		expect(multiAccountApis(tiles).size).toBe(0);
+		expect(accountLabels(tiles).size).toBe(0);
 	});
 });

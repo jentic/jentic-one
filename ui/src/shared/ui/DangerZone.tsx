@@ -3,8 +3,8 @@ import { Button } from '@/shared/ui/Button';
 import { DetailSection } from '@/shared/ui/DetailSection';
 
 /**
- * DangerZone — the Settings tab's destructive-actions card, shared by the
- * detail consoles (agent, …) so irreversible actions
+ * DangerZone — the destructive-actions card shared by entity settings
+ * surfaces (an agent's Settings sheet, …) so irreversible actions
  * read identically everywhere: the danger-tinted `DetailSection` shell with
  * one row per action.
  *

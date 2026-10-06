@@ -53,6 +53,7 @@ function makeItem(vendor: string, outcome: PreflightOutcome, over: Partial<Prefl
 		api,
 		outcome,
 		covering: outcome === 'choose' ? [makeCredential()] : [],
+		existing: [],
 		importsApi: false,
 		...over,
 	} satisfies PreflightItem;

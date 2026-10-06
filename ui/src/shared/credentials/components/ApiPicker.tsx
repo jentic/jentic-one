@@ -17,6 +17,7 @@ import { cn } from '@/shared/lib/utils';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
 	apiRowToSelected,
+	catalogToSelected,
 	useApis,
 	useCatalog,
 	useVendors,
@@ -62,6 +63,9 @@ export interface ApiPickerProps {
 	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
 	 * a function labels each row by its `apiRefKey`. */
 	disabledLabel?: string | ((key: string) => string | undefined);
+	/** A quiet note on a row that stays pickable (e.g. "Added via GitHub — personal"),
+	 * by `apiRefKey`. */
+	rowHint?: (key: string) => string | undefined;
 	/** The search box, for a host that must move focus there itself (e.g. a sheet
 	 * re-opened without remounting the picker). */
 	searchInputRef?: RefObject<HTMLInputElement | null>;
@@ -81,33 +85,6 @@ const ROW_VARIANTS: Variants = {
 	show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
 };
 
-function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
-	// The identity a catalog import registers: vendor is the entry's `vendor`, and
-	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
-	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
-	// from this pick must carry that same identity — the broker only finds a
-	// credential whose name matches the registered API's — so this mirrors the
-	// import rather than splitting the slug itself.
-	//
-	// The label reads from `api_id` through the shared helper the workspace rows
-	// use, so one API never titles two ways in this picker. Version isn't on the
-	// catalog entry; a credential leaves it unpinned anyway.
-	const slug = entry.api_id;
-	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
-	const name = slug;
-	const version = '1.0.0';
-	return {
-		source: 'catalog',
-		vendor,
-		name,
-		version,
-		apiId: slug,
-		specUrl: entry.spec_url ?? undefined,
-		registered: entry.registered,
-		label: apiRefDisplayName({ catalogApiId: slug, vendor, name }),
-	};
-}
-
 export function ApiPicker({
 	onSelect,
 	onVendorSelect,
@@ -115,6 +92,7 @@ export function ApiPicker({
 	selectedKeys,
 	disabledKeys,
 	disabledLabel,
+	rowHint,
 	emptyAction,
 	searchInputRef,
 }: ApiPickerProps) {
@@ -209,7 +187,7 @@ export function ApiPicker({
 
 	// Presence, not emptiness, switches the rows into checkbox mode.
 	const selection: RowSelection | undefined = selectedKeys
-		? { selectedKeys, disabledKeys, disabledLabel }
+		? { selectedKeys, disabledKeys, disabledLabel, rowHint }
 		: undefined;
 
 	return (
@@ -372,6 +350,7 @@ interface RowSelection {
 	selectedKeys: ReadonlySet<string>;
 	disabledKeys?: ReadonlySet<string>;
 	disabledLabel?: ApiPickerProps['disabledLabel'];
+	rowHint?: ApiPickerProps['rowHint'];
 }
 
 /**
@@ -406,6 +385,7 @@ function PickerRow({
 		typeof selection?.disabledLabel === 'function'
 			? selection.disabledLabel(key)
 			: selection?.disabledLabel;
+	const hint = blocked ? undefined : selection?.rowHint?.(key);
 	return (
 		<button
 			type="button"
@@ -428,6 +408,14 @@ function PickerRow({
 					{api.label}
 				</span>
 				<p className="text-foreground-sub mt-0.5 truncate font-mono text-xs">{meta}</p>
+				{hint && (
+					<p
+						data-testid="picker-row-hint"
+						className="text-muted-foreground mt-0.5 truncate text-xs"
+					>
+						{hint}
+					</p>
+				)}
 			</div>
 			{blocked && blockedLabel ? (
 				<Badge variant="neutral" className="shrink-0">

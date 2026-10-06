@@ -40,8 +40,10 @@ const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
   adapts the wire `EventResponse` into the rail's UI-shaped `StreamEvent` and
   exposes the same provider/hook surface the rail components already consume.
 
-  The SSE subscription is ORG-WIDE (toasts and the query-cache bridge below
-  must see every event). The Activity rail can narrow to one actor: `setScope`
+  The SSE subscription is unfiltered by actor (toasts and the query-cache
+  bridge below must see every event the caller can see; the server limits it
+  to the caller's own events and their agents', or the whole org for
+  `org:admin`). The Activity rail can narrow to one actor: `setScope`
   fetches that actor's backlog via `GET /events?actor_id=&actor_type=` and the
   rail filters the shared list client-side with `matchesActivityScope` — so one
   connection serves every consumer. Event types the backend can emit today:
@@ -697,7 +699,7 @@ export function AgentStreamProvider({
 		};
 	}, [upsert]);
 
-	// 1b. Scoped backlog. The shared list only holds the newest org-wide page,
+	// 1b. Scoped backlog. The shared list only holds the newest unfiltered page,
 	// which may contain nothing from a quiet agent — seed that actor's history.
 	useEffect(() => {
 		setScopedCursor(null);
@@ -716,7 +718,7 @@ export function AgentStreamProvider({
 				setScopedCursor(page.next_cursor ?? null);
 				setScopedHasMore(page.has_more);
 			} catch {
-				// Non-fatal: the lens still filters whatever the org feed holds.
+				// Non-fatal: the lens still filters whatever the shared feed holds.
 			}
 		})();
 		return () => {
@@ -1184,8 +1186,10 @@ const NAV = {
 		ev.tokens.job_id
 			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
+	// Agent events open the agent as selected on the Agents page — the shape of
+	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
-		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
 	// Catalog/overlay events deep-link to the affected API's hub in the
 	// Library: `/library/workspace/:vendor/:name/:version`, each segment
 	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
@@ -1213,7 +1217,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	if (ev.requiresAction && !ev.acknowledged) {
 		if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
 			// A self-registered agent awaits approval — route the operator to the
-			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
+			// agent on the Agents page (where approve/deny lives) instead of a bare
+			// Acknowledge.
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else if (ev.type === 'oauth_client.registered') {
@@ -1252,8 +1257,8 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
 		}
 	} else if (ev.kind === 'oauth' && ev.tokens.agent_id) {
-		// Grant lifecycle rows deep-link to the bound agent, whose "Connected
-		// clients" panel lists (and can revoke) the grant (§4.8).
+		// Grant lifecycle rows deep-link to the bound agent, whose Permissions
+		// sheet's "Connected clients" card lists (and can revoke) the grant.
 		actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
@@ -1323,8 +1328,8 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'catalog':
 			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
 		case 'oauth':
-			// Grant rows go to the bound agent's console (its Connected-clients
-			// panel); client registration/approval rows go to the Settings queue.
+			// Grant rows go to the bound agent (its Permissions sheet's Connected
+			// clients); client registration/approval rows go to the Settings queue.
 			return ev.tokens.grant_id && ev.tokens.agent_id ? NAV.agent(ev) : NAV.oauthQueue();
 		default:
 			return NAV.trace(ev);

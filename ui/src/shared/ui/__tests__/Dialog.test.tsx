@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { vi } from 'vitest';
+import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
 
@@ -62,5 +63,50 @@ describe('Dialog', () => {
 		const { container } = renderWithProviders(<DialogHarness />);
 		// The open dialog IS the component under test, so the audit says so.
 		await checkA11y(container, { modal: true });
+	});
+
+	it('syncs the owner when the browser closes the modal itself', async () => {
+		const onClose = vi.fn();
+		function Owner() {
+			const [open, setOpen] = useState(true);
+			return (
+				<Dialog
+					open={open}
+					onClose={() => {
+						onClose();
+						setOpen(false);
+					}}
+					title="My Dialog"
+				>
+					<p className="text-foreground">Dialog body</p>
+				</Dialog>
+			);
+		}
+		renderWithProviders(<Owner />);
+		const dialog = screen.getByRole('dialog', { name: 'My Dialog' }) as HTMLDialogElement;
+		// A close the owner did not ask for (e.g. an Esc the close watcher
+		// handles without a `cancel` event).
+		dialog.close();
+		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		expect(dialog).not.toHaveAttribute('open');
+	});
+
+	it('does not call onClose when the owner closes it', async () => {
+		const onClose = vi.fn();
+		const { rerender } = renderWithProviders(
+			<Dialog open onClose={onClose} title="My Dialog">
+				<p className="text-foreground">Dialog body</p>
+			</Dialog>,
+		);
+		const dialog = screen.getByRole('dialog', { name: 'My Dialog' });
+		rerender(
+			<Dialog open={false} onClose={onClose} title="My Dialog">
+				<p className="text-foreground">Dialog body</p>
+			</Dialog>,
+		);
+		await waitFor(() => expect(dialog).not.toHaveAttribute('open'));
+		// `close` is dispatched asynchronously; give it a turn to land.
+		await new Promise((r) => setTimeout(r, 0));
+		expect(onClose).not.toHaveBeenCalled();
 	});
 });

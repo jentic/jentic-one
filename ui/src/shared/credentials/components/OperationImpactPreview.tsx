@@ -5,7 +5,7 @@
  * template-aware matcher (parity-tested against the Python side).
  *
  * Shared between the credentials connect-flow rules page and the
- * agent-detail bindings editor so users author + review rules against
+ * Agents page's bindings editor so users author + review rules against
  * the same visualisation everywhere.
  *
  * States:
@@ -66,7 +66,7 @@ export function OperationImpactPreview({
 	rules: readonly PermissionRule[];
 	/**
 	 * Section label above the preview. Overridable for callers where
-	 * the default copy doesn't fit (agent-detail per-binding editor
+	 * the default copy doesn't fit (the Agents page's per-binding editor
 	 * uses "Effective access for this binding" instead of the
 	 * connect-flow's copy).
 	 */

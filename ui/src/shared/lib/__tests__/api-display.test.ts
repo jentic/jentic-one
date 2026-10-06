@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	apiIdentityTuple,
 	apiRefDisplayName,
 	formatOperation,
 	humanizeDomainSlug,
@@ -395,6 +396,47 @@ describe('formatOperation', () => {
 
 	it('returns null when the row has no operation identity at all', () => {
 		expect(formatOperation({})).toBeNull();
+	});
+});
+
+describe('apiIdentityTuple', () => {
+	it('returns the persisted catalog slug verbatim when present', () => {
+		// The slug IS the machine identity the user picked — the subtitle shows
+		// it untouched instead of reconstructing a tuple.
+		expect(
+			apiIdentityTuple({
+				catalogApiId: 'nytimes.com/article_search',
+				vendor: 'nytimes-com',
+				name: 'nytimes-com-article-search',
+			}),
+		).toBe('nytimes.com/article_search');
+	});
+
+	it('joins vendor and name with a slash', () => {
+		expect(apiIdentityTuple({ vendor: 'posthog-com', name: 'posthog-api' })).toBe(
+			'posthog-com/posthog-api',
+		);
+	});
+
+	it('does not double the vendor when name is itself a vendor/name tuple', () => {
+		// Real binding rows carry `api_name='posthog-com/posthog-com-posthog-api'`
+		// — the same vendor/name tuple shape the display-name helpers peel. The
+		// subtitle must peel it too, or the vendor renders twice.
+		expect(
+			apiIdentityTuple({
+				vendor: 'posthog-com',
+				name: 'posthog-com/posthog-com-posthog-api',
+			}),
+		).toBe('posthog-com/posthog-com-posthog-api');
+		expect(apiIdentityTuple({ vendor: 'Posthog-Com', name: 'posthog-com/api' })).toBe(
+			'Posthog-Com/api',
+		);
+	});
+
+	it('falls back to the single present field, empty when both are absent', () => {
+		expect(apiIdentityTuple({ vendor: 'posthog-com', name: null })).toBe('posthog-com');
+		expect(apiIdentityTuple({ vendor: '', name: 'posthog-api' })).toBe('posthog-api');
+		expect(apiIdentityTuple({ vendor: null, name: null })).toBe('');
 	});
 });
 

@@ -115,14 +115,6 @@ export async function listAgents(params: {
 	}
 }
 
-export async function getAgent(agentId: string): Promise<AgentEntity> {
-	try {
-		return agentToEntity(await AgentsService.getAgent({ agentId }));
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load the agent.');
-	}
-}
-
 export async function approveAgent(agentId: string): Promise<AgentEntity> {
 	try {
 		return agentToEntity(await AgentsService.approveAgent({ agentId }));
@@ -353,7 +345,7 @@ export async function createAgent(params: {
 				description: params.description ?? null,
 				// Optional initial grants — POST /agents accepts scopes[] so a
 				// manually created agent can start with the permissions it needs
-				// instead of a follow-up PUT from the detail page.
+				// instead of a follow-up PUT from the Permissions sheet.
 				scopes: params.scopes?.length ? params.scopes : null,
 			},
 		});
@@ -512,8 +504,8 @@ export interface ActorUsageDetail {
 }
 
 /**
- * One actor's usage over the trailing `sinceDays` window — the detail page's
- * KPI strip and Activity chart. `agent_id` is the endpoint's (misnamed) actor
+ * One actor's usage over the trailing `sinceDays` window — the Agents page's
+ * stat strip and the Activity sheet's chart. `agent_id` is the endpoint's (misnamed) actor
  * filter: the backend maps it onto `actor_id`. `null` on 403 means the
  * viewer isn't an admin and the caller renders no stats — never an error.
  */
@@ -618,7 +610,7 @@ export interface ActorExecutionEntity {
 
 /**
  * The most recent executions attributed to one actor
- * (`GET /executions?actor_id=…`). One page only — the detail page shows a
+ * (`GET /executions?actor_id=…`). One page only — the Activity sheet shows a
  * recent-activity feed and deep-links to Monitor (which owns cursor paging,
  * filters, and trace sheets) for the full history. `null` on 403.
  */

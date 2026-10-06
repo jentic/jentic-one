@@ -15,27 +15,41 @@ import { credentialsBindableBy, type BindViewer } from '@/shared/credentials/lib
  * What a pick will cost, worst-to-best as work for the operator. The tray only
  * DESCRIBES the outcome; every decision is made in the setup queue.
  *
- * - `attached` — this agent already reaches the API; the tray blocks the pick.
  * - `choose` — one or more credentials the viewer may bind cover it. The queue asks which to use
  *   (or to add a new one) — never bound silently, even when only one covers it:
  *   reuse matches API identity, not account, so a wrong-tenant match must be
  *   the operator's call.
  * - `oauth` — none covers it, and a new one is one sign-in click.
  * - `form` — none covers it, so a new credential is typed in.
+ *
+ * An API the agent already reaches is not a dead end: an agent may hold several
+ * credentials for one API (one per account), so the pick adds another account
+ * and {@link PreflightItem.existing} says which ones it has.
  */
-export type PreflightOutcome = 'attached' | 'oauth' | 'choose' | 'form';
+export type PreflightOutcome = 'oauth' | 'choose' | 'form';
+
+/** A binding through which the agent already reaches a pick. */
+export interface ExistingAccount {
+	bindingId: string;
+	credentialId: string;
+	/** The credential's label, falling back to its id. */
+	name: string;
+}
 
 export interface PreflightItem {
 	/** `vendor/name` identity — the picker's selection key for this API. */
 	key: string;
 	api: SelectedApi;
 	outcome: PreflightOutcome;
-	/** Every bindable credential that covers this pick, in list order — the options the
-	 * queue offers alongside a new credential. Empty for `oauth` / `form`. */
+	/** Every bindable credential that covers this pick and is not bound to the agent
+	 * yet, in list order — the options the queue offers alongside a new credential.
+	 * An already-bound credential is left out: binding it again is a 409. Empty for
+	 * `oauth` / `form`. */
 	covering: Credential[];
-	/** `attached` only: the credential the agent already reaches this API
-	 *  through, so the row can say which binding is in the way. */
-	attachedVia?: string;
+	/** The bindings through which the agent already reaches this API, when the pick
+	 * adds another account. Empty for an API the agent does not reach yet. The item
+	 * is done only once a binding NOT in this list serves the API. */
+	existing: ExistingAccount[];
 	/** True when accepting this pick imports the API into the workspace. */
 	importsApi: boolean;
 }
@@ -55,32 +69,42 @@ export interface PreflightInputs {
 	managedOAuthAvailable: boolean;
 }
 
-/** Does a binding's served reference already cover this pick? Delegates to
- * {@link apiScopeCovers} — two comparators is how a pick reads `Already added`
- * while the grid draws no tile for it. */
-function servedCoversPick(served: ServedApiEntity, api: SelectedApi): boolean {
-	return apiScopeCovers(served, api);
+/** Does a binding serve this pick? Delegates to {@link apiScopeCovers}, so a
+ * vendor-wide binding covers every API of its vendor. */
+function bindingServesApi(binding: CredentialBindingEntity, api: SelectedApi): boolean {
+	return binding.serves.some((served: ServedApiEntity) => apiScopeCovers(served, api));
 }
 
-/** The binding through which the agent already reaches this API, if any. */
-function bindingServingApi(
+/** The bindings through which the agent already reaches this API, in list order. */
+function accountsServingApi(
 	bindings: CredentialBindingEntity[],
 	api: SelectedApi,
-): CredentialBindingEntity | undefined {
-	return bindings.find((b) => b.serves.some((s) => servedCoversPick(s, api)));
+): ExistingAccount[] {
+	return bindings
+		.filter((b) => bindingServesApi(b, api))
+		.map((b) => ({
+			bindingId: b.id,
+			credentialId: b.credentialId,
+			name: b.name || b.credentialId,
+		}));
 }
 
 /**
- * The part of an owed setup batch that is still owed: items the agent now reaches
- * through a live binding (added by the queue, or elsewhere meanwhile) are done, so
- * they neither count toward "Finish adding N" nor reopen in the queue. Returns the
- * input array itself when nothing changed, so a caller can compare by reference.
+ * The part of an owed setup batch that is still owed. An item is done once a
+ * binding it did not start with serves its API (added by the queue, or elsewhere
+ * meanwhile) — judged per binding, not per API, so a queued second account is not
+ * settled by the first. Done items neither count toward "Finish adding N" nor
+ * reopen in the queue. Returns the input array itself when nothing changed, so a
+ * caller can compare by reference.
  */
 export function stillOwedItems(
 	items: PreflightItem[],
 	bindings: CredentialBindingEntity[],
 ): PreflightItem[] {
-	const owed = items.filter((item) => !bindingServingApi(bindings, item.api));
+	const owed = items.filter((item) => {
+		const known = new Set(item.existing.map((a) => a.bindingId));
+		return !bindings.some((b) => !known.has(b.id) && bindingServesApi(b, item.api));
+	});
 	return owed.length === items.length ? items : owed;
 }
 
@@ -113,32 +137,22 @@ function newCredentialIsOneClick(api: SelectedApi, managedOAuthAvailable: boolea
 export function preflightApi(api: SelectedApi, inputs: PreflightInputs): PreflightItem {
 	const key = apiRefKey(api);
 	const importsApi = api.source === 'catalog' && !api.registered;
-
-	const binding = bindingServingApi(inputs.bindings, api);
-	if (binding) {
-		return {
-			key,
-			api,
-			outcome: 'attached',
-			covering: [],
-			attachedVia: binding.name ?? binding.credentialId,
-			importsApi: false,
-		};
-	}
+	const existing = accountsServingApi(inputs.bindings, api);
 
 	// Only credentials this viewer may bind: offering another user's credential
-	// would end in a 404 on bind and a "Try again" that can never succeed.
-	const covering = credentialsBindableBy(inputs.credentials, inputs.viewer).filter((c) =>
-		credentialCoversApi(c, api),
+	// would end in a 404 on bind and a "Try again" that can never succeed. One
+	// already bound to this agent would end in a 409, whatever API it serves.
+	const bound = new Set(inputs.bindings.map((b) => b.credentialId));
+	const covering = credentialsBindableBy(inputs.credentials, inputs.viewer).filter(
+		(c) => !bound.has(c.credential_id) && credentialCoversApi(c, api),
 	);
-	if (covering.length > 0) return { key, api, outcome: 'choose', covering, importsApi };
-	return {
-		key,
-		api,
-		outcome: newCredentialIsOneClick(api, inputs.managedOAuthAvailable) ? 'oauth' : 'form',
-		covering,
-		importsApi,
-	};
+	const outcome: PreflightOutcome =
+		covering.length > 0
+			? 'choose'
+			: newCredentialIsOneClick(api, inputs.managedOAuthAvailable)
+				? 'oauth'
+				: 'form';
+	return { key, api, outcome, covering, existing, importsApi };
 }
 
 /** The queue pane's starting selection: the lone covering credential is
@@ -158,31 +172,29 @@ export function preflightApis(apis: SelectedApi[], inputs: PreflightInputs): Pre
 }
 
 export interface PreflightTally {
-	attached: number;
 	oauth: number;
 	choose: number;
 	form: number;
+	/** Picks the agent already reaches — each adds another credential. */
+	another: number;
 	/** Catalog picks that will be imported into the workspace. */
 	imports: number;
-	/** Picks that can actually be acted on — `attached` excluded. Each one stops
-	 *  in the setup queue. */
-	actionable: number;
+	/** Every pick; each one stops in the setup queue. */
 	total: number;
 }
 
 export function preflightTally(items: PreflightItem[]): PreflightTally {
 	const tally: PreflightTally = {
-		attached: 0,
 		oauth: 0,
 		choose: 0,
 		form: 0,
+		another: 0,
 		imports: 0,
-		actionable: 0,
 		total: items.length,
 	};
 	for (const item of items) {
 		tally[item.outcome] += 1;
-		if (item.outcome !== 'attached') tally.actionable += 1;
+		if (item.existing.length > 0) tally.another += 1;
 		if (item.importsApi) tally.imports += 1;
 	}
 	return tally;
@@ -191,7 +203,6 @@ export function preflightTally(items: PreflightItem[]): PreflightTally {
 /** One-line summary of what the next step will ask for, shown on the pick's row
  * in the tray. Informational only — nothing is chosen in the tray. */
 export const PREFLIGHT_LABELS: Record<PreflightOutcome, string> = {
-	attached: 'Already added',
 	oauth: 'One sign-in click',
 	choose: 'Choose a credential in the next step',
 	form: 'Needs a new credential',
@@ -204,14 +215,16 @@ export function coveringCountLabel(count: number): string {
 		: `${count} of your credentials cover this API — use one or add a new one`;
 }
 
+/** Which accounts the agent already reaches an API through, e.g. `Added via
+ * GitHub — personal`. Empty for a pick the agent does not reach yet. */
+export function addedViaLabel(existing: ExistingAccount[]): string {
+	if (existing.length === 0) return '';
+	return `Added via ${existing.map((a) => a.name).join(', ')}`;
+}
+
 /** The tally lines, in the order the rows' outcomes are worked. Only non-zero
  * lines are rendered. */
-export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = [
-	'choose',
-	'oauth',
-	'form',
-	'attached',
-];
+export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = ['choose', 'oauth', 'form'];
 
 /** Plural-aware tally copy — what the next step will ask for, before committing. */
 export function preflightTallyLabel(outcome: PreflightOutcome, count: number): string {
@@ -224,7 +237,23 @@ export function preflightTallyLabel(outcome: PreflightOutcome, count: number): s
 			return `${subject} ${one ? 'needs' : 'need'} one sign-in click`;
 		case 'form':
 			return `${subject} ${one ? 'needs' : 'need'} a new credential`;
-		case 'attached':
-			return `${subject} ${one ? 'is' : 'are'} already added`;
 	}
+}
+
+/**
+ * The tally line for picks the agent already reaches. A second credential that
+ * ties on scope makes the broker refuse every call that does not name one (409
+ * `ambiguous_credential_binding`), so the tally says so before anything is
+ * committed.
+ */
+export function anotherAccountTallyLabel(count: number): string {
+	return count === 1
+		? '1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly'
+		: `${count} APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly`;
+}
+
+/** The setup-queue warning for a pick that adds another credential to an API
+ * the agent already reaches — see {@link anotherAccountTallyLabel}. */
+export function anotherCredentialWarning(apiLabel: string): string {
+	return `Once added, calls to ${apiLabel} must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.`;
 }

@@ -629,6 +629,25 @@ export const credentialsHandlers = [
 
 	http.post('/credentials', async ({ request }) => {
 		const body = (await request.json()) as CredentialCreateRequest;
+		// Mirror the backend's identity guard (`_canonical_api_scope`, #746): a `/`
+		// in api.name/version reads as a spec path and is rejected, not slugged.
+		for (const [axis, value] of [
+			['name', body.api?.name],
+			['version', body.api?.version],
+		] as const) {
+			if (value && value.includes('/')) {
+				return HttpResponse.json(
+					{
+						type: 'invalid_credential_input',
+						status: 400,
+						title: 'Bad Request',
+						detail: `api.${axis} '${value}' is not an identity — it looks like a spec path`,
+						instance: '/credentials',
+					},
+					{ status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+				);
+			}
+		}
 		seq += 1;
 		const id = `cred_${seq}`;
 		const now = new Date().toISOString();

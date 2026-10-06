@@ -22,7 +22,7 @@ import type { PermissionRuleSchema } from '@/shared/api';
  * rule tester's verdict references.
  *
  * Lives in `shared/ui` (not a feature module) so every surface that authors
- * binding rules can reuse it — e.g. the agent console's rule editor.
+ * binding rules can reuse it — e.g. the Agents page's binding rule editor.
  *
  * The editor's own verbs (`Add rule`, plus `Allow all operations` while no
  * catch-all grant exists) share ONE row with the host's commit verbs via

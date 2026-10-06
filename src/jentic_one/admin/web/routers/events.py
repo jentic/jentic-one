@@ -104,6 +104,7 @@ async def list_events(
             actor_id=actor_id,
             actor_type=actor_type,
         ),
+        identity=identity,
         cursor=cursor,
         limit=limit,
     )
@@ -141,6 +142,7 @@ async def stream_events(
         log = structlog.get_logger(__name__)
         try:
             async for item in stream_svc.stream(
+                identity=identity,
                 since=since,
                 last_event_id=last_event_id,
                 event_type=event_type,
@@ -179,7 +181,7 @@ async def get_event(
     event_svc: EventService = Depends(get_event_service),
 ) -> EventResponse:
     """Get an event by ID."""
-    view = await event_svc.get_by_id(event_id)
+    view = await event_svc.get_by_id(event_id, identity=identity)
     return _event_response(view, request)
 
 

@@ -10,7 +10,7 @@ import { avatarToneIndex, avatarToneStyle } from '@/shared/ui/avatarPalette';
  * one identity grammar. The glyph is the actor's initials, falling back to a
  * bot icon when there's no name.
  *
- * A shared primitive so the agents table, detail page, and any future
+ * A shared primitive so the agents surfaces and any future
  * agents/monitor surface can reuse one identity treatment.
  */
 

@@ -85,8 +85,8 @@ export function AgentDock({
 					icon={<ActivityIcon className="h-4 w-4" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
-				{/* MCP before Settings, mirroring the console's tab order, with the
-				    protocol's own mark rather than a generic integration glyph. */}
+				{/* MCP before Settings, with the protocol's own mark rather than a
+				    generic integration glyph. */}
 				<DockIconButton
 					label="MCP"
 					icon={<McpIcon className="h-4 w-4" />}

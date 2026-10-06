@@ -13,6 +13,8 @@ from jentic_one.admin.services.schemas.events import EventAcknowledgePayload, Ev
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 
+_ADMIN = Identity(sub="usr_event_admin", permissions=["org:admin"])
+
 pytestmark = pytest.mark.integration
 
 
@@ -37,7 +39,7 @@ async def test_list_returns_page(integration_context: Context, clean_events: Non
         await session.commit()
 
     service = EventService(ctx)
-    page = await service.list_all(EventFilter(), limit=50)
+    page = await service.list_all(EventFilter(), identity=_ADMIN, limit=50)
     assert len(page.data) == 3
     assert page.has_more is False
 
@@ -56,12 +58,14 @@ async def test_list_pagination(integration_context: Context, clean_events: None)
             await session.commit()
 
     service = EventService(ctx)
-    page1 = await service.list_all(EventFilter(), limit=2)
+    page1 = await service.list_all(EventFilter(), identity=_ADMIN, limit=2)
     assert len(page1.data) == 2
     assert page1.has_more is True
     assert page1.next_cursor is not None
 
-    page2 = await service.list_all(EventFilter(), cursor=page1.next_cursor, limit=2)
+    page2 = await service.list_all(
+        EventFilter(), identity=_ADMIN, cursor=page1.next_cursor, limit=2
+    )
     assert len(page2.data) == 2
     assert page2.has_more is True
 
@@ -78,7 +82,9 @@ async def test_list_with_type_filter(integration_context: Context, clean_events:
         await session.commit()
 
     service = EventService(ctx)
-    page = await service.list_all(EventFilter(event_type=["toolkit.error"]), limit=50)
+    page = await service.list_all(
+        EventFilter(event_type=["toolkit.error"]), identity=_ADMIN, limit=50
+    )
     assert len(page.data) == 1
     assert page.data[0].type == "toolkit.error"
 
@@ -98,7 +104,7 @@ async def test_get_by_id(integration_context: Context, clean_events: None) -> No
     event_id = event.id
 
     service = EventService(ctx)
-    view = await service.get_by_id(event_id)
+    view = await service.get_by_id(event_id, identity=_ADMIN)
     assert view.id == event_id
     assert view.type == "toolkit.error"
     assert view.trace_id == "trace_abc"
@@ -107,7 +113,7 @@ async def test_get_by_id(integration_context: Context, clean_events: None) -> No
 async def test_get_by_id_not_found(integration_context: Context, clean_events: None) -> None:
     service = EventService(integration_context)
     with pytest.raises(EventNotFoundError):
-        await service.get_by_id("evt_nonexistent000000000000")
+        await service.get_by_id("evt_nonexistent000000000000", identity=_ADMIN)
 
 
 async def test_acknowledge(integration_context: Context, clean_events: None) -> None:
@@ -128,7 +134,7 @@ async def test_acknowledge(integration_context: Context, clean_events: None) -> 
     result = await service.acknowledge(
         event_id,
         payload=EventAcknowledgePayload(acknowledged=True, note="handled"),
-        identity=Identity(sub="usr_admin", email="test@local"),
+        identity=Identity(sub="usr_admin", email="test@local", permissions=["org:admin"]),
     )
     assert result.acknowledged is True
     assert result.acknowledged_by == "usr_admin"
@@ -153,7 +159,7 @@ async def test_acknowledge_idempotent(integration_context: Context, clean_events
     result = await service.acknowledge(
         event_id,
         payload=EventAcknowledgePayload(acknowledged=True),
-        identity=Identity(sub="usr_second", email="test@local"),
+        identity=Identity(sub="usr_second", email="test@local", permissions=["org:admin"]),
     )
     assert result.acknowledged is True
     assert result.acknowledged_by == "usr_first"

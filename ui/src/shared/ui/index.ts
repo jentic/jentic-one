@@ -22,9 +22,6 @@ export type {
 	RecentExecutionsCardProps,
 } from '@/shared/ui/RecentExecutionsCard';
 
-export { KillSwitch } from '@/shared/ui/KillSwitch';
-export type { KillSwitchProps } from '@/shared/ui/KillSwitch';
-
 export { DangerZone } from '@/shared/ui/DangerZone';
 export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 
@@ -61,7 +58,7 @@ export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
 export type { StatAccent } from '@/shared/ui/StatCard';
 export { TabNav } from '@/shared/ui/TabNav';
-export type { TabNavOption } from '@/shared/ui/TabNav';
+export type { TabNavChangeSource, TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 
@@ -191,6 +188,10 @@ export * from '@/shared/ui/AlphaRail';
 export { ResizeHandle } from '@/shared/ui/ResizeHandle';
 export type { ResizeHandleProps } from '@/shared/ui/ResizeHandle';
 export type { VendorIconProps } from '@/shared/ui/VendorIcon';
+export { VendorMark } from '@/shared/ui/VendorMark';
+export type { VendorMarkProps, VendorMarkSize } from '@/shared/ui/VendorMark';
+export { VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
+export type { VendorMarkSlug, VendorMarkData } from '@/shared/ui/vendorMarks';
 
 export {
 	ActorStatusBadge,

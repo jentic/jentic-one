@@ -14,10 +14,15 @@ import { cn } from '@/shared/lib/utils';
  *
  * Implements the WAI-ARIA tabs pattern with automatic activation: roving
  * tabIndex plus Left/Right/Home/End moving focus AND selection. The underline
- * is an absolutely-positioned bar whose left/width are measured from the
- * active button (same scroll-safe technique as `SegmentedToggle`; see
- * framer/motion#1535 for why `layoutId` is avoided).
+ * is an absolutely-positioned bar measured from the active button (same
+ * scroll-safe technique as `SegmentedToggle`; see framer/motion#1535 for why
+ * `layoutId` is avoided). It glides on transforms alone — a 1px bar moved with
+ * `x` and stretched with `scaleX` from its left edge — on the app's
+ * ease-out-soft curve with no overshoot, so it never forces a layout mid-glide.
  */
+
+/** The underline's glide: `--ease-out-soft`, the curve the app's motion shares. */
+const INDICATOR_TRANSITION = { duration: 0.24, ease: [0.22, 1, 0.36, 1] } as const;
 
 export interface TabNavOption<T extends string = string> {
 	value: T;
@@ -28,16 +33,24 @@ export interface TabNavOption<T extends string = string> {
 	count?: number;
 }
 
+/** How a tab was chosen: `click` is a click (or Enter/Space on the tab), which
+ * a host may follow by moving focus into the panel; `arrow` is Left/Right/
+ * Home/End, where focus stays on the tab list so the next arrow keeps moving. */
+export type TabNavChangeSource = 'click' | 'arrow';
+
 interface TabNavProps<T extends string = string> {
 	options: TabNavOption<T>[];
 	value: T;
-	onChange: (value: T) => void;
+	onChange: (value: T, source: TabNavChangeSource) => void;
 	/** Accessible name for the tablist. */
 	ariaLabel: string;
 	/** Map an option value → the `id` to give its tab button. */
 	getTabId?: (value: T) => string | undefined;
 	/** Map an option value → the `id` of the tabpanel it controls. */
 	getControls?: (value: T) => string | undefined;
+	/** The tabs share the bar's width equally, each label centred in its share
+	 * (a panel's two routes in, say). Off, each tab is as wide as its label. */
+	fill?: boolean;
 	className?: string;
 }
 
@@ -53,6 +66,7 @@ export function TabNav<T extends string = string>({
 	ariaLabel,
 	getTabId,
 	getControls,
+	fill = false,
 	className,
 }: TabNavProps<T>) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -83,7 +97,7 @@ export function TabNav<T extends string = string>({
 		if (nextIdx == null) return;
 		e.preventDefault();
 		const next = options[nextIdx].value;
-		onChange(next);
+		onChange(next, 'arrow');
 		btnRefs.current.get(next)?.focus();
 	}
 
@@ -93,17 +107,20 @@ export function TabNav<T extends string = string>({
 			role="tablist"
 			aria-label={ariaLabel}
 			className={cn(
-				'border-border relative flex max-w-full items-end gap-1 overflow-x-auto overflow-y-hidden border-b',
+				'border-border relative flex max-w-full overflow-x-auto overflow-y-hidden border-b',
+				fill ? 'w-full items-stretch' : 'items-end gap-1',
 				className,
 			)}
 		>
 			{indicator && (
 				<motion.div
 					aria-hidden="true"
-					className="bg-primary pointer-events-none absolute bottom-0 h-0.5 rounded-full"
+					data-testid="tabnav-indicator"
+					className="bg-primary pointer-events-none absolute bottom-0 left-0 h-0.5 w-px will-change-transform"
+					style={{ originX: 0 }}
 					initial={false}
-					animate={{ left: indicator.left, width: indicator.width }}
-					transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+					animate={{ x: indicator.left, scaleX: indicator.width }}
+					transition={INDICATOR_TRANSITION}
 				/>
 			)}
 			{options.map((option) => {
@@ -121,10 +138,11 @@ export function TabNav<T extends string = string>({
 							if (el) btnRefs.current.set(option.value, el);
 							else btnRefs.current.delete(option.value);
 						}}
-						onClick={() => onChange(option.value)}
+						onClick={() => onChange(option.value, 'click')}
 						onKeyDown={handleKeyDown}
 						className={cn(
-							'focus-visible:ring-ring group relative inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+							'focus-visible:ring-ring group relative inline-flex cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+							fill ? 'min-w-0 flex-1 basis-0 justify-center' : 'shrink-0',
 							isActive
 								? 'text-foreground'
 								: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',

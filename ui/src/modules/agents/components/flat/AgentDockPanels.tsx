@@ -1,8 +1,7 @@
 /**
- * AgentDockPanels — the dock's sheet surfaces. Each rehosts the console panel it
- * replaces verbatim, so the contracts stay what the console ships (notably the API
- * key's metadata-always, plaintext-once rule). Archived is the exception: an
- * archived agent can never authenticate, so the MCP sheet drops the connect
+ * AgentDockPanels — the dock's sheet surfaces, each hosting one agent panel (the
+ * API key's metadata-always, plaintext-once rule lives in its panel). An archived
+ * agent can never authenticate, so for it the MCP sheet drops the connect
  * invitation and Permissions drops the scope editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
@@ -245,20 +244,19 @@ export function AgentSettingsSheet({
 				headingId={headingId}
 				onClose={onClose}
 			>
-				{/* The console panel as-is. Its Archive defers to the page-level
-				    LifecycleDialogs confirm, a native dialog above this sheet. */}
+				{/* Its Archive defers to the page-level LifecycleDialogs confirm, a
+				    native dialog above this sheet. */}
 				<AgentSettingsPanel
 					agent={agent}
 					lifecyclePending={archivePending}
 					onLifecycle={() => onArchive()}
 					afterIdentity={
-						// Where this agent came from and who vouched for it. Same component
-						// the console's Overview renders, so the two can't drift.
+						// Where this agent came from and who vouched for it.
 						<DetailSection
 							title="Provenance"
 							icon={<Fingerprint className="h-4 w-4" />}
 						>
-							<AgentProvenance agent={agent} columns="sheet" />
+							<AgentProvenance agent={agent} />
 						</DetailSection>
 					}
 				/>

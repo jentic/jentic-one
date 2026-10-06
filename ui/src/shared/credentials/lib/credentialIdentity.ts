@@ -10,8 +10,10 @@ import {
 	type Credential,
 } from '@/shared/credentials/api';
 
-/** Characters of the credential id shown as its tail — enough to tell siblings apart. */
-const ID_TAIL_LENGTH = 6;
+/** Characters of the credential id shown as its tail — enough to tell siblings
+ * apart, and the same four the broker's ambiguous-credential refusal lists
+ * (`last4`), so a tail on screen matches the one in the error. */
+const ID_TAIL_LENGTH = 4;
 
 /** `added 23 Sept 2026`-style date; `recently` when the backend sent none. */
 export function formatCredentialDate(value: string | null | undefined): string {
@@ -21,9 +23,14 @@ export function formatCredentialDate(value: string | null | undefined): string {
 	return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/** The last few characters of a credential id. */
+export function idTail(credentialId: string): string {
+	return credentialId.slice(-ID_TAIL_LENGTH);
+}
+
 /** The last few characters of the id, the one fact two same-named siblings never share. */
 export function credentialIdTail(cred: Pick<Credential, 'credential_id'>): string {
-	return cred.credential_id.slice(-ID_TAIL_LENGTH);
+	return idTail(cred.credential_id);
 }
 
 /**
@@ -31,7 +38,7 @@ export function credentialIdTail(cred: Pick<Credential, 'credential_id'>): strin
  * null when its name is already unique among `siblings`. The first real fact
  * no same-named sibling shares wins: the redacted key hint (`details.hint`,
  * e.g. `••••4242`), then the pinned version (`v2024-01-01`), else the id tail
- * (`…a1b2c3`), which siblings never share.
+ * (`…b2c3`), which siblings never share.
  */
 export function credentialSiblingHint(
 	cred: Credential,
@@ -54,7 +61,7 @@ export function credentialSiblingHint(
 	return `…${credentialIdTail(cred)}`;
 }
 
-/** `API key · added 23 Sept 2026 · …a1b2c3` — one line that tells siblings apart.
+/** `API key · added 23 Sept 2026 · …b2c3` — one line that tells siblings apart.
  * `type: false` drops the type, for a host that already shows it as a badge. */
 export function credentialDistinguisher(
 	cred: Pick<Credential, 'credential_id' | 'type' | 'created_at'>,

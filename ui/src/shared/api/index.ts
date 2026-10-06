@@ -217,3 +217,7 @@ export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/
 export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
+
+// RFC 9457 problem bodies: the string `detail` callers surface over the
+// transport's status text. Append-only, like the rest.
+export { problemDetailText } from '@/shared/api/problem';

@@ -8,8 +8,8 @@ import { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 
 /**
- * AuditTrailCard — the "Recent changes" card shared by the detail consoles
- * (agent, …): a read-only, entity-scoped slice of the
+ * AuditTrailCard — the "Recent changes" card shared by the entity surfaces
+ * (an agent's Activity sheet, an OAuth client's detail sheet): a read-only, entity-scoped slice of the
  * org-wide audit log. One component so "Recent changes" reads identically
  * everywhere; callers own the data fetch (per-module hooks) and map their
  * wire rows into {@link AuditTrailEntry}.
@@ -36,7 +36,7 @@ const rowMotion = {
 };
 
 /**
- * Audit verb → badge tint. The union of the consoles' vocabularies so a verb
+ * Audit verb → badge tint. The union of those surfaces' vocabularies so a verb
  * reads the same wherever it appears; unknown verbs fall through to neutral.
  */
 function actionVariant(action: string): 'default' | 'success' | 'danger' {

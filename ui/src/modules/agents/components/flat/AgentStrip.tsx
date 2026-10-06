@@ -208,6 +208,7 @@ export function AgentStrip({
 				}}
 				type="button"
 				role="tab"
+				data-agent-id={agent.id}
 				aria-selected={isSelected}
 				tabIndex={agent.id === focusableId ? 0 : -1}
 				onClick={() => onSelect(agent.id)}

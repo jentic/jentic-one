@@ -17,6 +17,7 @@ import {
 	type OAuth2FlowDef,
 	type RawSchemes,
 } from '@/shared/credentials/lib/schemes';
+import { slugifyApiField } from '@/shared/lib/apiSlug';
 import type { CredentialFormState } from '@/shared/credentials/components/CredentialTypeFields';
 
 function apiRef(state: CredentialFormState): APIReferenceRequest {
@@ -337,6 +338,12 @@ export function validateUpdate(
  * registry's ingested spec need not report the same string. Pinning is opt-in:
  * the form's "Use for" picker (`CredentialVersionScope`) pins on request.
  *
+ * A catalog pick's `name` is the whole `api_id` (`github.com/api.github.com`).
+ * `POST /credentials` rejects a `/` in `api.name` as a spec path, so a catalog
+ * pick seeds the slug its import registers (`github-com-api-github-com`); the
+ * verbatim id travels as `catalog_api_id`. A bare id (`slack.com`) slugs the
+ * same way server-side. A workspace (`local`) pick keeps its registered name.
+ *
  * `nameDirty` guards the credential name: when the user hasn't manually edited
  * it we always refresh it to the newly-picked API's label (so switching APIs
  * updates the name), but once they've typed their own we never clobber it.
@@ -349,7 +356,7 @@ export function seedFormFromSelectedApi(
 	return {
 		...state,
 		apiVendor: api.vendor,
-		apiName: api.name,
+		apiName: api.source === 'catalog' ? slugifyApiField(api.name) : api.name,
 		apiVersion: '',
 		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,

@@ -1,8 +1,7 @@
 /**
- * ActorAuditPanel — the "Recent changes" card on the agent
- * detail Overview tab: a thin, actor-scoped wrapper over the shared
- * {@link AuditTrailCard} (the shared audit card, so
- * "Recent changes" reads identically across consoles). Surfaces the lifecycle
+ * ActorAuditPanel — the "Recent changes" section of the dock's Activity
+ * sheet: a thin, actor-scoped wrapper over the shared {@link AuditTrailCard},
+ * so "Recent changes" reads identically on every surface. Surfaces the lifecycle
  * trail recorded against this actor as the TARGET (register, approve/deny,
  * disable/enable, key rotation, binding grant/revoke).
  *

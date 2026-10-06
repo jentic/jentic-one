@@ -1,12 +1,19 @@
 /**
- * AgentActivitySheet — the dock's Activity surface: the console `ActivityPanel`
- * plus the audit slice folded in as a section (changes are activity). The panels
- * keep their console coverage; these pin the composition, the agent scoping of
- * both sections, and the actor-directory resolution in the audit rows.
+ * AgentActivitySheet — the dock's Activity surface: `ActivityPanel` plus the
+ * audit slice folded in as a section (changes are activity). Pins the
+ * composition, the agent scoping of both sections, the Monitor deep link, the
+ * permission gate, and the actor-directory resolution in the audit rows.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
-import { renderWithProviders, screen, within, userEvent } from '@/__tests__/test-utils';
+import {
+	renderWithProviders,
+	screen,
+	within,
+	userEvent,
+	createErrorHandler,
+} from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
@@ -46,14 +53,13 @@ describe('AgentActivitySheet — the dock Activity surface', () => {
 
 		expect(sheet.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
 
-		// The rehosted ActivityPanel: the recent-executions feed with its
+		// The ActivityPanel: the recent-executions feed with its
 		// Monitor deep link (Monitor owns the full history).
 		expect(await sheet.findByText('Recent executions')).toBeInTheDocument();
 		expect(sheet.getByRole('link', { name: /Monitor/ })).toBeInTheDocument();
 
-		// The console Overview's audit slice, as a SECTION of this sheet
-		// — not another surface. Lifecycle events recorded against this agent
-		// as the target, newest first.
+		// The audit slice, as a SECTION of this sheet — not another surface.
+		// Lifecycle events recorded against this agent as the target, newest first.
 		expect(await sheet.findByText('Recent changes')).toBeInTheDocument();
 		expect(await sheet.findByText('rotate')).toBeInTheDocument();
 		expect(sheet.getByText('approve')).toBeInTheDocument();
@@ -76,5 +82,41 @@ describe('AgentActivitySheet — the dock Activity surface', () => {
 			await sheet.findByText(/No recorded changes for this agent yet/),
 		).toBeInTheDocument();
 		expect(sheet.queryByText('rotate')).not.toBeInTheDocument();
+	});
+
+	it("lists the agent's executions with a Monitor deep link carrying the actor filter", async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		// The feed lists this agent's executions only (agents-module fixture) —
+		// with the human-readable operation (method + path template) when the
+		// record carries one; the opaque operation_id never renders (legacy
+		// rows show just the credential attribution).
+		expect(
+			await sheet.findByText('github · POST /repos/{owner}/{repo}/issues'),
+		).toBeInTheDocument();
+		expect(sheet.queryByText(/search_issues/)).not.toBeInTheDocument();
+		expect(sheet.getByText(/pbac_denied/)).toBeInTheDocument();
+		expect(sheet.getByText('Execution volume · 7d')).toBeInTheDocument();
+
+		const link = sheet.getByRole('link', { name: /Open Monitor/ });
+		const href = new URL(link.getAttribute('href')!, window.location.origin);
+		expect(href.searchParams.get('show')).toBe('calls');
+		expect(href.searchParams.get('actor_id')).toBe('agnt_active_1');
+		expect(href.searchParams.get('actor_type')).toBe('agent');
+	});
+
+	it('shows a quiet permission note for non-admins (403), not an error', async () => {
+		worker.use(
+			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
+			createErrorHandler('get', '/executions', { status: 403 }),
+		);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const sheet = await openSheet(user);
+
+		expect(await sheet.findByText('Activity requires elevated access')).toBeInTheDocument();
+		expect(sheet.queryByRole('alert')).not.toBeInTheDocument();
 	});
 });

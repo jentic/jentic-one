@@ -17,10 +17,15 @@ import { Toaster } from '@/shared/ui';
 import MonitorPage from '@/modules/monitor/pages/MonitorPage';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 
-/** Mirrors the router location search string into the DOM for assertions. */
+/** Mirrors the router location into the DOM for assertions. */
 function LocationProbe() {
 	const location = useLocation();
-	return <div data-testid="location-search">{location.search}</div>;
+	return (
+		<>
+			<div data-testid="location-path">{location.pathname}</div>
+			<div data-testid="location-search">{location.search}</div>
+		</>
+	);
 }
 
 /**
@@ -820,6 +825,47 @@ describe('Monitor inter-linking', () => {
 			expect(currentParams().get('trace_id')).toBe('trace_bbbbbbbb');
 		});
 		expect(await screen.findByRole('dialog')).toBeInTheDocument();
+	});
+
+	it('feed row → an agent event opens the agent selected on the Agents page', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: { self: '/events/evt_agent_reg_1' },
+							acknowledged: false,
+							acknowledged_at: null,
+							acknowledged_by: null,
+							created_at: new Date().toISOString(),
+							data: { agent_id: 'agnt_curl_1' },
+							detail: null,
+							event_id: 'evt_agent_reg_1',
+							requires_action: false,
+							severity: 'info',
+							summary: "Agent 'curl-agent' self-registered",
+							trace_id: null,
+							type: 'agent.self_registered',
+							actor_id: 'agnt_curl_1',
+							actor_type: 'agent',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?view=activity');
+
+		await user.click(
+			await screen.findByRole('link', { name: "Agent 'curl-agent' self-registered" }),
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
+		);
+		expect(currentParams().get('agent')).toBe('agnt_curl_1');
 	});
 
 	it('feed row → a job event opens the job detail sheet in place', async () => {

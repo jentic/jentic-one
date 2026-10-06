@@ -6,15 +6,18 @@ export interface CodeSnippetProps {
 	code: string;
 	/** Optional tiny uppercase caption above the block (eyebrow style). */
 	label?: string;
+	/** The copy button's accessible name, when "Copy to clipboard" is too
+	 * generic to say what it copies (several snippets on one surface). */
+	copyAriaLabel?: string;
 	className?: string;
 }
 
 /**
  * One copyable code block: a bordered mono `<pre>` with a corner CopyButton
  * and an optional eyebrow label. The shared chrome for CLI snippets and
- * client-config JSON (the MCP config card and DcrQuickstart).
+ * client-config JSON (the MCP config and connect cards).
  */
-export function CodeSnippet({ code, label, className }: CodeSnippetProps) {
+export function CodeSnippet({ code, label, copyAriaLabel, className }: CodeSnippetProps) {
 	return (
 		<div className={cn(className)}>
 			{label && (
@@ -27,7 +30,7 @@ export function CodeSnippet({ code, label, className }: CodeSnippetProps) {
 					{code}
 				</pre>
 				<div className="absolute top-2 right-2">
-					<CopyButton value={code} />
+					<CopyButton value={code} ariaLabel={copyAriaLabel} />
 				</div>
 			</div>
 		</div>

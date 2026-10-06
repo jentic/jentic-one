@@ -1,6 +1,6 @@
 /**
- * Shared scaffolding for the agent detail console — the pieces its tab
- * panels would otherwise copy. The card
+ * Shared scaffolding for the agent panels the Agents page hosts (dock sheets,
+ * the API access sidebar) — the pieces they would otherwise copy. The card
  * shells themselves (`DetailSection`, `DangerZone`, `IdentitySettingsCard`,
  * `AuditTrailCard`) are shared product-wide from `@/shared/ui`.
  */

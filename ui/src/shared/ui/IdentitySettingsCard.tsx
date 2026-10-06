@@ -9,8 +9,8 @@ import { Label } from '@/shared/ui/Label';
 import { Textarea } from '@/shared/ui/Textarea';
 
 /**
- * IdentitySettingsCard — the Settings tab's "General" card shared by the
- * detail consoles (agent, …): the immutable, copyable
+ * IdentitySettingsCard — the "General" settings card shared by entity
+ * settings surfaces (an agent's Settings sheet, …): the immutable, copyable
  * entity id plus the editable name/description form.
  *
  * One grammar everywhere:

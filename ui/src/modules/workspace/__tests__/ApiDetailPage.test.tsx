@@ -7,6 +7,7 @@ import {
 	userEvent,
 	within,
 	checkA11y,
+	settleAnimations,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { CredentialType, setToken } from '@/shared/api';
@@ -17,22 +18,6 @@ import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { patchMockApi } from '@/modules/workspace/mocks/handlers';
 import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
-
-/**
- * Settle the PageHeader entrance animation before asserting (framer-motion's
- * opacity would otherwise trip the a11y colour-contrast checks).
- */
-async function settleAnimations(container: HTMLElement): Promise<void> {
-	await waitFor(() => {
-		const faded = Array.from(container.querySelectorAll<HTMLElement>('*')).find((el) => {
-			if (el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true')
-				return false;
-			const opacity = Number.parseFloat(getComputedStyle(el).opacity);
-			return !Number.isNaN(opacity) && opacity > 0 && opacity < 1;
-		});
-		expect(faded).toBeUndefined();
-	});
-}
 
 const PATH = '/library/workspace/:vendor/:name/:version';
 

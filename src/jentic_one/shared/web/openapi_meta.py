@@ -489,7 +489,12 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`execution.repeated_failure`). Events reference the underlying `ExecutionRecord` "
             "or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via "
             "`GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` "
-            "filter."
+            "filter. An event is visible only to the actor (`actor_id`) or creator "
+            "(`created_by`) it names, to the human owner of either when that is an agent, "
+            "and to `org:admin`; system events with no subject are visible only to "
+            "`org:admin`. To "
+            "any other caller an event is indistinguishable from a missing one (`404`), "
+            "including on acknowledgement."
         ),
     },
     {
