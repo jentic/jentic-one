@@ -11,6 +11,8 @@ the job runs, with the same problem type the sync execute route returns.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, update
@@ -18,6 +20,8 @@ from sqlalchemy import delete, update
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.core.schema.users import User
 from jentic_one.broker.core.setup import build_queued_execution_authorizer
 from jentic_one.broker.repos.actor_status import ActorStatusResolver
@@ -27,7 +31,7 @@ from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest
-from jentic_one.shared.models import StoredCredentialType
+from jentic_one.shared.models import JobKind, JobStatus, StoredCredentialType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
@@ -301,3 +305,93 @@ async def test_actor_status_resolver_refuses_retired_service_account_actors(
     assert not await resolver.holds_scope(
         actor_id="sva_queued", actor_type="service_account", scope=BROKER_EXECUTE_SCOPE
     )
+
+
+async def _set_rule_effect(ctx: Context, agent_id: str, effect: str) -> None:
+    async with ctx.control_db.session() as session:
+        await session.execute(
+            update(AgentPermissionRule)
+            .where(AgentPermissionRule.agent_id == agent_id)
+            .values(effect=effect)
+        )
+        await session.commit()
+
+
+async def _job_with_approval(ctx: Context, agent_id: str, state: str | None) -> str:
+    """A job created by ``agent_id``, with an approval row in ``state`` (or none)."""
+    async with ctx.admin_db.session() as session:
+        job = Job(kind=JobKind.EXECUTION, status=JobStatus.RUNNING, created_by=agent_id)
+        session.add(job)
+        await session.flush()
+        if state is not None:
+            session.add(
+                ExecutionApproval(
+                    job_id=job.id,
+                    agent_id=agent_id,
+                    credential_id="cred_x",
+                    api_vendor=_VENDOR,
+                    api_name=_API_NAME,
+                    api_version=_API_VERSION,
+                    method="GET",
+                    path="/v1/pets",
+                    request_fingerprint=generate_ksuid("fp").ljust(64, "0"),
+                    state=state,
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            )
+        await session.commit()
+        return str(job.id)
+
+
+@pytest.fixture()
+async def clean_jobs(integration_context: Context) -> AsyncGenerator[None, None]:
+    yield
+    async with integration_context.admin_db.session() as session:
+        await session.execute(delete(Job))
+        await session.commit()
+
+
+async def test_require_approval_passes_only_for_the_approved_job(
+    integration_context: Context, clean_tables: None, clean_jobs: None
+) -> None:
+    """A require-approval verdict at run time is honoured for the job a reviewer
+    approved — and for no other job, pending or unapproved."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _set_rule_effect(ctx, agent_id, "require-approval")
+    approved_job = await _job_with_approval(ctx, agent_id, "approved")
+    pending_job = await _job_with_approval(ctx, agent_id, "pending")
+    bare_job = await _job_with_approval(ctx, agent_id, None)
+    authorizer = build_queued_execution_authorizer(ctx)
+
+    allowed = await authorizer.authorize(
+        replace(_request(agent_id, credential_id), job_id=approved_job)
+    )
+    assert allowed.allowed is True
+    assert allowed.credential_id == credential_id
+
+    for job_id in (pending_job, bare_job, None):
+        verdict = await authorizer.authorize(
+            replace(_request(agent_id, credential_id), job_id=job_id)
+        )
+        assert verdict.allowed is False
+        assert verdict.problem is not None
+        assert verdict.problem["type"] == "approval_required"
+        assert verdict.problem["status"] == 403
+
+
+async def test_approved_job_still_fails_when_the_rule_now_denies(
+    integration_context: Context, clean_tables: None, clean_jobs: None
+) -> None:
+    """An approval only satisfies require-approval; a rule that now denies wins."""
+    ctx = integration_context
+    agent_id, credential_id = await _seed_bound_agent(ctx)
+    await _set_rule_effect(ctx, agent_id, "deny")
+    approved_job = await _job_with_approval(ctx, agent_id, "approved")
+
+    verdict = await build_queued_execution_authorizer(ctx).authorize(
+        replace(_request(agent_id, credential_id), job_id=approved_job)
+    )
+    assert verdict.allowed is False
+    assert verdict.problem is not None
+    assert verdict.problem["type"] == "action_denied"
