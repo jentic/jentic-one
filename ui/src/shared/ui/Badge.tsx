@@ -6,8 +6,9 @@ export type Variant = 'default' | 'success' | 'warning' | 'danger' | 'pending' |
 // A soft borderless pill: the hue tints the fill (10%) and the word; the word
 // carries the meaning, so the tint is only a secondary cue. The warm states
 // never tint the word or fill: `warning` (a state to note) and `pending` (a
-// person must act) are neutral tonal chips, only their (optional) dot warm —
-// `pending`'s a step stronger so the two stay apart.
+// person must act) are neutral tonal chips whose dot — on by default, so
+// every caller gets the warm cue — carries the warmth, `pending`'s a step
+// stronger than `warning`'s.
 const variantClasses: Record<Variant, string> = {
 	default: 'bg-primary/10 text-primary',
 	success: 'bg-success/10 text-success',
@@ -25,15 +26,21 @@ const badgeDotClasses: Partial<Record<Variant, string>> = {
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 	variant?: Variant;
-	/** Show a leading status dot in the badge's colour. */
+	/**
+	 * Show a leading status dot in the badge's colour. On by default for
+	 * `warning` and `pending` (their only warm cue); pass `false` to drop it.
+	 */
 	dot?: boolean;
+	/** Extra classes for the dot (e.g. a hollow ring for an idle state). */
+	dotClassName?: string;
 	/** Monospace digits for codes, ids and counts (e.g. an HTTP status). */
 	mono?: boolean;
 }
 
 export function Badge({
 	variant = 'default',
-	dot,
+	dot = variant === 'warning' || variant === 'pending',
+	dotClassName,
 	mono,
 	children,
 	className,
@@ -55,6 +62,7 @@ export function Badge({
 					className={cn(
 						'h-1.5 w-1.5 shrink-0 rounded-full',
 						badgeDotClasses[variant] ?? 'bg-current',
+						dotClassName,
 					)}
 					aria-hidden="true"
 				/>

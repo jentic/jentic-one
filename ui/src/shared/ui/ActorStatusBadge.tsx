@@ -90,6 +90,15 @@ export function toActorStatus(status: string): ActorStatus {
 	return (ACTOR_STATUSES as string[]).includes(status) ? (status as ActorStatus) : 'archived';
 }
 
+/**
+ * Badge dot per status, where the variant's own dot isn't enough: `disabled`
+ * shares a warm hue with `pending`, so it draws a hollow ring (switched off,
+ * idle) against pending's filled dot (waiting on a person).
+ */
+const STATUS_BADGE_DOT: Partial<Record<ActorStatus, string>> = {
+	disabled: 'bg-transparent border border-caution',
+};
+
 /** Status pill for an actor (agent) using its lifecycle status. */
 export function ActorStatusBadge({
 	status,
@@ -104,7 +113,13 @@ export function ActorStatusBadge({
 } & HTMLAttributes<HTMLSpanElement>) {
 	const s = toActorStatus(status);
 	return (
-		<Badge variant={STATUS_BADGE_VARIANT[s]} dot={dot} className={className} {...props}>
+		<Badge
+			variant={STATUS_BADGE_VARIANT[s]}
+			dot={dot}
+			dotClassName={STATUS_BADGE_DOT[s]}
+			className={className}
+			{...props}
+		>
 			{STATUS_LABELS[s]}
 		</Badge>
 	);

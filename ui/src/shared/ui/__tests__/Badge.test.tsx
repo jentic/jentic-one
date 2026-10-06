@@ -32,6 +32,26 @@ describe('Badge', () => {
 		expect(container.querySelector('span[aria-hidden="true"]')).toBeNull();
 	});
 
+	it('defaults the dot on for warning and pending — their only warm cue — with distinct hues', () => {
+		const { container } = renderWithProviders(
+			<>
+				<Badge variant="warning">Deprecated</Badge>
+				<Badge variant="pending">Pending</Badge>
+				<Badge variant="warning" dot={false}>
+					Opted out
+				</Badge>
+			</>,
+		);
+		const dotOf = (name: string) =>
+			screen.getByText(name).querySelector<HTMLElement>('span[aria-hidden="true"]');
+		expect(dotOf('Deprecated')).toHaveClass('bg-caution');
+		expect(dotOf('Pending')).toHaveClass('bg-warning');
+		expect(dotOf('Opted out')).toBeNull();
+		const bg = (el: HTMLElement | null) => getComputedStyle(el!).backgroundColor;
+		expect(bg(dotOf('Deprecated'))).not.toBe(bg(dotOf('Pending')));
+		expect(container.querySelectorAll('span[aria-hidden="true"]')).toHaveLength(2);
+	});
+
 	it('MethodBadge upper-cases the method', () => {
 		renderWithProviders(<MethodBadge method="get" />);
 		expect(screen.getByText('GET')).toBeInTheDocument();
