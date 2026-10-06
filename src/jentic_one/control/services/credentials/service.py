@@ -516,9 +516,15 @@ class CredentialService:
         themselves live control-side, so this is the cross-DB seam). Returns
         the binding row so callers can see its attached ``rule_set_id``.
 
+        The bound agent must also be one the caller may see
+        (:meth:`_bound_agent_visibility`, the same rule as ``list_agents``):
+        a binding of an agent outside that set answers the same 404 as a
+        binding that does not exist.
+
         ``for_write`` additionally requires :meth:`_may_write_binding_rules`;
         a caller who can see the credential but not write its rules gets the
-        same 404 as one who cannot see it at all.
+        same 404 as one who cannot see it at all. Writes are therefore
+        owner-or-admin only, and both of those callers see every bound agent.
         """
         access_filters = build_access_filters(
             identity,
@@ -536,7 +542,10 @@ class CredentialService:
                 raise CredentialNotFoundError(credential_id)
         async with self._ctx.admin_db.session() as session:
             binding = await PrerequisiteRepository.get_agent_credential_binding(
-                session, agent_id=agent_id, credential_id=credential_id
+                session,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                visible_to=self._bound_agent_visibility(credential, identity),
             )
         if binding is None:
             raise AgentBindingNotFoundError(credential_id, agent_id)
