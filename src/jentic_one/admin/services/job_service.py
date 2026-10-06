@@ -16,7 +16,6 @@ from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-from jentic_one.shared.models.jobs import JobStatus
 
 
 class JobService:
@@ -89,12 +88,11 @@ class JobService:
             if cancelled is None:
                 return self._to_view(job)
 
-            # Cancelling a held job withdraws its pending approval; no result
-            # is written.
-            if job.status == JobStatus.HELD:
-                await ExecutionApprovalRepository.withdraw_by_job_id(
-                    session, job_id, now=datetime.now(UTC)
-                )
+            # Cancelling a held job withdraws its pending approval (only a
+            # held job has one); no result is written.
+            await ExecutionApprovalRepository.withdraw_by_job_id(
+                session, job_id, now=datetime.now(UTC)
+            )
 
             await AuditRepository.record(
                 session,

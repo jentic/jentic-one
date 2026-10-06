@@ -91,7 +91,7 @@ class ExecutionApprovalRepository:
                 decision_reason=decision_reason,
             )
             .returning(ExecutionApproval)
-            .execution_options(synchronize_session=False)
+            .execution_options(synchronize_session=False, populate_existing=True)
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
