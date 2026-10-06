@@ -29,6 +29,7 @@ from jentic_one.control.repos.device_authorization_credential_repo import (
 )
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
+    AgentVisibility,
     CredentialBoundAgentRow,
     PrerequisiteRepository,
 )
@@ -78,7 +79,7 @@ from jentic_one.shared.models.credentials import CredentialType, StoredCredentia
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.permissions.matching import compile_matcher
-from jentic_one.shared.scopes import ORG_ADMIN
+from jentic_one.shared.scopes import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -408,6 +409,11 @@ class CredentialService:
         able to see the credential itself before enumerating who is bound to
         it (hard problem 7/9 owner-gating; existence never leaks past the
         filters).
+
+        ``org:admin`` and the credential's creator see every bound agent. Any
+        other caller who can see the credential (a bound agent, a delegated
+        agent, a shared-read grant) sees only the agents it can see itself:
+        see :meth:`_bound_agent_visibility`.
         """
         access_filters = build_access_filters(
             identity,
@@ -429,7 +435,11 @@ class CredentialService:
 
         async with self._ctx.admin_db.session() as session:
             rows = await PrerequisiteRepository.list_agents_for_credential(
-                session, credential_id=credential_id, cursor=decoded_cursor, limit=limit + 1
+                session,
+                credential_id=credential_id,
+                cursor=decoded_cursor,
+                limit=limit + 1,
+                visible_to=self._bound_agent_visibility(credential, identity),
             )
 
         has_more = len(rows) > limit
@@ -442,6 +452,26 @@ class CredentialService:
             next_cursor = encode_cursor(last.bound_at, last.binding_id)
 
         return rows, has_more, next_cursor
+
+    @staticmethod
+    def _bound_agent_visibility(
+        credential: Credential, identity: Identity
+    ) -> AgentVisibility | None:
+        """Bound agents the caller may enumerate; ``None`` means all of them.
+
+        ``org:admin`` and the credential's creator see every bound agent.
+        Anyone else sees the agents it owns and itself (when the caller is an
+        agent), plus its owner's agents when it holds ``owner:agents:read`` —
+        the same agent visibility the admin surface applies.
+        """
+        if ORG_ADMIN in identity.permissions:
+            return None
+        if credential.created_by is not None and credential.created_by == identity.sub:
+            return None
+        owner_ids = [identity.sub]
+        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
+            owner_ids.append(identity.parent_actor_id)
+        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
 
     # --- Per-binding permission rules (theme 5 phase 1) ---
 

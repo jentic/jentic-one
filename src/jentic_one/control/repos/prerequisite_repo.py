@@ -9,8 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import NamedTuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import BindParameter
 
 
 class CredentialBoundAgentRow(NamedTuple):
@@ -23,6 +24,13 @@ class CredentialBoundAgentRow(NamedTuple):
     bound_at: datetime
     suspended: bool
     rule_set_id: str | None
+
+
+class AgentVisibility(NamedTuple):
+    """Which bound agents a caller may see: itself, or agents owned by ``owner_ids``."""
+
+    self_id: str
+    owner_ids: tuple[str, ...]
 
 
 class AgentCredentialBindingRow(NamedTuple):
@@ -80,6 +88,7 @@ class PrerequisiteRepository:
         credential_id: str,
         cursor: tuple[datetime, str] | None = None,
         limit: int = 50,
+        visible_to: AgentVisibility | None = None,
     ) -> list[CredentialBoundAgentRow]:
         """Return agents directly bound to a credential, paginated by (bound_at DESC, id DESC).
 
@@ -87,39 +96,35 @@ class PrerequisiteRepository:
         phase 1), reading ``agent_credential_bindings``. Suspended bindings
         are included (with their flag) so the
         credential-detail view can show a reversible cut-off, not hide it.
+
+        ``visible_to`` narrows the rows to agents the caller may see (see
+        :class:`AgentVisibility`); ``None`` returns every bound agent.
         """
+        conditions = ["b.credential_id = :credential_id"]
+        params: dict[str, object] = {"credential_id": credential_id, "limit": limit}
+        bind_params: list[BindParameter[object]] = []
         if cursor is not None:
             cursor_ts, cursor_id = cursor
-            result = await session.execute(
-                text(
-                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
-                    "FROM agent_credential_bindings b "
-                    "JOIN agents a ON a.id = b.agent_id "
-                    "WHERE b.credential_id = :credential_id "
-                    "AND (b.bound_at < :cursor_ts "
-                    "     OR (b.bound_at = :cursor_ts AND b.id < :cursor_id)) "
-                    "ORDER BY b.bound_at DESC, b.id DESC "
-                    "LIMIT :limit"
-                ),
-                {
-                    "credential_id": credential_id,
-                    "cursor_ts": cursor_ts,
-                    "cursor_id": cursor_id,
-                    "limit": limit,
-                },
+            conditions.append(
+                "(b.bound_at < :cursor_ts OR (b.bound_at = :cursor_ts AND b.id < :cursor_id))"
             )
-        else:
-            result = await session.execute(
-                text(
-                    "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
-                    "FROM agent_credential_bindings b "
-                    "JOIN agents a ON a.id = b.agent_id "
-                    "WHERE b.credential_id = :credential_id "
-                    "ORDER BY b.bound_at DESC, b.id DESC "
-                    "LIMIT :limit"
-                ),
-                {"credential_id": credential_id, "limit": limit},
-            )
+            params.update(cursor_ts=cursor_ts, cursor_id=cursor_id)
+        if visible_to is not None:
+            conditions.append("(a.id = :self_id OR a.owner_id IN :owner_ids)")
+            params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
+            bind_params.append(bindparam("owner_ids", expanding=True))
+
+        stmt = text(
+            "SELECT b.id, a.id, a.name, a.status, b.bound_at, b.suspended, b.rule_set_id "
+            "FROM agent_credential_bindings b "
+            "JOIN agents a ON a.id = b.agent_id "
+            f"WHERE {' AND '.join(conditions)} "
+            "ORDER BY b.bound_at DESC, b.id DESC "
+            "LIMIT :limit"
+        )
+        if bind_params:
+            stmt = stmt.bindparams(*bind_params)
+        result = await session.execute(stmt, params)
         return [CredentialBoundAgentRow(*row) for row in result.fetchall()]
 
     @staticmethod
