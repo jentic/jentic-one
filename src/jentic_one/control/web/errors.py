@@ -13,6 +13,7 @@ from jentic_one.control.services.credentials.errors import (
     ImmutableFieldError,
     InvalidCredentialInputError,
     RuleSetAccessDeniedError,
+    RuleSetAttachDeniedError,
     RuleSetInUseError,
     RuleSetNameConflictError,
     RuleSetNotFoundError,
@@ -54,6 +55,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RuleSetNameConflictError: (409, "rule_set_name_conflict"),
     RuleSetInUseError: (409, "rule_set_in_use"),
     RuleSetAccessDeniedError: (403, "rule_set_access_denied"),
+    RuleSetAttachDeniedError: (403, "rule_set_attach_denied"),
 }
 
 credential_service_error_handler = make_service_error_handler(_ERROR_MAP)

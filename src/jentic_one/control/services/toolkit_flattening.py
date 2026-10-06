@@ -681,10 +681,12 @@ class ToolkitFlatteningService:
         existing set is never overwritten (operator edits win).
         """
         name = _rule_set_name(pair.source_path.toolkit_id, pair.credential_id)
-        existing = await PermissionRuleSetRepository.get_by_name(session, name)
-        if existing is not None:
-            return existing.id
-        rule_set = await PermissionRuleSetRepository.create(
+        # Column-scoped reads and writes: this runs before the toolkit-table
+        # drop, when ``permission_rule_sets`` has no ``curated`` column yet.
+        existing_id = await PermissionRuleSetRepository.get_id_by_name(session, name)
+        if existing_id is not None:
+            return existing_id
+        rule_set_id = await PermissionRuleSetRepository.insert_for_flattening(
             session,
             name=name,
             description=(
@@ -695,7 +697,7 @@ class ToolkitFlatteningService:
         )
         await PermissionRuleSetRepository.replace_user_rules(
             session,
-            rule_set.id,
+            rule_set_id,
             [
                 {
                     "effect": rule.effect,
@@ -709,7 +711,7 @@ class ToolkitFlatteningService:
             ],
             created_by=SYSTEM_ACTOR,
         )
-        return rule_set.id
+        return rule_set_id
 
     async def verify(self, *, acknowledge: bool = False) -> VerificationResult:
         """Run the R-02 verification queries; optionally write the 6b gate row.

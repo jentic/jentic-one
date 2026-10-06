@@ -3,9 +3,9 @@
 Pins, against real SQLite databases driven through the CLI entrypoint
 (``migrations.run.main``), the runner contract: steps run only after a full
 upgrade to head, a failing step exits ``EXIT_UPGRADE_STEP_FAILED`` without
-being ledgered, and an operator skip defers a step. No step is registered
-since theme-5 Phase 6b deleted the toolkit steps, so the tests register a
-fake one; the index-repair tests for ``5c7e2a9d4f16`` also live here.
+being ledgered, and an operator skip defers a step. Most tests replace the
+registered steps with a fake one; the index-repair tests for
+``5c7e2a9d4f16`` also live here.
 """
 
 from __future__ import annotations
@@ -95,12 +95,26 @@ def _register(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> list[in
 
 
 def test_no_registered_steps_is_a_clean_no_op(
-    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Post-Phase-6b a full upgrade runs no steps and never touches the ledger."""
+    """With no step registered a full upgrade runs none and never touches the ledger."""
+    monkeypatch.setattr(steps_mod, "STEPS", ())
     assert run_mod.main([]) == 0
     assert "upgrade step" not in capsys.readouterr().out
     assert _ledger(sqlite_stack) == []
+
+
+def test_full_upgrade_runs_the_rule_set_curation_step(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The registered curation step runs once on a fresh install and is ledgered."""
+    assert run_mod.main([]) == 0
+    assert f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: performed" in capsys.readouterr().out
+    assert run_mod.main([]) == 0
+    assert (
+        f"upgrade step {steps_mod.RULE_SETS_MARK_CURATED}: already_done" in capsys.readouterr().out
+    )
+    assert _ledger(sqlite_stack) == [steps_mod.RULE_SETS_MARK_CURATED]
 
 
 def test_full_upgrade_runs_a_registered_step_exactly_once(
