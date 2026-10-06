@@ -214,6 +214,14 @@ export function RegisterCommand({
 					<span className="text-muted-foreground flex-1 text-center font-mono text-[11px]">
 						where your agent runs
 					</span>
+					{/* The quoting is POSIX (sh, bash, zsh) — not PowerShell or cmd. */}
+					<span
+						className="text-foreground-faint font-mono text-[10.5px]"
+						data-testid="register-command-shell"
+						title="Quoted for a POSIX shell (sh, bash, zsh)"
+					>
+						POSIX shell
+					</span>
 					<CopyButton
 						value={commandText(tokens)}
 						label="Copy"

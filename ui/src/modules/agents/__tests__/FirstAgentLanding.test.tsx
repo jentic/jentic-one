@@ -154,6 +154,16 @@ describe('Agents page — zero agents', () => {
 		expect(copy).toHaveTextContent('Copied!');
 	});
 
+	it('labels the register command as a POSIX shell command, keeping the terminal title', async () => {
+		const { container } = renderPage();
+		await landing();
+		expect(screen.getByText('where your agent runs')).toBeInTheDocument();
+		const hint = screen.getByTestId('register-command-shell');
+		expect(hint).toHaveTextContent('POSIX shell');
+		expect(hint).toHaveAttribute('title', expect.stringContaining('sh, bash, zsh'));
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
 	it('tucks how to get the CLI into a collapsed section at the foot of the card', async () => {
 		const user = userEvent.setup();
 		const { container } = renderPage();
