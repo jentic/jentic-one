@@ -64,6 +64,7 @@ export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
 // label, same day separators, same "where does this lead" destination).
 export {
 	adaptEvent,
+	isApprovalRequestEvent,
 	primaryDestinationFor,
 	STREAM_KIND_LABEL,
 	formatStreamDayLabel,

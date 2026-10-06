@@ -323,6 +323,50 @@ describe('MonitorPage', () => {
 		expect(await within(row).findByText('Acknowledged')).toBeInTheDocument();
 	});
 
+	it('opens the review page, not an execution, from an approval-request row', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: {
+								self: '/events/evt_held_1',
+								execution: '/executions/exec_held_1',
+								job: '/jobs/job_held_1',
+							},
+							acknowledged: true,
+							acknowledged_at: new Date().toISOString(),
+							acknowledged_by: 'usr_1',
+							created_at: new Date().toISOString(),
+							data: { approval_id: 'exap_held_1', agent_id: 'agnt_1' },
+							detail: null,
+							event_id: 'evt_held_1',
+							requires_action: true,
+							severity: 'warning',
+							summary: 'Agent agnt_1 wants to POST /v1/charges',
+							trace_id: 'a'.repeat(32),
+							type: 'execution.approval_requested',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?view=activity');
+
+		await user.click(
+			await screen.findByRole('link', { name: 'Agent agnt_1 wants to POST /v1/charges' }),
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/approvals/exap_held_1'),
+		);
+		expect(currentParams().get('execution_id')).toBeNull();
+		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
 	it('folds a run of successful calls into one expandable row', async () => {
 		const user = userEvent.setup();
 		const now = Date.now();
