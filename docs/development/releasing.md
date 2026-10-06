@@ -833,35 +833,53 @@ it out.
   `permission` (plus the unique constraint, primary key, and indexes). Stored
   values are unchanged (`agents:write` stays `agents:write`), and so are the
   `asg_…` row ids.
-- **Expect an authentication gap during a rolling upgrade.** The previous
-  release reads `actor_scope_grants` directly when it resolves API keys and
-  opaque tokens for agents (and for unmigrated service-account keys). Once the
-  migration has run, pods still on the previous release fail those lookups
-  until they are replaced. The [upgrade contract](../operations/upgrades.md#the-contract)
-  already treats old code on a new schema as unsupported — here it is an
-  observable outage, so schedule the upgrade in a maintenance window, or scale
-  the app and broker to zero before the migration and back up after it. With
-  Helm, the migration runs as a `pre-upgrade` hook, so the window lasts from
-  the hook until the rollout completes.
-- **HTTP API.** `GET|PUT /agents/{id}/scopes` is now
-  `/agents/{id}/permissions`, with `{"permissions": […]}` bodies; `GET /me`
-  (including the service-account variant) reports `permissions` /
-  `token_permissions` instead of `scopes` / `token_scopes`. The endpoint
-  reference emits `required_permissions` under schema
-  `jentic.endpoint-permission-tree/v1`. New audit entries write the
+- **Old pods stop working once the migration has run.** The previous
+  release reads `actor_scope_grants` almost everywhere: its ORM model (every
+  grant read and write), the broker's execution gate for every agent
+  (JWT-authenticated ones included), token minting, API-key and opaque-token
+  resolution, and the control plane's grant effects. From the moment the
+  migration renames the table until the last old pod is replaced, those pods
+  fail authentication, execution, and every grant change. The
+  [upgrade contract](../operations/upgrades.md#the-contract) already treats
+  old code on a new schema as unsupported — here it is an outage, so schedule
+  the upgrade in a maintenance window, or scale the app and broker to zero
+  before the migration and back up after it. With Helm, the migration runs as
+  a `pre-upgrade` hook, so the window lasts from the hook until the rollout
+  completes.
+- **HTTP API.**
+  - `GET|PUT /agents/{id}/scopes` is now `/agents/{id}/permissions`, with
+    `{"permissions": […]}` bodies.
+  - `POST /agents` takes its initial grants as `permissions` (was `scopes`).
+    Both `POST /agents` and `PUT /agents/{id}/permissions` now reject unknown
+    body fields with 422, so a client still sending `scopes` fails loudly
+    instead of the key being ignored (which, on `POST /agents`, would have
+    granted the full default permission set).
+  - `GET /me` reports `permissions` / `token_permissions` instead of
+    `scopes` / `token_scopes`.
+  - The agent permission-ceiling problem types are
+    `agent_permission_not_grantable` (403, was `scope_not_grantable`) and
+    `unknown_agent_permission` (422, was `unknown_scope`) — distinct from the
+    admin user-permission types `permission_not_grantable` /
+    `unknown_permission`.
+  - The endpoint reference emits `required_permissions` under schema
+    `jentic.endpoint-permission-tree/v1`.
+- **Audit log.** New agent create/approve/replace/register entries write the
   `permissions` payload key and the `replace_permissions` /
-  `default_permissions` reason strings (replacing the pre-rename `scopes` key
-  and `replace_scopes` / `default_scopes` reasons); reconciliation and the
-  service-account verification queries tolerate the historical `scopes` /
-  `replace_scopes` records already in the log, so no backfill is required.
+  `default_permissions` reason strings, replacing the `scopes` key and
+  `replace_scopes` / `default_scopes` reasons. Entries already in the log keep
+  the old spelling (they are history), so external `GET /audit` consumers that
+  key on `scopes` must read both spellings across the upgrade.
 - **CLI and Go SDK.** `jentic endpoints --scope` is now `--permission`.
   The generated control client renames `AgentScopesRequest`/`Response` to
   `AgentPermissionsRequest`/`Response`, and `MeAgent` exposes
   `Permissions`/`TokenPermissions` — a breaking change for Go importers of
-  `github.com/jentic/jentic-one/cli`. Upgrade the CLI with the
-  server: a mismatched CLI refuses `/me` and the endpoint reference with an
-  error naming the version skew, rather than reporting an empty permission
-  set.
+  `github.com/jentic/jentic-one/cli`. **Upgrade every CLI with the server.**
+  The version-skew guard lives in the new CLI only: a new CLI talking to an
+  old server refuses `/me` and the endpoint reference with a
+  `SERVER_INCOMPATIBLE` error, but an older CLI talking to a new server fails
+  silently — `jentic doctor` reports "scopes: none", `jentic endpoints` shows
+  every route as open to any authenticated caller, and `--scope` matches
+  nothing.
 
 ## Deprecations
 
