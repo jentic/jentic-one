@@ -96,6 +96,24 @@ func (e ApiSourceUrlType) Valid() bool {
 	}
 }
 
+// Defines values for ApprovalDecision.
+const (
+	ApprovalDecisionApprove ApprovalDecision = "approve"
+	ApprovalDecisionDeny    ApprovalDecision = "deny"
+)
+
+// Valid indicates whether the value is a known member of the ApprovalDecision enum.
+func (e ApprovalDecision) Valid() bool {
+	switch e {
+	case ApprovalDecisionApprove:
+		return true
+	case ApprovalDecisionDeny:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuditTargetType.
 const (
 	AuditTargetTypeAccessRequest     AuditTargetType = "access_request"
@@ -104,6 +122,7 @@ const (
 	AuditTargetTypeCredential        AuditTargetType = "credential"
 	AuditTargetTypeCredentialBinding AuditTargetType = "credential_binding"
 	AuditTargetTypeEvent             AuditTargetType = "event"
+	AuditTargetTypeExecutionApproval AuditTargetType = "execution_approval"
 	AuditTargetTypeExecutionRecord   AuditTargetType = "execution_record"
 	AuditTargetTypeInviteToken       AuditTargetType = "invite_token"
 	AuditTargetTypeJob               AuditTargetType = "job"
@@ -138,6 +157,8 @@ func (e AuditTargetType) Valid() bool {
 	case AuditTargetTypeCredentialBinding:
 		return true
 	case AuditTargetTypeEvent:
+		return true
+	case AuditTargetTypeExecutionApproval:
 		return true
 	case AuditTargetTypeExecutionRecord:
 		return true
@@ -351,6 +372,33 @@ func (e EventSeverity) Valid() bool {
 	case Info:
 		return true
 	case Warning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExecutionApprovalState.
+const (
+	ExecutionApprovalStateApproved  ExecutionApprovalState = "approved"
+	ExecutionApprovalStateDenied    ExecutionApprovalState = "denied"
+	ExecutionApprovalStateExpired   ExecutionApprovalState = "expired"
+	ExecutionApprovalStatePending   ExecutionApprovalState = "pending"
+	ExecutionApprovalStateWithdrawn ExecutionApprovalState = "withdrawn"
+)
+
+// Valid indicates whether the value is a known member of the ExecutionApprovalState enum.
+func (e ExecutionApprovalState) Valid() bool {
+	switch e {
+	case ExecutionApprovalStateApproved:
+		return true
+	case ExecutionApprovalStateDenied:
+		return true
+	case ExecutionApprovalStateExpired:
+		return true
+	case ExecutionApprovalStatePending:
+		return true
+	case ExecutionApprovalStateWithdrawn:
 		return true
 	default:
 		return false
@@ -683,8 +731,9 @@ func (e OperationResultResponseType) Valid() bool {
 
 // Defines values for PermissionRuleReadSchemaEffect.
 const (
-	PermissionRuleReadSchemaEffectAllow PermissionRuleReadSchemaEffect = "allow"
-	PermissionRuleReadSchemaEffectDeny  PermissionRuleReadSchemaEffect = "deny"
+	PermissionRuleReadSchemaEffectAllow           PermissionRuleReadSchemaEffect = "allow"
+	PermissionRuleReadSchemaEffectDeny            PermissionRuleReadSchemaEffect = "deny"
+	PermissionRuleReadSchemaEffectRequireApproval PermissionRuleReadSchemaEffect = "require-approval"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleReadSchemaEffect enum.
@@ -693,6 +742,8 @@ func (e PermissionRuleReadSchemaEffect) Valid() bool {
 	case PermissionRuleReadSchemaEffectAllow:
 		return true
 	case PermissionRuleReadSchemaEffectDeny:
+		return true
+	case PermissionRuleReadSchemaEffectRequireApproval:
 		return true
 	default:
 		return false
@@ -722,8 +773,9 @@ func (e PermissionRuleReadSchemaMatchMode) Valid() bool {
 
 // Defines values for PermissionRuleSchemaEffect.
 const (
-	PermissionRuleSchemaEffectAllow PermissionRuleSchemaEffect = "allow"
-	PermissionRuleSchemaEffectDeny  PermissionRuleSchemaEffect = "deny"
+	PermissionRuleSchemaEffectAllow           PermissionRuleSchemaEffect = "allow"
+	PermissionRuleSchemaEffectDeny            PermissionRuleSchemaEffect = "deny"
+	PermissionRuleSchemaEffectRequireApproval PermissionRuleSchemaEffect = "require-approval"
 )
 
 // Valid indicates whether the value is a known member of the PermissionRuleSchemaEffect enum.
@@ -732,6 +784,8 @@ func (e PermissionRuleSchemaEffect) Valid() bool {
 	case PermissionRuleSchemaEffectAllow:
 		return true
 	case PermissionRuleSchemaEffectDeny:
+		return true
+	case PermissionRuleSchemaEffectRequireApproval:
 		return true
 	default:
 		return false
@@ -1173,6 +1227,9 @@ type ApiUpdateRequest struct {
 	IconUrl     *string `json:"icon_url,omitempty"`
 }
 
+// ApprovalDecision A reviewer's decision on a pending approval.
+type ApprovalDecision string
+
 // AuditListResponse Paginated list of audit entries.
 type AuditListResponse struct {
 	Data       []AuditResponse `json:"data"`
@@ -1591,6 +1648,17 @@ type DailyExecutionBucket struct {
 	Total   int    `json:"total"`
 }
 
+// DecideRequest Approve or deny a pending execution approval.
+//
+// Examples: {"decision":"deny","reason":"Not this account"}
+type DecideRequest struct {
+	// Decision `approve` releases the call; `deny` fails it.
+	Decision ApprovalDecision `json:"decision"`
+
+	// Reason Optional reason, recorded with the decision.
+	Reason *string `json:"reason,omitempty"`
+}
+
 // DenyRequest Request body for denying an agent.
 type DenyRequest struct {
 	Reason string `json:"reason"`
@@ -1678,6 +1746,166 @@ type EventResponse struct {
 // EventSeverity Severity level for platform events.
 type EventSeverity string
 
+// ExecutionApprovalDetailResponse An approval with the agent context and the held request a reviewer decides on.
+type ExecutionApprovalDetailResponse struct {
+	// UnderscoreLinks HAL-style links for an execution approval.
+	UnderscoreLinks ExecutionApprovalLinksResponse `json:"_links"`
+
+	// AgentId The agent whose call was held.
+	AgentId string `json:"agent_id"`
+
+	// AgentName Display name of the agent.
+	AgentName *string `json:"agent_name,omitempty"`
+
+	// AgentOwnerId The agent's owner; null for an ownerless agent (admin-only).
+	AgentOwnerId *string `json:"agent_owner_id,omitempty"`
+
+	// ApiName Name of the API called.
+	ApiName string `json:"api_name"`
+
+	// ApiVendor Vendor of the API called.
+	ApiVendor string `json:"api_vendor"`
+
+	// ApiVersion Version of the API called.
+	ApiVersion string `json:"api_version"`
+
+	// CreatedAt When the call was held.
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId The credential selected when the call was held.
+	CredentialId string `json:"credential_id"`
+
+	// DecidedAt When it left `pending`.
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+
+	// DecidedBy Reviewer who decided it.
+	DecidedBy *string `json:"decided_by,omitempty"`
+
+	// DecisionReason Reviewer's reason.
+	DecisionReason *string `json:"decision_reason,omitempty"`
+
+	// ExecutionId Execution record written once the approved job ran.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// ExpiresAt When a pending approval expires undecided.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Id Approval id (`exap_…`).
+	Id string `json:"id"`
+
+	// JobId The held execution job.
+	JobId string `json:"job_id"`
+
+	// MatchedRuleId The require-approval permission rule that held the call.
+	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
+
+	// Method HTTP method of the held call.
+	Method string `json:"method"`
+
+	// OperationId Resolved OpenAPI operation id.
+	OperationId *string `json:"operation_id,omitempty"`
+
+	// Path Upstream path of the held call.
+	Path string `json:"path"`
+
+	// Request The held call.
+	Request *HeldRequestResponse `json:"request,omitempty"`
+
+	// State Approval state.
+	State ExecutionApprovalState `json:"state"`
+
+	// TraceId Trace id of the held call.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// UpdatedAt Last change.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// ExecutionApprovalLinksResponse HAL-style links for an execution approval.
+type ExecutionApprovalLinksResponse struct {
+	// Job The held execution job to poll for the outcome.
+	Job string `json:"job"`
+
+	// Self This approval.
+	Self string `json:"self"`
+}
+
+// ExecutionApprovalListResponse A page of execution approvals.
+type ExecutionApprovalListResponse struct {
+	Data       []ExecutionApprovalResponse `json:"data"`
+	HasMore    bool                        `json:"has_more"`
+	NextCursor *string                     `json:"next_cursor,omitempty"`
+}
+
+// ExecutionApprovalResponse A held execution waiting on (or settled by) a human decision.
+type ExecutionApprovalResponse struct {
+	// UnderscoreLinks HAL-style links for an execution approval.
+	UnderscoreLinks ExecutionApprovalLinksResponse `json:"_links"`
+
+	// AgentId The agent whose call was held.
+	AgentId string `json:"agent_id"`
+
+	// ApiName Name of the API called.
+	ApiName string `json:"api_name"`
+
+	// ApiVendor Vendor of the API called.
+	ApiVendor string `json:"api_vendor"`
+
+	// ApiVersion Version of the API called.
+	ApiVersion string `json:"api_version"`
+
+	// CreatedAt When the call was held.
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId The credential selected when the call was held.
+	CredentialId string `json:"credential_id"`
+
+	// DecidedAt When it left `pending`.
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+
+	// DecidedBy Reviewer who decided it.
+	DecidedBy *string `json:"decided_by,omitempty"`
+
+	// DecisionReason Reviewer's reason.
+	DecisionReason *string `json:"decision_reason,omitempty"`
+
+	// ExecutionId Execution record written once the approved job ran.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// ExpiresAt When a pending approval expires undecided.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Id Approval id (`exap_…`).
+	Id string `json:"id"`
+
+	// JobId The held execution job.
+	JobId string `json:"job_id"`
+
+	// MatchedRuleId The require-approval permission rule that held the call.
+	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
+
+	// Method HTTP method of the held call.
+	Method string `json:"method"`
+
+	// OperationId Resolved OpenAPI operation id.
+	OperationId *string `json:"operation_id,omitempty"`
+
+	// Path Upstream path of the held call.
+	Path string `json:"path"`
+
+	// State Approval state.
+	State ExecutionApprovalState `json:"state"`
+
+	// TraceId Trace id of the held call.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// UpdatedAt Last change.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// ExecutionApprovalState Lifecycle of an execution approval; every state but “pending“ is terminal.
+type ExecutionApprovalState string
+
 // ExecutionListResponse Paginated list of executions.
 type ExecutionListResponse struct {
 	Data       []ExecutionResponse `json:"data"`
@@ -1762,6 +1990,21 @@ type HealthResponse struct {
 	SetupRequired bool    `json:"setup_required"`
 	Status        string  `json:"status"`
 	Surface       string  `json:"surface"`
+}
+
+// HeldRequestResponse The held call exactly as it runs if approved (credentials are injected at run time).
+type HeldRequestResponse struct {
+	// Body Request body, if any.
+	Body *string `json:"body,omitempty"`
+
+	// BodyTruncated True when `body` is cut short for display.
+	BodyTruncated *bool `json:"body_truncated,omitempty"`
+
+	// Method HTTP method.
+	Method string `json:"method"`
+
+	// Url Upstream URL including the query string.
+	Url string `json:"url"`
 }
 
 // InstanceIdentityResponse Self-describing identity of the backend serving this request.
@@ -2567,7 +2810,7 @@ type PermissionRuleReadSchemaMatchMode string
 // denied (default-deny). A binding with zero rules therefore blocks all
 // operations — users must explicitly add at least one allow rule.
 type PermissionRuleSchema struct {
-	// Effect Whether this rule allows or denies the matched request.
+	// Effect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 	Effect PermissionRuleSchemaEffect `json:"effect"`
 
 	// MatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
@@ -2583,7 +2826,7 @@ type PermissionRuleSchema struct {
 	Path *string `json:"path,omitempty"`
 }
 
-// PermissionRuleSchemaEffect Whether this rule allows or denies the matched request.
+// PermissionRuleSchemaEffect Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
 type PermissionRuleSchemaEffect string
 
 // PermissionRuleSchemaMatchMode How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
@@ -3445,6 +3688,14 @@ type ListExecutionsParams struct {
 	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListExecutionApprovalsParams defines parameters for ListExecutionApprovals.
+type ListExecutionApprovalsParams struct {
+	State   *ExecutionApprovalState `form:"state,omitempty" json:"state,omitempty"`
+	AgentId *string                 `form:"agent_id,omitempty" json:"agent_id,omitempty"`
+	Cursor  *string                 `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit   *int                    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // GetGovernedHostsParams defines parameters for GetGovernedHosts.
 type GetGovernedHostsParams struct {
 	// IfNoneMatch Change-poll precondition: the `ETag` from a previous response (quoted, `"<digest>"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.
@@ -3683,6 +3934,9 @@ type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
 // AcknowledgeEventJSONRequestBody defines body for AcknowledgeEvent for application/json ContentType.
 type AcknowledgeEventJSONRequestBody = EventAcknowledgeRequest
+
+// DecideExecutionApprovalJSONRequestBody defines body for DecideExecutionApproval for application/json ContentType.
+type DecideExecutionApprovalJSONRequestBody = DecideRequest
 
 // IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
 type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
@@ -5885,6 +6139,56 @@ type ClientInterface interface {
 	// Corresponds with GET /executions (the `ListExecutions` operationId).
 	ListExecutions(ctx context.Context, params *ListExecutionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListExecutionApprovals List execution approvals
+	//
+	// List the approvals the caller may review, newest first.
+	//
+	// ``org:admin`` sees every approval; a user sees approvals for agents they
+	// own; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or
+	// ``agent_id``.
+	//
+	// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
+	ListExecutionApprovals(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetExecutionApproval Get an execution approval
+	//
+	// One approval with its agent, owner, matched rule and the held request body.
+	//
+	// An approval outside the caller's reviewer visibility answers ``404``.
+	//
+	// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
+	GetExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideExecutionApprovalWithBody Approve or deny an execution approval
+	//
+	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the held job to the worker, which re-authorizes and
+	// runs it once; ``deny`` fails the job with a permission-denied result. The
+	// first decision wins: deciding an approval that is no longer pending (or
+	// has expired) answers ``409``. An agent caller is always refused (``403``),
+	// whatever its scopes.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+	DecideExecutionApprovalWithBody(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideExecutionApproval Approve or deny an execution approval
+	//
+	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the held job to the worker, which re-authorizes and
+	// runs it once; ``deny`` fails the job with a permission-denied result. The
+	// first decision wins: deciding an approval that is no longer pending (or
+	// has expired) answers ``409``. An agent caller is always refused (``403``),
+	// whatever its scopes.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+	DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetExecution Get Execution
 	//
 	// Get an execution record by ID.
@@ -6001,14 +6305,20 @@ type ClientInterface interface {
 
 	// GetJobResult Get Job Result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the result of a completed job, or the problem body of a failed execution.
+	//
+	// Polymorphic by kind. A held execution that was denied or expired is
+	// ``failed`` with a permission-denied problem as its result.
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CancelJob Cancel Job
 	//
-	// Cancel an active job.
+	// Cancel a queued or running job; an already-terminal job is returned unchanged.
+	//
+	// A ``held`` execution answers ``409``: it settles only through its approval
+	// (a reviewer's decision, the filing agent's withdrawal, or expiry).
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9810,6 +10120,96 @@ func (c *Client) ListExecutions(ctx context.Context, params *ListExecutionsParam
 	return c.Client.Do(req)
 }
 
+// ListExecutionApprovals List execution approvals
+//
+// List the approvals the caller may review, newest first.
+//
+// “org:admin“ sees every approval; a user sees approvals for agents they
+// own; an agent sees its own. Filter by “state“ (e.g. “pending“) or
+// “agent_id“.
+//
+// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
+func (c *Client) ListExecutionApprovals(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListExecutionApprovalsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetExecutionApproval Get an execution approval
+//
+// One approval with its agent, owner, matched rule and the held request body.
+//
+// An approval outside the caller's reviewer visibility answers “404“.
+//
+// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
+func (c *Client) GetExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetExecutionApprovalRequest(c.Server, approvalId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideExecutionApprovalWithBody Approve or deny an execution approval
+//
+// Decide a pending approval — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the held job to the worker, which re-authorizes and
+// runs it once; “deny“ fails the job with a permission-denied result. The
+// first decision wins: deciding an approval that is no longer pending (or
+// has expired) answers “409“. An agent caller is always refused (“403“),
+// whatever its scopes.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+func (c *Client) DecideExecutionApprovalWithBody(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideExecutionApprovalRequestWithBody(c.Server, approvalId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideExecutionApproval Approve or deny an execution approval
+//
+// Decide a pending approval — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the held job to the worker, which re-authorizes and
+// runs it once; “deny“ fails the job with a permission-denied result. The
+// first decision wins: deciding an approval that is no longer pending (or
+// has expired) answers “409“. An agent caller is always refused (“403“),
+// whatever its scopes.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+func (c *Client) DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideExecutionApprovalRequest(c.Server, approvalId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetExecution Get Execution
 //
 // Get an execution record by ID.
@@ -10016,7 +10416,10 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 
 // GetJobResult Get Job Result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the result of a completed job, or the problem body of a failed execution.
+//
+// Polymorphic by kind. A held execution that was denied or expired is
+// “failed“ with a permission-denied problem as its result.
 //
 // Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -10033,7 +10436,10 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 
 // CancelJob Cancel Job
 //
-// Cancel an active job.
+// Cancel a queued or running job; an already-terminal job is returned unchanged.
+//
+// A “held“ execution answers “409“: it settles only through its approval
+// (a reviewer's decision, the filing agent's withdrawal, or expiry).
 //
 // Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17745,6 +18151,177 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 	return req, nil
 }
 
+// NewListExecutionApprovalsRequest constructs an http.Request for the ListExecutionApprovals method
+func NewListExecutionApprovalsRequest(server string, params *ListExecutionApprovalsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/approvals")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AgentId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", *params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetExecutionApprovalRequest constructs an http.Request for the GetExecutionApproval method
+func NewGetExecutionApprovalRequest(server string, approvalId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/approvals/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDecideExecutionApprovalRequest calls the generic DecideExecutionApproval builder with application/json body
+func NewDecideExecutionApprovalRequest(server string, approvalId string, body DecideExecutionApprovalJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideExecutionApprovalRequestWithBody(server, approvalId, "application/json", bodyReader)
+}
+
+// NewDecideExecutionApprovalRequestWithBody constructs an http.Request for the DecideExecutionApproval method, with any body, and a specified content type
+func NewDecideExecutionApprovalRequestWithBody(server string, approvalId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/approvals/%s:decide", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetExecutionRequest constructs an http.Request for the GetExecution method
 func NewGetExecutionRequest(server string, executionId string) (*http.Request, error) {
 	var err error
@@ -22201,6 +22778,60 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /executions (the `ListExecutions` operationId).
 	ListExecutionsWithResponse(ctx context.Context, params *ListExecutionsParams, reqEditors ...RequestEditorFn) (*ListExecutionsHTTPResp, error)
 
+	// ListExecutionApprovalsWithResponse List execution approvals
+	//
+	// List the approvals the caller may review, newest first.
+	//
+	// ``org:admin`` sees every approval; a user sees approvals for agents they
+	// own; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or
+	// ``agent_id``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
+	ListExecutionApprovalsWithResponse(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*ListExecutionApprovalsHTTPResp, error)
+
+	// GetExecutionApprovalWithResponse Get an execution approval
+	//
+	// One approval with its agent, owner, matched rule and the held request body.
+	//
+	// An approval outside the caller's reviewer visibility answers ``404``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
+	GetExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*GetExecutionApprovalHTTPResp, error)
+
+	// DecideExecutionApprovalWithBodyWithResponse Approve or deny an execution approval
+	//
+	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the held job to the worker, which re-authorizes and
+	// runs it once; ``deny`` fails the job with a permission-denied result. The
+	// first decision wins: deciding an approval that is no longer pending (or
+	// has expired) answers ``409``. An agent caller is always refused (``403``),
+	// whatever its scopes.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+	DecideExecutionApprovalWithBodyWithResponse(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error)
+
+	// DecideExecutionApprovalWithResponse Approve or deny an execution approval
+	//
+	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the held job to the worker, which re-authorizes and
+	// runs it once; ``deny`` fails the job with a permission-denied result. The
+	// first decision wins: deciding an approval that is no longer pending (or
+	// has expired) answers ``409``. An agent caller is always refused (``403``),
+	// whatever its scopes.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+	DecideExecutionApprovalWithResponse(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error)
+
 	// GetExecutionWithResponse Get Execution
 	//
 	// Get an execution record by ID.
@@ -22331,7 +22962,10 @@ type ClientWithResponsesInterface interface {
 
 	// GetJobResultWithResponse Get Job Result
 	//
-	// Get the result of a completed job — polymorphic by kind.
+	// Get the result of a completed job, or the problem body of a failed execution.
+	//
+	// Polymorphic by kind. A held execution that was denied or expired is
+	// ``failed`` with a permission-denied problem as its result.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22340,7 +22974,10 @@ type ClientWithResponsesInterface interface {
 
 	// CancelJobWithResponse Cancel Job
 	//
-	// Cancel an active job.
+	// Cancel a queued or running job; an already-terminal job is returned unchanged.
+	//
+	// A ``held`` execution answers ``409``: it settles only through its approval
+	// (a reviewer's decision, the filing agent's withdrawal, or expiry).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -32142,6 +32779,276 @@ func (r ListExecutionsHTTPResp) ContentType() string {
 	return ""
 }
 
+type ListExecutionApprovalsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionApprovalListResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListExecutionApprovalsHTTPResp) GetJSON200() *ExecutionApprovalListResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListExecutionApprovalsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListExecutionApprovalsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListExecutionApprovalsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListExecutionApprovalsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetExecutionApprovalHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionApprovalDetailResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalDetailResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetExecutionApprovalHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetExecutionApprovalHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetExecutionApprovalHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetExecutionApprovalHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DecideExecutionApprovalHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExecutionApprovalResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideExecutionApprovalHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideExecutionApprovalHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideExecutionApprovalHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideExecutionApprovalHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetExecutionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -32830,6 +33737,10 @@ type CancelJobHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -32856,6 +33767,16 @@ func (r CancelJobHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r CancelJobHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CancelJobHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CancelJobHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -39318,6 +40239,84 @@ func (c *ClientWithResponses) ListExecutionsWithResponse(ctx context.Context, pa
 	return ParseListExecutionsHTTPResp(rsp)
 }
 
+// ListExecutionApprovalsWithResponse List execution approvals
+//
+// List the approvals the caller may review, newest first.
+//
+// “org:admin“ sees every approval; a user sees approvals for agents they
+// own; an agent sees its own. Filter by “state“ (e.g. “pending“) or
+// “agent_id“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
+func (c *ClientWithResponses) ListExecutionApprovalsWithResponse(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*ListExecutionApprovalsHTTPResp, error) {
+	rsp, err := c.ListExecutionApprovals(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListExecutionApprovalsHTTPResp(rsp)
+}
+
+// GetExecutionApprovalWithResponse Get an execution approval
+//
+// One approval with its agent, owner, matched rule and the held request body.
+//
+// An approval outside the caller's reviewer visibility answers “404“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
+func (c *ClientWithResponses) GetExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*GetExecutionApprovalHTTPResp, error) {
+	rsp, err := c.GetExecutionApproval(ctx, approvalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetExecutionApprovalHTTPResp(rsp)
+}
+
+// DecideExecutionApprovalWithBodyWithResponse Approve or deny an execution approval
+//
+// Decide a pending approval — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the held job to the worker, which re-authorizes and
+// runs it once; “deny“ fails the job with a permission-denied result. The
+// first decision wins: deciding an approval that is no longer pending (or
+// has expired) answers “409“. An agent caller is always refused (“403“),
+// whatever its scopes.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+func (c *ClientWithResponses) DecideExecutionApprovalWithBodyWithResponse(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error) {
+	rsp, err := c.DecideExecutionApprovalWithBody(ctx, approvalId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideExecutionApprovalHTTPResp(rsp)
+}
+
+// DecideExecutionApprovalWithResponse Approve or deny an execution approval
+//
+// Decide a pending approval — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the held job to the worker, which re-authorizes and
+// runs it once; “deny“ fails the job with a permission-denied result. The
+// first decision wins: deciding an approval that is no longer pending (or
+// has expired) answers “409“. An agent caller is always refused (“403“),
+// whatever its scopes.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
+func (c *ClientWithResponses) DecideExecutionApprovalWithResponse(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error) {
+	rsp, err := c.DecideExecutionApproval(ctx, approvalId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDecideExecutionApprovalHTTPResp(rsp)
+}
+
 // GetExecutionWithResponse Get Execution
 //
 // Get an execution record by ID.
@@ -39502,7 +40501,10 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 
 // GetJobResultWithResponse Get Job Result
 //
-// Get the result of a completed job — polymorphic by kind.
+// Get the result of a completed job, or the problem body of a failed execution.
+//
+// Polymorphic by kind. A held execution that was denied or expired is
+// “failed“ with a permission-denied problem as its result.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -39517,7 +40519,10 @@ func (c *ClientWithResponses) GetJobResultWithResponse(ctx context.Context, jobI
 
 // CancelJobWithResponse Cancel Job
 //
-// Cancel an active job.
+// Cancel a queued or running job; an already-terminal job is returned unchanged.
+//
+// A “held“ execution answers “409“: it settles only through its approval
+// (a reviewer's decision, the filing agent's withdrawal, or expiry).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -48268,6 +49273,231 @@ func ParseListExecutionsHTTPResp(rsp *http.Response) (*ListExecutionsHTTPResp, e
 	return response, nil
 }
 
+// ParseListExecutionApprovalsHTTPResp parses an HTTP response from a ListExecutionApprovalsWithResponse call
+func ParseListExecutionApprovalsHTTPResp(rsp *http.Response) (*ListExecutionApprovalsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListExecutionApprovalsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionApprovalListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetExecutionApprovalHTTPResp parses an HTTP response from a GetExecutionApprovalWithResponse call
+func ParseGetExecutionApprovalHTTPResp(rsp *http.Response) (*GetExecutionApprovalHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetExecutionApprovalHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionApprovalDetailResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDecideExecutionApprovalHTTPResp parses an HTTP response from a DecideExecutionApprovalWithResponse call
+func ParseDecideExecutionApprovalHTTPResp(rsp *http.Response) (*DecideExecutionApprovalHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DecideExecutionApprovalHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecutionApprovalResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetExecutionHTTPResp parses an HTTP response from a GetExecutionWithResponse call
 func ParseGetExecutionHTTPResp(rsp *http.Response) (*GetExecutionHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -48863,6 +50093,20 @@ func ParseCancelJobHTTPResp(rsp *http.Response) (*CancelJobHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

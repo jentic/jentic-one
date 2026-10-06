@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState } from '@/shared/ui';
 import {
+	isCancellableJobStatus,
 	isTerminalJobStatus,
 	toJobStatus,
 	useActorForJob,
@@ -38,7 +39,7 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 
 	const job = query.data;
 	const status = job ? toJobStatus(job.status) : null;
-	const canCancel = isAdmin && status != null && !isTerminalJobStatus(status);
+	const canCancel = isAdmin && status != null && isCancellableJobStatus(status);
 	const span = job ? formatSpan(job.created_at, job.updated_at) : null;
 
 	const confirmCancel = () => {

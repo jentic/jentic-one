@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos import AuditRepository, JobRepository
-from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
-from jentic_one.admin.services.errors import JobNotFoundError
+from jentic_one.admin.services.errors import JobHeldError, JobNotFoundError
 from jentic_one.admin.services.metrics import audit_events_counter
 from jentic_one.admin.services.schemas.jobs import JobFilter, JobView
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.jobs import JobStatus
 
 
 class JobService:
@@ -81,18 +80,16 @@ class JobService:
             job = await JobRepository.get_by_id(session, job_id, filters=access_filters)
             if job is None:
                 raise JobNotFoundError(job_id)
+            if job.status == JobStatus.HELD:
+                # A held execution settles only through its approval (decide,
+                # withdraw or expiry), never through the generic jobs surface.
+                raise JobHeldError(job_id)
 
             cancelled = await JobRepository.cancel_if_active(
                 session, job_id, filters=access_filters
             )
             if cancelled is None:
                 return self._to_view(job)
-
-            # Cancelling a held job withdraws its pending approval (only a
-            # held job has one); no result is written.
-            await ExecutionApprovalRepository.withdraw_by_job_id(
-                session, job_id, now=datetime.now(UTC)
-            )
 
             await AuditRepository.record(
                 session,

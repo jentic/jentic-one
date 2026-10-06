@@ -109,7 +109,10 @@ export class JobsService {
     }
     /**
      * Cancel Job
-     * Cancel an active job.
+     * Cancel a queued or running job; an already-terminal job is returned unchanged.
+     *
+     * A ``held`` execution answers ``409``: it settles only through its approval
+     * (a reviewer's decision, the filing agent's withdrawal, or expiry).
      * @returns JobResponse Successful Response
      * @throws ApiError
      */
@@ -128,6 +131,8 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

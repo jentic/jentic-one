@@ -104,6 +104,7 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
+func (DecideRequest) RequiredFields() []string           { return []string{"decision"} }
 func (DenyRequest) RequiredFields() []string             { return []string{"reason"} }
 func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
 func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
@@ -112,6 +113,14 @@ func (EventLinks) RequiredFields() []string              { return []string{"self
 func (EventListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
 	return []string{"_links", "acknowledged", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
+}
+func (ExecutionApprovalDetailResponse) RequiredFields() []string {
+	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "job_id", "method", "path", "state"}
+}
+func (ExecutionApprovalLinksResponse) RequiredFields() []string { return []string{"job", "self"} }
+func (ExecutionApprovalListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
+func (ExecutionApprovalResponse) RequiredFields() []string {
+	return []string{"_links", "agent_id", "api_name", "api_vendor", "api_version", "created_at", "credential_id", "expires_at", "id", "job_id", "method", "path", "state"}
 }
 func (ExecutionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ExecutionRecordLinks) RequiredFields() []string  { return []string{"self"} }
@@ -125,6 +134,7 @@ func (GovernedHostsResponse) RequiredFields() []string { return []string{"data",
 func (HealthResponse) RequiredFields() []string {
 	return []string{"setup_required", "status", "surface"}
 }
+func (HeldRequestResponse) RequiredFields() []string { return []string{"method", "url"} }
 func (InstanceIdentityResponse) RequiredFields() []string {
 	return []string{"backend", "canonical_base_url", "host"}
 }

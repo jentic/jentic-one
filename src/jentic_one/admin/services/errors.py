@@ -203,6 +203,14 @@ class JobNotCancellableError(AdminServiceError):
         self.job_id = job_id
 
 
+class JobHeldError(JobNotCancellableError):
+    """Raised when ``:cancel`` targets a held job, which settles only through its approval."""
+
+    def __init__(self, job_id: str) -> None:
+        AdminServiceError.__init__(self, f"Job '{job_id}' is held for approval")
+        self.job_id = job_id
+
+
 class JobNotCompletedError(AdminServiceError):
     """Raised when attempting to access a result for a non-completed job."""
 

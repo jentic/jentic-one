@@ -95,15 +95,3 @@ class ExecutionApprovalRepository:
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
-
-    @staticmethod
-    async def withdraw_by_job_id(session: AsyncSession, job_id: str, *, now: datetime) -> bool:
-        """Move the job's pending approval to ``withdrawn``; True when one was pending."""
-        stmt = (
-            update(ExecutionApproval)
-            .where(ExecutionApproval.job_id == job_id, ExecutionApproval.state == _PENDING)
-            .values(state="withdrawn", decided_at=now)
-            .returning(ExecutionApproval.id)
-        )
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none() is not None

@@ -23,6 +23,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
@@ -108,13 +109,17 @@ async def get_job_result(
     return JSONResponse(content=view.body)
 
 
-@router.post("/jobs/{job_id}:cancel")
+@router.post("/jobs/{job_id}:cancel", responses=with_responses(not_found(), conflict()))
 async def cancel_job(
     request: Request,
     job_id: str,
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
-    """Cancel an active job."""
+    """Cancel a queued or running job; an already-terminal job is returned unchanged.
+
+    A ``held`` execution answers ``409``: it settles only through its approval
+    (a reviewer's decision, the filing agent's withdrawal, or expiry).
+    """
     view = await job_svc.cancel(job_id, identity=identity)
     return _job_response(view, request)

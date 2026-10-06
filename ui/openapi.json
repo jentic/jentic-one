@@ -28812,7 +28812,7 @@
     },
     "/jobs/{job_id}:cancel": {
       "post": {
-        "description": "Cancel an active job.",
+        "description": "Cancel a queued or running job; an already-terminal job is returned unchanged.\n\nA ``held`` execution answers ``409``: it settles only through its approval\n(a reviewer's decision, the filing agent's withdrawal, or expiry).",
         "operationId": "cancelJob",
         "parameters": [
           {
@@ -28886,6 +28886,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {

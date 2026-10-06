@@ -92,6 +92,14 @@ export function isTerminalJobStatus(status: JobStatusUi): boolean {
 }
 
 /**
+ * Whether the jobs surface can cancel a job: only `queued` and `running`. A
+ * `held` execution (shown as `unknown` here) settles only through its approval.
+ */
+export function isCancellableJobStatus(status: JobStatusUi): boolean {
+	return status === 'queued' || status === 'running';
+}
+
+/**
  * An actor that performed an audited action, resolved from `AuditResponse`.
  * Jobs/executions carry no actor on the wire (STATUS.md decision: actor
  * attribution lives only in the audit log), so trace/job detail views resolve

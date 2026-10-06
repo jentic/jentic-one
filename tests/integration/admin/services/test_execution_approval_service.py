@@ -1,7 +1,9 @@
 """Integration tests for require-approval holds: filing, deciding, withdrawing, expiring.
 
 Runs the shared hold path, ``ExecutionApprovalService``, ``JobService`` /
-``JobResultService`` and the worker's expiry sweep against the real admin DB.
+``JobResultService`` and the worker's expiry sweep against the real admin DB,
+and drives the admin routes through the real admin app (only the identity
+dependency is overridden).
 """
 
 from __future__ import annotations
@@ -9,12 +11,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.agents import Agent
@@ -29,12 +33,13 @@ from jentic_one.admin.services.errors import (
     ExecutionApprovalAlreadyDecidedError,
     ExecutionApprovalForbiddenError,
     ExecutionApprovalNotFoundError,
-    JobNotCompletedError,
+    JobHeldError,
 )
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.execution_approvals import DecideInput
+from jentic_one.admin.web.app import create_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
@@ -49,6 +54,7 @@ from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import ActorStatus, ActorType, InviteState, JobStatus
 from jentic_one.shared.models.events import EventType
 from jentic_one.shared.models.execution_approvals import ApprovalDecision
+from jentic_one.shared.web.deps import resolve_identity
 
 pytestmark = pytest.mark.integration
 
@@ -171,6 +177,16 @@ async def _approval(ctx: Context, approval_id: str) -> ExecutionApproval:
         row = await session.get(ExecutionApproval, approval_id)
         assert row is not None
         return row
+
+
+@asynccontextmanager
+async def _client(ctx: Context, identity: Identity | None) -> AsyncIterator[AsyncClient]:
+    """The real admin app; ``identity`` overrides token resolution, None sends no token."""
+    app = create_app(ctx)
+    if identity is not None:
+        app.dependency_overrides[resolve_identity] = lambda: identity
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://testserver") as c:
+        yield c
 
 
 async def _result_body(ctx: Context, job_id: str, identity: Identity) -> dict[str, Any]:
@@ -397,20 +413,16 @@ async def test_detail_shows_the_agent_owner_and_the_held_request(
     assert detail.request.body == _BODY.decode()
 
 
-async def test_withdraw_cancels_the_held_job_without_a_result(
+async def test_jobs_cancel_refuses_a_held_job_and_leaves_its_approval_pending(
     integration_context: Context, actors: _Actors
 ) -> None:
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
-    view = await JobService(ctx).cancel(hold.job_id, identity=actors.agent)
-    assert view.status == JobStatus.CANCELLED
-    assert (await _approval(ctx, hold.approval_id)).state == "withdrawn"
-    with pytest.raises(JobNotCompletedError):
-        await JobResultService(ctx).get(hold.job_id, identity=actors.agent)
-    with pytest.raises(ExecutionApprovalAlreadyDecidedError):
-        await ExecutionApprovalService(ctx).decide(
-            hold.approval_id, DecideInput(decision=ApprovalDecision.APPROVE), identity=actors.owner
-        )
+    for caller in (actors.agent, actors.admin):
+        with pytest.raises(JobHeldError):
+            await JobService(ctx).cancel(hold.job_id, identity=caller)
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
 
 async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
@@ -436,3 +448,16 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     assert body["status"] == 403
     assert (await _approval(ctx, live.approval_id)).state == "pending"
     assert (await _job(ctx, live.job_id)).status == JobStatus.HELD
+
+
+async def test_jobs_cancel_route_answers_409_for_a_held_job(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.agent) as client:
+        resp = await client.post(f"/jobs/{hold.job_id}:cancel")
+    assert resp.status_code == 409
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert resp.json()["type"].endswith("job_held")
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
