@@ -12,10 +12,11 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// newCredentialsCmd is `jentic credentials`: read-only listing/inspection of the
-// identity's credentials. The server already returns CredentialRedactedResponse
+// newCredentialsCmd is `jentic credentials`: listing, inspection and checking of
+// the identity's credentials. The server already returns CredentialRedactedResponse
 // (no live secret); the CLI redaction funnel is belt-and-braces on top. Not
-// fenced — read-only, no local config mutation (impl/5.0 §6b, jentic-one#742).
+// fenced — no local config mutation (impl/5.0 §6b, jentic-one#742); `check` is
+// gated server-side on credentials:write.
 func newCredentialsCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "credentials",
@@ -24,7 +25,7 @@ func newCredentialsCmd(app *app) *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newCredentialsListCmd(app), newCredentialsShowCmd(app))
+	cmd.AddCommand(newCredentialsListCmd(app), newCredentialsShowCmd(app), newCredentialsCheckCmd(app))
 	return cmd
 }
 
@@ -120,4 +121,69 @@ func newCredentialsShowCmd(_ *app) *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// newCredentialsCheckCmd is `jentic credentials check`: one read call with a
+// stored credential that names why it fails (#630) instead of the agent finding
+// out several steps later.
+func newCredentialsCheckCmd(_ *app) *cobra.Command {
+	return &cobra.Command{
+		Use:   "check <credential_id>",
+		Short: "Make one test call with a credential and name why it fails",
+		Long: `Make one read call with a stored credential and report what the API says.
+
+The control plane picks a GET with no required input from the API's own spec
+and sends it through the broker's egress policy with a 5 second deadline.
+Nothing is stored and the secret is never printed.
+
+The status is ok, or why the credential fails: bad_key, expired,
+missing_scope, wrong_base_url or unreachable. untested means no call could be
+made, and the reason says why.
+
+Exit codes: 0 for ok and untested; 2 for a credential to fix (bad_key,
+expired, missing_scope, wrong_base_url); 1 for unreachable, worth retrying.
+Needs the credentials:write scope.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			aud := ux.FromContext(cmd.Context())
+			client, err := clictx.GetControlClient(cmd.Context())
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+			resp, err := client.CheckCredentialWithResponse(cmd.Context(), args[0])
+			if err != nil {
+				return reportCoded(aud, asCoded(err))
+			}
+			if resp.JSON200 == nil {
+				return reportCoded(aud, &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg:  fmt.Sprintf("credential %q could not be checked (status %d)", args[0], resp.StatusCode()),
+				})
+			}
+			aud.Render(resp.JSON200)
+			if coded := checkFailure(args[0], resp.JSON200); coded != nil {
+				return reportCoded(aud, coded)
+			}
+			return nil
+		},
+	}
+}
+
+// checkFailure maps a failed check onto the exit-code contract: unreachable is
+// worth retrying (TRANSPORT_ERROR, exit 1); any other named failure means fix
+// the credential, not retry (RESOLVE_FAILED, exit 2). ok and untested pass.
+func checkFailure(id string, r *control.CredentialCheckResponse) *ux.CodedError {
+	code := ux.CodeResolveFailed
+	switch r.Status {
+	case control.CredentialCheckStatusOk, control.CredentialCheckStatusUntested:
+		return nil
+	case control.CredentialCheckStatusUnreachable:
+		code = ux.CodeTransportError
+	}
+	return &ux.CodedError{
+		Code:       code,
+		Msg:        fmt.Sprintf("credential %s failed its check (%s): %s", id, r.Status, r.Reason),
+		Actionable: "Fix what the reason names, then run `jentic credentials check " + id + "` again.",
+		Details:    map[string]any{"status": string(r.Status)},
+	}
 }

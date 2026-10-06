@@ -43,6 +43,9 @@ from jentic_one.wiring import install_broker_registry_resolver as _install_broke
 from jentic_one.wiring import (
     install_control_catalog_auto_importer as _install_control_catalog_auto_importer,
 )
+from jentic_one.wiring import (
+    install_control_credential_checker as _install_control_credential_checker,
+)
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
     # Auth reaches the control DB read-only to resolve credential names for the
@@ -127,6 +130,7 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
         # process without registry DB can't reach the catalog manifest anyway.
         if surface == "control" and ctx.is_db_allowed("registry"):
             _install_control_catalog_auto_importer(app, ctx)
+            _install_control_credential_checker(app, ctx)
         return app
     app = create_combined_app(ctx, apps, container=container)
     if "broker" in apps and ctx.is_db_allowed("registry"):
@@ -136,6 +140,7 @@ def _build_app(ctx: Context, apps: list[str]) -> FastAPI:
     # kick off an import in the same process too.
     if "control" in apps and ctx.is_db_allowed("registry"):
         _install_control_catalog_auto_importer(app, ctx)
+        _install_control_credential_checker(app, ctx)
     return app
 
 

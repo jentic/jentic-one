@@ -12,6 +12,7 @@ from jentic_one.control.web.schemas.permission_rules import (
     PermissionRuleReadSchema,
     PermissionRuleSchema,
 )
+from jentic_one.shared.credential_check import CredentialCheckStatus
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
@@ -66,7 +67,19 @@ def _reject_control_chars(v: str | None, info: ValidationInfo) -> str | None:
 # --- Create request models (per type) ---
 
 
-class BearerTokenCreateRequest(BaseModel):
+class _CheckOnSave(BaseModel):
+    """The opt-in save-time check every create request carries (#630)."""
+
+    check: bool = Field(
+        default=False,
+        description=(
+            "After saving, make one read call with the credential and return the verdict "
+            "as `check`. The credential is saved either way."
+        ),
+    )
+
+
+class BearerTokenCreateRequest(_CheckOnSave):
     """Create request for bearer_token credentials."""
 
     type: Literal["bearer_token"]
@@ -81,7 +94,7 @@ class BearerTokenCreateRequest(BaseModel):
     _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
-class ApiKeyCreateRequest(BaseModel):
+class ApiKeyCreateRequest(_CheckOnSave):
     """Create request for api_key credentials."""
 
     model_config = ConfigDict(
@@ -121,7 +134,7 @@ class ApiKeyCreateRequest(BaseModel):
     _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
-class BasicAuthCreateRequest(BaseModel):
+class BasicAuthCreateRequest(_CheckOnSave):
     """Create request for basic credentials."""
 
     type: Literal["basic"]
@@ -136,7 +149,7 @@ class BasicAuthCreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
-class OAuth2CreateRequest(BaseModel):
+class OAuth2CreateRequest(_CheckOnSave):
     """Create request for oauth2 credentials.
 
     For managed providers (e.g. pipedream, direct_oauth2), token_url/client_id/client_secret
@@ -159,7 +172,7 @@ class OAuth2CreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
-class NoAuthCreateRequest(BaseModel):
+class NoAuthCreateRequest(_CheckOnSave):
     """Create request for no_auth credentials.
 
     A no-auth credential carries no secret — it represents "this API is called
@@ -178,7 +191,7 @@ class NoAuthCreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
-class Sigv4CreateRequest(BaseModel):
+class Sigv4CreateRequest(_CheckOnSave):
     """Create request for sigv4 (AWS Signature V4) credentials."""
 
     type: Literal["sigv4"]
@@ -433,11 +446,35 @@ class CredentialRedactedResponse(BaseModel):
     )
 
 
+class CredentialCheckResponse(BaseModel):
+    """What one test call made with the stored credential says about it."""
+
+    status: CredentialCheckStatus = Field(
+        description=(
+            "`ok`, or why the credential fails: `bad_key`, `expired`, `missing_scope`, "
+            "`wrong_base_url`, `unreachable`. `untested` means no call could be made "
+            "or the answer said nothing about the credential; `reason` says which."
+        )
+    )
+    reason: str = Field(description="One sentence naming the cause. Never contains the secret.")
+    probe: str | None = Field(
+        default=None,
+        description="The call the check made, e.g. `GET https://api.example.com/v1/me`, "
+        "query values redacted.",
+    )
+    upstream_status: int | None = Field(
+        default=None, description="The HTTP status the API answered, when it answered."
+    )
+
+
 class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
     credential: CredentialRedactedResponse
     secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
+    check: CredentialCheckResponse | None = Field(
+        default=None, description="The save-time check, present when the request set `check`."
+    )
 
 
 class CredentialListResponse(BaseModel):

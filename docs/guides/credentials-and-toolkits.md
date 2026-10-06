@@ -231,6 +231,33 @@ No HashiCorp Vault or AWS Secrets Manager integration ships today — an
 integrator implements the Protocol (as `pipedream` does for its external
 vault, storing only an account reference locally) and registers it.
 
+## Checking a credential
+
+Saving a credential does not try it, so a wrong key, a wrong region or a
+missing scope would otherwise surface only when an agent's call fails. A
+check makes one read call with the stored credential and names the failure.
+It is opt-in:
+
+- on save, with `"check": true` in the `POST /credentials` body (the verdict
+  comes back as `check`; the credential is saved either way);
+- for an existing or rotated credential, with
+  `POST /credentials/{credential_id}:check` or
+  `jentic credentials check <credential_id>`.
+
+Both need `credentials:write` on a credential you own. The call is a `GET`
+with no required input, taken from the API's own spec (preferring one the
+spec marks as authenticated and a "who am I" path such as `/me`). It goes
+out through the broker's injection code and egress policy with a 5 second
+deadline ([`credential_check.py`](../../src/jentic_one/credential_check.py)).
+The verdict is `ok`, `bad_key`, `expired`, `missing_scope`,
+`wrong_base_url` or `unreachable`, with a `reason` sentence; when the host
+comes from a server variable, the reason adds the region hint and the
+values the check used. `untested` means no safe call exists or the answer
+said nothing about the credential. The verdict carries the call made (query
+values redacted) and the upstream status, never the secret or the upstream
+body. A check emits the usual `credential.accessed` event, stores nothing,
+and never refreshes an OAuth token: the broker does that on the next call.
+
 ## Server-side token refresh
 
 An expired OAuth2 access token is refreshed by the broker mid-call, before

@@ -544,6 +544,12 @@
             "$ref": "#/components/schemas/APIReferenceRequest",
             "description": "Loose (vendor, name, version) API identity tuple."
           },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
+          },
           "field_name": {
             "description": "Header or query-parameter name carrying the key.",
             "title": "Field Name",
@@ -1505,6 +1511,12 @@
           "api": {
             "$ref": "#/components/schemas/APIReferenceRequest"
           },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1652,6 +1664,12 @@
         "properties": {
           "api": {
             "$ref": "#/components/schemas/APIReferenceRequest"
+          },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
           },
           "name": {
             "title": "Name",
@@ -2652,9 +2670,78 @@
         "title": "CredentialBindingResponse",
         "type": "object"
       },
+      "CredentialCheckResponse": {
+        "description": "What one test call made with the stored credential says about it.",
+        "properties": {
+          "probe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The call the check made, e.g. `GET https://api.example.com/v1/me`, query values redacted.",
+            "title": "Probe"
+          },
+          "reason": {
+            "description": "One sentence naming the cause. Never contains the secret.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CredentialCheckStatus",
+            "description": "`ok`, or why the credential fails: `bad_key`, `expired`, `missing_scope`, `wrong_base_url`, `unreachable`. `untested` means no call could be made or the answer said nothing about the credential; `reason` says which."
+          },
+          "upstream_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The HTTP status the API answered, when it answered.",
+            "title": "Upstream Status"
+          }
+        },
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "CredentialCheckResponse",
+        "type": "object"
+      },
+      "CredentialCheckStatus": {
+        "description": "What one test call says about a credential.",
+        "enum": [
+          "ok",
+          "bad_key",
+          "expired",
+          "missing_scope",
+          "wrong_base_url",
+          "unreachable",
+          "untested"
+        ],
+        "title": "CredentialCheckStatus",
+        "type": "string"
+      },
       "CredentialCreateResponse": {
         "description": "Create response: redacted + secret shown once.",
         "properties": {
+          "check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredentialCheckResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The save-time check, present when the request set `check`."
+          },
           "credential": {
             "$ref": "#/components/schemas/CredentialRedactedResponse"
           },
@@ -4285,6 +4372,12 @@
           "api": {
             "$ref": "#/components/schemas/APIReferenceRequest"
           },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4577,6 +4670,12 @@
               }
             ],
             "title": "Authorize Url"
+          },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
           },
           "client_id": {
             "anyOf": [
@@ -8243,6 +8342,12 @@
             "description": "Signing service, e.g. 'aoss', 'execute-api', 's3'.",
             "title": "Aws Service",
             "type": "string"
+          },
+          "check": {
+            "default": false,
+            "description": "After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.",
+            "title": "Check",
+            "type": "boolean"
           },
           "name": {
             "description": "Human-readable label for the credential.",
@@ -22542,7 +22647,7 @@
         ]
       },
       "post": {
-        "description": "Create a new credential. The secret is returned once and never readable again.",
+        "description": "Create a new credential. The secret is returned once and never readable again.\n\nWith `check: true` the response also carries one test call's verdict (see\n`POST /credentials/{credential_id}:check`). A failed check never undoes the save.",
         "operationId": "createCredential",
         "requestBody": {
           "content": {
@@ -24942,6 +25047,169 @@
           }
         ],
         "summary": "Begin OAuth connect flow",
+        "tags": [
+          "Credentials"
+        ]
+      }
+    },
+    "/credentials/{credential_id}:check": {
+      "post": {
+        "description": "Make one read call with the stored credential and say whether it works.\n\nThe call is a GET with no required input, taken from the API's own spec and\nsent through the broker's egress policy with a 5 second deadline. A failure\nis named rather than collapsed into \"invalid\": `bad_key`, `expired`,\n`missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no\nupstream body is returned. Use it after rotating a credential, or for one\nsaved before checks existed.",
+        "operationId": "checkCredential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Check a credential with one test call",
         "tags": [
           "Credentials"
         ]

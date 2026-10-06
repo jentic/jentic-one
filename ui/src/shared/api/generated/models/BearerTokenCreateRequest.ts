@@ -9,6 +9,10 @@ import type { RuntimeConfig } from './RuntimeConfig';
  */
 export type BearerTokenCreateRequest = {
     api: APIReferenceRequest;
+    /**
+     * After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+     */
+    check?: boolean;
     name: string;
     provider?: string;
     runtime_config?: (RuntimeConfig | null);

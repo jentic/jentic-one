@@ -13,6 +13,7 @@ from jentic_one.control.services.mcp.service import McpService
 from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
+from jentic_one.shared.credential_check import CredentialCheckerProtocol
 from jentic_one.shared.web import get_ctx
 
 
@@ -54,3 +55,15 @@ def get_connect_session_service(
         request.app.state, "catalog_auto_importer", None
     )
     return ConnectSessionService(ctx, catalog_auto_importer=importer)
+
+
+def get_credential_checker(request: Request) -> CredentialCheckerProtocol | None:
+    """The process-level credential checker, when this process can read the registry.
+
+    Installed by ``wiring.install_control_credential_checker``; ``None`` makes
+    a check answer ``untested`` with the reason.
+    """
+    checker: CredentialCheckerProtocol | None = getattr(
+        request.app.state, "credential_checker", None
+    )
+    return checker

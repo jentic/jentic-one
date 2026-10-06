@@ -89,6 +89,7 @@ func (CredentialBindingListResponse) RequiredFields() []string { return []string
 func (CredentialBindingResponse) RequiredFields() []string {
 	return []string{"agent_id", "bound_at", "credential_id", "id", "suspended"}
 }
+func (CredentialCheckResponse) RequiredFields() []string  { return []string{"reason", "status"} }
 func (CredentialCreateResponse) RequiredFields() []string { return []string{"credential", "secret"} }
 func (CredentialListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (CredentialRedactedResponse) RequiredFields() []string {

@@ -282,6 +282,39 @@ func (e ConsentAgentStatusResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for CredentialCheckStatus.
+const (
+	CredentialCheckStatusBadKey       CredentialCheckStatus = "bad_key"
+	CredentialCheckStatusExpired      CredentialCheckStatus = "expired"
+	CredentialCheckStatusMissingScope CredentialCheckStatus = "missing_scope"
+	CredentialCheckStatusOk           CredentialCheckStatus = "ok"
+	CredentialCheckStatusUnreachable  CredentialCheckStatus = "unreachable"
+	CredentialCheckStatusUntested     CredentialCheckStatus = "untested"
+	CredentialCheckStatusWrongBaseUrl CredentialCheckStatus = "wrong_base_url"
+)
+
+// Valid indicates whether the value is a known member of the CredentialCheckStatus enum.
+func (e CredentialCheckStatus) Valid() bool {
+	switch e {
+	case CredentialCheckStatusBadKey:
+		return true
+	case CredentialCheckStatusExpired:
+		return true
+	case CredentialCheckStatusMissingScope:
+		return true
+	case CredentialCheckStatusOk:
+		return true
+	case CredentialCheckStatusUnreachable:
+		return true
+	case CredentialCheckStatusUntested:
+		return true
+	case CredentialCheckStatusWrongBaseUrl:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialLocation.
 const (
 	Cookie CredentialLocation = "cookie"
@@ -994,6 +1027,9 @@ type ApiKeyCreateRequest struct {
 	// Api Loose (vendor, name, version) API identity tuple.
 	Api APIReferenceRequest `json:"api"`
 
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check *bool `json:"check,omitempty"`
+
 	// FieldName Header or query-parameter name carrying the key.
 	FieldName string `json:"field_name"`
 
@@ -1187,7 +1223,10 @@ type AuditTargetType string
 // BasicAuthCreateRequest Create request for basic credentials.
 type BasicAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest        `json:"api"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check           *bool                      `json:"check,omitempty"`
 	Name            string                     `json:"name"`
 	Password        string                     `json:"password"`
 	Provider        *string                    `json:"provider,omitempty"`
@@ -1217,7 +1256,10 @@ type BasicAuthUpdateRequestType string
 // BearerTokenCreateRequest Create request for bearer_token credentials.
 type BearerTokenCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest          `json:"api"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check           *bool                        `json:"check,omitempty"`
 	Name            string                       `json:"name"`
 	Provider        *string                      `json:"provider,omitempty"`
 	RuntimeConfig   *RuntimeConfig               `json:"runtime_config,omitempty"`
@@ -1482,8 +1524,29 @@ type CredentialBindingResponse struct {
 	SuspendedReason *string         `json:"suspended_reason,omitempty"`
 }
 
+// CredentialCheckResponse What one test call made with the stored credential says about it.
+type CredentialCheckResponse struct {
+	// Probe The call the check made, e.g. `GET https://api.example.com/v1/me`, query values redacted.
+	Probe *string `json:"probe,omitempty"`
+
+	// Reason One sentence naming the cause. Never contains the secret.
+	Reason string `json:"reason"`
+
+	// Status `ok`, or why the credential fails: `bad_key`, `expired`, `missing_scope`, `wrong_base_url`, `unreachable`. `untested` means no call could be made or the answer said nothing about the credential; `reason` says which.
+	Status CredentialCheckStatus `json:"status"`
+
+	// UpstreamStatus The HTTP status the API answered, when it answered.
+	UpstreamStatus *int `json:"upstream_status,omitempty"`
+}
+
+// CredentialCheckStatus What one test call says about a credential.
+type CredentialCheckStatus string
+
 // CredentialCreateResponse Create response: redacted + secret shown once.
 type CredentialCreateResponse struct {
+	// Check The save-time check, present when the request set `check`.
+	Check *CredentialCheckResponse `json:"check,omitempty"`
+
 	// Credential Redacted credential response (for read/list/patch).
 	//
 	// Examples: {"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}
@@ -1914,7 +1977,10 @@ type MeUserType string
 // it as a no-op auth (see broker credential resolver / injection).
 type NoAuthCreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest     `json:"api"`
+	Api APIReferenceRequest `json:"api"`
+
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check           *bool                   `json:"check,omitempty"`
 	Name            string                  `json:"name"`
 	Provider        *string                 `json:"provider,omitempty"`
 	RuntimeConfig   *RuntimeConfig          `json:"runtime_config,omitempty"`
@@ -1976,8 +2042,11 @@ type NoteUpdateRequest struct {
 // are optional — the connect flow handles authentication without caller-supplied client details.
 type OAuth2CreateRequest struct {
 	// Api Relaxed variant for request bodies where partial identification is allowed.
-	Api             APIReferenceRequest     `json:"api"`
-	AuthorizeUrl    *string                 `json:"authorize_url,omitempty"`
+	Api          APIReferenceRequest `json:"api"`
+	AuthorizeUrl *string             `json:"authorize_url,omitempty"`
+
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check           *bool                   `json:"check,omitempty"`
 	ClientId        *string                 `json:"client_id,omitempty"`
 	ClientSecret    *string                 `json:"client_secret,omitempty"`
 	GrantType       *string                 `json:"grant_type,omitempty"`
@@ -2962,6 +3031,9 @@ type Sigv4CreateRequest struct {
 
 	// AwsService Signing service, e.g. 'aoss', 'execute-api', 's3'.
 	AwsService string `json:"aws_service"`
+
+	// Check After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+	Check *bool `json:"check,omitempty"`
 
 	// Name Human-readable label for the credential.
 	Name string `json:"name"`
@@ -5536,6 +5608,9 @@ type ClientInterface interface {
 	//
 	// Create a new credential. The secret is returned once and never readable again.
 	//
+	// With `check: true` the response also carries one test call's verdict (see
+	// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /credentials (the `CreateCredential` operationId).
@@ -5544,6 +5619,9 @@ type ClientInterface interface {
 	// CreateCredential Create credential
 	//
 	// Create a new credential. The secret is returned once and never readable again.
+	//
+	// With `check: true` the response also carries one test call's verdict (see
+	// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5758,6 +5836,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredential(ctx context.Context, credentialId string, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckCredential Check a credential with one test call
+	//
+	// Make one read call with the stored credential and say whether it works.
+	//
+	// The call is a GET with no required input, taken from the API's own spec and
+	// sent through the broker's egress policy with a 5 second deadline. A failure
+	// is named rather than collapsed into "invalid": `bad_key`, `expired`,
+	// `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+	// upstream body is returned. Use it after rotating a credential, or for one
+	// saved before checks existed.
+	//
+	// Corresponds with POST /credentials/{credential_id}:check (the `CheckCredential` operationId).
+	CheckCredential(ctx context.Context, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ErrorPage Error Page
 	//
@@ -9126,6 +9218,9 @@ func (c *Client) ListCredentials(ctx context.Context, params *ListCredentialsPar
 //
 // Create a new credential. The secret is returned once and never readable again.
 //
+// With `check: true` the response also carries one test call's verdict (see
+// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /credentials (the `CreateCredential` operationId).
@@ -9144,6 +9239,9 @@ func (c *Client) CreateCredentialWithBody(ctx context.Context, contentType strin
 // CreateCredential Create credential
 //
 // Create a new credential. The secret is returned once and never readable again.
+//
+// With `check: true` the response also carries one test call's verdict (see
+// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -9549,6 +9647,30 @@ func (c *Client) ConnectCredentialWithBody(ctx context.Context, credentialId str
 // Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 func (c *Client) ConnectCredential(ctx context.Context, credentialId string, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConnectCredentialRequest(c.Server, credentialId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckCredential Check a credential with one test call
+//
+// Make one read call with the stored credential and say whether it works.
+//
+// The call is a GET with no required input, taken from the API's own spec and
+// sent through the broker's egress policy with a 5 second deadline. A failure
+// is named rather than collapsed into "invalid": `bad_key`, `expired`,
+// `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+// upstream body is returned. Use it after rotating a credential, or for one
+// saved before checks existed.
+//
+// Corresponds with POST /credentials/{credential_id}:check (the `CheckCredential` operationId).
+func (c *Client) CheckCredential(ctx context.Context, credentialId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckCredentialRequest(c.Server, credentialId)
 	if err != nil {
 		return nil, err
 	}
@@ -16945,6 +17067,40 @@ func NewConnectCredentialRequestWithBody(server string, credentialId string, con
 	return req, nil
 }
 
+// NewCheckCredentialRequest constructs an http.Request for the CheckCredential method
+func NewCheckCredentialRequest(server string, credentialId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "credential_id", credentialId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/credentials/%s:check", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewErrorPageRequest constructs an http.Request for the ErrorPage method
 func NewErrorPageRequest(server string, params *ErrorPageParams) (*http.Request, error) {
 	var err error
@@ -21672,6 +21828,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Create a new credential. The secret is returned once and never readable again.
 	//
+	// With `check: true` the response also carries one test call's verdict (see
+	// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /credentials (the `CreateCredential` operationId).
@@ -21680,6 +21839,9 @@ type ClientWithResponsesInterface interface {
 	// CreateCredentialWithResponse Create credential
 	//
 	// Create a new credential. The secret is returned once and never readable again.
+	//
+	// With `check: true` the response also carries one test call's verdict (see
+	// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21908,6 +22070,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /credentials/{credential_id}/connect (the `ConnectCredential` operationId).
 	ConnectCredentialWithResponse(ctx context.Context, credentialId string, body ConnectCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*ConnectCredentialHTTPResp, error)
+
+	// CheckCredentialWithResponse Check a credential with one test call
+	//
+	// Make one read call with the stored credential and say whether it works.
+	//
+	// The call is a GET with no required input, taken from the API's own spec and
+	// sent through the broker's egress policy with a 5 second deadline. A failure
+	// is named rather than collapsed into "invalid": `bad_key`, `expired`,
+	// `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+	// upstream body is returned. Use it after rotating a credential, or for one
+	// saved before checks existed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /credentials/{credential_id}:check (the `CheckCredential` operationId).
+	CheckCredentialWithResponse(ctx context.Context, credentialId string, reqEditors ...RequestEditorFn) (*CheckCredentialHTTPResp, error)
 
 	// ErrorPageWithResponse Error Page
 	//
@@ -31340,6 +31518,96 @@ func (r ConnectCredentialHTTPResp) ContentType() string {
 	return ""
 }
 
+type CheckCredentialHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CredentialCheckResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckCredentialHTTPResp) GetJSON200() *CredentialCheckResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CheckCredentialHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckCredentialHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckCredentialHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckCredentialHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckCredentialHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ErrorPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -38485,6 +38753,9 @@ func (c *ClientWithResponses) ListCredentialsWithResponse(ctx context.Context, p
 //
 // Create a new credential. The secret is returned once and never readable again.
 //
+// With `check: true` the response also carries one test call's verdict (see
+// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /credentials (the `CreateCredential` operationId).
@@ -38499,6 +38770,9 @@ func (c *ClientWithResponses) CreateCredentialWithBodyWithResponse(ctx context.C
 // CreateCredentialWithResponse Create credential
 //
 // Create a new credential. The secret is returned once and never readable again.
+//
+// With `check: true` the response also carries one test call's verdict (see
+// `POST /credentials/{credential_id}:check`). A failed check never undoes the save.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -38846,6 +39120,28 @@ func (c *ClientWithResponses) ConnectCredentialWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseConnectCredentialHTTPResp(rsp)
+}
+
+// CheckCredentialWithResponse Check a credential with one test call
+//
+// Make one read call with the stored credential and say whether it works.
+//
+// The call is a GET with no required input, taken from the API's own spec and
+// sent through the broker's egress policy with a 5 second deadline. A failure
+// is named rather than collapsed into "invalid": `bad_key`, `expired`,
+// `missing_scope`, `wrong_base_url` or `unreachable`. Nothing is stored and no
+// upstream body is returned. Use it after rotating a credential, or for one
+// saved before checks existed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /credentials/{credential_id}:check (the `CheckCredential` operationId).
+func (c *ClientWithResponses) CheckCredentialWithResponse(ctx context.Context, credentialId string, reqEditors ...RequestEditorFn) (*CheckCredentialHTTPResp, error) {
+	rsp, err := c.CheckCredential(ctx, credentialId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckCredentialHTTPResp(rsp)
 }
 
 // ErrorPageWithResponse Error Page
@@ -47408,6 +47704,81 @@ func ParseConnectCredentialHTTPResp(rsp *http.Response) (*ConnectCredentialHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckCredentialHTTPResp parses an HTTP response from a CheckCredentialWithResponse call
+func ParseCheckCredentialHTTPResp(rsp *http.Response) (*CheckCredentialHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckCredentialHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CredentialCheckResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

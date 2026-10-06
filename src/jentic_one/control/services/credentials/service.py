@@ -72,6 +72,11 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.credential_check import (
+    CredentialCheckerProtocol,
+    CredentialCheckResult,
+    CredentialCheckStatus,
+)
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
@@ -1140,6 +1145,35 @@ class CredentialService:
             before={"name": existing.name, "active": existing.active},
             origin=identity.origin.value,
         )
+
+    async def check(
+        self,
+        credential_id: str,
+        *,
+        identity: Identity,
+        checker: CredentialCheckerProtocol | None,
+    ) -> CredentialCheckResult:
+        """Make one test call with a credential the caller may manage (#630).
+
+        Owner-scoped like the other writes: a check spends the secret on an
+        upstream call, so it takes the same access as rotating it.
+        """
+        access_filters = build_access_filters(identity, Credential)
+        async with self._ctx.control_db.session() as session:
+            existing = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+        if existing is None:
+            raise CredentialNotFoundError(credential_id)
+        if checker is None:
+            return CredentialCheckResult(
+                status=CredentialCheckStatus.UNTESTED,
+                reason=(
+                    "This process cannot read the API registry, so it cannot pick a call to "
+                    "test with; run the check where the registry is served too."
+                ),
+            )
+        return await checker.check(credential_id=credential_id, identity=identity)
 
     def _to_redacted(self, credential: Any) -> CredentialRedactedView:
         """Project an ORM Credential to a redacted view."""

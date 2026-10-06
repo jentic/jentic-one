@@ -13,6 +13,10 @@ import type { RuntimeConfig } from './RuntimeConfig';
 export type OAuth2CreateRequest = {
     api: APIReferenceRequest;
     authorize_url?: (string | null);
+    /**
+     * After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+     */
+    check?: boolean;
     client_id?: (string | null);
     client_secret?: (string | null);
     grant_type?: string;

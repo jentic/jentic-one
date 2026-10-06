@@ -25,6 +25,10 @@ export type Sigv4CreateRequest = {
      */
     aws_service: string;
     /**
+     * After saving, make one read call with the credential and return the verdict as `check`. The credential is saved either way.
+     */
+    check?: boolean;
+    /**
      * Human-readable label for the credential.
      */
     name: string;

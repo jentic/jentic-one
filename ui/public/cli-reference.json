@@ -1616,6 +1616,30 @@
                   "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
                 }
               ]
+            },
+            {
+              "name": "check",
+              "path": "jentic credentials check",
+              "use": "check \u003ccredential_id\u003e",
+              "short": "Make one test call with a credential and name why it fails",
+              "long": "Make one read call with a stored credential and report what the API says.\n\nThe control plane picks a GET with no required input from the API's own spec\nand sends it through the broker's egress policy with a 5 second deadline.\nNothing is stored and the secret is never printed.\n\nThe status is ok, or why the credential fails: bad_key, expired,\nmissing_scope, wrong_base_url or unreachable. untested means no call could be\nmade, and the reason says why.\n\nExit codes: 0 for ok and untested; 2 for a credential to fix (bad_key,\nexpired, missing_scope, wrong_base_url); 1 for unreachable, worth retrying.\nNeeds the credentials:write scope.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
             }
           ]
         },

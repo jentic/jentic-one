@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **175**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -209,7 +209,7 @@ _Total endpoints: **174**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (71)
+## Any authenticated actor (72)
 
 
 ### `admin`
@@ -280,6 +280,7 @@ _Total endpoints: **174**._
 | DELETE | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Detach rule set from binding |
 | PUT | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Attach rule set to binding |
 | POST | `/credentials/{credential_id}/connect` | `credentials:write` | any | Begin OAuth connect flow |
+| POST | `/credentials/{credential_id}:check` | `credentials:write` | any | Check a credential with one test call |
 
 ### `governed-hosts`
 
