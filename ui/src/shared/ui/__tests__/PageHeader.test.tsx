@@ -1,5 +1,8 @@
+import { afterEach } from 'vitest';
+import { page } from 'vitest/browser';
 import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { PageHeader } from '@/shared/ui/PageHeader';
+import { PageShell } from '@/shared/ui/PageShell';
 import { Button } from '@/shared/ui/Button';
 
 describe('PageHeader', () => {
@@ -58,6 +61,39 @@ describe('PageHeader', () => {
 		expect(after.backgroundImage).toContain('linear-gradient');
 		expect(after.backgroundImage).toMatch(/rgba\([^)]*,\s*0\) 100%\)/);
 		expect(after.backgroundSize).toContain('2px');
+	});
+
+	describe('layout', () => {
+		afterEach(async () => {
+			await page.viewport(1280, 900);
+		});
+
+		it('wraps its actions onto their own row at phone width instead of clipping them', async () => {
+			await page.viewport(390, 844);
+			renderWithProviders(
+				<PageShell>
+					<PageHeader
+						title="Agents"
+						subtitle="Approve, deny, and govern agents across their lifecycle."
+						animated={false}
+						actions={
+							<>
+								<Button size="sm">Filter agents</Button>
+								<Button size="sm">New agent</Button>
+								<Button size="sm">Credentials</Button>
+								<Button size="sm">Help</Button>
+							</>
+						}
+					/>
+				</PageShell>,
+			);
+			for (const name of ['Filter agents', 'New agent', 'Credentials', 'Help']) {
+				const r = screen.getByRole('button', { name }).getBoundingClientRect();
+				expect(r.left).toBeGreaterThanOrEqual(0);
+				expect(r.right).toBeLessThanOrEqual(window.innerWidth);
+			}
+			expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+		});
 	});
 
 	it('has no critical a11y violations', async () => {

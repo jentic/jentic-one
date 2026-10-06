@@ -68,7 +68,9 @@ export function PageHeader({
 				// fields off the band with fill and a soft shadow (no edges), a
 				// glow on the primary CTA and a filled field well. Keyed off
 				// Button's `data-variant`, so pages just pick the right variant.
-				<div className="page-header-actions flex shrink-0 items-center gap-2 self-center">
+				// Below `sm` the slot takes its own row and wraps rather than
+				// running off a narrow screen; from `sm` it sits beside the title.
+				<div className="page-header-actions flex max-w-full min-w-0 basis-full flex-wrap items-center gap-2 self-center sm:shrink-0 sm:basis-auto">
 					{actions}
 				</div>
 			)}
