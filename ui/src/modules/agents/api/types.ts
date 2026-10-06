@@ -56,7 +56,8 @@ export const ACTION_LABEL: Record<AgentAction, string> = {
 export const ACTION_VARIANT: Record<AgentAction, 'primary' | 'secondary' | 'danger' | 'outline'> = {
 	approve: 'primary',
 	enable: 'primary',
-	deny: 'danger',
+	// Tonal beside Approve: the deny reason dialog carries the destructive red.
+	deny: 'secondary',
 	disable: 'danger',
 	archive: 'secondary',
 };

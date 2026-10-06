@@ -9,7 +9,7 @@
  * view takes over. The landing's state (resume on load, the roster poll, the
  * exits) is `useFirstAgentLanding`; its rules are `lib/firstRun.ts`.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
@@ -70,6 +70,7 @@ import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip'
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
+import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -514,6 +515,7 @@ const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }>
 
 /** The notice above the grid — and, for pending, the decision itself. */
 function StateBanner({
+	agentId,
 	status,
 	denialReason,
 	deniedBy,
@@ -521,6 +523,7 @@ function StateBanner({
 	approvePending,
 	onDeny,
 }: {
+	agentId: string;
 	status: BanneredStatus;
 	denialReason: string | null;
 	deniedBy: string | null;
@@ -530,6 +533,7 @@ function StateBanner({
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
+	const grantId = useId();
 	return (
 		<div
 			role="status"
@@ -558,12 +562,29 @@ function StateBanner({
 							Denied by <ActorLabel actorId={deniedBy} />.
 						</>
 					)}
+					{status === 'pending' && (
+						<>
+							{' '}
+							<ApprovalGrantNote agentId={agentId} id={grantId} />
+						</>
+					)}
 				</p>
 			</div>
 			{status === 'pending' && (
 				// The banner pins the longest-waiting agent only; any OTHER pending
-				// agent is decided here, so both verbs sit on its own panel.
+				// agent is decided here, so both verbs sit on its own panel — in the
+				// order and weights every approval surface uses: Approve, then Deny.
 				<span className="flex shrink-0 items-center gap-2">
+					<Button
+						size="sm"
+						variant={ACTION_VARIANT.approve}
+						loading={approvePending}
+						onClick={onApprove}
+						aria-describedby={grantId}
+						data-testid="state-banner-approve"
+					>
+						{ACTION_LABEL.approve}
+					</Button>
 					<Button
 						size="sm"
 						variant={ACTION_VARIANT.deny}
@@ -572,14 +593,6 @@ function StateBanner({
 						data-testid="state-banner-deny"
 					>
 						{ACTION_LABEL.deny}
-					</Button>
-					<Button
-						size="sm"
-						loading={approvePending}
-						onClick={onApprove}
-						data-testid="state-banner-approve"
-					>
-						Approve
 					</Button>
 				</span>
 			)}
@@ -882,6 +895,7 @@ function SelectedAgentPanel({
 
 			{bannerStatus && (
 				<StateBanner
+					agentId={agent.id}
 					status={bannerStatus}
 					denialReason={agent.denialReason}
 					deniedBy={agent.attribution.deniedBy}

@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, act, waitFor, userEvent } from '@/__tests__/test-utils';
+import { http, HttpResponse } from 'msw';
+import { worker } from '@/mocks/browser';
+import { renderWithProviders, screen, act, waitFor, userEvent } from '@/__tests__/test-utils';
+import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
 import type { AgentEntity } from '@/modules/agents/api';
 import {
 	PendingApprovalBanner,
@@ -34,7 +37,7 @@ function renderBanner(
 	pending: AgentEntity[],
 	over: Partial<React.ComponentProps<typeof PendingApprovalBanner>> = {},
 ) {
-	return render(
+	return renderWithProviders(
 		<PendingApprovalBanner
 			pending={pending}
 			atLeast={false}
@@ -185,7 +188,7 @@ describe('PendingApprovalBanner', () => {
 			...pendingRow('agnt_w', 'waiting-bot', 0),
 			createdAt: new Date(Date.now() - 45_000).toISOString(), // 45s ago
 		};
-		const { unmount } = renderBanner([row]);
+		const { unmount, queryClient } = renderBanner([row]);
 		const banner = () => screen.getByRole('region', { name: 'Awaiting approval' });
 		expect(banner()).toHaveTextContent('waiting under a minute');
 
@@ -198,8 +201,10 @@ describe('PendingApprovalBanner', () => {
 		act(() => vi.advanceTimersByTime(10 * 60_000));
 		expect(banner()).toHaveTextContent('waiting 11m');
 
-		// Unmount clears the interval — no timer leak.
+		// Unmount clears the interval — no timer leak. (The grant note's query
+		// cache keeps its own GC timers; clearing the test's client drops them.)
 		unmount();
+		queryClient.clear();
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
@@ -226,6 +231,67 @@ describe('PendingApprovalBanner', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Deny oldest-bot' }));
 		expect(onDeny).toHaveBeenCalledWith({ id: 'agnt_old', name: 'oldest-bot' });
+	});
+
+	it('orders the decision Approve (primary), Deny (tonal), then Review, and says what Approve grants', async () => {
+		worker.use(http.get('/agents/:id/scopes', () => HttpResponse.json({ scopes: [] })));
+		renderBanner([pendingRow('agnt_old', 'oldest-bot', 60)]);
+		const banner = screen.getByRole('region', { name: 'Awaiting approval' });
+		const names = [...banner.querySelectorAll('button')].map((b) =>
+			b.getAttribute('aria-label'),
+		);
+		expect(names).toEqual(['Approve oldest-bot', 'Deny oldest-bot', 'Review oldest-bot']);
+		const approve = screen.getByRole('button', { name: 'Approve oldest-bot' });
+		const deny = screen.getByRole('button', { name: 'Deny oldest-bot' });
+		expect(approve.className).toContain('bg-primary');
+		expect(deny.className).toContain('bg-surface-tonal');
+		expect(deny.className).not.toContain('bg-danger');
+		const copy = `Approving grants the default agent scopes (${DEFAULT_AGENT_SCOPES.length}).`;
+		expect(await screen.findByText(copy)).toBeInTheDocument();
+		expect(approve).toHaveAccessibleDescription(copy);
+	});
+
+	it('after the named agent is decided, focus lands on the next one’s line — not a button', async () => {
+		const oldest = pendingRow('agnt_old', 'oldest-bot', 90);
+		const next = pendingRow('agnt_mid', 'middling-bot', 30);
+		const props = {
+			atLeast: false,
+			onReview: noop,
+			onApprove: noop,
+			onDeny: noop,
+			approvePendingId: null,
+		};
+		const { rerender } = renderBanner(descRows(oldest, next));
+		screen.getByRole('button', { name: 'Deny oldest-bot' }).focus();
+		rerender(<PendingApprovalBanner pending={[next]} {...props} />);
+		const line = screen.getByTestId('pending-approval-line');
+		await waitFor(() => expect(line).toHaveFocus());
+		expect(line).toHaveTextContent('middling-bot');
+		expect(document.activeElement?.tagName).not.toBe('BUTTON');
+	});
+
+	it('leaves focus alone when it was elsewhere on the page', () => {
+		const oldest = pendingRow('agnt_old', 'oldest-bot', 90);
+		const next = pendingRow('agnt_mid', 'middling-bot', 30);
+		const outside = document.createElement('button');
+		document.body.appendChild(outside);
+		try {
+			const { rerender } = renderBanner(descRows(oldest, next));
+			outside.focus();
+			rerender(
+				<PendingApprovalBanner
+					pending={[next]}
+					atLeast={false}
+					onReview={noop}
+					onApprove={noop}
+					onDeny={noop}
+					approvePendingId={null}
+				/>,
+			);
+			expect(outside).toHaveFocus();
+		} finally {
+			outside.remove();
+		}
 	});
 
 	it('scopes the in-flight state to the named agent id', () => {

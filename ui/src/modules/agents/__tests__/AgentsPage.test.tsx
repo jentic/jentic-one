@@ -1570,6 +1570,17 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 	});
 
+	it('the Waiting for approval banner orders Approve before a tonal Deny and says what Approve grants', async () => {
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+		const buttons = within(banner).getAllByRole('button');
+		expect(buttons.map((b) => b.textContent)).toEqual(['Approve', 'Deny']);
+		expect(buttons[1].className).not.toContain('bg-danger');
+		const copy = await within(banner).findByTestId('approval-grant-note');
+		expect(copy).toHaveTextContent(/^Approving grants /);
+		expect(buttons[0]).toHaveAccessibleDescription(copy.textContent!);
+	});
+
 	it('keeps the deny dialog open and toasts when the panel deny fails', async () => {
 		const user = userEvent.setup();
 		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));

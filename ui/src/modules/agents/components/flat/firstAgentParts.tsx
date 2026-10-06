@@ -677,11 +677,10 @@ export function AgentDetails({
 									<CircleCheck className="h-4 w-4" />
 									{ACTION_LABEL.approve}
 								</Button>
-								{/* Tonal, not the red fill: on the first agent, refusing
-								    is one of two equal choices, not a destructive act
-								    (the deny dialog still confirms it). */}
+								{/* Tonal, not the red fill, as on every approval surface:
+								    the deny dialog carries the destructive red. */}
 								<Button
-									variant="secondary"
+									variant={ACTION_VARIANT.deny}
 									disabled={approvePending}
 									onClick={onDeny}
 									aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
