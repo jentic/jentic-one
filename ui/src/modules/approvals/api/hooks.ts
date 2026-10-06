@@ -16,6 +16,8 @@ import {
 } from '@/modules/approvals/api/client';
 import type { DecideRequest, ExecutionApprovalResponse } from '@/shared/api';
 
+export { ApprovalDecision, ExecutionApprovalState } from '@/shared/api';
+
 /** Stable query-key roots for precise cache invalidation. */
 export const approvalsKeys = {
 	all: ['approvals'] as const,

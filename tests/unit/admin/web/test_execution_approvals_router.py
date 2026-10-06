@@ -1,7 +1,7 @@
 """Unit tests for the execution approvals router HTTP contract.
 
-Pins the three endpoints (``GET /execution-approvals``,
-``GET /execution-approvals/{id}``, ``POST /execution-approvals/{id}:decide``)
+Pins the three endpoints (``GET /executions/approvals``,
+``GET /executions/approvals/{id}``, ``POST /executions/approvals/{id}:decide``)
 to their response shapes and error → HTTP status mapping.
 State-machine behaviour is covered in integration tests; this file mocks
 ``ExecutionApprovalService`` at the boundary and exercises only the router.
@@ -25,26 +25,21 @@ from jentic_one.admin.services.errors import (
     ExecutionApprovalNotFoundError,
 )
 from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
-from jentic_one.admin.services.schemas.execution_approvals import ExecutionApprovalView
+from jentic_one.admin.services.schemas.execution_approvals import (
+    ExecutionApprovalDetailView,
+    ExecutionApprovalView,
+    HeldRequestView,
+)
 from jentic_one.admin.web.app import get_exception_handlers
 from jentic_one.admin.web.deps import get_execution_approval_service
 from jentic_one.admin.web.routers import execution_approvals as ea_router
 from jentic_one.admin.web.routers.execution_approvals import _approval_response
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.web import deps as shared_deps
 
 _TS = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
 
-_USER_IDENTITY = Identity(
-    sub="usr_alice",
-    permissions=["execution_approvals:read", "execution_approvals:write"],
-)
-_AGENT_IDENTITY = Identity(
-    sub="agt_scout",
-    permissions=["execution_approvals:read"],
-    actor_type=ActorType.AGENT,
-)
+_USER_IDENTITY = Identity(sub="usr_alice", permissions=[])
 
 
 def _make_view(**overrides: Any) -> ExecutionApprovalView:
@@ -79,18 +74,18 @@ def _build_app(*, svc: Any, identity: Identity = _USER_IDENTITY) -> FastAPI:
 
 
 # ---------------------------------------------------------------------------
-# GET /execution-approvals
+# GET /executions/approvals
 # ---------------------------------------------------------------------------
 
 
 def test_list_returns_200_with_data() -> None:
     svc = AsyncMock(spec=ExecutionApprovalService)
-    svc.list_approvals = AsyncMock(
+    svc.list_all = AsyncMock(
         return_value=Page(data=[_make_view()], has_more=False, next_cursor=None)
     )
     app = _build_app(svc=svc)
     with TestClient(app) as client:
-        resp = client.get("/execution-approvals")
+        resp = client.get("/executions/approvals")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["data"]) == 1
@@ -100,42 +95,54 @@ def test_list_returns_200_with_data() -> None:
 
 def test_list_passes_state_filter_to_service() -> None:
     svc = AsyncMock(spec=ExecutionApprovalService)
-    svc.list_approvals = AsyncMock(return_value=Page(data=[], has_more=False, next_cursor=None))
+    svc.list_all = AsyncMock(return_value=Page(data=[], has_more=False, next_cursor=None))
     app = _build_app(svc=svc)
     with TestClient(app) as client:
-        client.get("/execution-approvals?state=pending")
-    call_kwargs = svc.list_approvals.await_args.kwargs
+        client.get("/executions/approvals?state=pending")
+    call_kwargs = svc.list_all.await_args.kwargs
     assert call_kwargs["state"] == "pending"
 
 
 # ---------------------------------------------------------------------------
-# GET /execution-approvals/{id}
+# GET /executions/approvals/{id}
 # ---------------------------------------------------------------------------
 
 
 def test_get_returns_200() -> None:
     svc = AsyncMock(spec=ExecutionApprovalService)
-    svc.get_approval = AsyncMock(return_value=_make_view())
+    svc.get = AsyncMock(
+        return_value=ExecutionApprovalDetailView(
+            **_make_view().model_dump(),
+            agent_name="scout",
+            agent_owner_id="usr_alice",
+            request=HeldRequestView(
+                method="POST", url="https://api.stripe.com/v1/charges", body='{"amount": 5}'
+            ),
+        )
+    )
     app = _build_app(svc=svc)
     with TestClient(app) as client:
-        resp = client.get("/execution-approvals/exap_001")
+        resp = client.get("/executions/approvals/exap_001")
     assert resp.status_code == 200
     body = resp.json()
     assert body["id"] == "exap_001"
     assert body["state"] == "pending"
+    assert body["agent_owner_id"] == "usr_alice"
+    assert body["request"]["body"] == '{"amount": 5}'
+    assert body["_links"]["job"].endswith("/jobs/job_001")
 
 
 def test_get_returns_404_when_not_found() -> None:
     svc = AsyncMock(spec=ExecutionApprovalService)
-    svc.get_approval = AsyncMock(side_effect=ExecutionApprovalNotFoundError("exap_missing"))
+    svc.get = AsyncMock(side_effect=ExecutionApprovalNotFoundError("exap_missing"))
     app = _build_app(svc=svc)
     with TestClient(app) as client:
-        resp = client.get("/execution-approvals/exap_missing")
+        resp = client.get("/executions/approvals/exap_missing")
     assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# POST /execution-approvals/{id}/:decide
+# POST /executions/approvals/{id}/:decide
 # ---------------------------------------------------------------------------
 
 
@@ -145,8 +152,8 @@ def test_decide_approve_returns_200() -> None:
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         resp = client.post(
-            "/execution-approvals/exap_001/:decide",
-            json={"decision": "approved"},
+            "/executions/approvals/exap_001:decide",
+            json={"decision": "approve"},
         )
     assert resp.status_code == 200
     assert resp.json()["state"] == "approved"
@@ -158,8 +165,8 @@ def test_decide_deny_returns_200() -> None:
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         resp = client.post(
-            "/execution-approvals/exap_001/:decide",
-            json={"decision": "denied", "reason": "Not needed"},
+            "/executions/approvals/exap_001:decide",
+            json={"decision": "deny", "reason": "Not needed"},
         )
     assert resp.status_code == 200
     assert resp.json()["state"] == "denied"
@@ -171,8 +178,8 @@ def test_decide_returns_409_for_already_decided() -> None:
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         resp = client.post(
-            "/execution-approvals/exap_001/:decide",
-            json={"decision": "approved"},
+            "/executions/approvals/exap_001:decide",
+            json={"decision": "approve"},
         )
     assert resp.status_code == 409
 
@@ -183,10 +190,20 @@ def test_decide_returns_403_for_forbidden() -> None:
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         resp = client.post(
-            "/execution-approvals/exap_001/:decide",
-            json={"decision": "approved"},
+            "/executions/approvals/exap_001:decide",
+            json={"decision": "approve"},
         )
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("decision", ["approved", "maybe"])
+def test_decide_rejects_unknown_decision_with_422(decision: str) -> None:
+    svc = AsyncMock(spec=ExecutionApprovalService)
+    app = _build_app(svc=svc)
+    with TestClient(app) as client:
+        resp = client.post("/executions/approvals/exap_001:decide", json={"decision": decision})
+    assert resp.status_code == 422
+    svc.decide.assert_not_awaited()
 
 
 def test_decide_passes_reason_to_service() -> None:
@@ -195,15 +212,15 @@ def test_decide_passes_reason_to_service() -> None:
     app = _build_app(svc=svc)
     with TestClient(app) as client:
         client.post(
-            "/execution-approvals/exap_001/:decide",
-            json={"decision": "denied", "reason": "Nope"},
+            "/executions/approvals/exap_001:decide",
+            json={"decision": "deny", "reason": "Nope"},
         )
     call_kwargs = svc.decide.await_args
     assert call_kwargs is not None
     # body is the second positional arg (DecideInput)
     decide_input = call_kwargs.args[1]
     assert decide_input.reason == "Nope"
-    assert decide_input.decision == "denied"
+    assert decide_input.decision == "deny"
 
 
 # ---------------------------------------------------------------------------

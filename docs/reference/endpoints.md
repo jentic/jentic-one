@@ -287,13 +287,13 @@ _Total endpoints: **178**._
 | PUT | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Attach rule set to binding |
 | POST | `/credentials/{credential_id}/connect` | `credentials:write` | any | Begin OAuth connect flow |
 
-### `execution-approvals`
+### `executions`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/execution-approvals` | `execution_approvals:read` | any | List Execution Approvals |
-| GET | `/execution-approvals/{approval_id}` | `execution_approvals:read` | any | Get Execution Approval |
-| POST | `/execution-approvals/{approval_id}/:decide` | `execution_approvals:write` | any | Decide Execution Approval |
+| GET | `/executions/approvals` | _any authenticated_ | any | List execution approvals |
+| GET | `/executions/approvals/{approval_id}` | _any authenticated_ | any | Get an execution approval |
+| POST | `/executions/approvals/{approval_id}:decide` | _any authenticated_ | any | Approve or deny an execution approval |
 
 ### `governed-hosts`
 

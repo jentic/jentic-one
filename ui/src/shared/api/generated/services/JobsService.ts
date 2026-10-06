@@ -79,7 +79,10 @@ export class JobsService {
     }
     /**
      * Get Job Result
-     * Get the result of a completed job — polymorphic by kind.
+     * Get the result of a completed job, or the problem body of a failed execution.
+     *
+     * Polymorphic by kind. A held execution that was denied or expired is
+     * ``failed`` with a permission-denied problem as its result.
      * @returns any Successful Response
      * @throws ApiError
      */

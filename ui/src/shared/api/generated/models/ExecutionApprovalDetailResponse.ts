@@ -4,15 +4,24 @@
 /* eslint-disable */
 import type { ExecutionApprovalLinksResponse } from './ExecutionApprovalLinksResponse';
 import type { ExecutionApprovalState } from './ExecutionApprovalState';
+import type { HeldRequestResponse } from './HeldRequestResponse';
 /**
- * A held execution waiting on (or settled by) a human decision.
+ * An approval with the agent context and the held request a reviewer decides on.
  */
-export type ExecutionApprovalResponse = {
+export type ExecutionApprovalDetailResponse = {
     _links: ExecutionApprovalLinksResponse;
     /**
      * The agent whose call was held.
      */
     agent_id: string;
+    /**
+     * Display name of the agent.
+     */
+    agent_name?: (string | null);
+    /**
+     * The agent's owner; null for an ownerless agent (admin-only).
+     */
+    agent_owner_id?: (string | null);
     /**
      * Name of the API called.
      */
@@ -77,6 +86,10 @@ export type ExecutionApprovalResponse = {
      * Upstream path of the held call.
      */
     path: string;
+    /**
+     * The held call.
+     */
+    request?: (HeldRequestResponse | null);
     /**
      * Approval state.
      */

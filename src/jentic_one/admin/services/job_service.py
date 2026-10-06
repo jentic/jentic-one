@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from jentic_one.admin.core.schema.jobs import Job
@@ -88,11 +89,12 @@ class JobService:
             if cancelled is None:
                 return self._to_view(job)
 
-            # When cancelling a held job the agent is withdrawing its hold.
-            # Transition the linked approval row to withdrawn so the approval
-            # surface reflects the terminal outcome.
+            # Cancelling a held job withdraws its pending approval; no result
+            # is written.
             if job.status == JobStatus.HELD:
-                await ExecutionApprovalRepository.withdraw_by_job_id(session, job_id)
+                await ExecutionApprovalRepository.withdraw_by_job_id(
+                    session, job_id, now=datetime.now(UTC)
+                )
 
             await AuditRepository.record(
                 session,

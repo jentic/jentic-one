@@ -286,4 +286,8 @@ export { problemDetailText } from '@/shared/api/problem';
 export { ExecutionApprovalsService } from '@/shared/api/generated/services/ExecutionApprovalsService';
 export type { ExecutionApprovalResponse } from '@/shared/api/generated/models/ExecutionApprovalResponse';
 export type { ExecutionApprovalListResponse } from '@/shared/api/generated/models/ExecutionApprovalListResponse';
+export type { ExecutionApprovalDetailResponse } from '@/shared/api/generated/models/ExecutionApprovalDetailResponse';
+export type { HeldRequestResponse } from '@/shared/api/generated/models/HeldRequestResponse';
+export { ApprovalDecision } from '@/shared/api/generated/models/ApprovalDecision';
+export { ExecutionApprovalState } from '@/shared/api/generated/models/ExecutionApprovalState';
 export type { DecideRequest } from '@/shared/api/generated/models/DecideRequest';

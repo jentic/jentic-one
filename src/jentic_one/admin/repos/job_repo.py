@@ -148,6 +148,24 @@ class JobRepository:
         return row
 
     @staticmethod
+    async def transition(
+        session: AsyncSession,
+        job_id: str,
+        *,
+        from_status: JobStatus,
+        to_status: JobStatus,
+    ) -> bool:
+        """Move a job ``from_status`` → ``to_status``; False when it is in another status."""
+        stmt = (
+            update(Job)
+            .where(Job.id == job_id, Job.status == from_status)
+            .values(status=to_status, visible_at=None)
+            .returning(Job.id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def get_child_job_ids(session: AsyncSession, parent_job_id: str) -> list[str]:
         result = await session.execute(
             select(Job.id).where(Job.parent_job_id == parent_job_id).order_by(Job.created_at.asc())

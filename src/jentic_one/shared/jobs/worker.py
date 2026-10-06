@@ -10,7 +10,6 @@ import structlog
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.sql import func
 
-from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
@@ -18,6 +17,13 @@ from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
+from jentic_one.shared.jobs.hold import (
+    PROBLEM_CONTENT_TYPE,
+    approval_resume_failed_problem,
+    expire_lapsed_approvals,
+    get_approved_by_job_id,
+    set_execution_id_for_job,
+)
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
@@ -116,6 +122,8 @@ class WorkerLoop:
 
         self._idle.clear()
         try:
+            if await self._refuse_approved_reclaim(job):
+                return True
             kind = JobKind(job.kind)
             handler = self._handlers.get(kind)
             if handler is None:
@@ -198,13 +206,42 @@ class WorkerLoop:
             return result
 
     async def _is_approved_execution(self, session: Any, job_id: str) -> bool:
-        """True when a job has an approved execution_approvals row."""
-        stmt = select(ExecutionApproval).where(
-            ExecutionApproval.job_id == job_id,
-            ExecutionApproval.state == "approved",
-        )
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        """True when the job is a held execution a reviewer approved."""
+        return await get_approved_by_job_id(session, job_id) is not None
+
+    async def _refuse_approved_reclaim(self, job: Any) -> bool:
+        """Fail an approved execution re-claimed after its worker died mid-run.
+
+        ``attempts`` counts claims including this one, so above 1 means an
+        earlier claim already started the run — the upstream call may have
+        happened, and an approved call runs at most once. Returns True when
+        the job was failed here instead of dispatched.
+        """
+        if job.kind != JobKind.EXECUTION or int(job.attempts or 0) <= 1:
+            return False
+        async with self._db.transaction() as session:
+            approval = await get_approved_by_job_id(session, job.id)
+            if approval is None:
+                return False
+            db_job = await session.get(Job, job.id)
+            if db_job is None or db_job.status != JobStatus.RUNNING:
+                return True
+            db_job.status = JobStatus.FAILED
+            db_job.error = "approved execution interrupted; not re-run"
+            db_job.visible_at = None
+            session.add(
+                JobResult(
+                    job_id=job.id,
+                    kind=job.kind,
+                    content_type=PROBLEM_CONTENT_TYPE,
+                    body=approval_resume_failed_problem(approval.id),
+                    available_until=datetime.now(UTC)
+                    + timedelta(seconds=self._approved_result_retention_seconds),
+                    created_by=db_job.created_by,
+                )
+            )
+        logger.warning("approved_job_reclaim_refused", job_id=job.id, attempts=job.attempts)
+        return True
 
     async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
         """Mark job completed and write result.
@@ -222,10 +259,18 @@ class WorkerLoop:
             job.status = JobStatus.COMPLETED
             job.visible_at = None
             available_until = None
-            if await self._is_approved_execution(session, job_id):
+            if kind == JobKind.EXECUTION and await self._is_approved_execution(session, job_id):
+                # An approved execution runs once: a failed run (re-auth deny,
+                # upstream error) is terminal ``failed`` with its outcome as the
+                # result, and the result is kept for the retention window.
+                if result.body.get("status") == "failed":
+                    job.status = JobStatus.FAILED
                 available_until = datetime.now(UTC) + timedelta(
                     seconds=self._approved_result_retention_seconds
                 )
+                execution_id = result.body.get("execution_id")
+                if isinstance(execution_id, str) and execution_id:
+                    await set_execution_id_for_job(session, job_id, execution_id)
             job_result = JobResult(
                 job_id=job_id,
                 kind=kind,
@@ -260,18 +305,18 @@ class WorkerLoop:
         a forward-dated visibility deadline). At/over the budget it is moved to
         ``DEAD_LETTER`` (poison-message handling) instead of looping forever.
 
-        Approved-execution jobs never retry: the approval was a one-shot human decision.
-        A failure after approval moves the job directly to ``FAILED`` so the
-        approval surface reflects the terminal outcome without a second attempt.
+        Approved executions never retry: an approval releases one run, so a
+        handler failure moves the job straight to ``FAILED``.
         """
-        async with self._db.transaction() as check_session:
-            is_approved = await self._is_approved_execution(check_session, job.id)
-        if is_approved:
-            await self._terminal_job(
-                job.id, JobStatus.FAILED, error, event_summary_prefix="Import failed"
-            )
-            logger.info("approved_job_failed_no_retry", job_id=job.id, error=error[:_ERROR_MAX_LEN])
-            return
+        if job.kind == JobKind.EXECUTION:
+            async with self._db.session() as check_session:
+                is_approved = await self._is_approved_execution(check_session, job.id)
+            if is_approved:
+                await self._terminal_job(
+                    job.id, JobStatus.FAILED, error, event_summary_prefix="Execution failed"
+                )
+                logger.info("approved_job_failed_no_retry", job_id=job.id)
+                return
 
         attempts = int(job.attempts or 0)
         if attempts >= self._config.max_attempts:
@@ -333,63 +378,15 @@ class WorkerLoop:
                 logger.warning("emit_event_failed", job_id=job_id)
 
     async def _sweep_expired(self) -> None:
-        """Periodically remove expired job results, expire held approvals, and
+        """Periodically expire lapsed approvals, remove expired job results, and
         purge long-expired token rows."""
         try:
-            # Expire pending approval rows whose TTL has lapsed: mark the
-            # approval as ``expired`` and fail the corresponding held job so it
-            # does not sit in HELD forever.
-            now = datetime.now(UTC)
+            # Pending approvals past their TTL expire and fail their held jobs
+            # with a permission-denied result, each pair in one transaction.
             async with self._db.transaction() as session:
-                # Fetch the job IDs of pending approvals whose TTL has lapsed,
-                # then expire them and fail their jobs in one transaction.
-                fetch_stmt = select(ExecutionApproval.job_id).where(
-                    ExecutionApproval.state == "pending",
-                    ExecutionApproval.expires_at < now,
-                )
-                fetch_result = await session.execute(fetch_stmt)
-                expired_job_ids: list[str] = list(fetch_result.scalars().all())
-
-                expired_count = len(expired_job_ids)
-                if expired_count > 0:
-                    await session.execute(
-                        update(ExecutionApproval)
-                        .where(
-                            ExecutionApproval.state == "pending",
-                            ExecutionApproval.expires_at < now,
-                        )
-                        .values(state="expired", decided_at=now)
-                    )
-                    await session.execute(
-                        update(Job)
-                        .where(
-                            Job.id.in_(expired_job_ids),
-                            Job.status == JobStatus.HELD,
-                        )
-                        .values(status=JobStatus.FAILED)
-                    )
-                    # Write a permission-denied result for each expired job so
-                    # agents polling get_execution_result receive a structured
-                    # error instead of a missing row.
-                    for jid in expired_job_ids:
-                        session.add(
-                            JobResult(
-                                job_id=jid,
-                                kind="execution",
-                                content_type="application/problem+json",
-                                body={
-                                    "type": "execution_approval_expired",
-                                    "title": "Approval Expired",
-                                    "status": 403,
-                                    "detail": (
-                                        "The execution approval window lapsed before "
-                                        "a reviewer decided. Re-submit the request to "
-                                        "create a new approval."
-                                    ),
-                                },
-                            )
-                        )
-                    logger.info("approval_expiry_sweep_expired", count=expired_count)
+                expired = await expire_lapsed_approvals(session, now=datetime.now(UTC))
+            if expired:
+                logger.info("approval_expiry_sweep_expired", count=expired)
 
             async with self._db.transaction() as session:
                 stmt = delete(JobResult).where(

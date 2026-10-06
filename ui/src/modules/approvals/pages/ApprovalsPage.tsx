@@ -20,7 +20,10 @@ import {
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
 import { useApprovals } from '@/modules/approvals/api/hooks';
-import type { ExecutionApprovalResponse } from '@/modules/approvals/api/client';
+import type {
+	ExecutionApprovalResponse,
+	ListApprovalsParams,
+} from '@/modules/approvals/api/client';
 
 const STATE_OPTIONS = [
 	{ value: '', label: 'All states' },
@@ -101,7 +104,7 @@ export default function ApprovalsPage() {
 	const [stateFilter, setStateFilter] = useState<string>('pending');
 
 	const { data, isLoading, error, refetch } = useApprovals({
-		state: stateFilter || null,
+		state: (stateFilter || null) as ListApprovalsParams['state'],
 	});
 
 	return (

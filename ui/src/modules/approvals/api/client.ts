@@ -7,20 +7,29 @@
  * service calls into UI-shaped data and normalize errors into a single sentinel.
  *
  * Response-code contract:
- *   GET  /execution-approvals           → 200 + ExecutionApprovalListResponse
- *   GET  /execution-approvals/{id}      → 200 + ExecutionApprovalResponse
- *   POST /execution-approvals/{id}:decide → 200 + ExecutionApprovalResponse
+ *   GET  /executions/approvals              → 200 + ExecutionApprovalListResponse
+ *   GET  /executions/approvals/{id}         → 200 + ExecutionApprovalDetailResponse
+ *   POST /executions/approvals/{id}:decide  → 200 + ExecutionApprovalResponse
+ *   404 on detail/decide means the caller is not a reviewer for it (the agent's
+ *   owner or an org admin) — or it does not exist.
  */
 import {
 	ApiError,
 	ExecutionApprovalsService,
 	type DecideRequest,
 	type ExecutionApprovalListResponse,
+	type ExecutionApprovalDetailResponse,
 	type ExecutionApprovalResponse,
+	type ExecutionApprovalState,
 } from '@/shared/api';
 
 // Re-export types so module pages never need to reach into @/shared/api directly.
-export type { DecideRequest, ExecutionApprovalListResponse, ExecutionApprovalResponse };
+export type {
+	DecideRequest,
+	ExecutionApprovalDetailResponse,
+	ExecutionApprovalListResponse,
+	ExecutionApprovalResponse,
+};
 
 /** Sentinel error for Approvals repository calls. */
 export class ApprovalsApiError extends Error {
@@ -47,7 +56,7 @@ function toApprovalsError(error: unknown, fallback: string): ApprovalsApiError {
 }
 
 export interface ListApprovalsParams {
-	state?: string | null;
+	state?: ExecutionApprovalState | null;
 	agentId?: string | null;
 	cursor?: string | null;
 	limit?: number;
@@ -63,7 +72,7 @@ export async function listApprovals(
 	}
 }
 
-export async function getApproval(approvalId: string): Promise<ExecutionApprovalResponse> {
+export async function getApproval(approvalId: string): Promise<ExecutionApprovalDetailResponse> {
 	try {
 		return await ExecutionApprovalsService.getExecutionApproval({ approvalId });
 	} catch (error) {

@@ -16,21 +16,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-APPROVAL_PENDING = "pending"
-APPROVAL_APPROVED = "approved"
-APPROVAL_DENIED = "denied"
-APPROVAL_EXPIRED = "expired"
-APPROVAL_WITHDRAWN = "withdrawn"
+APPROVAL_PENDING = ExecutionApprovalState.PENDING
+APPROVAL_APPROVED = ExecutionApprovalState.APPROVED
+APPROVAL_DENIED = ExecutionApprovalState.DENIED
+APPROVAL_EXPIRED = ExecutionApprovalState.EXPIRED
 
 #: Problem types a failed held job's result carries. All are 403
 #: permission-denied problems: the call never reached the upstream.
@@ -306,3 +307,66 @@ def approval_resume_failed_problem(approval_id: str) -> dict[str, Any]:
     )
     body["status"] = 409
     return body
+
+
+async def fail_held_job(
+    session: AsyncSession, *, job_id: str, problem: dict[str, Any], error: str
+) -> bool:
+    """Fail a ``held`` job with a problem-body result; False when it is no longer held."""
+    result = await session.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status == JobStatus.HELD)
+        .values(status=JobStatus.FAILED, error=error, visible_at=None)
+        .returning(Job.created_by)
+    )
+    created_by = result.scalar_one_or_none()
+    if created_by is None:
+        return False
+    session.add(
+        JobResult(
+            job_id=job_id,
+            kind=str(JobKind.EXECUTION),
+            content_type=PROBLEM_CONTENT_TYPE,
+            body=problem,
+            created_by=created_by,
+        )
+    )
+    await session.flush()
+    return True
+
+
+async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime) -> int:
+    """Expire every pending approval past ``expires_at`` and fail its held job.
+
+    Runs in the caller's transaction, so each approval and its job settle
+    together. Returns the number of approvals expired.
+    """
+    result = await session.execute(
+        update(ExecutionApproval)
+        .where(
+            ExecutionApproval.state == APPROVAL_PENDING,
+            ExecutionApproval.expires_at <= now,
+        )
+        .values(state=APPROVAL_EXPIRED, decided_at=now)
+        .returning(ExecutionApproval.id, ExecutionApproval.job_id)
+        .execution_options(synchronize_session=False)
+    )
+    expired = list(result.all())
+    for approval_id, job_id in expired:
+        await fail_held_job(
+            session,
+            job_id=job_id,
+            problem=approval_expired_problem(approval_id),
+            error="approval expired",
+        )
+    return len(expired)
+
+
+async def set_execution_id_for_job(session: AsyncSession, job_id: str, execution_id: str) -> None:
+    """Link an approved job's approval to the execution record its run wrote."""
+    await session.execute(
+        update(ExecutionApproval)
+        .where(ExecutionApproval.job_id == job_id, ExecutionApproval.state == APPROVAL_APPROVED)
+        .values(execution_id=execution_id)
+        .execution_options(synchronize_session=False)
+    )

@@ -1,4 +1,4 @@
-"""Execution approval service-layer view models."""
+"""Execution approval service-layer models."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from jentic_one.shared.models.execution_approvals import ApprovalDecision
+
 
 class ExecutionApprovalView(BaseModel):
-    """Internal view model for an execution approval row."""
+    """One execution approval row."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -34,8 +36,25 @@ class ExecutionApprovalView(BaseModel):
     updated_at: datetime | None = None
 
 
-class DecideInput(BaseModel):
-    """Input for the approve/deny action."""
+class HeldRequestView(BaseModel):
+    """The held call as the reviewer sees it — what runs if they approve."""
 
-    decision: str  # "approved" | "denied"
+    method: str
+    url: str
+    body: str | None = None
+    body_truncated: bool = False
+
+
+class ExecutionApprovalDetailView(ExecutionApprovalView):
+    """An approval plus the agent context and the held request."""
+
+    agent_name: str | None = None
+    agent_owner_id: str | None = None
+    request: HeldRequestView | None = None
+
+
+class DecideInput(BaseModel):
+    """A reviewer's decision."""
+
+    decision: ApprovalDecision
     reason: str | None = None

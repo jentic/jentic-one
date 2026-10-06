@@ -3,15 +3,21 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DecideRequest } from '../models/DecideRequest';
+import type { ExecutionApprovalDetailResponse } from '../models/ExecutionApprovalDetailResponse';
 import type { ExecutionApprovalListResponse } from '../models/ExecutionApprovalListResponse';
 import type { ExecutionApprovalResponse } from '../models/ExecutionApprovalResponse';
+import type { ExecutionApprovalState } from '../models/ExecutionApprovalState';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ExecutionApprovalsService {
     /**
-     * List Execution Approvals
-     * List execution approvals with optional state/agent filters.
+     * List execution approvals
+     * List the approvals the caller may review, newest first.
+     *
+     * ``org:admin`` sees every approval; a user sees approvals for agents they
+     * own; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or
+     * ``agent_id``.
      * @returns ExecutionApprovalListResponse Successful Response
      * @throws ApiError
      */
@@ -21,14 +27,14 @@ export class ExecutionApprovalsService {
         cursor,
         limit = 25,
     }: {
-        state?: (string | null),
+        state?: (ExecutionApprovalState | null),
         agentId?: (string | null),
         cursor?: (string | null),
         limit?: number,
     }): CancelablePromise<ExecutionApprovalListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/execution-approvals',
+            url: '/executions/approvals',
             query: {
                 'state': state,
                 'agent_id': agentId,
@@ -46,19 +52,21 @@ export class ExecutionApprovalsService {
         });
     }
     /**
-     * Get Execution Approval
-     * Get the detail of one execution approval.
-     * @returns ExecutionApprovalResponse Successful Response
+     * Get an execution approval
+     * One approval with its agent, owner, matched rule and the held request body.
+     *
+     * An approval outside the caller's reviewer visibility answers ``404``.
+     * @returns ExecutionApprovalDetailResponse Successful Response
      * @throws ApiError
      */
     public static getExecutionApproval({
         approvalId,
     }: {
         approvalId: string,
-    }): CancelablePromise<ExecutionApprovalResponse> {
+    }): CancelablePromise<ExecutionApprovalDetailResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/execution-approvals/{approval_id}',
+            url: '/executions/approvals/{approval_id}',
             path: {
                 'approval_id': approvalId,
             },
@@ -66,6 +74,7 @@ export class ExecutionApprovalsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -73,14 +82,14 @@ export class ExecutionApprovalsService {
         });
     }
     /**
-     * Decide Execution Approval
-     * Approve or deny a pending execution approval.
+     * Approve or deny an execution approval
+     * Decide a pending approval — the agent's owner or an ``org:admin`` only.
      *
-     * ``decision`` must be ``"approved"`` or ``"denied"``. An optional ``reason``
-     * is stored on the approval row for audit purposes.
-     *
-     * Approving flips the held job to QUEUED so the worker picks it up on the
-     * next tick. Denying marks the job FAILED.
+     * ``approve`` releases the held job to the worker, which re-authorizes and
+     * runs it once; ``deny`` fails the job with a permission-denied result. The
+     * first decision wins: deciding an approval that is no longer pending (or
+     * has expired) answers ``409``. An agent caller is always refused (``403``),
+     * whatever its scopes.
      * @returns ExecutionApprovalResponse Successful Response
      * @throws ApiError
      */
@@ -93,7 +102,7 @@ export class ExecutionApprovalsService {
     }): CancelablePromise<ExecutionApprovalResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/execution-approvals/{approval_id}/:decide',
+            url: '/executions/approvals/{approval_id}:decide',
             path: {
                 'approval_id': approvalId,
             },
@@ -103,6 +112,8 @@ export class ExecutionApprovalsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

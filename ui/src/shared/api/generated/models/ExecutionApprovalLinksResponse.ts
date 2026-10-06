@@ -6,7 +6,13 @@
  * HAL-style links for an execution approval.
  */
 export type ExecutionApprovalLinksResponse = {
-    job?: (string | null);
+    /**
+     * The held execution job to poll for the outcome.
+     */
+    job: string;
+    /**
+     * This approval.
+     */
     self: string;
 };
 

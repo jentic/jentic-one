@@ -1,10 +1,23 @@
-"""Execution approval service — list, get, and decide on held executions."""
+"""Execution approval service — list, read, and decide on held executions.
+
+Visibility follows jobs (``build_access_filters``): ``org:admin`` sees every
+approval, a user sees approvals filed by agents they own, an agent sees its
+own. Deciding needs that same reviewer visibility — the agent's owner or an
+``org:admin``; an ownerless agent's approvals are admin-only — and is refused
+outright for any agent caller, whatever its scopes.
+"""
 
 from __future__ import annotations
 
+import base64
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+import structlog
+
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
-from jentic_one.admin.core.schema.job_results import JobResult
-from jentic_one.admin.repos import AuditRepository
+from jentic_one.admin.repos import AgentRepository, AuditRepository, JobResultRepository
 from jentic_one.admin.repos.execution_approval_repo import ExecutionApprovalRepository
 from jentic_one.admin.repos.job_repo import JobRepository
 from jentic_one.admin.scoping.filters import build_access_filters
@@ -16,146 +29,208 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.admin.services.schemas.execution_approvals import (
     DecideInput,
+    ExecutionApprovalDetailView,
     ExecutionApprovalView,
+    HeldRequestView,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.jobs.hold import (
+    ENCRYPTED_PAYLOAD_KEY,
+    PROBLEM_CONTENT_TYPE,
+    approval_denied_problem,
+)
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-from jentic_one.shared.models.jobs import JobStatus
+from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.execution_approvals import ApprovalDecision, ExecutionApprovalState
+from jentic_one.shared.models.jobs import JobKind, JobStatus
 
-_DENY_CONTENT_TYPE = "application/problem+json"
-_DENY_KIND = "execution"
+logger = structlog.get_logger(__name__)
+
+#: Cap on the held body shown to a reviewer; the page notes the truncation.
+_MAX_REVIEW_BODY_BYTES = 64 << 10
 
 
 class ExecutionApprovalService:
-    """Business logic for the execution approval surface.
-
-    Decide actions are scoped to admins (``execution_approvals:write``).
-    List/detail reads use ``execution_approvals:read``.
-    """
+    """Read and decide execution approvals."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def list_approvals(
+    async def list_all(
         self,
         *,
         identity: Identity,
-        state: str | None = None,
+        state: ExecutionApprovalState | None = None,
         agent_id: str | None = None,
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[ExecutionApprovalView]:
-        cursor_dt = None
+        cursor_dt: datetime | None = None
         cursor_id: str | None = None
         if cursor is not None:
             cursor_dt, cursor_id = decode_cursor(cursor)
-
-        access_filters = build_access_filters(identity, ExecutionApproval)
+        filters = build_access_filters(identity, ExecutionApproval)
         async with self._ctx.admin_db.session() as session:
-            rows = await ExecutionApprovalRepository.list_by_state(
+            rows = await ExecutionApprovalRepository.list_all(
                 session,
-                state=state,
+                state=state.value if state is not None else None,
                 agent_id=agent_id,
                 limit=limit + 1,
                 cursor_created_at=cursor_dt,
                 cursor_id=cursor_id,
-                extra_filters=access_filters,
+                filters=filters,
             )
-
         has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-
-        data = [ExecutionApprovalView.model_validate(r) for r in rows]
-        next_cursor = None
-        if has_more and data:
-            last = data[-1]
-            next_cursor = encode_cursor(last.created_at, last.id)
-
+        data = [ExecutionApprovalView.model_validate(r) for r in rows[:limit]]
+        next_cursor = encode_cursor(data[-1].created_at, data[-1].id) if has_more else None
         return Page(data=data, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_approval(self, approval_id: str, *, identity: Identity) -> ExecutionApprovalView:
-        access_filters = build_access_filters(identity, ExecutionApproval)
+    async def get(self, approval_id: str, *, identity: Identity) -> ExecutionApprovalDetailView:
+        filters = build_access_filters(identity, ExecutionApproval)
         async with self._ctx.admin_db.session() as session:
-            row = await ExecutionApprovalRepository.get_by_id(
-                session, approval_id, filters=access_filters
-            )
-        if row is None:
-            raise ExecutionApprovalNotFoundError(approval_id)
-        return ExecutionApprovalView.model_validate(row)
+            row = await ExecutionApprovalRepository.get_by_id(session, approval_id, filters=filters)
+            if row is None:
+                raise ExecutionApprovalNotFoundError(approval_id)
+            agent = await AgentRepository.get_by_id(session, row.agent_id)
+            job = await JobRepository.get_by_id(session, row.job_id)
+        view = ExecutionApprovalView.model_validate(row)
+        return ExecutionApprovalDetailView(
+            **view.model_dump(),
+            agent_name=agent.name if agent is not None else None,
+            agent_owner_id=agent.owner_id if agent is not None else None,
+            request=self._held_request(job.payload if job is not None else None),
+        )
+
+    def _held_request(self, payload: dict[str, Any] | None) -> HeldRequestView | None:
+        """Decrypt the held job payload into what the reviewer is approving.
+
+        Upstream credentials are injected only when the job runs, so the
+        payload never carries them.
+        """
+        if not payload:
+            return None
+        if ENCRYPTED_PAYLOAD_KEY in payload:
+            payload = json.loads(self._ctx.encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
+        raw = base64.b64decode(payload["body_b64"]) if payload.get("body_b64") else b""
+        truncated = len(raw) > _MAX_REVIEW_BODY_BYTES
+        body = raw[:_MAX_REVIEW_BODY_BYTES].decode("utf-8", errors="replace") if raw else None
+        return HeldRequestView(
+            method=str(payload.get("method", "")),
+            url=str(payload.get("upstream_url", "")),
+            body=body,
+            body_truncated=truncated,
+        )
 
     async def decide(
-        self,
-        approval_id: str,
-        body: DecideInput,
-        *,
-        identity: Identity,
+        self, approval_id: str, body: DecideInput, *, identity: Identity
     ) -> ExecutionApprovalView:
-        """Approve or deny a pending execution approval.
+        """Approve or deny a pending approval — compare-and-set, first reviewer wins.
 
-        On approval the held job flips to QUEUED so the worker claims it on the
-        next tick. On denial the held job is marked FAILED and a
-        permission-denied result is written to job_results.
+        In one transaction: approve moves the held job to ``queued``; deny fails
+        it with a permission-denied problem as its result. The decision is
+        audit-logged and emits ``execution.approval_decided``.
         """
         if identity.actor_type == ActorType.AGENT:
             raise ExecutionApprovalForbiddenError(
-                "Agents cannot decide execution approvals — only human actors may."
+                f"Agent '{identity.sub}' cannot decide execution approvals"
             )
-
-        if body.decision not in ("approved", "denied"):
-            raise ExecutionApprovalAlreadyDecidedError(
-                f"decision must be 'approved' or 'denied', got {body.decision!r}"
-            )
-
+        approve = body.decision == ApprovalDecision.APPROVE
+        new_state = ExecutionApprovalState.APPROVED if approve else ExecutionApprovalState.DENIED
+        filters = build_access_filters(identity, ExecutionApproval)
+        now = datetime.now(UTC)
         async with self._ctx.admin_db.transaction() as session:
+            visible = await ExecutionApprovalRepository.get_by_id(
+                session, approval_id, filters=filters
+            )
+            if visible is None:
+                raise ExecutionApprovalNotFoundError(approval_id)
             updated = await ExecutionApprovalRepository.decide(
                 session,
                 approval_id,
-                new_state=body.decision,
+                new_state=new_state.value,
                 decided_by=identity.sub,
                 decision_reason=body.reason,
+                now=now,
             )
             if updated is None:
-                # Either the row doesn't exist or it's no longer pending (CAS
-                # semantics: the update only matches state = 'pending').
-                existing = await ExecutionApprovalRepository.get_by_id(session, approval_id)
-                if existing is None:
-                    raise ExecutionApprovalNotFoundError(approval_id)
+                current = await ExecutionApprovalRepository.get_by_id(session, approval_id)
+                state = current.state if current is not None else visible.state
+                if state == ExecutionApprovalState.PENDING:
+                    state = ExecutionApprovalState.EXPIRED.value
                 raise ExecutionApprovalAlreadyDecidedError(
-                    f"Approval '{approval_id}' is already in state '{existing.state}'"
+                    f"Execution approval '{approval_id}' is already {state}"
                 )
-
-            new_job_status = JobStatus.QUEUED if body.decision == "approved" else JobStatus.FAILED
-            await JobRepository.update(session, updated.job_id, status=new_job_status)
-
-            if body.decision == "denied":
-                # Write a permission-denied result so the agent polling
-                # get_execution_result receives a structured error body rather
-                # than a missing row.
-                reason = body.reason or "Execution denied by reviewer."
-                result = JobResult(
-                    job_id=updated.job_id,
-                    kind=_DENY_KIND,
-                    content_type=_DENY_CONTENT_TYPE,
-                    body={
-                        "type": "execution_approval_denied",
-                        "title": "Execution Denied",
-                        "status": 403,
-                        "detail": reason,
-                        "approval_id": approval_id,
-                    },
+            if approve:
+                await JobRepository.transition(
+                    session,
+                    updated.job_id,
+                    from_status=JobStatus.HELD,
+                    to_status=JobStatus.QUEUED,
                 )
-                session.add(result)
-
+            else:
+                moved = await JobRepository.transition(
+                    session,
+                    updated.job_id,
+                    from_status=JobStatus.HELD,
+                    to_status=JobStatus.FAILED,
+                )
+                if moved:
+                    await JobRepository.update(session, updated.job_id, error="approval denied")
+                    await JobResultRepository.create(
+                        session,
+                        job_id=updated.job_id,
+                        kind=JobKind.EXECUTION.value,
+                        body=approval_denied_problem(approval_id, body.reason),
+                        content_type=PROBLEM_CONTENT_TYPE,
+                        created_by=identity.sub,
+                    )
             await AuditRepository.record(
                 session,
-                action=AuditAction.APPROVE if body.decision == "approved" else AuditAction.DENY,
+                action=AuditAction.APPROVE if approve else AuditAction.DENY,
                 target_type=AuditTargetType.EXECUTION_APPROVAL,
                 target_id=approval_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                before={"state": ExecutionApprovalState.PENDING.value},
+                after={"state": new_state.value},
+                reason=body.reason,
             )
-
-        return ExecutionApprovalView.model_validate(updated)
+            await emit_event_best_effort(
+                session,
+                type=EventType.EXECUTION_APPROVAL_DECIDED,
+                severity=EventSeverity.INFO,
+                summary=f"Execution approval {approval_id} {new_state.value}",
+                job_id=updated.job_id,
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "approval_id": approval_id,
+                    "agent_id": updated.agent_id,
+                    "decision": body.decision.value,
+                    "method": updated.method,
+                    "path": updated.path,
+                },
+            )
+            try:
+                async with session.begin_nested():
+                    await settle_actionable_events(
+                        session,
+                        event_type=EventType.EXECUTION_APPROVAL_REQUESTED,
+                        acknowledged_by=identity.sub,
+                        acknowledgement_note=f"Approval {new_state.value}",
+                        data_match={"approval_id": approval_id},
+                    )
+            except Exception:
+                logger.warning("approval_event_settle_failed", approval_id=approval_id)
+            view = ExecutionApprovalView.model_validate(updated)
+        logger.info(
+            "execution_approval_decided",
+            approval_id=approval_id,
+            decision=body.decision.value,
+            actor_id=identity.sub,
+        )
+        return view

@@ -23,7 +23,7 @@ import {
 	Textarea,
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
-import { useApproval, useDecideApproval } from '@/modules/approvals/api/hooks';
+import { ApprovalDecision, useApproval, useDecideApproval } from '@/modules/approvals/api/hooks';
 
 function stateVariant(state: string): 'warning' | 'success' | 'danger' | 'default' {
 	switch (state) {
@@ -60,7 +60,7 @@ export default function ApprovalDetailPage() {
 
 	const isPending = approval?.state === 'pending';
 
-	function handleDecide(decision: 'approved' | 'denied') {
+	function handleDecide(decision: ApprovalDecision) {
 		if (!id) return;
 		decide.mutate(
 			{ approvalId: id, body: { decision, reason: reason || null } },
@@ -183,14 +183,14 @@ export default function ApprovalDetailPage() {
 								<div className="flex gap-3">
 									<Button
 										variant="primary"
-										onClick={() => handleDecide('approved')}
+										onClick={() => handleDecide(ApprovalDecision.APPROVE)}
 										disabled={decide.isPending}
 									>
 										Approve
 									</Button>
 									<Button
 										variant="danger"
-										onClick={() => handleDecide('denied')}
+										onClick={() => handleDecide(ApprovalDecision.DENY)}
 										disabled={decide.isPending}
 									>
 										Deny

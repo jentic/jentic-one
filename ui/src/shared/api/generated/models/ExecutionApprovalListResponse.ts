@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ExecutionApprovalResponse } from './ExecutionApprovalResponse';
 /**
- * Paginated list of execution approvals.
+ * A page of execution approvals.
  */
 export type ExecutionApprovalListResponse = {
     data: Array<ExecutionApprovalResponse>;

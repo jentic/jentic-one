@@ -2,11 +2,18 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApprovalDecision } from './ApprovalDecision';
 /**
- * Request body for approving or denying a held execution.
+ * Approve or deny a pending execution approval.
  */
 export type DecideRequest = {
-    decision: string;
+    /**
+     * `approve` releases the call; `deny` fails it.
+     */
+    decision: ApprovalDecision;
+    /**
+     * Optional reason, recorded with the decision.
+     */
     reason?: (string | null);
 };
 

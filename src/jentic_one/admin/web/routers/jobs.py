@@ -29,11 +29,10 @@ router = APIRouter()
 
 def _job_response(view: JobView, request: Request) -> JobResponse:
     """Project a JobView to a JobResponse."""
-    result_link = (
-        build_link(request, f"/jobs/{view.id}/result")
-        if view.status == JobStatus.COMPLETED
-        else None
+    has_result = view.status == JobStatus.COMPLETED or (
+        view.status == JobStatus.FAILED and view.kind == JobKind.EXECUTION
     )
+    result_link = build_link(request, f"/jobs/{view.id}/result") if has_result else None
     execution_link = (
         build_link(request, f"/executions/{view.execution_id}") if view.execution_id else None
     )
@@ -98,7 +97,11 @@ async def get_job_result(
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
-    """Get the result of a completed job — polymorphic by kind."""
+    """Get the result of a completed job, or the problem body of a failed execution.
+
+    Polymorphic by kind. A held execution that was denied or expired is
+    ``failed`` with a permission-denied problem as its result.
+    """
     view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:
         return Response(content=view.raw_body, media_type=view.content_type)
