@@ -150,6 +150,10 @@ export function ApiDetailSheet({
 	// fall back to the entity's own summary when the host renders the sheet alone.
 	const displayTitle = title ?? entity?.summary ?? '';
 	const iconProps = icon ?? { name: entity?.summary ?? '', vendor: entity?.vendor };
+	// A bare-domain entry (`adyen.com`) titles, domains and ids as the same
+	// string — so drop the domain from the subtitle when it only repeats the
+	// title (the version, if any, still reads), as the ledger row's Vendor column does.
+	const subtitleDomain = domain && domain !== displayTitle ? domain : '';
 	const inWorkspace = !!entity?.registered;
 	// Mid-import the CTA's "Adding…" is the honest state, so the pill waits.
 	const updateAvailable = inWorkspace && !!entity?.updateAvailable && !importPending;
@@ -174,17 +178,22 @@ export function ApiDetailSheet({
 							>
 								{displayTitle}
 							</h2>
-							<p className="text-muted-foreground mt-0.5 truncate text-[13.5px]">
-								{domain}
-								{entity.version && (
-									<>
-										{' · '}
-										<span className="font-mono text-[12.5px]">
-											{versionLabel(entity.version)}
-										</span>
-									</>
-								)}
-							</p>
+							{(subtitleDomain || entity.version) && (
+								<p
+									className="text-muted-foreground mt-0.5 truncate text-[13.5px]"
+									data-testid="sheet-subtitle"
+								>
+									{subtitleDomain}
+									{entity.version && (
+										<>
+											{subtitleDomain && ' · '}
+											<span className="font-mono text-[12.5px]">
+												{versionLabel(entity.version)}
+											</span>
+										</>
+									)}
+								</p>
+							)}
 							<div className="mt-2 flex flex-wrap items-center gap-2">
 								{updateAvailable ? (
 									<SoftPill tone="warning" data-testid="sheet-update-available">
