@@ -78,7 +78,10 @@ export function PageHeader({
 	);
 
 	return (
-		<div className={cn('page-header-band -mx-page-gutter -mt-6', className)}>
+		// `mb-6` fixes the gap under the band on every page, whatever rhythm the
+		// host `PageShell` sets between its other children (`space-y-*` has zero
+		// specificity, so this wins).
+		<div className={cn('page-header-band -mx-page-gutter -mt-6 mb-6', className)}>
 			<div className="px-4 pt-5 pb-4 md:pt-6 md:pb-5">
 				{animated ? (
 					<motion.div

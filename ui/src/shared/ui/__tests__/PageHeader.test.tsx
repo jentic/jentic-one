@@ -94,6 +94,24 @@ describe('PageHeader', () => {
 			}
 			expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 		});
+
+		it('leaves the same gap before the content whatever rhythm the shell sets', () => {
+			const gaps = ['space-y-3', 'space-y-6'].map((spacing) => {
+				const { container, unmount } = renderWithProviders(
+					<PageShell spacing={spacing}>
+						<PageHeader title="Page" animated={false} />
+						<div data-testid="content">Content</div>
+					</PageShell>,
+				);
+				const band = container.querySelector('.page-header-band') as HTMLElement;
+				const gap =
+					screen.getByTestId('content').getBoundingClientRect().top -
+					band.getBoundingClientRect().bottom;
+				unmount();
+				return gap;
+			});
+			expect(gaps).toEqual([24, 24]);
+		});
 	});
 
 	it('has no critical a11y violations', async () => {
