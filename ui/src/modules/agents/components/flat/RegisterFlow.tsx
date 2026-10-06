@@ -2,9 +2,10 @@
  * RegisterFlow — the self-registration flow both the zero-agents landing's
  * primary card and the New agent panel's "Register from the CLI" tab render:
  * the register command (listening), then the arrived agent's details with
- * Approve / Deny (arrived), then its first API (approved); under it the
- * four-step stepper, the live status line and, while listening, the collapsed
- * CLI install hint.
+ * Approve / Deny (arrived), then its first API (approved). While listening,
+ * the four-step stepper, the live status line and the collapsed CLI install
+ * hint sit under the command; once an agent is on the card, it shows its own
+ * one-line progress and the status line is only announced.
  *
  * The host decides which agent is `agent` and what its exits do. An in-session
  * view change — a new phase, or the next pending agent replacing a denied one —
@@ -153,7 +154,11 @@ export function RegisterFlow({
 				</motion.div>
 			</AnimatePresence>
 			<motion.div layout="position" transition={{ layout: morph }}>
-				<Stepper phase={phase} reducedMotion={reducedMotion} surface={surface} />
+				{/* The full stepper only before an agent arrives; the agent card
+				    carries its own one-line progress. */}
+				{phase === 'listening' && (
+					<Stepper phase={phase} reducedMotion={reducedMotion} surface={surface} />
+				)}
 				<StatusLine phase={phase} name={agent?.name ?? null} />
 				<AnimatePresence initial={false}>
 					{phase === 'listening' && (

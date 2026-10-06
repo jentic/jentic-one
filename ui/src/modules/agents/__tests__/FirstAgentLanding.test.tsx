@@ -31,7 +31,7 @@ import {
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import { FIRST_AGENT_POLL_MS } from '@/modules/agents/lib/useFirstAgentLanding';
-import { DEFAULT_AGENT_SCOPES } from '@/modules/agents/lib/requestedScopes';
+import { DEFAULT_AGENT_SCOPES, groupScopesByArea } from '@/modules/agents/lib/requestedScopes';
 import {
 	catalogPage,
 	liveGithubCatalog,
@@ -284,6 +284,18 @@ describe('Agents page — zero agents', () => {
 		within(screen.getByTestId('register-stepper'))
 			.getAllByRole('listitem')
 			.map((li) => li.getAttribute('data-state'));
+	const progress = () => screen.getByTestId('register-progress');
+
+	/** The scope ids the review lists under `label`, opening it if folded. */
+	async function reviewedScopes(label: string): Promise<(string | null)[]> {
+		const summary = await screen.findByTestId('scopes-summary');
+		const toggle = within(summary).getByRole('button', { name: /scopes$/ });
+		if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
+		const group = screen.getByRole('group', { name: label });
+		return [...group.querySelectorAll('[data-scope]')].map((el) =>
+			el.getAttribute('data-scope'),
+		);
+	}
 
 	it('while listening, the stepper is on its first step', async () => {
 		renderPage();
@@ -294,7 +306,7 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('register-stepper').tagName).toBe('OL');
 	});
 
-	it('an arrival swaps the command for the agent, advances the stepper and sends the manual card off', async () => {
+	it('an arrival swaps the command for the agent, decision first, and sends the manual card off', async () => {
 		const { container, queryClient } = renderPage();
 		await landing();
 		expect(screen.getByTestId('manual-card')).toBeInTheDocument();
@@ -305,38 +317,42 @@ describe('Agents page — zero agents', () => {
 		expect(within(card).getByText('Pending')).toBeInTheDocument();
 		expect(card).toHaveTextContent(/Registered just now/);
 		expect(card).toHaveTextContent(
-			"It has its own key but can't make calls until you approve it.",
+			"It has its own key but can't make any calls until you approve.",
 		);
 		expect(within(card).getByRole('button', { name: 'Approve my-first-agent' })).toBeEnabled();
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
-		// The command view is gone; the steps stay.
+		// The command view and the four-step stepper are gone: one quiet
+		// progress line says where the flow is, and the header says it is
+		// pending, so the status line is announced, not drawn again.
 		await waitFor(() => expect(screen.queryByTestId('register-command')).toBeNull());
-		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
-		expect(
-			within(screen.getByTestId('register-stepper')).getAllByRole('listitem')[2],
-		).toHaveAttribute('aria-current', 'step');
+		expect(screen.queryByTestId('register-stepper')).toBeNull();
+		expect(progress()).toHaveTextContent('Step 3 of 4 · Approve it');
 		expect(status()).toHaveTextContent(
 			'my-first-agent just registered · awaiting your approval',
 		);
+		expect(status().parentElement).toHaveClass('sr-only');
 
-		// A self-registration's facts: how it came in, its keypair, its id — and
-		// none of the rows it has no data for.
+		// A self-registration's facts on one quiet line, then its id — and none
+		// of the pairs it has no data for.
 		const facts = within(screen.getByTestId('agent-facts'));
-		expect(facts.getByText('Self-registered')).toBeInTheDocument();
-		expect(facts.getByText('Its own keypair')).toBeInTheDocument();
+		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
+			'Self-registered · signs in with its own keypair',
+		);
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
-		// No scopes requested: approval grants the default agent scopes, so the
-		// card lists them rather than reading as "no scopes".
-		const defaults = await screen.findByRole('list', { name: 'Default agent scopes' });
-		expect(
-			within(defaults)
-				.getAllByRole('listitem')
-				.map((li) => li.textContent),
-		).toEqual([...DEFAULT_AGENT_SCOPES]);
-		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'Requests none, so it gets the default agent scopes:',
+		// No scopes requested: approval grants the default agent scopes. None of
+		// them is flagged, so they wait behind the review, which lists them all.
+		const summary = await screen.findByTestId('scopes-summary');
+		expect(summary).toHaveTextContent(
+			`Gets the default agent scopes · ${DEFAULT_AGENT_SCOPES.length}`,
+		);
+		expect(within(summary).getByRole('button', { name: 'Review scopes' })).toHaveAttribute(
+			'aria-expanded',
+			'false',
+		);
+		expect(await reviewedScopes('Default agent scopes')).toEqual(
+			groupScopesByArea(DEFAULT_AGENT_SCOPES).flatMap((g) => g.scopes),
 		);
 		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
 			'Approving grants the default agent scopes.',
@@ -440,19 +456,17 @@ describe('Agents page — zero agents', () => {
 
 		const facts = within(screen.getByTestId('agent-facts'));
 		expect(facts.getByText('Owner')).toBeInTheDocument();
-		expect(facts.getByText('An API key')).toBeInTheDocument();
+		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
+			'signs in with an API key',
+		);
 		expect(await facts.findByText('Key ID')).toBeInTheDocument();
-		const scopes = within(await screen.findByRole('list', { name: 'Requested scopes' }));
-		expect(scopes.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-			'apis:read',
-			'agents:write (can change data)',
-		]);
+		expect(await reviewedScopes('Requested scopes')).toEqual(['apis:read', 'agents:write']);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
-		expect(facts.queryByText('Self-registered')).toBeNull();
+		expect(screen.getByTestId('agent-provenance')).not.toHaveTextContent('Self-registered');
 		expect(facts.queryByText('Parent agent')).toBeNull();
 	});
 
-	it('lists every requested scope in full and flags the ones that write or administer', async () => {
+	it('a request with flagged scopes opens its full review before approval, and never folds them away', async () => {
 		const requested = [
 			'apis:read',
 			'agents:write',
@@ -476,25 +490,37 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		await arrive('scoped-bot', queryClient);
 
-		const list = await screen.findByRole('list', { name: 'Requested scopes' });
-		// Nothing hides behind an ellipsis: every scope is its own visible badge,
-		// once the arrival's details have faded in.
-		const items = within(list).getAllByRole('listitem');
-		expect(items).toHaveLength(requested.length);
+		// Flagged scopes in the request: the review is open before approval, so
+		// every scope approval grants is on screen, grouped by area.
+		const group = await screen.findByRole('group', { name: 'Requested scopes' });
+		const items = [...group.querySelectorAll<HTMLElement>('[data-scope]')];
+		expect(items.map((el) => el.dataset.scope).sort()).toEqual([...requested].sort());
 		await waitFor(() => {
 			for (const item of items) expect(item).toBeVisible();
 		});
 		const risk = (scope: string) =>
-			within(list).getByText(scope).closest('[data-risk]')?.getAttribute('data-risk') ?? null;
+			group.querySelector(`[data-scope="${scope}"]`)?.getAttribute('data-risk') ?? null;
 		expect(risk('agents:write')).toBe('write');
 		expect(risk('credentials:write')).toBe('write');
 		expect(risk('org:admin')).toBe('admin');
 		expect(risk('apis:read')).toBeNull();
-		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'3 of these can change data or administer your organisation. Approving grants the recognised scopes listed.',
+		const scopes = screen.getByTestId('requested-scopes');
+		expect(scopes).toHaveTextContent(
+			'3 of these can change data or administer your organisation.',
 		);
+		expect(scopes).toHaveTextContent('Approving grants the recognised scopes listed.');
 		expect(screen.getByRole('button', { name: 'Approve scoped-bot' })).toBeEnabled();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+
+		// Hiding the review keeps the flagged ones on the summary.
+		await userEvent.click(screen.getByRole('button', { name: 'Hide scopes' }));
+		const pinned = screen.getByRole('list', {
+			name: 'Scopes that can change data or administer',
+		});
+		expect(
+			[...pinned.querySelectorAll('[data-scope]')].map((el) => el.getAttribute('data-scope')),
+		).toEqual(['agents:write', 'credentials:write', 'org:admin']);
+		expect(screen.queryByRole('group', { name: 'Requested scopes' })).toBeNull();
 	});
 
 	it('holds Approve while the requested scopes are still being read', async () => {
@@ -547,9 +573,9 @@ describe('Agents page — zero agents', () => {
 
 		healthy = true;
 		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
-		expect(
-			await within(scopes).findByRole('list', { name: 'Default agent scopes' }),
-		).toBeInTheDocument();
+		expect(await within(scopes).findByTestId('scopes-summary')).toHaveTextContent(
+			'Gets the default agent scopes',
+		);
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeEnabled(),
 		);
@@ -565,12 +591,7 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		await arrive('mixed-bot', queryClient);
 
-		const granted = await screen.findByRole('list', { name: 'Requested scopes' });
-		expect(
-			within(granted)
-				.getAllByRole('listitem')
-				.map((li) => li.textContent),
-		).toEqual(['apis:read', 'agents:write (can change data)']);
+		expect(await reviewedScopes('Requested scopes')).toEqual(['apis:read', 'agents:write']);
 		const unrecognised = screen.getByRole('list', { name: 'Unrecognised scopes' });
 		expect(
 			within(unrecognised)
@@ -581,10 +602,13 @@ describe('Agents page — zero agents', () => {
 			"Not recognised — won't be granted:",
 		);
 		// A non-empty request brings no defaults, and only the recognised count.
-		expect(screen.queryByRole('list', { name: 'Default agent scopes' })).toBeNull();
+		expect(screen.queryByRole('group', { name: 'Default agent scopes' })).toBeNull();
 		expect(screen.queryByTestId('no-scopes-warning')).toBeNull();
+		expect(screen.getByTestId('scopes-summary')).toHaveTextContent(
+			'Gets the 2 scopes it requests',
+		);
 		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'1 of these can change data or administer your organisation. Approving grants the recognised scopes listed.',
+			'1 of these can change data or administer your organisation.',
 		);
 	});
 
@@ -658,9 +682,9 @@ describe('Agents page — zero agents', () => {
 
 		healthy = true;
 		await user.click(within(scopes).getByRole('button', { name: /Try again/ }));
-		expect(
-			await within(scopes).findByRole('list', { name: 'Default agent scopes' }),
-		).toBeInTheDocument();
+		expect(await within(scopes).findByTestId('scopes-summary')).toHaveTextContent(
+			'Gets the default agent scopes',
+		);
 		await waitFor(() =>
 			expect(
 				screen.getByRole('button', { name: 'Approve flaky-catalogue-bot' }),
@@ -668,7 +692,7 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
-	it('approving from the card completes the stepper and suggests GitHub', async () => {
+	it('approving from the card moves it to its last step and suggests GitHub', async () => {
 		const user = userEvent.setup();
 		const { container, queryClient } = renderPage();
 		await landing();
@@ -691,11 +715,8 @@ describe('Agents page — zero agents', () => {
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Approve my-first-agent' })).toBeNull();
 
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
 		// Approved: the step now asked for is its first API.
-		const steps = within(screen.getByTestId('register-stepper')).getAllByRole('listitem');
-		expect(steps[3]).toHaveAttribute('aria-current', 'step');
-		expect(steps[3]).toHaveTextContent('Give it an API');
+		expect(progress()).toHaveTextContent('Step 4 of 4 · Give it an API');
 		expect(
 			within(screen.getByTestId('arrival-card')).getByText('Active', { selector: 'span' }),
 		).toBeInTheDocument();
@@ -705,7 +726,7 @@ describe('Agents page — zero agents', () => {
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
-	it('once approved, the granted scopes fold into a summary that opens on demand', async () => {
+	it('once approved, the granted scopes are a summary that opens on demand', async () => {
 		const user = userEvent.setup();
 		const { queryClient } = renderPage();
 		await landing();
@@ -714,17 +735,20 @@ describe('Agents page — zero agents', () => {
 		await screen.findByTestId('first-api-panel');
 
 		const summary = await screen.findByTestId('scopes-summary');
-		expect(summary).toHaveTextContent(`${DEFAULT_AGENT_SCOPES.length} scopes granted`);
-		expect(screen.queryByRole('list', { name: 'Granted scopes' })).toBeNull();
-		const toggle = within(summary).getByRole('button', { name: 'Show' });
+		expect(summary).toHaveTextContent(`Granted ${DEFAULT_AGENT_SCOPES.length} scopes`);
+		expect(screen.queryByRole('group', { name: 'Granted scopes' })).toBeNull();
+		const toggle = within(summary).getByRole('button', { name: 'Review scopes' });
 		expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
 		await user.click(toggle);
-		const list = screen.getByRole('list', { name: 'Granted scopes' });
-		expect(within(list).getAllByRole('listitem')).toHaveLength(DEFAULT_AGENT_SCOPES.length);
-		const hide = within(summary).getByRole('button', { name: 'Hide' });
+		const group = screen.getByRole('group', { name: 'Granted scopes' });
+		expect(group.querySelectorAll('[data-scope]')).toHaveLength(DEFAULT_AGENT_SCOPES.length);
+		// Grouped by area, each with what it allows in words.
+		expect(within(group).getByRole('list', { name: 'Capabilities' })).toBeInTheDocument();
+		expect(group).toHaveTextContent('Execute capabilities via the broker');
+		const hide = within(summary).getByRole('button', { name: 'Hide scopes' });
 		expect(hide).toHaveAttribute('aria-expanded', 'true');
-		expect(hide).toHaveAttribute('aria-controls', list.id);
+		expect(hide).toHaveAttribute('aria-controls', group.id);
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {
@@ -737,7 +761,7 @@ describe('Agents page — zero agents', () => {
 		expect(res.ok).toBe(true);
 		await queryClient.invalidateQueries();
 		expect(await screen.findByTestId('first-api-panel')).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
+		expect(progress()).toHaveTextContent('Step 4 of 4');
 	});
 
 	async function approved(user: ReturnType<typeof userEvent.setup>) {
@@ -1241,10 +1265,7 @@ describe('Agents page — resuming the first run on load', () => {
 	});
 
 	const phase = () => screen.getByTestId('agents-empty-landing').getAttribute('data-phase');
-	const stepStates = () =>
-		within(screen.getByTestId('register-stepper'))
-			.getAllByRole('listitem')
-			.map((li) => li.getAttribute('data-state'));
+	const progressStep = () => screen.getByTestId('register-progress').getAttribute('data-step');
 	const seedActive = (id: string, name: string) =>
 		seedExtraAgents([{ id, name, status: 'active', registered_by: 'self' }]);
 
@@ -1262,7 +1283,7 @@ describe('Agents page — resuming the first run on load', () => {
 		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		expect(within(screen.getByTestId('agent-facts')).getByText(id)).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
+		expect(progressStep()).toBe('3');
 		// Rendered resolved: the manual card never mounts, so nothing slides off.
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
@@ -1315,7 +1336,7 @@ describe('Agents page — resuming the first run on load', () => {
 		).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Add another API' })).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
+		expect(progressStep()).toBe('4');
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 	});
 

@@ -68,3 +68,48 @@ export function approvalGrant(
 		unrecognised: requested.filter((scope) => !known.has(scope)),
 	};
 }
+
+/** The areas a scope list is grouped into for review, in reading order. */
+export const SCOPE_AREAS = [
+	'Capabilities',
+	'APIs & catalog',
+	'Executions, jobs & events',
+	'Credentials',
+	"Its owner's resources",
+	'Organisation',
+	'Other',
+] as const;
+
+export type ScopeArea = (typeof SCOPE_AREAS)[number];
+
+const AREA_BY_RESOURCE: Record<string, ScopeArea> = {
+	capabilities: 'Capabilities',
+	apis: 'APIs & catalog',
+	catalog: 'APIs & catalog',
+	executions: 'Executions, jobs & events',
+	jobs: 'Executions, jobs & events',
+	events: 'Executions, jobs & events',
+	audit: 'Executions, jobs & events',
+	credentials: 'Credentials',
+	owner: "Its owner's resources",
+	agents: 'Organisation',
+	users: 'Organisation',
+	org: 'Organisation',
+};
+
+/** The area a scope belongs to, by its first segment (`owner:agents:read` → owner). */
+export function scopeArea(scope: string): ScopeArea {
+	const resource = scope.trim().toLowerCase().split(':')[0] ?? '';
+	return AREA_BY_RESOURCE[resource] ?? 'Other';
+}
+
+/** `scopes` grouped by area, areas in {@link SCOPE_AREAS} order, scopes in
+ * their given order; empty areas are left out. */
+export function groupScopesByArea(
+	scopes: readonly string[],
+): Array<{ area: ScopeArea; scopes: string[] }> {
+	return SCOPE_AREAS.map((area) => ({
+		area,
+		scopes: scopes.filter((scope) => scopeArea(scope) === area),
+	})).filter((group) => group.scopes.length > 0);
+}

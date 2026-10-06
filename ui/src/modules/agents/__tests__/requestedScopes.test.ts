@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	approvalGrant,
 	DEFAULT_AGENT_SCOPES,
+	groupScopesByArea,
+	scopeArea,
 	scopeRisk,
 } from '@/modules/agents/lib/requestedScopes';
 
@@ -81,5 +83,36 @@ describe('approvalGrant', () => {
 
 	it('counts org:admin as recognised though the catalogue hides it from non-admins', () => {
 		expect(approvalGrant(['org:admin'], catalogue).granted).toEqual(['org:admin']);
+	});
+});
+
+describe('groupScopesByArea', () => {
+	it('groups the default scopes by area, in reading order, keeping their order within', () => {
+		expect(groupScopesByArea(DEFAULT_AGENT_SCOPES)).toEqual([
+			{ area: 'Capabilities', scopes: ['capabilities:execute', 'capabilities:read'] },
+			{ area: 'APIs & catalog', scopes: ['apis:read', 'catalog:import'] },
+			{
+				area: 'Executions, jobs & events',
+				scopes: ['executions:read', 'jobs:read', 'events:read'],
+			},
+			{ area: 'Credentials', scopes: ['credentials:connect'] },
+			{
+				area: "Its owner's resources",
+				scopes: ['owner:resources:read', 'owner:agents:read', 'owner:credentials:read'],
+			},
+		]);
+	});
+
+	it('puts the organisation scopes together and anything unknown last', () => {
+		expect(scopeArea('org:admin')).toBe('Organisation');
+		expect(scopeArea('users:read')).toBe('Organisation');
+		expect(scopeArea('workflows:write')).toBe('Other');
+		// Nothing dropped: every scope lands in exactly one area.
+		const scopes = ['workflows:write', 'org:admin', 'apis:read'];
+		expect(
+			groupScopesByArea(scopes)
+				.flatMap((g) => g.scopes)
+				.sort(),
+		).toEqual([...scopes].sort());
 	});
 });

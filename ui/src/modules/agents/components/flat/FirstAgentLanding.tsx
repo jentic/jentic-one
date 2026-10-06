@@ -280,18 +280,19 @@ function ManualCard({ onCreateAgent }: { onCreateAgent: () => void }) {
 			<p className="text-muted-foreground mt-1 text-sm leading-normal">
 				Create an agent here, add its APIs and keys, then connect it with an API key or MCP.
 			</p>
-			{/* Plain rows on the card — the same tonal markers as the stepper. */}
-			<ol className="my-4 grid w-full gap-3">
+			{/* Raised tonal tiles so the three read as steps in order — lifted off
+			    the card by fill alone, no outlines. */}
+			<ol className="my-4 grid w-full gap-2">
 				{MANUAL_STEPS.map(({ icon: Icon, title, detail }) => (
 					<li
 						key={title}
-						className="text-foreground-sub grid grid-cols-[24px_1fr] items-center gap-x-3 text-[13px]"
+						className="bg-surface-tonal rounded-field grid grid-cols-[28px_1fr] items-center gap-x-3 px-3.5 py-2.5 text-[13px]"
 					>
 						<span
 							aria-hidden="true"
-							className="bg-surface-field text-foreground-sub row-span-2 grid h-6 w-6 place-items-center rounded-full"
+							className="bg-surface-field text-foreground-sub row-span-2 grid h-7 w-7 place-items-center rounded-full"
 						>
-							<Icon className="h-3 w-3" />
+							<Icon className="h-3.5 w-3.5" />
 						</span>
 						<span className="text-foreground font-semibold">{title}</span>
 						<span className="text-muted-foreground text-xs">{detail}</span>

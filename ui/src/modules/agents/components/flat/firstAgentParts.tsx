@@ -50,7 +50,12 @@ import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agen
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
-import { approvalGrant, scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
+import {
+	approvalGrant,
+	groupScopesByArea,
+	scopeRisk,
+	type ScopeRisk,
+} from '@/modules/agents/lib/requestedScopes';
 import {
 	commandText,
 	registerCommandTokens,
@@ -488,10 +493,12 @@ export function Stepper({
 // The live status line
 // ---------------------------------------------------------------------------
 
-/** The card's one live line: what the landing is waiting on now. */
+/** The card's one live line: what the landing is waiting on now. Once an
+ * agent is on the card its header already says so, so the line is only
+ * announced (the live region stays), not drawn a second time. */
 export function StatusLine({ phase, name }: { phase: FirstAgentPhase; name: string | null }) {
 	return (
-		<div className="border-hairline mt-4 border-t pt-3">
+		<div className={phase === 'listening' ? 'border-hairline mt-4 border-t pt-3' : 'sr-only'}>
 			<p
 				role="status"
 				aria-live="polite"
@@ -540,6 +547,32 @@ function relativeTime(iso: string): string {
 	return ago === 'now' ? 'just now' : `${ago} ago`;
 }
 
+/** The step the card is on, for its one-line progress (the stepper's four
+ * steps, which only the listening card draws in full). */
+const PROGRESS: Record<Exclude<FirstAgentPhase, 'listening'>, { step: number; label: string }> = {
+	arrived: { step: 3, label: 'Approve it' },
+	approved: { step: 4, label: 'Give it an API' },
+};
+
+/** "Step 3 of 4 · Approve it" — where the flow is, in place of the stepper. */
+export function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'listening'> }) {
+	const { step, label } = PROGRESS[phase];
+	return (
+		<p
+			data-testid="register-progress"
+			data-step={step}
+			className="text-foreground-faint text-[11.5px] font-medium"
+		>
+			Step {step} of {STEPS.length} · {label}
+		</p>
+	);
+}
+
+/**
+ * The arrived agent, decision first: its name and status, then what it can't
+ * do yet and Approve / Deny (or, once approved, its first API); below that
+ * the quiet facts — where it came from, its id, the scopes approval grants.
+ */
 export function AgentDetails({
 	titleId,
 	agent,
@@ -586,38 +619,34 @@ export function AgentDetails({
 
 	return (
 		<div data-testid="arrival-card">
-			<CardHeader
-				titleId={titleId}
-				glyph={
-					// Neutral on purpose: anyone who can reach `/register` can arrive
-					// here under any name, so the card lends it no brand.
-					<span
-						aria-hidden="true"
-						className="text-foreground-sub bg-surface-tonal grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
-					>
-						<Bot className="h-4 w-4" />
-					</span>
-				}
-				title={<span className="font-mono">{agent.name}</span>}
-				detail={
-					// When it registered, in full: the time is how an operator tells
-					// their own run from someone else's.
-					<span data-testid="arrival-registered">
-						Registered {relativeTime(agent.createdAt)} ·{' '}
-						<time dateTime={agent.createdAt} className="text-foreground/90 font-medium">
-							{formatTimestamp(agent.createdAt)}
-						</time>
-					</span>
-				}
-				badge={<ActorStatusBadge status={agent.status} dot />}
-			/>
-			<AgentFacts
-				agent={agent}
-				phase={phase}
-				selfRegistered={selfRegistered}
-				scopes={scopes}
-				catalogue={catalogue}
-			/>
+			<StepProgress phase={phase} />
+			<div className="mt-2.5">
+				<CardHeader
+					titleId={titleId}
+					glyph={
+						// Neutral on purpose: anyone who can reach `/register` can arrive
+						// here under any name, so the card lends it no brand.
+						<span
+							aria-hidden="true"
+							className="text-foreground-sub bg-surface-tonal grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
+						>
+							<Bot className="h-4 w-4" />
+						</span>
+					}
+					title={<span className="font-mono">{agent.name}</span>}
+					detail={
+						// When it registered, in full: the time is how an operator tells
+						// their own run from someone else's.
+						<span data-testid="arrival-registered" className="text-[13px]">
+							Registered {relativeTime(agent.createdAt)} ·{' '}
+							<time dateTime={agent.createdAt}>
+								{formatTimestamp(agent.createdAt)}
+							</time>
+						</span>
+					}
+					badge={<ActorStatusBadge status={agent.status} dot />}
+				/>
+			</div>
 
 			<AnimatePresence mode="wait" initial={false}>
 				<motion.div
@@ -628,14 +657,14 @@ export function AgentDetails({
 					transition={fade}
 				>
 					{phase === 'arrived' ? (
-						<div className="mt-4">
+						<div data-testid="arrival-decision" className="mt-5">
 							<ArrivalWarnings
 								agentName={agent.name}
 								expectedName={expectedName}
 								morePending={morePending}
 							/>
-							<p className="text-foreground-sub text-sm">
-								It has its own key but can&apos;t make calls until you approve it.
+							<p className="text-foreground text-sm">
+								It has its own key but can&apos;t make any calls until you approve.
 							</p>
 							<div className="mt-3 flex flex-wrap items-center gap-2">
 								<Button
@@ -674,6 +703,14 @@ export function AgentDetails({
 					)}
 				</motion.div>
 			</AnimatePresence>
+
+			<AgentFacts
+				agent={agent}
+				phase={phase}
+				selfRegistered={selfRegistered}
+				scopes={scopes}
+				catalogue={catalogue}
+			/>
 			{morePending > 0 && (
 				<Button
 					variant="ghost"
@@ -739,22 +776,21 @@ function ArrivalWarnings({
 	);
 }
 
-/** One fact about the agent. */
+/** One fact about the agent: a tight label/value pair on one line. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		<div className="min-w-0">
-			<dt className="text-foreground-faint text-[10px] font-medium tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground-sub mt-0.5 truncate text-xs">{children}</dd>
+		<div className="flex min-w-0 items-baseline gap-2">
+			<dt className="text-foreground-faint w-24 shrink-0">{label}</dt>
+			<dd className="text-foreground-sub min-w-0 truncate">{children}</dd>
 		</div>
 	);
 }
 
 /**
- * What the API says about where the agent came from — only the facts it has.
- * A self-registration carries no owner, no API key and usually no scopes, so
- * most rows only show for an agent someone set up.
+ * What the API says about where the agent came from — only the facts it has,
+ * quiet, under the decision. A self-registration carries no owner, no API key
+ * and usually no scopes, so the extra pairs only show for an agent someone
+ * set up.
  */
 function AgentFacts({
 	agent,
@@ -770,13 +806,19 @@ function AgentFacts({
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
+	const signsIn = agent.hasApiKey
+		? 'signs in with an API key'
+		: selfRegistered
+			? 'signs in with its own keypair'
+			: 'no way to sign in yet';
+	const extras = keyInfo.data || agent.ownerId || agent.parentAgentId || agent.description;
 
 	return (
-		<dl
+		<div
 			data-testid="agent-facts"
-			className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3"
+			className="border-hairline text-muted-foreground mt-5 space-y-2 border-t pt-4 text-xs"
 		>
-			<Fact label="How">
+			<p data-testid="agent-provenance">
 				{selfRegistered ? (
 					// Not "from the CLI": anything that can reach `POST /register`
 					// arrives this way.
@@ -787,52 +829,46 @@ function AgentFacts({
 					</>
 				) : (
 					'Created here'
-				)}
-			</Fact>
-			<Fact label="Signs in with">
-				{agent.hasApiKey
-					? 'An API key'
-					: selfRegistered
-						? 'Its own keypair'
-						: 'Nothing yet'}
-			</Fact>
-			{/* Its own row, in full and copyable: a narrow card would otherwise
-			    cut the id short with no way to read or copy the rest. */}
-			<div data-testid="agent-id-fact" className="col-span-full min-w-0">
-				<dt className="text-foreground-faint text-[10px] font-medium tracking-wider uppercase">
-					Agent ID
-				</dt>
-				<dd className="text-foreground-sub mt-0.5 flex min-w-0 items-center gap-2 text-xs">
-					<code className="min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
-						{agent.id}
-					</code>
-					<CopyButton
-						value={agent.id}
-						size="icon"
-						variant="ghost"
-						ariaLabel="Copy the agent ID"
-						toastMessage="Agent ID copied"
-					/>
-				</dd>
-			</div>
-			{keyInfo.data && (
-				<Fact label="Key ID">
-					<span className="font-mono">{keyInfo.data.id}</span>
-				</Fact>
+				)}{' '}
+				· {signsIn}
+			</p>
+			{/* In full and copyable: a narrow card would otherwise cut the id
+			    short with no way to read or copy the rest. */}
+			<p data-testid="agent-id-fact" className="flex min-w-0 items-center gap-1.5">
+				<span className="sr-only">Agent ID: </span>
+				<code className="min-w-0 font-mono [overflow-wrap:anywhere]">{agent.id}</code>
+				<CopyButton
+					value={agent.id}
+					size="icon"
+					variant="ghost"
+					ariaLabel="Copy the agent ID"
+					toastMessage="Agent ID copied"
+					className="-my-1.5 h-7 w-7 shrink-0 p-0 [&_svg]:h-3.5 [&_svg]:w-3.5"
+				/>
+			</p>
+			{extras && (
+				<dl className="space-y-1">
+					{keyInfo.data && (
+						<Fact label="Key ID">
+							<span className="font-mono">{keyInfo.data.id}</span>
+						</Fact>
+					)}
+					{agent.ownerId && (
+						<Fact label="Owner">
+							<ActorLabel actorId={agent.ownerId} />
+						</Fact>
+					)}
+					{agent.parentAgentId && (
+						<Fact label="Parent agent">
+							<ActorLabel actorId={agent.parentAgentId} />
+						</Fact>
+					)}
+					{agent.description && <Fact label="Description">{agent.description}</Fact>}
+				</dl>
 			)}
-			{agent.ownerId && (
-				<Fact label="Owner">
-					<ActorLabel actorId={agent.ownerId} />
-				</Fact>
-			)}
-			{agent.parentAgentId && (
-				<Fact label="Parent agent">
-					<ActorLabel actorId={agent.parentAgentId} />
-				</Fact>
-			)}
-			{agent.description && <Fact label="Description">{agent.description}</Fact>}
-			<RequestedScopes scopes={scopes} catalogue={catalogue} phase={phase} />
-		</dl>
+			{/* Keyed by phase: an approval starts the review folded again. */}
+			<RequestedScopes key={phase} scopes={scopes} catalogue={catalogue} phase={phase} />
+		</div>
 	);
 }
 
@@ -851,35 +887,71 @@ const RISK_LABEL: Record<ScopeRisk, string> = {
 /** A scope chip: the neutral tag, mono, wrapping when a scope is long. */
 const SCOPE_CHIP = 'max-w-full font-mono font-medium whitespace-normal [overflow-wrap:anywhere]';
 
-/** One scope as a quiet chip; only the glyph of a flagged one is tinted. */
-function ScopeBadge({ scope }: { scope: string }) {
-	const risk = scopeRisk(scope);
+/** A flagged scope as a quiet chip; only its glyph is tinted. */
+function RiskChip({ scope, risk }: { scope: string; risk: ScopeRisk }) {
 	return (
-		<li className="max-w-full">
-			<Tag data-risk={risk ?? undefined} className={SCOPE_CHIP}>
-				{risk && (
-					<TriangleAlert
-						className={cn('h-3 w-3 shrink-0', RISK_TINT[risk])}
-						aria-hidden="true"
-					/>
-				)}
+		<li className="max-w-full" data-scope={scope} data-risk={risk}>
+			<Tag className={SCOPE_CHIP}>
+				<TriangleAlert
+					className={cn('h-3 w-3 shrink-0', RISK_TINT[risk])}
+					aria-hidden="true"
+				/>
 				{scope}
-				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
+				<span className="sr-only"> ({RISK_LABEL[risk]})</span>
 			</Tag>
 		</li>
 	);
 }
 
+/** One scope in the review: what it allows in words, its id in muted mono. */
+function ScopeRow({ scope, description }: { scope: string; description?: string }) {
+	const risk = scopeRisk(scope);
+	return (
+		<li
+			data-scope={scope}
+			data-risk={risk ?? undefined}
+			className="flex min-w-0 items-start gap-2 py-0.5 leading-snug"
+		>
+			<span aria-hidden="true" className="mt-px grid h-3.5 w-3.5 shrink-0 place-items-center">
+				{risk ? (
+					<TriangleAlert className={cn('h-3.5 w-3.5', RISK_TINT[risk])} />
+				) : (
+					<span className="bg-foreground-faint/50 h-1 w-1 rounded-full" />
+				)}
+			</span>
+			<span className="min-w-0">
+				{description && <span className="text-foreground-sub block">{description}</span>}
+				<code
+					className={cn(
+						'font-mono text-[11px] [overflow-wrap:anywhere]',
+						description ? 'text-foreground-faint' : 'text-foreground-sub',
+					)}
+				>
+					{scope}
+				</code>
+				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
+			</span>
+		</li>
+	);
+}
+
 /**
- * Every scope approval grants, in full: they go live at once, so none may hide
- * behind an ellipsis while the approval is pending. Once approved the grant is
- * done and the card's next step is its first API, so the list folds into a
- * one-line summary that opens on demand. An agent that requests none gets the default agent
- * scopes; requested strings outside the permission catalogue grant nothing and
- * are listed apart, and they don't bring the defaults back — so a request made
- * only of those approves an agent with no scopes, which the card says. Scopes
- * that change data or administer the organisation are flagged; an unread list
- * says so rather than reading as "no scopes".
+ * What approval grants, as a summary with the full list one click away.
+ *
+ * Approval makes the scopes live at once, so the approver must be able to see
+ * exactly what they are granting before the click — never an unexplained
+ * "and N more". The summary gives the count and the source (the default agent
+ * scopes, or what the agent requested); any scope that can change data or
+ * administer the organisation is never folded away: it stays on the summary,
+ * flagged, and while approval is pending such a request opens the full review
+ * by default. A request of plain read scopes (the defaults among them) waits
+ * behind "Review scopes", grouped by area with what each one allows.
+ *
+ * An agent that requests none gets the default agent scopes; requested
+ * strings outside the permission catalogue grant nothing and are listed
+ * apart, always visible, and they don't bring the defaults back — so a
+ * request made only of those approves an agent with no scopes, which the card
+ * says. An unread list says so rather than reading as "no scopes".
  */
 function RequestedScopes({
 	scopes,
@@ -890,16 +962,17 @@ function RequestedScopes({
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 	phase: Exclude<FirstAgentPhase, 'listening'>;
 }) {
-	const [expanded, setExpanded] = useState(false);
-	const listId = useId();
+	// null: the default for the request (open when it holds a flagged scope
+	// and is still pending); a click makes it the operator's choice.
+	const [expandedChoice, setExpanded] = useState<boolean | null>(null);
+	const reviewId = useId();
 	const failed = scopes.isError ? scopes : catalogue.isError ? catalogue : null;
 	let body: ReactNode;
 	if (scopes.isPending || catalogue.isPending) {
 		body = (
 			<span aria-busy="true" className="flex flex-wrap gap-1.5">
 				<span className="sr-only">Reading the scopes it requests…</span>
-				<Skeleton className="h-5 w-24 rounded-full" />
-				<Skeleton className="h-5 w-32 rounded-full" />
+				<Skeleton className="h-4 w-48 rounded-full" />
 			</span>
 		);
 	} else if (failed) {
@@ -919,80 +992,107 @@ function RequestedScopes({
 			scopes.data ?? [],
 			(catalogue.data ?? []).map((p) => p.name),
 		);
-		const risky = grant.granted.filter((scope) => scopeRisk(scope) != null).length;
-		const riskNote =
-			risky === 0
-				? null
-				: risky === 1
-					? '1 of these can change data or administer your organisation.'
-					: `${risky} of these can change data or administer your organisation.`;
-		// Approved: the grant is done — a summary, the list a click away.
-		const folded = phase === 'approved' && grant.granted.length > 0;
-		const listLabel = folded
+		const descriptions = new Map((catalogue.data ?? []).map((p) => [p.name, p.description]));
+		const flagged = grant.granted.flatMap((scope) => {
+			const risk = scopeRisk(scope);
+			return risk ? [{ scope, risk }] : [];
+		});
+		const pending = phase === 'arrived';
+		const expanded = expandedChoice ?? (pending && flagged.length > 0);
+		const count = grant.granted.length;
+		const listLabel = !pending
 			? 'Granted scopes'
 			: grant.kind === 'defaults'
 				? 'Default agent scopes'
 				: 'Requested scopes';
-		const list = grant.granted.length > 0 && (!folded || expanded) && (
-			<ul
-				id={listId}
-				aria-label={listLabel}
-				className={cn('flex flex-wrap gap-1.5', folded && 'mt-2')}
-			>
-				{grant.granted.map((scope) => (
-					<ScopeBadge key={scope} scope={scope} />
-				))}
-			</ul>
-		);
-		body = folded ? (
+		const summary = !pending
+			? grant.kind === 'defaults'
+				? `Has the default agent scopes · ${count}`
+				: `Granted ${count === 1 ? '1 scope' : `${count} scopes`}`
+			: grant.kind === 'defaults'
+				? `Gets the default agent scopes · ${count}`
+				: `Gets the ${count === 1 ? 'scope' : `${count} scopes`} it requests`;
+		const riskNote =
+			flagged.length === 0
+				? null
+				: flagged.length === 1
+					? '1 of these can change data or administer your organisation.'
+					: `${flagged.length} of these can change data or administer your organisation.`;
+		body = (
 			<>
-				<p data-testid="scopes-summary" className="flex flex-wrap items-center gap-x-2">
-					<span>
-						{grant.granted.length === 1
-							? '1 scope granted'
-							: `${grant.granted.length} scopes granted`}
-					</span>
-					<Button
-						variant="ghost"
-						size="xs"
-						aria-expanded={expanded}
-						aria-controls={expanded ? listId : undefined}
-						onClick={() => setExpanded((v) => !v)}
-						className="text-muted-foreground hover:text-foreground -my-1 h-6 gap-1 px-1.5 text-xs font-medium"
-					>
-						<ChevronRight
-							aria-hidden="true"
-							className={cn(
-								'h-3.5 w-3.5 transition-transform duration-200',
-								expanded && 'rotate-90',
-							)}
-						/>
-						{expanded ? 'Hide' : 'Show'}
-					</Button>
-				</p>
-				{list}
-				{riskNote && <p className="text-muted-foreground mt-1.5">{riskNote}</p>}
-			</>
-		) : (
-			<>
-				{grant.kind === 'defaults' ? (
-					<p className="mb-1.5">Requests none, so it gets the default agent scopes:</p>
-				) : null}
-				{list}
-				{grant.granted.length > 0 && (
-					<p className="text-muted-foreground mt-1.5">
-						{riskNote}
-						{riskNote && ' '}
-						{grant.kind === 'defaults'
-							? 'Approving grants the default agent scopes.'
-							: 'Approving grants the recognised scopes listed.'}
+				{count > 0 && (
+					<p data-testid="scopes-summary" className="flex flex-wrap items-center gap-x-2">
+						<span className="text-foreground-sub">{summary}</span>
+						<Button
+							variant="ghost"
+							size="xs"
+							aria-expanded={expanded}
+							aria-controls={reviewId}
+							onClick={() => setExpanded(!expanded)}
+							className="text-muted-foreground hover:text-foreground -my-1 h-6 gap-1 px-1.5 text-xs font-medium"
+						>
+							<ChevronRight
+								aria-hidden="true"
+								className={cn(
+									'h-3.5 w-3.5 transition-transform duration-200',
+									expanded && 'rotate-90',
+								)}
+							/>
+							{expanded ? 'Hide scopes' : 'Review scopes'}
+						</Button>
 					</p>
 				)}
+				{/* Flagged scopes never fold away. */}
+				{flagged.length > 0 && !expanded && (
+					<ul
+						aria-label="Scopes that can change data or administer"
+						className="mt-2 flex flex-wrap gap-1.5"
+					>
+						{flagged.map(({ scope, risk }) => (
+							<RiskChip key={scope} scope={scope} risk={risk} />
+						))}
+					</ul>
+				)}
+				{riskNote && <p className="mt-1.5">{riskNote}</p>}
+				<div
+					id={reviewId}
+					role="group"
+					aria-label={listLabel}
+					hidden={!expanded}
+					data-testid="scope-review"
+					className="mt-2 space-y-2.5"
+				>
+					{expanded &&
+						groupScopesByArea(grant.granted).map(({ area, scopes: inArea }) => (
+							<div key={area}>
+								<p
+									aria-hidden="true"
+									className="text-foreground-faint text-[11px] font-semibold"
+								>
+									{area}
+								</p>
+								<ul aria-label={area}>
+									{inArea.map((scope) => (
+										<ScopeRow
+											key={scope}
+											scope={scope}
+											description={descriptions.get(scope)}
+										/>
+									))}
+								</ul>
+							</div>
+						))}
+					{expanded && pending && (
+						<p>
+							{grant.kind === 'defaults'
+								? 'Approving grants the default agent scopes.'
+								: 'Approving grants the recognised scopes listed.'}
+						</p>
+					)}
+				</div>
 				{grant.unrecognised.length > 0 && (
 					<div data-testid="unrecognised-scopes" className="mt-2.5">
-						<p className="text-muted-foreground mb-1.5">
-							Not recognised — won&apos;t be granted:
-						</p>
+						<p className="mb-1.5">Not recognised — won&apos;t be granted:</p>
 						<ul aria-label="Unrecognised scopes" className="flex flex-wrap gap-1.5">
 							{grant.unrecognised.map((scope) => (
 								<li key={scope} className="max-w-full">
@@ -1004,7 +1104,7 @@ function RequestedScopes({
 						</ul>
 					</div>
 				)}
-				{grant.kind === 'requested' && grant.granted.length === 0 && (
+				{grant.kind === 'requested' && count === 0 && (
 					<p
 						data-testid="no-scopes-warning"
 						className="text-foreground mt-2 flex items-start gap-2"
@@ -1020,11 +1120,8 @@ function RequestedScopes({
 		);
 	}
 	return (
-		<div data-testid="requested-scopes" className="col-span-full min-w-0">
-			<dt className="text-foreground-faint text-[10px] font-medium tracking-wider uppercase">
-				Scopes
-			</dt>
-			<dd className="text-foreground-sub mt-1 text-xs">{body}</dd>
+		<div data-testid="requested-scopes" className="min-w-0">
+			{body}
 		</div>
 	);
 }
