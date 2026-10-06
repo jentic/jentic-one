@@ -53,14 +53,20 @@ describe('DiscoverToolbar', () => {
 		await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 		expect(toolbar).toHaveAttribute('data-scrolled', 'false');
 
-		// Past the page header: the bar pins and gets its hairline.
+		// Past the page header: the bar pins and gets its hairline. The observer
+		// reports on its own schedule, which a loaded CI runner can stretch past
+		// waitFor's 1s default — give it room rather than race it.
 		scroller.scrollTop = 600;
-		await waitFor(() => expect(toolbar).toHaveAttribute('data-scrolled', 'true'));
+		await waitFor(() => expect(toolbar).toHaveAttribute('data-scrolled', 'true'), {
+			timeout: 5000,
+		});
 		expect(Math.round(toolbar.getBoundingClientRect().top)).toBe(48);
 
 		// Back to the top: it lets go.
 		scroller.scrollTop = 0;
-		await waitFor(() => expect(toolbar).toHaveAttribute('data-scrolled', 'false'));
+		await waitFor(() => expect(toolbar).toHaveAttribute('data-scrolled', 'false'), {
+			timeout: 5000,
+		});
 	});
 
 	it('disconnects its observer on unmount', () => {
