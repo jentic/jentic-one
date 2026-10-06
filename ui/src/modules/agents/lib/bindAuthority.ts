@@ -6,6 +6,7 @@
  */
 import { ORG_ADMIN } from '@/shared/auth';
 import type { Credential } from '@/shared/credentials/api';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 
 /** The slice of the signed-in user these rules read. `null` = not known yet
  * (still loading, or rendered outside an `AuthProvider`). */
@@ -24,12 +25,13 @@ export function viewerIsOrgAdmin(viewer: BindViewer | null | undefined): boolean
  * The credentials this viewer may bind: every one for an `org:admin`, otherwise
  * only the ones they created. An unknown viewer gets the list unfiltered — the
  * server still enforces, and hiding everything while `/users/me` loads would
- * misclassify every pick as "needs a new credential".
+ * misclassify every pick as "needs a new credential". The same owner-or-admin
+ * rule decides who may edit a credential ({@link credentialEditableBy}).
  */
 export function credentialsBindableBy(
 	credentials: Credential[],
 	viewer: BindViewer | null | undefined,
 ): Credential[] {
 	if (!viewer || viewerIsOrgAdmin(viewer)) return credentials;
-	return credentials.filter((c) => c.created_by === viewer.id);
+	return credentials.filter((c) => credentialEditableBy(c, viewer));
 }
