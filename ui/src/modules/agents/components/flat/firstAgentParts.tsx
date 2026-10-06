@@ -153,6 +153,8 @@ export function RegisterCommand({
 	const nameError = agentNameError(name);
 	const target = useRegisterTarget();
 	const tokens = registerCommandTokens({ ...target, name: commandName });
+	// Approving needs `agents:write` (or `org:admin`): anyone else is told who does.
+	const canApprove = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div>
@@ -167,7 +169,11 @@ export function RegisterCommand({
 					</span>
 				}
 				title="Let your agent register itself"
-				detail="Run one command where your agent runs. It signs up with its own key and shows up here for you to approve."
+				detail={
+					canApprove
+						? 'Run one command where your agent runs. It signs up with its own key and shows up here for you to approve.'
+						: 'Run one command where your agent runs. It signs up with its own key and shows up here, pending until someone who can manage agents approves it.'
+				}
 				badge={
 					surface === 'landing' ? (
 						<Badge className="font-sans text-[11px] font-semibold">Recommended</Badge>
@@ -354,6 +360,13 @@ const STEPS: Array<{
 	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
 ];
 
+/** The approval step for a viewer who cannot approve. */
+const APPROVED_BY_OTHERS: (typeof STEPS)[number] = {
+	icon: CircleCheck,
+	title: 'It gets approved',
+	detail: 'By someone who can manage agents',
+};
+
 type StepState = 'done' | 'current' | 'upcoming';
 
 /** The last step is current once the agent is approved. Adding its first API
@@ -388,6 +401,11 @@ export function Stepper({
 	surface?: RegisterSurface;
 }) {
 	const inPanel = surface === 'panel';
+	// The approval step names who approves: the viewer only with `agents:write`.
+	const canApprove = useCanAccess(AGENTS_WRITE);
+	const steps = canApprove
+		? STEPS
+		: STEPS.map((step, i) => (i === 2 ? APPROVED_BY_OTHERS : step));
 	const states = STEP_STATES[phase];
 	const fills = SEGMENT_FILL[phase];
 	return (
@@ -399,7 +417,7 @@ export function Stepper({
 				inPanel ? '@[32rem]:grid-cols-4' : 'sm:grid-cols-4',
 			)}
 		>
-			{STEPS.map(({ icon: Icon, title, detail }, i) => {
+			{steps.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
 				const fill = i > 0 ? fills[i - 1] : 0;
 				// A connector that starts filling in this phase waits for the one

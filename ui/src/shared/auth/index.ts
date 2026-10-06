@@ -11,6 +11,7 @@ export {
 	AGENTS_WRITE,
 	AUDIT_READ,
 	CREDENTIALS_READ,
+	CREDENTIALS_WRITE,
 	JOBS_READ,
 	OWNER_CREDENTIALS_READ,
 } from '@/shared/auth/useCanAccess';

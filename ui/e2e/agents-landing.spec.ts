@@ -28,6 +28,13 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 		await w.__queryClient.resetQueries();
 	});
 
+	// The URL still names the agent the fleet view had selected, which the empty
+	// roster no longer holds: "Agent not found", and "Show my agents" drops the link.
+	const notFound = page.getByTestId('agent-not-found');
+	await expect(notFound).toBeVisible();
+	await notFound.getByRole('button', { name: 'Show my agents' }).click();
+	await expect(page).not.toHaveURL(/agent=/);
+
 	const landing = page.getByTestId('agents-empty-landing');
 	await expect(landing).toBeVisible();
 	// No agent has ever existed here: the suggestion is the first agent's.

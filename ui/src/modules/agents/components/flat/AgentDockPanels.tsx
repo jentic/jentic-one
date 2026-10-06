@@ -6,6 +6,7 @@
  */
 import { Fingerprint, X } from 'lucide-react';
 import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { useIsGeneratingAgentApiKey, type AgentEntity } from '@/modules/agents/api';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
@@ -128,6 +129,8 @@ export function AgentPermissionsSheet({
 	onClose: () => void;
 }) {
 	const headingId = 'agent-permissions-sheet-title';
+	// Replacing an agent's permissions needs `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
 	// Archive sweeps this agent's permission grants and OAuth consents, so for an
 	// archived agent the sheet is a record, never a grant invite.
 	const isArchived = agent.status === 'archived';
@@ -162,7 +165,7 @@ export function AgentPermissionsSheet({
 					<PermissionsCard
 						actorId={agent.id}
 						actorName={agent.name}
-						canEdit={!isArchived}
+						canEdit={!isArchived && canManage}
 					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>

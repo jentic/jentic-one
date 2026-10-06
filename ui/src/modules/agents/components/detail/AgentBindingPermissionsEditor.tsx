@@ -55,6 +55,11 @@ export interface AgentBindingPermissionsEditorProps {
 	 * without suggestions.
 	 */
 	apiReference?: OpsApiReference | null;
+	/**
+	 * The viewer may not change these rules (saving needs `credentials:write` or
+	 * `org:admin`): the saved rules are listed, with no editor and no save.
+	 */
+	readOnly?: boolean;
 }
 
 /**
@@ -155,6 +160,7 @@ export function AgentBindingPermissionsEditor({
 	onClose,
 	onDirtyChange,
 	apiReference,
+	readOnly = false,
 }: AgentBindingPermissionsEditorProps) {
 	const [rules, setRules] = useState<PermissionRuleInput[]>(() =>
 		initialRules.filter((r) => !r._system).map(toInput),
@@ -225,6 +231,37 @@ export function AgentBindingPermissionsEditor({
 	const discard = () => {
 		setRules(initialRules.filter((r) => !r._system).map(toInput));
 	};
+
+	if (readOnly) {
+		return (
+			<div
+				className="border-border bg-muted/20 space-y-3 rounded-lg border p-4 sm:p-5"
+				data-testid="binding-rules-read-only"
+			>
+				<div>
+					<p className="text-foreground text-sm font-semibold">
+						Permission rules for {credentialLabel}
+					</p>
+					<p className="text-muted-foreground mt-0.5 text-xs">
+						Rules are evaluated in order — first match wins, anything unmatched is
+						denied.
+					</p>
+				</div>
+				{savedDisplay.length === 0 ? (
+					<p className="text-muted-foreground text-sm">No rules — all calls blocked.</p>
+				) : (
+					<ol className="text-foreground list-decimal space-y-1 pl-5 text-xs">
+						{savedDisplay.map((rule, i) => (
+							<li key={i}>{oneLiner(rule)}</li>
+						))}
+					</ol>
+				)}
+				<p className="text-muted-foreground text-xs">
+					Changing these rules needs permission to manage credentials.
+				</p>
+			</div>
+		);
+	}
 
 	return (
 		<div className="border-border bg-muted/20 space-y-4 rounded-lg border p-4 sm:p-5">

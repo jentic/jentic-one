@@ -23,10 +23,11 @@ interface ApiTileProps {
 	rules: BindingRuleSummary | undefined;
 	/** Open the access sidebar for this tile's binding. */
 	onOpen: () => void;
-	/** Pause this binding (reversible — rules survive). */
-	onSuspend: () => void;
-	/** Lift a suspension on this binding. */
-	onResume: () => void;
+	/** Pause this binding (reversible — rules survive). Omitted when the viewer
+	 * may not manage the agent's bindings: the tile then offers no pause. */
+	onSuspend?: () => void;
+	/** Lift a suspension on this binding. Omitted like `onSuspend`. */
+	onResume?: () => void;
 	/** A suspend/resume on THIS tile's credential is in flight. */
 	bindingPending: boolean;
 	/** Whether the AGENT this tile belongs to is serving traffic. False for
@@ -191,39 +192,41 @@ export function ApiTile({
 				{/* Above the overlay, so these verbs are reachable — and so the
 				    tile advertises that it can be acted on at all. */}
 				<div className="relative z-10 flex shrink-0 items-center gap-0.5">
-					{tile.suspended ? (
-						<Tooltip
-							content="Resume this binding — rules survived; access is restored."
-							interactiveChild
-						>
-							<Button
-								variant="ghost"
-								size="sm"
-								loading={bindingPending}
-								onClick={onResume}
-								aria-label={`Resume ${tile.title} access`}
-								className="text-muted-foreground hover:text-foreground px-1.5"
-							>
-								<PlayCircle className="h-4 w-4" />
-							</Button>
-						</Tooltip>
-					) : (
-						<Tooltip
-							content="Pause this binding — reversible; rules survive and resume restores access."
-							interactiveChild
-						>
-							<Button
-								variant="ghost"
-								size="sm"
-								loading={bindingPending}
-								onClick={onSuspend}
-								aria-label={`Pause ${tile.title} access`}
-								className="text-muted-foreground hover:text-foreground px-1.5"
-							>
-								<PauseCircle className="h-4 w-4" />
-							</Button>
-						</Tooltip>
-					)}
+					{tile.suspended
+						? onResume && (
+								<Tooltip
+									content="Resume this binding — rules survived; access is restored."
+									interactiveChild
+								>
+									<Button
+										variant="ghost"
+										size="sm"
+										loading={bindingPending}
+										onClick={onResume}
+										aria-label={`Resume ${tile.title} access`}
+										className="text-muted-foreground hover:text-foreground px-1.5"
+									>
+										<PlayCircle className="h-4 w-4" />
+									</Button>
+								</Tooltip>
+							)
+						: onSuspend && (
+								<Tooltip
+									content="Pause this binding — reversible; rules survive and resume restores access."
+									interactiveChild
+								>
+									<Button
+										variant="ghost"
+										size="sm"
+										loading={bindingPending}
+										onClick={onSuspend}
+										aria-label={`Pause ${tile.title} access`}
+										className="text-muted-foreground hover:text-foreground px-1.5"
+									>
+										<PauseCircle className="h-4 w-4" />
+									</Button>
+								</Tooltip>
+							)}
 					<Tooltip
 						content="Manage access — credential, rules and tester."
 						interactiveChild
