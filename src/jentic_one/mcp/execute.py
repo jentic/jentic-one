@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import uuid as uuid_mod
+from http import HTTPStatus
 from importlib.metadata import PackageNotFoundError, version
 from ipaddress import ip_address
 from typing import Any
@@ -179,21 +180,17 @@ def _error_origin(headers: httpx.Headers) -> str:
     return value.strip().lower()
 
 
-def _flatten_detail(detail: Any) -> str:
-    """Render a problem+json ``detail`` member to a string (Go: ``flattenDetail``).
+def _flatten_validation_errors(errors: Any) -> str:
+    """Render a validation error array to a string (Go: ``flattenValidationErrors``).
 
-    A string verbatim, or FastAPI's validation array (``[{loc, msg}, …]``)
-    joined into its messages (each prefixed with its dotted location) — the
-    shape FastAPI emits for a 422 with NO top-level ``title``, which would
-    otherwise be dropped behind a bare "Unprocessable Entity". Any other shape
-    yields ``""``.
+    The broker's 422 carries its field errors as ``errors`` (``[{loc, msg}, …]``,
+    sanitized of submitted input); each message is prefixed with its dotted
+    location and the messages are ``"; "``-joined. Any other shape yields ``""``.
     """
-    if isinstance(detail, str):
-        return detail
-    if not isinstance(detail, list):
+    if not isinstance(errors, list):
         return ""
     msgs: list[str] = []
-    for item in detail:
+    for item in errors:
         if not isinstance(item, dict):
             continue
         msg = item.get("msg")
@@ -207,18 +204,66 @@ def _flatten_detail(detail: Any) -> str:
     return "; ".join(msgs)
 
 
-def _broker_error_next_tool(status: int, problem_type: str) -> str:
-    """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``).
+def _flatten_detail(detail: Any) -> str:
+    """Render a problem+json ``detail`` member to a string (Go: ``flattenDetail``).
 
-    Keyed on the status AND the problem type, never a bare whoami default —
-    that sends contract/payload failures into an identity-check loop that can
-    never resolve them. An unregistered operation (404 / operation-shaped type)
-    needs search_apis; a credential the broker could not resolve gets whoami;
-    any other 4xx (405/413/422/428) points at inspect_operation.
+    A string verbatim, or a validation array via
+    :func:`_flatten_validation_errors`. Any other shape yields ``""``.
     """
-    if status == 404 or "operation" in problem_type:
+    if isinstance(detail, str):
+        return detail
+    return _flatten_validation_errors(detail)
+
+
+def _status_text(status: int) -> str:
+    """The standard reason phrase for ``status`` (Go: ``http.StatusText``), else ``""``."""
+    try:
+        return HTTPStatus(status).phrase
+    except ValueError:
+        return ""
+
+
+def _problem_reason(problem: dict[str, Any], status: int) -> str:
+    """Human-readable reason from a broker problem body (Go: ``problemReason``).
+
+    ``detail`` first (a conformant RFC 9457 body), else ``title`` (where the
+    broker's own ``problem_body`` puts the message), else the status phrase —
+    with the flattened ``errors`` array appended so a validation 422 names WHICH
+    field was wrong instead of only "Request validation failed".
+    """
+    title = problem.get("title")
+    reason = (
+        _flatten_detail(problem.get("detail"))
+        or (title if isinstance(title, str) else "")
+        or _status_text(status)
+    )
+    if field_errors := _flatten_validation_errors(problem.get("errors")):
+        reason += f" ({field_errors})"
+    return reason
+
+
+# The wire types the broker emits when a Jentic-Credential-Id/Name header names a
+# credential it cannot resolve for the caller (broker/services/credentials/
+# orchestrator.py). Matched exactly (Go: ``brokerCredentialProblemTypes``): a
+# substring test would silently re-route any future type that merely mentions
+# "credential".
+_BROKER_CREDENTIAL_PROBLEM_TYPES = frozenset(
+    {"credential_id_not_found", "credential_name_not_found"}
+)
+
+
+def _broker_error_next_tool(status: int, problem_type: str) -> str:
+    """Recovery pointer for a broker resolve failure (Go: ``brokerErrorNextTool``
+    over ``agentops.BrokerErrorRecoveryFor``).
+
+    A 404 or ``operation_not_found`` needs search_apis; a known
+    credential-resolution type gets whoami; any other broker 4xx — a contract or
+    payload error — points at inspect_operation, never an identity-check loop
+    that cannot fix a malformed request.
+    """
+    if status == 404 or problem_type == "operation_not_found":
         return "search_apis"
-    if "credential" in problem_type:
+    if problem_type in _BROKER_CREDENTIAL_PROBLEM_TYPES:
         return "whoami"
     return "inspect_operation"
 
@@ -235,26 +280,32 @@ def _broker_error_actionable(next_tool: str) -> str:
     if next_tool == "whoami":
         return (
             "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker "
-            "could not resolve for this operation. Call whoami to see your credential bindings and "
-            "re-issue the call naming one bound to this operation — do not retry the same header."
+            "could not resolve for this operation. Pick a valid id from details.candidates when "
+            "present (else call whoami to see your credential bindings) and re-issue the call "
+            "naming one bound to this operation — do not retry the same header."
         )
     return (
-        "The broker rejected the request shape before it reached the upstream API. Call "
+        "The broker rejected the request before it reached the upstream API. Call "
         "inspect_operation to re-read the operation's contract — the method, revision pin, payload "
-        "size, or a required header is wrong — and fix the request rather than retrying it."
+        "size, idempotency key, or a required header is wrong — and fix the request rather than "
+        "retrying it."
     )
 
 
 def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> ToolError | None:
     """Broker resolve-failure classification (Go: ``agentops.BrokerError``), #1429.
 
-    A broker-origin 4xx that is not a denial (an unknown or unbound credential
-    id or name, an unregistered operation) never reached the upstream, so it is
-    a RESOLVE_FAILED error, not a normal result. The origin must say ``broker``
-    explicitly: 400/404/422 are what an upstream answers on a call that ran, so
-    a missing header keeps the pass-through reading. Broker 5xx is out of scope.
+    A broker-origin 4xx that is not a denial (an unknown credential id or name,
+    an unregistered operation, a malformed request) never reached the upstream,
+    so it is a RESOLVE_FAILED error, not a normal result. The origin must say
+    ``broker`` explicitly: 400/404/422 are what an upstream answers on a call
+    that ran, so a missing header keeps the pass-through reading.
+
+    Two broker-origin statuses stay pass-through, because RESOLVE_FAILED means
+    "change the ask, don't retry" and both are retryable as sent: 429
+    (``rate_limit_exceeded``, with Retry-After) and every 5xx (#1531).
     """
-    if not 400 <= status < 500 or status in _DENIAL_STATUSES:
+    if not 400 <= status < 500 or status == 429 or status in _DENIAL_STATUSES:
         return None
     if _error_origin(headers) != "broker":
         return None
@@ -265,19 +316,15 @@ def classify_broker_error(status: int, headers: httpx.Headers, body: bytes) -> T
             problem = parsed
     except ValueError:
         pass
-    reason = (
-        _flatten_detail(problem.get("detail"))
-        or str(problem.get("title") or "")
-        or f"HTTP {status}"
-    )
-    problem_type = str(problem.get("type") or "")
+    reason = _problem_reason(problem, status)
+    raw_type = problem.get("type")
+    problem_type = raw_type if isinstance(raw_type, str) else ""
     details: dict[str, Any] = {"http_status": status, "origin": "broker"}
     if problem_type:
         details["problem_type"] = problem_type
-    # The broker embeds the caller's own covering credentials on an unknown or
-    # unbound Jentic-Credential-Id/Name (orchestrator._resolve_mapped); relay
-    # them so the agent need not issue a follow-up whoami just to learn which
-    # ids exist.
+    # The broker embeds the caller's own covering credentials on an unknown
+    # Jentic-Credential-Id/Name (orchestrator._resolve_mapped); relay them so the
+    # agent need not issue a follow-up whoami just to learn which ids exist.
     candidates = problem.get("candidates")
     if isinstance(candidates, list) and candidates:
         details["candidates"] = candidates

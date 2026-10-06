@@ -238,9 +238,10 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// result, not a normal one (#1429). Re-sending the same call cannot succeed.
 	if coded := agentops.BrokerError(res); coded != nil {
 		nextTool := brokerErrorNextTool(coded)
-		// The classify core phrases the recovery for the CLI (jentic apis list /
+		// The classify core phrases the recovery for the CLI (jentic search /
 		// creds list); re-flavor it for this lane's tools so the agent is pointed
-		// at a tool it can actually call, matching nextTool.
+		// at a tool it can actually call, matching nextTool. Relayed candidates
+		// stay in details["candidates"].
 		coded.Actionable = brokerErrorToolHint(nextTool)
 		return s.softErrorExtra(cctx, coded, nextTool, map[string]any{"retryable": false}), nil
 	}
@@ -821,36 +822,31 @@ func brokerErrorToolHint(nextTool string) string {
 			"operation, confirm it with inspect_operation, then execute that one — do not retry this call."
 	case "whoami":
 		return "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
-			"not resolve for this operation. Call whoami to see your credential bindings and re-issue the call " +
-			"naming one bound to this operation — do not retry the same header."
+			"not resolve for this operation. Pick a valid id from details.candidates when present (else call " +
+			"whoami to see your credential bindings) and re-issue the call naming one bound to this operation — " +
+			"do not retry the same header."
 	default: // inspect_operation
-		return "The broker rejected the request shape before it reached the upstream API. Call inspect_operation " +
-			"to re-read the operation's contract — the method, revision pin, payload size, or a required header is " +
-			"wrong — and fix the request rather than retrying it."
+		return "The broker rejected the request before it reached the upstream API. Call inspect_operation " +
+			"to re-read the operation's contract — the method, revision pin, payload size, idempotency key, or a " +
+			"required header is wrong — and fix the request rather than retrying it."
 	}
 }
 
 // brokerErrorNextTool points a broker resolve failure at the tool that can fix
-// it, keyed on the status AND the problem type — never a bare default of whoami,
-// which sends contract/payload failures into an identity-check loop that can
-// never resolve them:
-//
-//   - an unregistered operation (404, or an operation-shaped type) needs
-//     search_apis to find the right one;
-//   - a credential the broker could not resolve (a credential-shaped type) gets
-//     whoami, the same safe default the denial path uses;
-//   - any other 4xx (405/413/422/428 — a contract or payload error) points at
-//     inspect_operation so the agent re-reads the contract instead of querying
-//     its identity.
-//
-// Never get_started: the identity already resolved.
+// it, keyed on agentops.BrokerErrorRecoveryFor (the same routing the CLI prose
+// uses): an unregistered operation needs search_apis, an unresolvable
+// credential header gets whoami (the same safe default the denial path uses),
+// and any other broker 4xx — a contract or payload error — points at
+// inspect_operation so the agent re-reads the contract instead of looping on an
+// identity check that cannot fix it. Never get_started: the identity already
+// resolved.
 func brokerErrorNextTool(coded *ux.CodedError) string {
 	status, _ := coded.Details["http_status"].(int)
 	pt, _ := coded.Details["problem_type"].(string)
-	switch {
-	case status == http.StatusNotFound || strings.Contains(pt, "operation"):
+	switch agentops.BrokerErrorRecoveryFor(status, pt) {
+	case agentops.RecoverOperation:
 		return "search_apis"
-	case strings.Contains(pt, "credential"):
+	case agentops.RecoverCredential:
 		return "whoami"
 	default:
 		return "inspect_operation"

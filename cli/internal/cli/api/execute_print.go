@@ -37,7 +37,6 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 			return denial.Err()
 		}
 		if brokerErr != nil {
-			a.printBrokerResolveRecovery(cmd.Context(), brokerErr)
 			return brokerErr
 		}
 		return nil
@@ -73,8 +72,11 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 		}
 		return denial.Err()
 	}
+	// A broker resolve failure carries its recovery (and any relayed candidate
+	// credentials) in Actionable, which the root error reporter renders once on
+	// stderr: a styled "Next Step" for humans, actionable_step in the agent
+	// envelope.
 	if brokerErr != nil {
-		a.printBrokerResolveRecovery(cmd.Context(), brokerErr)
 		return brokerErr
 	}
 	return nil

@@ -511,19 +511,46 @@ async def test_transport_error_envelope_carries_exception_class_not_message(brok
     assert payload["retryable"] is False
 
 
+def _broker_problem(status: int, problem: dict[str, Any]) -> httpx.Response:
+    """A problem response in the broker's real ``problem_body`` shape (message in
+    ``title``, no ``detail``, ``Jentic-Error-Origin: broker``)."""
+    return httpx.Response(
+        status,
+        headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+        content=json.dumps({"status": status, "error_origin": "broker", **problem}).encode(),
+    )
+
+
 @pytest.mark.parametrize(
     ("status", "body", "want_tool"),
     [
         (
             400,
-            {"type": "credential_id_not_found", "detail": "credential cred_nope not found"},
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+            },
             "whoami",
         ),
-        (400, {"type": "credential_name_not_found", "detail": "no credential named zzz"}, "whoami"),
-        (404, {"type": "operation_not_found", "detail": "no operation registered"}, "search_apis"),
+        (400, {"type": "credential_name_not_found", "title": "No credential named zzz"}, "whoami"),
+        (
+            404,
+            {
+                "type": "operation_not_found",
+                "title": "Operation not found — unregistered upstream URL.",
+            },
+            "search_apis",
+        ),
         # A contract/payload error (413/422/428) is neither a discovery nor a
         # binding problem — it points at the operation contract, not whoami.
-        (413, {"type": "payload_too_large", "detail": "body too large"}, "inspect_operation"),
+        (
+            413,
+            {"type": "payload_too_large", "title": "Request body exceeds the cap."},
+            "inspect_operation",
+        ),
+        # Exact type match: a type that merely mentions "credential" is not routed
+        # to whoami.
+        (400, {"type": "credential_header_malformed", "title": "bad header"}, "inspect_operation"),
     ],
 )
 async def test_broker_resolve_failure_is_a_coded_soft_error(
@@ -532,15 +559,7 @@ async def test_broker_resolve_failure_is_a_coded_soft_error(
     """#1429 (Go: TestMCPExecute_BrokerResolveFailureIsError): a broker-origin
     4xx that is not a denial never reached the upstream, so it is an isError
     RESOLVE_FAILED result, never a normal tool result."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            status,
-            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
-            content=json.dumps(body).encode(),
-        )
-
-    broker(handler)
+    broker(lambda request: _broker_problem(status, body))
     env = make_env("http://127.0.0.1:8100")
     result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
     assert result.is_error
@@ -549,65 +568,98 @@ async def test_broker_resolve_failure_is_a_coded_soft_error(
     assert payload["error_code"] == "RESOLVE_FAILED"
     assert payload["details"]["http_status"] == status
     assert payload["details"]["problem_type"] == body["type"]
-    assert body["detail"] in payload["error"]
+    assert body["title"] in payload["error"]
     assert payload["retryable"] is False
     assert payload["next_tool"] == want_tool
 
 
-async def test_broker_resolve_failure_surfaces_array_detail(broker) -> None:
-    """A broker body whose ``detail`` is FastAPI's validation array must flatten
-    to its messages (Go: ``flattenDetail``), not be swallowed behind the status
-    text — the agent needs to see WHICH field was wrong."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+async def test_broker_resolve_failure_surfaces_validation_errors(broker) -> None:
+    """The broker's validation 422 (broker/web/errors.handle_validation) carries
+    its field errors in ``errors`` under a generic title; the reason must name
+    WHICH field was wrong (Go: ``TestBrokerErrorSurfacesValidationErrors``)."""
+    broker(
+        lambda request: _broker_problem(
             422,
-            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
-            content=json.dumps(
-                {"detail": [{"loc": ["header", "jentic-credential-id"], "msg": "field required"}]}
-            ).encode(),
+            {
+                "type": "about:blank#validation",
+                "title": "Request validation failed",
+                "errors": [
+                    {
+                        "type": "missing",
+                        "loc": ["header", "jentic-credential-id"],
+                        "msg": "field required",
+                    }
+                ],
+            },
         )
-
-    broker(handler)
+    )
     env = make_env("http://127.0.0.1:8100")
     result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
     assert result.is_error
 
     payload = decode_tool_json(result)
     assert payload["error_code"] == "RESOLVE_FAILED"
-    assert "field required" in payload["error"]
-    assert "header.jentic-credential-id" in payload["error"]
+    assert "Request validation failed" in payload["error"]
+    assert "header.jentic-credential-id: field required" in payload["error"]
+    assert payload["next_tool"] == "inspect_operation"
+
+
+async def test_broker_resolve_failure_falls_back_to_status_phrase(broker) -> None:
+    """With no detail and no title the reason is the standard status phrase, the
+    same text Go's ``http.StatusText`` yields."""
+    broker(lambda request: _broker_problem(405, {}))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+
+    payload = decode_tool_json(result)
+    assert payload["error"].endswith("(HTTP 405): Method Not Allowed")
 
 
 async def test_broker_resolve_failure_relays_candidates(broker) -> None:
     """#1429 candidate relay: the broker embeds the caller's own covering
-    credentials on an unknown/unbound id, so they ride details["candidates"]
-    rather than forcing a follow-up whoami to learn which ids exist."""
+    credentials on an unknown id, so they ride details["candidates"] rather than
+    forcing a follow-up whoami to learn which ids exist."""
     candidates = [
-        {"id": "cred_real", "name": "prod", "last4": "1234"},
-        {"id": "cred_other", "name": "staging", "last4": "5678"},
+        {"id": "cred_real", "name": "prod", "last4": "real", "created_at": None},
+        {"id": "cred_other", "name": "staging", "last4": "ther", "created_at": None},
     ]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    broker(
+        lambda request: _broker_problem(
             400,
-            headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
-            content=json.dumps(
-                {
-                    "type": "credential_id_not_found",
-                    "title": "Bad Request",
-                    "candidates": candidates,
-                }
-            ).encode(),
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+                "candidates": candidates,
+            },
         )
-
-    broker(handler)
+    )
     env = make_env("http://127.0.0.1:8100")
     result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
     assert result.is_error
 
     payload = decode_tool_json(result)
     assert payload["details"]["candidates"] == candidates
+
+
+async def test_broker_rate_limit_is_not_a_resolve_failure(broker) -> None:
+    """A broker 429 is retryable after Retry-After, so it must not become a
+    RESOLVE_FAILED carrying retryable=false / "do not retry" advice."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _broker_problem(
+            429,
+            {
+                "type": "rate_limit_exceeded",
+                "title": "Rate limit exceeded; slow down and retry after the indicated delay.",
+            },
+        )
+        response.headers["Retry-After"] = "1"
+        return response
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert decode_tool_json(result).get("error_code") != "RESOLVE_FAILED"
 
 
 @pytest.mark.parametrize("origin", ["upstream", None])

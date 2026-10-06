@@ -25,13 +25,3 @@ func (a *app) printSynthesizedDenialRecovery(ctx context.Context, status int) {
 func (a *app) printAgentDirective(ctx context.Context, d ux.Directive) {
 	ux.RenderDirective(ctx, a.Err, d)
 }
-
-// printBrokerResolveRecovery surfaces a broker resolve failure's recovery on
-// stderr, the way a denial surfaces its directive — so an agent reading a
-// RESOLVE_FAILED (#1429) is handed the fix on the same stream in default and
-// --json mode, not only the bare problem body on stdout. The returned error
-// still carries the machine contract (error_code, candidates) for the root
-// envelope and the exit code.
-func (a *app) printBrokerResolveRecovery(ctx context.Context, coded *ux.CodedError) {
-	ux.RenderCodedRecovery(ctx, a.Err, coded)
-}

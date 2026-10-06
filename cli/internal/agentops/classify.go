@@ -110,72 +110,126 @@ func Classify(r *ExecuteResult) *Denial {
 }
 
 // BrokerError classifies a broker-origin 4xx that is not a recoverable denial:
-// the broker could not resolve the call (an unknown or unbound credential id or
-// name, an unregistered operation) and never reached the upstream, so it must
-// not read as an upstream response that exits 0 (#1429). It returns
-// RESOLVE_FAILED (exit 2) carrying the problem detail, or nil.
+// the broker could not resolve the call (an unknown credential id or name, an
+// unregistered operation, a malformed request) and never reached the upstream,
+// so it must not read as an upstream response that exits 0 (#1429). It returns
+// RESOLVE_FAILED (exit 2) carrying the problem reason, or nil.
 //
 // Unlike IsBrokerDenial it requires Jentic-Error-Origin to say "broker"
 // explicitly: 400/404/422 are exactly what an upstream answers on a call that
 // ran, so a missing header keeps the pass-through reading rather than turning a
-// real upstream answer into a failure. Broker 5xx is out of scope here; whether
-// those should be retryable is a separate decision.
+// real upstream answer into a failure. Because of that origin requirement the
+// denial-status exclusion is equivalent to skipping 401/403/409/424 — those stay
+// on the Classify (denial) path.
+//
+// Two broker-origin statuses are deliberately left as pass-through, because
+// RESOLVE_FAILED means "change the ask, don't retry" and both are retryable as
+// sent: 429 (rate_limit_exceeded, with Retry-After) and every 5xx. Their coded
+// mapping is tracked separately (#1531).
 func BrokerError(r *ExecuteResult) *ux.CodedError {
-	if r == nil || r.Status < 400 || r.Status >= 500 || IsBrokerDenial(r) ||
-		errorOrigin(r) != errorOriginBroker {
+	if r == nil || r.Status < 400 || r.Status >= 500 || r.Status == http.StatusTooManyRequests ||
+		IsBrokerDenial(r) || errorOrigin(r) != errorOriginBroker {
 		return nil
 	}
-	// Detail is decoded as a raw value, not a string: the broker's own problems
-	// carry a string detail, but FastAPI's array-form 422 (`detail: [{loc, msg}]`)
-	// must be flattened to its messages rather than discarded (a struct with a
-	// string Detail would leave it empty and lose the validation error entirely).
+	// The broker renders every problem through problem_body: the message rides
+	// `title` (there is no `detail` member), and a request-validation 422 carries
+	// its field errors in `errors` ([{loc, msg}]). `detail` is still read first so
+	// a conformant RFC 9457 body that does set it is honoured.
 	var problem struct {
 		Type       string          `json:"type"`
 		Title      string          `json:"title"`
 		Detail     json.RawMessage `json:"detail"`
+		Errors     json.RawMessage `json:"errors"`
 		Candidates json.RawMessage `json:"candidates"`
 	}
 	_ = json.Unmarshal(r.Body, &problem) // best effort: a non-JSON body falls back to the status text
-	reason := problemReason(problem.Detail, problem.Title, r.Status)
+	reason := problemReason(problem.Detail, problem.Title, problem.Errors, r.Status)
 	details := map[string]any{"http_status": r.Status, "origin": errorOriginBroker}
 	if problem.Type != "" {
 		details["problem_type"] = problem.Type
 	}
-	// The broker embeds the caller's own covering credentials on an unknown or
-	// unbound Jentic-Credential-Id/Name (orchestrator._resolve_mapped). Relaying
-	// them spares the agent a follow-up whoami/`jentic creds list` just to learn
-	// which ids exist, so attach them verbatim when present.
-	if candidates := decodeCandidates(problem.Candidates); candidates != nil {
+	// The broker embeds the caller's own covering credentials on an unknown
+	// Jentic-Credential-Id/Name (orchestrator._resolve_mapped). Relaying them
+	// spares the agent a follow-up whoami/`jentic creds list` just to learn which
+	// ids exist, so attach them verbatim when present.
+	candidates := decodeCandidates(problem.Candidates)
+	if candidates != nil {
 		details["candidates"] = candidates
 	}
 	return &ux.CodedError{
 		Code: ux.CodeResolveFailed,
 		Msg: fmt.Sprintf("the broker could not resolve this call, so it never reached the upstream API (HTTP %d): %s",
 			r.Status, reason),
-		Actionable: brokerErrorActionable(r.Status, problem.Type),
+		Actionable: brokerErrorActionable(BrokerErrorRecoveryFor(r.Status, problem.Type), candidates),
 		Details:    details,
 	}
 }
 
-// problemReason renders the human-readable reason from a problem body: a string
-// `detail` verbatim, FastAPI's array-form `detail` ([{loc, msg}]) flattened to
-// its messages, else the `title`, else the HTTP status text. The array form is
-// what FastAPI emits for a 422 with NO top-level title — dropping it would bury
-// the actual validation error behind a bare "Unprocessable Entity".
-func problemReason(detail json.RawMessage, title string, status int) string {
-	if s := flattenDetail(detail); s != "" {
-		return s
+// BrokerErrorRecovery names what a broker resolve failure needs fixed. The CLI
+// actionable prose and the MCP next_tool both key on it, so the two lanes never
+// disagree about where to send the agent.
+type BrokerErrorRecovery string
+
+const (
+	// RecoverOperation: no registered operation serves the call — rediscover it.
+	RecoverOperation BrokerErrorRecovery = "operation"
+	// RecoverCredential: a Jentic-Credential-Id/Name header named a credential
+	// the broker could not resolve — pick a valid one.
+	RecoverCredential BrokerErrorRecovery = "credential"
+	// RecoverContract: any other broker 4xx (method, revision pin, payload size,
+	// idempotency key, egress-blocked URL, request validation) — fix the request
+	// against the operation's contract.
+	RecoverContract BrokerErrorRecovery = "contract"
+)
+
+// brokerCredentialProblemTypes are the wire types the broker emits when a
+// Jentic-Credential-Id/Name header names a credential it cannot resolve for the
+// caller (broker/services/credentials/orchestrator.py). Matched exactly: a
+// substring test would silently re-route any future type that merely mentions
+// "credential".
+var brokerCredentialProblemTypes = map[string]bool{
+	"credential_id_not_found":   true,
+	"credential_name_not_found": true,
+}
+
+// BrokerErrorRecoveryFor routes a broker resolve failure by status and exact
+// problem type: a 404 or operation_not_found is a discovery problem, a known
+// credential-resolution type is a header problem, and everything else is a
+// contract problem (never a bare identity check, which cannot fix a malformed
+// request).
+func BrokerErrorRecoveryFor(status int, problemType string) BrokerErrorRecovery {
+	switch {
+	case status == http.StatusNotFound || problemType == "operation_not_found":
+		return RecoverOperation
+	case brokerCredentialProblemTypes[problemType]:
+		return RecoverCredential
+	default:
+		return RecoverContract
 	}
-	if title != "" {
-		return title
+}
+
+// problemReason renders the human-readable reason from a broker problem body:
+// `detail` (a string verbatim, or a validation array flattened), else `title`,
+// else the HTTP status text — with the flattened `errors` array appended when
+// present, so a validation 422 names WHICH field was wrong instead of only the
+// generic "Request validation failed" title.
+func problemReason(detail json.RawMessage, title string, errs json.RawMessage, status int) string {
+	reason := flattenDetail(detail)
+	if reason == "" {
+		reason = title
 	}
-	return http.StatusText(status)
+	if reason == "" {
+		reason = http.StatusText(status)
+	}
+	if fieldErrs := flattenValidationErrors(errs); fieldErrs != "" {
+		reason += " (" + fieldErrs + ")"
+	}
+	return reason
 }
 
 // flattenDetail renders a problem+json `detail` member to a string: a JSON
-// string verbatim, or a FastAPI validation array ([{loc, msg}, …]) as its
-// semicolon-joined messages (each prefixed with its dotted location when one is
-// present). Any other shape (or an unparseable one) yields "".
+// string verbatim, or a validation array ([{loc, msg}, …]) via
+// flattenValidationErrors. Any other shape (or an unparseable one) yields "".
 func flattenDetail(detail json.RawMessage) string {
 	if len(detail) == 0 {
 		return ""
@@ -184,11 +238,22 @@ func flattenDetail(detail json.RawMessage) string {
 	if json.Unmarshal(detail, &asString) == nil {
 		return asString
 	}
+	return flattenValidationErrors(detail)
+}
+
+// flattenValidationErrors renders a validation error array ([{loc, msg}, …] —
+// the broker's 422 `errors` member, sanitized of submitted input) as its
+// semicolon-joined messages, each prefixed with its dotted location when one is
+// present. Any other shape (or an unparseable one) yields "".
+func flattenValidationErrors(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
 	var items []struct {
 		Loc []any  `json:"loc"`
 		Msg string `json:"msg"`
 	}
-	if json.Unmarshal(detail, &items) != nil {
+	if json.Unmarshal(raw, &items) != nil {
 		return ""
 	}
 	msgs := make([]string, 0, len(items))
@@ -205,7 +270,7 @@ func flattenDetail(detail json.RawMessage) string {
 	return strings.Join(msgs, "; ")
 }
 
-// joinLoc renders a FastAPI error `loc` ([... "header", "x-id"]) as a dotted
+// joinLoc renders a validation error `loc` ([... "header", "x-id"]) as a dotted
 // path, formatting non-string segments (array indices) with %v.
 func joinLoc(loc []any) string {
 	parts := make([]string, 0, len(loc))
@@ -221,8 +286,8 @@ func joinLoc(loc []any) string {
 
 // decodeCandidates relays the broker's candidate-credential list verbatim when
 // it is a JSON array (orchestrator attaches it as a top-level `candidates`
-// member on an unknown/unbound credential id or name). Any other shape yields
-// nil so the detail carries no half-parsed field.
+// member on an unknown credential id or name). Any other shape yields nil so the
+// detail carries no half-parsed field.
 func decodeCandidates(raw json.RawMessage) []any {
 	if len(raw) == 0 {
 		return nil
@@ -234,24 +299,55 @@ func decodeCandidates(raw json.RawMessage) []any {
 	return candidates
 }
 
-// brokerErrorActionable branches the recovery hint on what the broker could not
-// resolve, so the advice is never noise: an unregistered operation (404 or an
-// operation-shaped type) is a discovery problem, a credential-shaped type is a
-// header/binding problem, and anything else (405/413/422/428 contract or
-// payload errors) points at the operation contract rather than guessing.
-func brokerErrorActionable(status int, problemType string) string {
-	switch {
-	case status == http.StatusNotFound || strings.Contains(problemType, "operation"):
-		return "The broker has no such operation registered. Find the right one with `jentic apis list` " +
-			"(or search), then re-issue the call against a registered operation — do not retry this one."
-	case strings.Contains(problemType, "credential"):
-		return "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
-			"not resolve for this operation. List your bound credentials with `jentic creds list` and " +
-			"re-issue the call naming one bound to this operation — do not retry the same header."
+// candidateLabels renders relayed candidate records ({id, name, last4, …}) as
+// "id (name)" labels so the recovery line names a valid Jentic-Credential-Id
+// directly. Records without an id are skipped; never the secret — the broker
+// sends only id, name, a last4 display hint and created_at.
+func candidateLabels(candidates []any) []string {
+	labels := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		switch v := c.(type) {
+		case string:
+			if v != "" {
+				labels = append(labels, v)
+			}
+		case map[string]any:
+			id, _ := v["id"].(string)
+			if id == "" {
+				continue
+			}
+			if name, _ := v["name"].(string); name != "" {
+				labels = append(labels, fmt.Sprintf("%s (%s)", id, name))
+			} else {
+				labels = append(labels, id)
+			}
+		}
+	}
+	return labels
+}
+
+// brokerErrorActionable is the CLI recovery prose for each BrokerErrorRecovery,
+// so the advice is never noise for the other cases. A credential failure names
+// the relayed candidates inline: the root error reporter renders Actionable as
+// the single "next step" on stderr (and as actionable_step in the agent
+// envelope), so the fix appears exactly once per stream.
+func brokerErrorActionable(rec BrokerErrorRecovery, candidates []any) string {
+	switch rec {
+	case RecoverOperation:
+		return "The broker has no such operation registered. Find the right one with `jentic search <query>`, " +
+			"then re-issue the call against a registered operation — do not retry this one."
+	case RecoverCredential:
+		hint := "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
+			"not resolve for this operation. Re-issue the call naming one bound to this operation — do not " +
+			"retry the same header."
+		if labels := candidateLabels(candidates); len(labels) > 0 {
+			return hint + " Candidates: " + strings.Join(labels, ", ") + "."
+		}
+		return hint + " List your bound credentials with `jentic creds list`."
 	default:
-		return "The broker rejected the request shape before it reached the upstream API. Re-check the " +
-			"operation's contract (`jentic apis inspect`) — the method, revision pin, payload size, or a " +
-			"required header is wrong — and fix the request rather than retrying it."
+		return "The broker rejected the request before it reached the upstream API. Re-check the " +
+			"operation's contract (`jentic apis inspect`) — the method, revision pin, payload size, " +
+			"idempotency key, or a required header is wrong — and fix the request rather than retrying it."
 	}
 }
 

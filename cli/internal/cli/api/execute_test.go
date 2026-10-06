@@ -1766,8 +1766,10 @@ func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.Header().Set("Jentic-Error-Origin", "broker")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"type":"credential_id_not_found","title":"Bad Request","status":400,` +
-			`"detail":"credential cred_nope not found","candidates":[{"id":"cred_real","name":"prod","last4":"1234"}]}`))
+		// The broker's real problem_body shape: message in title, no detail.
+		_, _ = w.Write([]byte(`{"type":"credential_id_not_found",` +
+			`"title":"Credential id cred_nope is not among your credentials","status":400,"error_origin":"broker",` +
+			`"candidates":[{"id":"cred_real","name":"prod","last4":"real","created_at":null}]}`))
 	}))
 	defer srv.Close()
 
@@ -1804,9 +1806,13 @@ func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
 				t.Errorf("args %v: details[candidates] = %v, want the broker's one candidate relayed",
 					extra, coded.Details["candidates"])
 			}
+			if !strings.Contains(coded.Actionable, "cred_real (prod)") {
+				t.Errorf("args %v: the recovery step should name the candidate, got %q", extra, coded.Actionable)
+			}
 
 			// Stream separation: the problem body is still written to stdout for a
-			// machine to parse, while the coded recovery error renders on stderr.
+			// machine to parse; the coded error is left for the root reporter to
+			// render on stderr.
 			switch {
 			case contains(extra, "--json"):
 				var envelope map[string]any
@@ -1825,8 +1831,13 @@ func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
 					t.Errorf("default stdout should carry the broker problem body, got %q", out.String())
 				}
 			}
-			if !strings.Contains(errBuf.String(), "RESOLVE_FAILED") {
-				t.Errorf("args %v: stderr should render the coded error, got %q", extra, errBuf.String())
+			// The recovery renders once, via the root error reporter (Actionable);
+			// the command itself must not print a second copy of it.
+			if strings.Contains(errBuf.String(), "cred_real") {
+				t.Errorf("args %v: the recovery must not be printed twice, got %q", extra, errBuf.String())
+			}
+			if coded.IsReported() {
+				t.Errorf("args %v: the command must leave reporting to the root reporter", extra)
 			}
 		})
 	}
