@@ -13,23 +13,39 @@ import {
 } from '@/modules/agents/lib/requestedScopes';
 
 describe('scopeRisk', () => {
-	it('flags an admin segment anywhere as admin', () => {
+	it('flags any scope mentioning admin as admin', () => {
 		expect(scopeRisk('org:admin')).toBe('admin');
 		expect(scopeRisk('admin:read')).toBe('admin');
+		// Errs towards a flag: a look-alike is flagged too.
+		expect(scopeRisk('administrators:read')).toBe('admin');
 	});
 
-	it('flags a trailing write action as write', () => {
+	it('flags the scopes known to act, by name', () => {
+		expect(scopeRisk('overlays:confirm')).toBe('write');
+		expect(scopeRisk('credentials:connect')).toBe('write');
+		expect(scopeRisk('capabilities:execute')).toBe('execute');
+		expect(scopeRisk(' Capabilities:Execute ')).toBe('execute');
+	});
+
+	it('falls back to flagging a trailing write action as write', () => {
 		expect(scopeRisk('agents:write')).toBe('write');
 		expect(scopeRisk('credentials:write')).toBe('write');
 		expect(scopeRisk('Events:WRITE')).toBe('write');
 	});
 
-	it('leaves reads, executes and look-alikes unflagged', () => {
+	it('leaves reads and look-alikes unflagged', () => {
 		expect(scopeRisk('apis:read')).toBeNull();
-		expect(scopeRisk('capabilities:execute')).toBeNull();
+		expect(scopeRisk('capabilities:read')).toBeNull();
 		expect(scopeRisk('owner:agents:read')).toBeNull();
 		expect(scopeRisk('writers:read')).toBeNull();
-		expect(scopeRisk('administrators:read')).toBeNull();
+		expect(scopeRisk('constructor')).toBeNull();
+	});
+
+	it('flags the acting default agent scopes', () => {
+		expect(DEFAULT_AGENT_SCOPES.filter((s) => scopeRisk(s) != null)).toEqual([
+			'capabilities:execute',
+			'credentials:connect',
+		]);
 	});
 });
 

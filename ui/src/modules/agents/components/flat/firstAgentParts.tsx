@@ -872,16 +872,18 @@ function AgentFacts({
 	);
 }
 
-/** The flag's glyph tone: administering the org is the red one; a write is
- * a state to note, in the low-chroma caution. */
+/** The flag's glyph tone: administering the org is the red one; a write or
+ * an upstream call is a state to note, in the low-chroma caution. */
 const RISK_TINT: Record<ScopeRisk, string> = {
 	admin: 'text-danger',
 	write: 'text-caution',
+	execute: 'text-caution',
 };
 
 const RISK_LABEL: Record<ScopeRisk, string> = {
 	admin: 'administers the organisation',
 	write: 'can change data',
+	execute: 'runs calls to connected APIs',
 };
 
 /** A scope chip: the neutral tag, mono, wrapping when a scope is long. */
@@ -941,10 +943,11 @@ function ScopeRow({ scope, description }: { scope: string; description?: string 
  * Approval makes the scopes live at once, so the approver must be able to see
  * exactly what they are granting before the click — never an unexplained
  * "and N more". The summary gives the count and the source (the default agent
- * scopes, or what the agent requested); any scope that can change data or
- * administer the organisation is never folded away: it stays on the summary,
- * flagged, and while approval is pending such a request opens the full review
- * by default. A request of plain read scopes (the defaults among them) waits
+ * scopes, or what the agent requested); any scope that can change data, run
+ * upstream calls or administer the organisation (`scopeRisk`) is never folded
+ * away: it stays on the summary, flagged, and while approval is pending such a
+ * request — the defaults among them, which include `capabilities:execute` —
+ * opens the full review by default. A request of plain read scopes waits
  * behind "Review scopes", grouped by area with what each one allows.
  *
  * An agent that requests none gets the default agent scopes; requested
@@ -1016,8 +1019,8 @@ function RequestedScopes({
 			flagged.length === 0
 				? null
 				: flagged.length === 1
-					? '1 of these can change data or administer your organisation.'
-					: `${flagged.length} of these can change data or administer your organisation.`;
+					? '1 of these can change data, run upstream calls or administer your organisation.'
+					: `${flagged.length} of these can change data, run upstream calls or administer your organisation.`;
 		body = (
 			<>
 				{count > 0 && (
@@ -1045,7 +1048,7 @@ function RequestedScopes({
 				{/* Flagged scopes never fold away. */}
 				{flagged.length > 0 && !expanded && (
 					<ul
-						aria-label="Scopes that can change data or administer"
+						aria-label="Scopes that can change data, run calls or administer"
 						className="mt-2 flex flex-wrap gap-1.5"
 					>
 						{flagged.map(({ scope, risk }) => (

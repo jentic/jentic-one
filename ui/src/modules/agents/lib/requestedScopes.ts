@@ -2,15 +2,35 @@
  * How much a requested scope can do, for the moment an operator approves an
  * agent. A self-registering agent names its own scopes, and approval makes them
  * live (bounded only by the approver's own ceiling), so the ones that can
- * change data or administer the organisation are flagged before the click.
+ * change data, run upstream calls or administer the organisation are flagged
+ * before the click.
  */
-export type ScopeRisk = 'admin' | 'write';
+export type ScopeRisk = 'admin' | 'write' | 'execute';
 
-/** `admin` for any scope with an `admin` segment (`org:admin`), `write` for a
- * `…:write` scope, otherwise `null`. */
+/**
+ * Scopes known to act, by name: they change data or run calls without saying
+ * `write` (`overlays:confirm` mutates a spec, `capabilities:execute` runs
+ * upstream calls, `credentials:connect` stores a credential).
+ */
+const RISKY_SCOPES: Readonly<Record<string, ScopeRisk>> = {
+	'overlays:confirm': 'write',
+	'capabilities:execute': 'execute',
+	'credentials:connect': 'write',
+};
+
+/**
+ * `admin` for any scope mentioning `admin` (`org:admin`, `administrators:read`
+ * — erring towards a flag), then the explicit {@link RISKY_SCOPES}, then
+ * `write` for a `…:write` scope; otherwise `null`.
+ */
 export function scopeRisk(scope: string): ScopeRisk | null {
-	const segments = scope.trim().toLowerCase().split(':');
-	if (segments.includes('admin')) return 'admin';
+	const normalised = scope.trim().toLowerCase();
+	if (normalised.includes('admin')) return 'admin';
+	const known = Object.prototype.hasOwnProperty.call(RISKY_SCOPES, normalised)
+		? RISKY_SCOPES[normalised]
+		: undefined;
+	if (known) return known;
+	const segments = normalised.split(':');
 	if (segments[segments.length - 1] === 'write') return 'write';
 	return null;
 }

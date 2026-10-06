@@ -341,15 +341,20 @@ describe('Agents page — zero agents', () => {
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
-		// No scopes requested: approval grants the default agent scopes. None of
-		// them is flagged, so they wait behind the review, which lists them all.
+		// No scopes requested: approval grants the default agent scopes. Two of
+		// them act (capabilities:execute runs upstream calls,
+		// credentials:connect stores a credential), so the review opens before
+		// approval and lists them all.
 		const summary = await screen.findByTestId('scopes-summary');
 		expect(summary).toHaveTextContent(
 			`Gets the default agent scopes · ${DEFAULT_AGENT_SCOPES.length}`,
 		);
-		expect(within(summary).getByRole('button', { name: 'Review scopes' })).toHaveAttribute(
+		expect(within(summary).getByRole('button', { name: 'Hide scopes' })).toHaveAttribute(
 			'aria-expanded',
-			'false',
+			'true',
+		);
+		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
+			'2 of these can change data, run upstream calls or administer your organisation.',
 		);
 		expect(await reviewedScopes('Default agent scopes')).toEqual(
 			groupScopesByArea(DEFAULT_AGENT_SCOPES).flatMap((g) => g.scopes),
@@ -503,10 +508,11 @@ describe('Agents page — zero agents', () => {
 		expect(risk('agents:write')).toBe('write');
 		expect(risk('credentials:write')).toBe('write');
 		expect(risk('org:admin')).toBe('admin');
+		expect(risk('capabilities:execute')).toBe('execute');
 		expect(risk('apis:read')).toBeNull();
 		const scopes = screen.getByTestId('requested-scopes');
 		expect(scopes).toHaveTextContent(
-			'3 of these can change data or administer your organisation.',
+			'4 of these can change data, run upstream calls or administer your organisation.',
 		);
 		expect(scopes).toHaveTextContent('Approving grants the recognised scopes listed.');
 		expect(screen.getByRole('button', { name: 'Approve scoped-bot' })).toBeEnabled();
@@ -515,11 +521,11 @@ describe('Agents page — zero agents', () => {
 		// Hiding the review keeps the flagged ones on the summary.
 		await userEvent.click(screen.getByRole('button', { name: 'Hide scopes' }));
 		const pinned = screen.getByRole('list', {
-			name: 'Scopes that can change data or administer',
+			name: 'Scopes that can change data, run calls or administer',
 		});
 		expect(
 			[...pinned.querySelectorAll('[data-scope]')].map((el) => el.getAttribute('data-scope')),
-		).toEqual(['agents:write', 'credentials:write', 'org:admin']);
+		).toEqual(['agents:write', 'credentials:write', 'org:admin', 'capabilities:execute']);
 		expect(screen.queryByRole('group', { name: 'Requested scopes' })).toBeNull();
 	});
 
@@ -608,7 +614,7 @@ describe('Agents page — zero agents', () => {
 			'Gets the 2 scopes it requests',
 		);
 		expect(screen.getByTestId('requested-scopes')).toHaveTextContent(
-			'1 of these can change data or administer your organisation.',
+			'1 of these can change data, run upstream calls or administer your organisation.',
 		);
 	});
 
