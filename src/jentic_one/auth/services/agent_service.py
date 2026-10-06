@@ -266,7 +266,7 @@ class AgentService:
             existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
-            # Scopes a self-registration requested become live on approval, so
+            # Permissions a self-registration requested become live on approval, so
             # the approver's ceiling applies to them. Requested strings outside
             # the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).

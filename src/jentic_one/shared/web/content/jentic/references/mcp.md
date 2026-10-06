@@ -80,7 +80,7 @@ For everything else, **report the gap to your human operator in one
 complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
 rules, and why. Approval is always a human action, and so are binding an
-existing credential and scope grants: the operator acts in the Jentic One
+existing credential and permission grants: the operator acts in the Jentic One
 dashboard; your job is to relay the gap, not to grant it.
 
 Bindings resolve live per request on the HTTP mount, so once your operator

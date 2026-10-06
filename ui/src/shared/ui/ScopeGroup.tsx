@@ -153,6 +153,7 @@ export function ScopeGroup({
 									scope={scope}
 									isSelected={selectedScopes.has(scope.scope)}
 									disabled={disabledScopes?.has(scope.scope)}
+									disabledTitle={`You do not have permission to grant this ${noun.singular}`}
 									showRecommended={showRecommended}
 									onToggle={(): void => onToggleScope(scope.scope)}
 								/>
@@ -169,12 +170,14 @@ function ScopeItem({
 	scope,
 	isSelected,
 	disabled,
+	disabledTitle,
 	showRecommended,
 	onToggle,
 }: {
 	scope: EnhancedScope;
 	isSelected: boolean;
 	disabled?: boolean;
+	disabledTitle: string;
 	showRecommended: boolean;
 	onToggle: () => void;
 }) {
@@ -185,7 +188,7 @@ function ScopeItem({
 			aria-checked={isSelected}
 			aria-label={scope.scope}
 			disabled={disabled}
-			title={disabled ? 'You do not have permission to grant this scope' : undefined}
+			title={disabled ? disabledTitle : undefined}
 			onClick={onToggle}
 			className={cn(
 				'group flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',

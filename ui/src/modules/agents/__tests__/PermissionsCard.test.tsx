@@ -14,6 +14,7 @@ import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 function renderCard(props: { actorId: string; actorName: string; canEdit?: boolean }) {
 	return renderWithProviders(
@@ -45,6 +46,16 @@ describe('PermissionsCard', () => {
 		expect(
 			await screen.findByText('No permissions granted.', { exact: false }),
 		).toBeInTheDocument();
+	});
+
+	it('approving a grant-less agent in the mock grants the real default baseline', async () => {
+		// The mock must grant exactly what the approval card promises
+		// (DEFAULT_AGENT_PERMISSIONS), or the card and the Permissions card disagree.
+		const approve = await fetch('/agents/agnt_pending_1:approve', { method: 'POST' });
+		expect(approve.ok).toBe(true);
+		const res = await fetch('/agents/agnt_pending_1/permissions');
+		const body = (await res.json()) as { permissions: string[] };
+		expect(body.permissions).toEqual([...DEFAULT_AGENT_PERMISSIONS]);
 	});
 
 	it('hides the edit affordance when canEdit is false', async () => {

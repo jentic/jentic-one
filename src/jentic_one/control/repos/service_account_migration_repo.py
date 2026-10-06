@@ -7,8 +7,8 @@ binding twins, token revocation, the stamp, the sweep, and the pre-drop
 verification queries). The control module must not import admin ORM
 models, so every admin-side statement
 here is raw SQL (F1 is also served by this: successor creation must never go
-through ``AgentService.create()``/``approve()``, whose empty-scope default is
-``DEFAULT_AGENT_SCOPES``).
+through ``AgentService.create()``/``approve()``, whose empty-permission default is
+``DEFAULT_AGENT_PERMISSIONS``).
 
 Concurrency (H-A x F6): the caller wraps each SA in one admin transaction
 (``BEGIN IMMEDIATE`` on SQLite via ``DatabaseSession.transaction``);
@@ -50,8 +50,9 @@ SKIPPED_STAMP = "skipped"
 
 #: Scopes retired by theme 8 itself (Phase 2): stored SA grants carrying them
 #: get no successor twin — they are left behind for the sweep, never carried.
-#: E2 cross-reference: every member is also in ``shared.scopes.RETIRED_SCOPES``
-#: (Phase 2 retired them) — pinned by ``test_retired_scopes.py``.
+#: E2 cross-reference: every member is also in
+#: ``shared.auth.permission_catalog.RETIRED_PERMISSIONS`` (Phase 2 retired them)
+#: — pinned by ``tests/unit/shared/test_retired_permissions.py``.
 THEME8_RETIRED_SCOPES: frozenset[str] = frozenset(
     {
         "service-accounts:read",
@@ -239,7 +240,7 @@ class ServiceAccountMigrationRepository:
         first); a fresh one is generated when omitted.
 
         Raw SQL, NEVER ``AgentService.create()``/``approve()`` (F1) — both
-        default-grant ``DEFAULT_AGENT_SCOPES`` on empty scope sets, and a
+        default-grant ``DEFAULT_AGENT_PERMISSIONS`` on empty permission sets, and a
         zero-grant SA must yield a zero-grant successor. ``status`` is
         ``active`` or ``disabled`` (OQ-1) — never ``pending``. The digest is
         a COPY: the SA-side digest stays live until the sweep (F6/H-B). A
@@ -609,8 +610,8 @@ class ServiceAccountMigrationRepository:
         Rows: ``service_account_id, successor_agent_id, scope, post_stamp``.
         """
         # E2: bound parameters, never f-string interpolation, even for a
-        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_SCOPES is pinned by
-        # tests/unit/shared/test_retired_scopes.py.
+        # frozen constant. THEME8_RETIRED_SCOPES ⊆ RETIRED_PERMISSIONS is pinned
+        # by tests/unit/shared/test_retired_permissions.py.
         scope_params = {f"scope_{i}": s for i, s in enumerate(sorted(THEME8_RETIRED_SCOPES))}
         placeholders = ", ".join(f":{name}" for name in scope_params)
         rows = await session.execute(
@@ -717,12 +718,15 @@ class ServiceAccountMigrationRepository:
 
         Returns ``(removed_scopes, purged_bindings)`` as ``(agent_id, scope)``
         and ``(agent_id, credential_id)`` pairs. The two API paths that delete
-        such rows are both audited: ``replace_permissions`` (a ``grant`` row on
-        the agent whose ``before`` permissions are not all in ``after`` — also
-        matches the pre-rename ``replace_scopes`` reason) and a binding
+        such rows are both audited: ``replace_scopes`` (a ``grant`` row on the
+        agent whose ``before`` scopes are not all in ``after``) and a binding
         purge (a ``revoke`` row on ``credential_binding`` keyed by the
         credential id, parent = the agent). A soft unbind keeps the row, so it
         is never a gap in the first place.
+
+        Only the pre-rename ``replace_scopes`` / ``scopes`` spelling is read:
+        this runs inside the service-account retirement, with the admin schema
+        before ``e2f3a4b5c6d7``, so no ``replace_permissions`` row can exist yet.
         """
         ids = sorted(set(agent_ids))
         if not ids:
@@ -732,8 +736,7 @@ class ServiceAccountMigrationRepository:
                 "SELECT action, target_type, target_id, target_parent_id, before, after"
                 " FROM audit_entries"
                 " WHERE (action = 'grant' AND target_type = 'agent'"
-                "  AND reason IN ('replace_scopes', 'replace_permissions')"
-                "  AND target_id IN :ids)"
+                "  AND reason = 'replace_scopes' AND target_id IN :ids)"
                 " OR (action = 'revoke' AND target_type = 'credential_binding'"
                 "  AND target_parent_id IN :ids)"
             ).bindparams(bindparam("ids", expanding=True)),
@@ -752,11 +755,7 @@ class ServiceAccountMigrationRepository:
 
 
 def _scopes_of(payload: Any) -> set[str]:
-    """The granted-permission list of an audit ``before``/``after`` JSON payload.
-
-    Reads the ``permissions`` key (written since the permission rename) and
-    falls back to ``scopes`` for rows audited before the rename.
-    """
+    """The ``scopes`` list of an audit ``before``/``after`` JSON payload."""
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -764,7 +763,5 @@ def _scopes_of(payload: Any) -> set[str]:
             return set()
     if not isinstance(payload, dict):
         return set()
-    values = payload.get("permissions")
-    if values is None:
-        values = payload.get("scopes")
-    return {str(s) for s in values} if isinstance(values, list) else set()
+    scopes = payload.get("scopes")
+    return {str(s) for s in scopes} if isinstance(scopes, list) else set()

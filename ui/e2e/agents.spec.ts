@@ -93,7 +93,6 @@ async function openSelectedAgent(page: Page): Promise<void> {
 }
 
 /**
-/**
  * The selected agent's vitals and activity: the stat strip reads the per-actor
  * usage aggregate, and the dock's Activity sheet shows THIS agent's executions
  * with a Monitor deep link pre-filtered by actor.

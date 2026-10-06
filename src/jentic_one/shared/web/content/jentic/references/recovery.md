@@ -84,7 +84,7 @@ credential-*provisioning* denials below you can now start the fix yourself
 when the vendor is in the connect registry: run `jentic connect <vendor>`
 (CLI) or call `request_connection` (MCP), relay the returned `approval_url`
 to your operator, confirm with `whoami` once they approve, then retry.
-Everything else (binding an existing credential, scope grants, rule
+Everything else (binding an existing credential, permission grants, rule
 changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
 

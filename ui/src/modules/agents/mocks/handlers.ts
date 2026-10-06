@@ -24,6 +24,7 @@
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
 import { findMockCredential } from '@/shared/credentials/mocks/handlers';
+import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
 
@@ -638,24 +639,6 @@ function genId(prefix: string): string {
  */
 const PERMISSION_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
-/**
- * The default baseline `AgentService.create` grants when the payload carries
- * no permissions (mirror of DEFAULT_AGENT_PERMISSIONS in
- * `shared/auth/permission_catalog.py`).
- */
-const DEFAULT_AGENT_PERMISSIONS_MOCK = [
-	'capabilities:execute',
-	'capabilities:read',
-	'apis:read',
-	'catalog:import',
-	'executions:read',
-	'jobs:read',
-	'events:read',
-	'owner:resources:read',
-	'owner:agents:read',
-	'owner:credentials:read',
-] as const;
-
 /** Catalogue entries a (mock, non-admin) caller may not grant to an agent. */
 const NON_GRANTABLE_PERMISSIONS = new Set(
 	PERMISSION_CATALOGUE.filter((p) => !p.grantable_by_caller).map((p) => p.name),
@@ -836,7 +819,7 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			durationMs: 38,
 			httpStatus: 403,
 			minutesAgo: 9,
-			error: 'pbac_denied: permission violation chat:write',
+			error: 'pbac_denied: scope violation chat:write',
 		}),
 		executionRow({
 			id: 'exec_agnt_3',
@@ -1092,7 +1075,7 @@ export const agentsHandlers = [
 		// `AgentService.approve` grants DEFAULT_AGENT_PERMISSIONS to an agent holding
 		// no grants; a non-empty request (recognised or not) is left as-is.
 		if ((actorPermissions[res.row.id] ?? []).length === 0)
-			actorPermissions[res.row.id] = [...DEFAULT_AGENT_PERMISSIONS_MOCK];
+			actorPermissions[res.row.id] = [...DEFAULT_AGENT_PERMISSIONS];
 		return HttpResponse.json(res.row);
 	}),
 	http.post('/agents/:id\\:deny', async ({ params, request }) => {
@@ -1163,7 +1146,7 @@ export const agentsHandlers = [
 		actorPermissions[row.id] =
 			Array.isArray(body.permissions) && body.permissions.length > 0
 				? [...new Set(body.permissions)]
-				: [...DEFAULT_AGENT_PERMISSIONS_MOCK];
+				: [...DEFAULT_AGENT_PERMISSIONS];
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	// Partial in-place edit — name / description / owner_id. Mirrors

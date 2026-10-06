@@ -120,7 +120,7 @@ their browser and approves the connection and its scopes; you never open
 or approve it. Once they confirm, re-check your identity view (`whoami`) —
 an agent-initiated connect binds you at approval — and retry the blocked
 call. For APIs outside the registry, and always for **binding an existing
-credential or granting scopes**, the operator acts in the Jentic One
+credential or granting permissions**, the operator acts in the Jentic One
 dashboard: granting is always a human action — you report (or start the
 connect) and wait, you never grant yourself anything. Bindings take effect
 live: once the operator confirms, retry the call that was blocked.
@@ -242,7 +242,7 @@ a failure by its symptom, not by assuming access: transport failures
   binds you in the dashboard. You can *start* a registry vendor's connect
   session yourself (`jentic connect <vendor>` / `request_connection`), but
   you can't approve it, bind an existing credential, or grant yourself
-  scopes.
+  permissions.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

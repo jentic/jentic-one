@@ -36,9 +36,12 @@ export interface EnhancedScope {
 export type ScopeVocabulary = 'scope' | 'permission';
 
 /** Chrome nouns for each vocabulary (lower-case plural + heading form). */
-export const VOCABULARY_NOUNS: Record<ScopeVocabulary, { plural: string; heading: string }> = {
-	scope: { plural: 'scopes', heading: 'Scopes' },
-	permission: { plural: 'permissions', heading: 'Permissions' },
+export const VOCABULARY_NOUNS: Record<
+	ScopeVocabulary,
+	{ singular: string; plural: string; heading: string }
+> = {
+	scope: { singular: 'scope', plural: 'scopes', heading: 'Scopes' },
+	permission: { singular: 'permission', plural: 'permissions', heading: 'Permissions' },
 };
 
 /** A resource-grouped bundle of scopes (e.g. all `read:jira` / `write:jira`). */

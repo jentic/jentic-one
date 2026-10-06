@@ -1261,13 +1261,13 @@ async def handle_request_connection(
         require_permissions(env.identity, ["credentials:connect", "credentials:write"])
     except ToolError as exc:
         # The Go special case (requestConnectionError's 403 arm): a 403 on
-        # THIS route is the missing credentials:connect scope — an access gap
+        # THIS route is the missing credentials:connect permission — an access gap
         # the operator closes with a dashboard grant, not a revoked identity.
         raise ToolError(
             CODE_BROKER_DENIED,
-            f"starting a connect session requires the credentials:connect scope: {exc}",
+            f"starting a connect session requires the credentials:connect permission: {exc}",
             actionable="Ask your human operator to grant this agent the "
-            "credentials:connect scope in the dashboard, then retry "
+            "credentials:connect permission in the dashboard, then retry "
             "request_connection once they confirm.",
         ) from None
 

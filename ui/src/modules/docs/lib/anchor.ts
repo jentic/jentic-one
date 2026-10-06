@@ -100,9 +100,8 @@ export function scrollToAnchor(id: string, opts: { settleMs?: number } = {}): vo
  * `required_permissions.map(...)` or `Object.entries(implied_permissions)` would
  * then throw and blank the whole route. Normalizing once at the boundary means
  * every downstream consumer (PermissionPanel, AuthChip, permission tree) gets
- * safe defaults
- * without scattering `?? []` everywhere — a bad field degrades to "empty"
- * instead of crashing.
+ * safe defaults without scattering `?? []` everywhere — a bad field degrades
+ * to "empty" instead of crashing.
  */
 function normalizeEndpoint(endpoint: ReferenceEndpoint): ReferenceEndpoint {
 	return {

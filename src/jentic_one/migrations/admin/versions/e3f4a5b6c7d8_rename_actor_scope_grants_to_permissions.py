@@ -80,19 +80,16 @@ _INDEXES: tuple[tuple[str, list[str], str, list[str]], ...] = (
 def _rename_pg_primary_key(*, table: str, new_pkey: str) -> None:
     """Rename *table*'s primary key constraint to *new_pkey* on Postgres, safely.
 
-    The old blind ``ALTER TABLE … RENAME CONSTRAINT actor_scope_grants_pkey …``
-    assumed the PK still carried the name Postgres derived from the original
-    table. That is only true for a schema this project's own migrations built:
-    a database restored from a ``pg_dump`` with ``--no-privileges`` quirks, one
-    created with an explicitly-named PK, or one already partway through this
-    rename, can carry a different (or the already-renamed) name — and the blind
-    ALTER would raise ``undefined_object`` and abort the whole migration.
+    The PK name is discovered from ``pg_constraint`` rather than assumed to be
+    the one Postgres derived from the original table: a restored dump, an
+    explicitly-named PK, or a database already partway through this rename can
+    carry a different (or the already-renamed) name, and renaming a constraint
+    that does not exist would abort the whole migration.
 
     Nothing in the codebase reads the PK by name (SQLAlchemy neither names nor
-    diffs primary keys), so the rename is pure hygiene. Discover the real name
-    from the catalog and rename only when it both exists and differs from the
-    target; if the PK is already ``new_pkey`` (a re-run) or somehow absent,
-    this is a no-op rather than a failure.
+    diffs primary keys), so the rename is pure hygiene. It runs only when the
+    PK both exists and differs from the target; if the PK is already
+    ``new_pkey`` (a re-run) or absent, this is a no-op rather than a failure.
     """
     bind = op.get_bind()
     current_pkey = bind.execute(

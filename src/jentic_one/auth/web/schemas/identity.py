@@ -44,8 +44,8 @@ class MeUser(BaseModel):
     status: str
     # For users this is the token's permission set rather than a live grant read:
     # users re-authenticate interactively, so the token view is effectively live
-    # (no long-lived programmatic token to drift from grants the way
-    # agents/service accounts have — see #673).
+    # (no long-lived programmatic token to drift from grants the way an
+    # agent's has — see #673).
     permissions: list[str]
     must_change_password: bool
 
