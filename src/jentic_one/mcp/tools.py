@@ -1068,6 +1068,8 @@ async def _execute_tool(
         raise redirect
     if (denial := ex.classify_denial(status, response_headers, raw)) is not None:
         raise denial
+    if (resolve_failure := ex.classify_broker_error(status, response_headers, raw)) is not None:
+        raise resolve_failure
     return tool_result(
         env.ctx, ex.execute_result_payload(status, response_headers, raw, execution_id)
     )

@@ -233,6 +233,19 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 		return s.executeDenialError(cctx, denial), nil
 	}
 
+	// A broker-origin error that is not a denial (unknown credential id/name,
+	// unregistered operation) never reached the upstream, so it is an error
+	// result, not a normal one (#1429). Re-sending the same call cannot succeed.
+	if coded := agentops.BrokerError(res); coded != nil {
+		nextTool := brokerErrorNextTool(coded)
+		// The classify core phrases the recovery for the CLI (jentic search /
+		// creds list); re-flavor it for this lane's tools so the agent is pointed
+		// at a tool it can actually call, matching nextTool. Relayed candidates
+		// stay in details["candidates"].
+		coded.Actionable = brokerErrorToolHint(nextTool)
+		return s.softErrorExtra(cctx, coded, nextTool, map[string]any{"retryable": false}), nil
+	}
+
 	// Everything the broker relayed — 2xx, upstream 4xx/5xx, and the ask-tier
 	// 202-held envelope — is a normal result (§3.7 table row 1; §3.4: the held
 	// envelope passes through with its directive intact, the model polls with
@@ -796,5 +809,46 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			},
 			handler: s.handleGetExecutionResult,
 		},
+	}
+}
+
+// brokerErrorToolHint is the MCP-lane recovery prose for a broker resolve
+// failure, keyed on the next_tool brokerErrorNextTool chose so the two never
+// disagree. It names tools this surface serves, never CLI commands.
+func brokerErrorToolHint(nextTool string) string {
+	switch nextTool {
+	case "search_apis":
+		return "The broker has no such operation registered. Call search_apis to find the right " +
+			"operation, confirm it with inspect_operation, then execute that one — do not retry this call."
+	case "whoami":
+		return "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
+			"not resolve for this operation. Pick a valid id from details.candidates when present (else call " +
+			"whoami to see your credential bindings) and re-issue the call naming one bound to this operation — " +
+			"do not retry the same header."
+	default: // inspect_operation
+		return "The broker rejected the request before it reached the upstream API. Call inspect_operation " +
+			"to re-read the operation's contract — the method, revision pin, payload size, idempotency key, or a " +
+			"required header is wrong — and fix the request rather than retrying it."
+	}
+}
+
+// brokerErrorNextTool points a broker resolve failure at the tool that can fix
+// it, keyed on agentops.BrokerErrorRecoveryFor (the same routing the CLI prose
+// uses): an unregistered operation needs search_apis, an unresolvable
+// credential header gets whoami (the same safe default the denial path uses),
+// and any other broker 4xx — a contract or payload error — points at
+// inspect_operation so the agent re-reads the contract instead of looping on an
+// identity check that cannot fix it. Never get_started: the identity already
+// resolved.
+func brokerErrorNextTool(coded *ux.CodedError) string {
+	status, _ := coded.Details["http_status"].(int)
+	pt, _ := coded.Details["problem_type"].(string)
+	switch agentops.BrokerErrorRecoveryFor(status, pt) {
+	case agentops.RecoverOperation:
+		return "search_apis"
+	case agentops.RecoverCredential:
+		return "whoami"
+	default:
+		return "inspect_operation"
 	}
 }

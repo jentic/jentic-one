@@ -8,8 +8,11 @@
  * self-registered agent is approved and given its first API before the fleet
  * view takes over. The landing's state (resume on load, the roster poll, the
  * exits) is `useFirstAgentLanding`; its rules are `lib/firstRun.ts`.
+ *
+ * A refused roster read (403) shows "No access to agents"; a `?agent=` the
+ * whole roster does not hold shows "Agent not found" rather than another agent.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
@@ -46,6 +49,8 @@ import {
 	useUnbindAgentCredential,
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
+	isAgentsAccessDenied,
+	isAgentsSessionEnded,
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	type ActorStatus,
@@ -75,6 +80,11 @@ import {
 } from '@/modules/agents/components/LifecycleDialogs';
 import { NewAgentPanel } from '@/modules/agents/components/flat/NewAgentPanel';
 import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
+import {
+	AgentNotFound,
+	AgentsNoAccess,
+	AgentsSessionEnded,
+} from '@/modules/agents/components/flat/AgentAccessStates';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
 import {
@@ -172,7 +182,34 @@ export function FlatAgentsSection({
 	// Until the URL catches up with an exit's hand-off, the handed-off agent is
 	// the one on screen.
 	const shownId = agentParam ?? landing.handoffAgentId;
-	const selected = agents.find((a) => a.id === shownId) ?? agents[0] ?? null;
+	// An id the settled, whole roster does not hold is not this caller's agent
+	// (another user's, an unclaimed one only an admin sees, or none). A roster
+	// still loading or refetching — just after a create — may not have it yet,
+	// and a cached one may predate an agent registered since, so the roster is
+	// read once more before the id is judged; once judged, a later background
+	// refetch does not flip it back. Until then nothing is selected, rather than
+	// another agent in its place.
+	const rosterSettled = query.isSuccess && !query.hasNextPage && !query.isFetching && !isError;
+	const paramInRoster = agentParam != null && agents.some((a) => a.id === agentParam);
+	const paramUnknown =
+		agentParam != null && !paramInRoster && agentParam !== landing.handoffAgentId;
+	const [recheckedId, setRecheckedId] = useState<string | null>(null);
+	const recheckRequested = useRef<string | null>(null);
+	const { refetch: refetchRoster } = query;
+	useEffect(() => {
+		if (!paramUnknown || !rosterSettled || recheckRequested.current === agentParam) return;
+		recheckRequested.current = agentParam;
+		void refetchRoster().finally(() => setRecheckedId(agentParam));
+	}, [paramUnknown, rosterSettled, agentParam, refetchRoster]);
+	const [missingId, setMissingId] = useState<string | null>(null);
+	const agentNotFound =
+		paramUnknown && ((rosterSettled && recheckedId === agentParam) || missingId === agentParam);
+	useEffect(() => {
+		setMissingId(agentNotFound ? agentParam : null);
+	}, [agentNotFound, agentParam]);
+	const selected = paramUnknown
+		? null
+		: (agents.find((a) => a.id === shownId) ?? agents[0] ?? null);
 	// Written back only once the fleet view is decided and on screen, so the
 	// landing leaves the URL plain — and not while a hand-off's own selection
 	// is still on its way.
@@ -304,7 +341,13 @@ export function FlatAgentsSection({
 	if (firstPageFailed) {
 		return (
 			<>
-				<ErrorAlert message={query.error as Error} />
+				{isAgentsAccessDenied(query.error) ? (
+					<AgentsNoAccess />
+				) : isAgentsSessionEnded(query.error) ? (
+					<AgentsSessionEnded />
+				) : (
+					<ErrorAlert message={query.error as Error} />
+				)}
 				{overlays}
 			</>
 		);
@@ -393,6 +436,12 @@ export function FlatAgentsSection({
 					message="Couldn't load the rest of the fleet — some agents may be missing."
 					onRetry={() => void fetchNextPage()}
 					retrying={isFetchingNextPage}
+				/>
+			)}
+
+			{agentNotFound && (
+				<AgentNotFound
+					onShowAgents={agents.length > 0 ? () => selectAgent(agents[0].id) : undefined}
 				/>
 			)}
 

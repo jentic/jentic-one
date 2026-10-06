@@ -21,6 +21,7 @@ import {
 	GroupBy,
 	MonitoringService,
 	OAuthService,
+	PermissionRuleSetsService,
 	PermissionsService,
 	SystemService,
 	type AgentResponse,
@@ -32,12 +33,14 @@ import {
 	type PermissionRuleSchema,
 	type PermissionTestRequest,
 	type PermissionTestResponse,
+	type RuleSetResponse,
 } from '@/shared/api';
 import {
 	agentToEntity,
 	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
+	type BindingRuleSetEntity,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
 	type CredentialBindingEntity,
@@ -63,6 +66,17 @@ export class AgentsApiError extends Error {
 		this.status = status;
 		this.cause = cause;
 	}
+}
+
+/** A refused read (403): the caller lacks the permission, and retrying cannot
+ * change the answer. A 401 is a different state — the session itself ended. */
+export function isAgentsAccessDenied(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 403;
+}
+
+/** The session is no longer valid (401). */
+export function isAgentsSessionEnded(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 401;
 }
 
 function toAgentsError(error: unknown, fallback: string): AgentsApiError {
@@ -335,6 +349,39 @@ export async function replaceAgentBindingPermissions(
 		return res.data;
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to save permission rules.');
+	}
+}
+
+function ruleSetToEntity(r: RuleSetResponse): BindingRuleSetEntity {
+	return {
+		id: r.rule_set_id,
+		name: r.name,
+		description: r.description ?? null,
+		curated: r.curated,
+		bindingCount: r.binding_count,
+		rules: r.rules,
+	};
+}
+
+/** One shared rule set with its ordered rules (`GET /permission-rule-sets/{id}`). */
+export async function getBindingRuleSet(ruleSetId: string): Promise<BindingRuleSetEntity> {
+	try {
+		return ruleSetToEntity(await PermissionRuleSetsService.getPermissionRuleSet({ ruleSetId }));
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load the rule set.');
+	}
+}
+
+/** Detach a binding's shared rule set (`DELETE …/agents/{aid}/rule-set`) — its
+ * inline rules become the effective policy again. */
+export async function detachAgentBindingRuleSet(
+	agentId: string,
+	credentialId: string,
+): Promise<void> {
+	try {
+		await CredentialsService.detachAgentCredentialRuleSet({ credentialId, agentId });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to detach the rule set.');
 	}
 }
 

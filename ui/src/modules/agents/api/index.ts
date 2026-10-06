@@ -19,6 +19,8 @@ export {
 	useResumeAgentCredentialBinding,
 	useInvalidateCredentialBindingSurfaces,
 	useAgentBindingPermissions,
+	useAgentBindingEffectiveRules,
+	useDetachAgentBindingRuleSet,
 	useReplaceAgentBindingPermissions,
 	useTestAgentBindingPermissions,
 	useAgentApiKeyInfo,
@@ -54,9 +56,14 @@ export type {
 	SetServingVariables,
 	PendingAgentsResult,
 	BindingRuleSummary,
+	AgentBindingEffectiveRules,
 } from '@/modules/agents/api/hooks';
 
-export { AgentsApiError } from '@/modules/agents/api/client';
+export {
+	AgentsApiError,
+	isAgentsAccessDenied,
+	isAgentsSessionEnded,
+} from '@/modules/agents/api/client';
 export type {
 	ActorAuditEntry,
 	ActorUsageDetail,
@@ -87,6 +94,7 @@ export type {
 	ApiKeyResult,
 	BindingPermissionRule,
 	BindingPermissionTestResult,
+	BindingRuleSetEntity,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
 	McpLastSeen,

@@ -1139,3 +1139,74 @@ func problemTypeOf(body string) string {
 	_ = json.Unmarshal([]byte(body), &env)
 	return env.Type
 }
+
+// TestMCPExecute_BrokerResolveFailureIsError pins #1429 on the MCP twin: a
+// broker-origin 4xx that is not a denial is an isError RESOLVE_FAILED result,
+// non-retryable, pointing at the tool that can fix it.
+func TestMCPExecute_BrokerResolveFailureIsError(t *testing.T) {
+	cases := []struct {
+		name, body, wantNext string
+		status               int
+	}{
+		{"unknown credential id", `{"type":"credential_id_not_found","title":"Credential id cred_nope is not among your credentials","status":400}`, "whoami", http.StatusBadRequest},
+		{"unregistered upstream", `{"type":"operation_not_found","title":"Operation not found — unregistered upstream URL.","status":404}`, "search_apis", http.StatusNotFound},
+		{"contract error points at inspect", `{"type":"payload_too_large","title":"Request body exceeds the 1024-byte cap.","status":413}`, "inspect_operation", http.StatusRequestEntityTooLarge},
+		{"credential-ish type is not substring-matched", `{"type":"credential_header_malformed","title":"bad header","status":400}`, "inspect_operation", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("a broker resolve failure must be a soft error, not a protocol error: %v", err)
+			}
+			if !res.IsError {
+				t.Fatalf("want IsError result for a broker resolve failure")
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != ux.CodeResolveFailed {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
+			}
+			if payload["retryable"] != false {
+				t.Errorf("retryable = %v, want false", payload["retryable"])
+			}
+			if payload["next_tool"] != tc.wantNext {
+				t.Errorf("next_tool = %v, want %q", payload["next_tool"], tc.wantNext)
+			}
+		})
+	}
+}
+
+// TestMCPExecute_BrokerRateLimitIsNotAResolveFailure pins that a broker 429 is
+// not a RESOLVE_FAILED: it is retryable after Retry-After, so it must not carry
+// retryable=false / "do not retry" advice.
+func TestMCPExecute_BrokerRateLimitIsNotAResolveFailure(t *testing.T) {
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"rate_limit_exceeded","title":"Rate limit exceeded; slow down and retry after the indicated delay.","status":429}`))
+	}))
+	defer broker.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+		callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`))
+	if err != nil {
+		t.Fatalf("handleExecute: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] == ux.CodeResolveFailed {
+		t.Fatalf("a broker 429 must not be classified RESOLVE_FAILED: %v", payload)
+	}
+}

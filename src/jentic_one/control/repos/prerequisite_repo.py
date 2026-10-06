@@ -44,6 +44,17 @@ class AgentCredentialBindingRow(NamedTuple):
     rule_set_id: str | None
 
 
+class RuleSetBindingRow(NamedTuple):
+    """A direct binding attached to a shared rule set, with its agent's owner."""
+
+    binding_id: str
+    agent_id: str
+    agent_name: str
+    owner_id: str | None
+    credential_id: str
+    rule_set_id: str
+
+
 class PrerequisiteRepository:
     """Cross-DB reads (existence checks + lookups) without admin imports."""
 
@@ -231,3 +242,41 @@ class PrerequisiteRepository:
             {"rule_set_id": rule_set_id},
         )
         return int(result.scalar_one())
+
+    @staticmethod
+    async def list_rule_set_bindings_page(
+        session: AsyncSession, *, after_id: str | None = None, limit: int = 1000
+    ) -> list[RuleSetBindingRow]:
+        """One page of the direct bindings attached to a shared rule set (admin DB).
+
+        Keyset-paginated by binding id (pass the last row's ``binding_id`` as
+        ``after_id``), so a caller can walk every attached binding with
+        bounded memory and no parameter list sized by the data.
+        """
+        conditions = ["b.rule_set_id IS NOT NULL"]
+        params: dict[str, object] = {"limit": limit}
+        if after_id is not None:
+            conditions.append("b.id > :after_id")
+            params["after_id"] = after_id
+        result = await session.execute(
+            text(
+                "SELECT b.id, a.id, a.name, a.owner_id, b.credential_id, b.rule_set_id "
+                "FROM agent_credential_bindings b "
+                "JOIN agents a ON a.id = b.agent_id "
+                f"WHERE {' AND '.join(conditions)} "
+                "ORDER BY b.id "
+                "LIMIT :limit"
+            ),
+            params,
+        )
+        return [
+            RuleSetBindingRow(
+                binding_id=str(row[0]),
+                agent_id=str(row[1]),
+                agent_name=str(row[2]),
+                owner_id=str(row[3]) if row[3] is not None else None,
+                credential_id=str(row[4]),
+                rule_set_id=str(row[5]),
+            )
+            for row in result.fetchall()
+        ]

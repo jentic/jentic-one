@@ -15,18 +15,32 @@ The contract is the same on every install shape; only the commands differ.
    `docker run --rm --env-file … <image> python -m jentic_one.migrations.run`,
    or the compose file's `migrate` service. Appending `--check` inspects
    without modifying: it prints an
-   `OVERALL current|uninitialized|pending` verdict and exits non-zero unless
-   `OVERALL current`, so scripts can branch on it. A full run (all databases,
-   no `--target`) also performs the release's one-shot **upgrade steps** —
-   data changes that span databases (for example `rule_sets_mark_curated`,
-   which marks the shared permission rule sets an `org:admin` or a system job
-   created as curated, so they stay attachable by every credential writer) —
-   and prints
-   an `==> upgrade step <name>: <action>` line for each.
+   `OVERALL current|uninitialized|pending|unknown` verdict and exits `0` for
+   `current`, `3` for `uninitialized` or `pending`, and `5` for `unknown`
+   (the step ledger could not be read), so scripts can branch on it. A full run (all
+   databases, no `--target`) also performs the release's **upgrade steps** —
+   data changes that span databases — and prints an
+   `==> upgrade step <name>: <action>` line for each. Most steps run once per
+   install (`already_done` afterwards); a repeatable step runs on every full
+   upgrade. `rule_sets_mark_curated` is repeatable: it marks the shared
+   permission rule sets an `org:admin` or a system job created as curated
+   (so they stay attachable by every credential writer), including sets an
+   older release created after the step last ran (for example while that
+   release was redeployed on the newer schema).
    A step that leaves blocking work undone exits `4`: fix the logged cause
    and re-run before starting the new version (`--skip-upgrade-step <name>`
    defers one step deliberately; on Helm, via `migrate.extraArgs`).
-   Non-blocking follow-ups print as `==> WARNING` lines — read them. The run
+   Non-blocking follow-ups print as `==> WARNING` lines — read them (see
+   [Cross-owner rule set attachments](#cross-owner-rule-set-attachments)).
+   A step that has never run — after `--skip-upgrade-steps`, or a partial
+   run such as `--db control` — is reported by a `--check` that covers the
+   control and admin databases (the default) as a
+   `STATUS upgrade-step:<name> pending` line and `OVERALL pending` (exit
+   `3`), once every database is at head; a full run clears it. If the
+   schemas are at head but the step ledger cannot be read, `--check` prints
+   `OVERALL unknown` and exits `5`. `jenticctl start` refuses to start
+   while a step is pending, naming `jenticctl update --stack-only`, and
+   carries on when the verdict is `unknown`. The run
    lock these steps take is a Postgres session-level advisory lock, so point
    the migration at the database directly, not through a transaction-mode
    pooler (pgbouncer `pool_mode=transaction`).
@@ -75,6 +89,36 @@ emptied schemas, then re-run the migration with the cause fixed. Do not
 re-run blind: a run that died inside a `CONCURRENTLY` revision can fail its
 retry with `column already exists`, which is the signature of exactly this
 state — restore, don't patch.
+
+## Cross-owner rule set attachments
+
+Only a shared permission rule set's creator or an `org:admin` may attach a
+set that is not curated, because the creator can edit its rules — and so the
+policy of every binding attached to it. An attachment made before that rule
+existed, or one an `org:admin` made, is left in place. Every full upgrade
+lists each binding on a non-curated set created by someone other than the
+agent or its owner as `==> WARNING (rule_sets_mark_curated)` lines on
+stderr: a summary with the remediation, then one line per binding (the
+first 50, then `...and N more`) naming the binding, agent (id and name), the
+agent's owner, the credential, the rule set (id and name) and the set's
+creator. The full count is `cross_owner_bindings` in the step's JSON
+summary. Nothing is detached automatically; resolve each binding with one of:
+
+- the agent's owner attaches a set they created or a curated set, or
+  detaches the set so the binding's inline rules apply;
+- an `org:admin` attaches a curated set (one an `org:admin` created);
+- an `org:admin` marks the set curated, after which only an `org:admin` can
+  edit it. There is no API for this; in the control database (`control` is
+  your control `schema_name`; drop the prefix on SQLite):
+  `UPDATE control.permission_rule_sets SET curated = true WHERE id = '<rule set id>';`
+  A raw-SQL change leaves no audit record — note it in your change log.
+
+For an agent with no owner only the `org:admin` options apply. The warning
+repeats on each full upgrade until no such binding remains. If the listing
+itself fails (for example a query error on the admin database), the step
+still marks the sets, prints one `could not list cross-owner bindings`
+warning, and reports `cross_owner_bindings: null`; the upgrade does not
+fail on it.
 
 ## Where the commands live, per install
 

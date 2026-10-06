@@ -39,6 +39,7 @@ import {
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
+import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -198,12 +199,18 @@ export function CredentialInventorySheet({
 
 	// Both usage figures are three-state with different gates: the fleet count is
 	// exact or withheld; a credential missing from a TRUNCATED top-N is unknown.
+	// The fleet count is joined from the viewer's own roster, which holds every
+	// agent only for an `org:admin`: for anyone else it counts their agents
+	// alone, even on a credential they created, and the card says so.
 	const usage = useCredentialUsageTotals(open);
+	const viewer = useOptionalCurrentUser();
+	const usedByYoursOnly = viewer != null && !viewerIsOrgAdmin(viewer);
 	const usageFor = useCallback(
 		(cred: Credential) => ({
 			usedByAgentCount:
 				agentsPerCredential?.get(cred.credential_id) ??
 				(agentsPerCredential != null ? 0 : fleetJoinLoading ? undefined : null),
+			usedByYoursOnly,
 			callsLast7d: usage.isLoading
 				? undefined
 				: usage.data == null
@@ -211,12 +218,11 @@ export function CredentialInventorySheet({
 					: (usage.data.totals.get(cred.credential_id) ??
 						(usage.data.complete ? 0 : null)),
 		}),
-		[agentsPerCredential, fleetJoinLoading, usage.isLoading, usage.data],
+		[agentsPerCredential, fleetJoinLoading, usedByYoursOnly, usage.isLoading, usage.data],
 	);
 
 	// The list includes credentials shared with the viewer; only the owner or an
 	// admin can change those, so their cards offer no edit or delete.
-	const viewer = useOptionalCurrentUser();
 	const readOnlyFor = useCallback(
 		(cred: Credential) => !credentialEditableBy(cred, viewer),
 		[viewer],

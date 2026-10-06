@@ -649,3 +649,69 @@ describe('CredentialInventorySheet — credentials shared with the viewer', () =
 		await checkA11y(document.body, { modal: true });
 	});
 });
+
+describe('CredentialInventorySheet — whose agents "used by" counts', () => {
+	const VIEWER = 'usr_viewer_1';
+
+	function seedViewer(permissions: string[]) {
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: VIEWER,
+					email: 'viewer@local',
+					first_name: 'View',
+					last_name: 'Er',
+					active: true,
+					permissions,
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	}
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		// A credential the viewer created that none of THEIR agents is bound to.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_own_unbound',
+				name: 'Own Stripe key',
+				type: CredentialType.API_KEY,
+				api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+		]);
+		resetApisStore([]);
+	});
+
+	async function usedByCopy(): Promise<HTMLElement> {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+			</AuthProvider>,
+			{ route: '/?agent=agnt_active_1' },
+		);
+		await screen.findByTestId('agent-dock');
+		await user.click(headerTrigger());
+		const sheet = await screen.findByTestId('sheet-primitive');
+		const card = (await within(sheet).findByText('Own Stripe key')).closest(
+			'[data-testid="credential-card"]',
+		) as HTMLElement;
+		return within(card).findByTestId('cred-used-by');
+	}
+
+	it('a non-admin creator reads "none of your agents": their roster holds only their own', async () => {
+		seedViewer(['agents:read', 'agents:write', 'credentials:read', 'credentials:write']);
+		expect(await usedByCopy()).toHaveTextContent('used by none of your agents');
+	});
+
+	it('an org:admin, whose roster is the whole org, reads the unscoped count', async () => {
+		seedViewer(['org:admin']);
+		expect(await usedByCopy()).toHaveTextContent('used by no agents');
+	});
+});

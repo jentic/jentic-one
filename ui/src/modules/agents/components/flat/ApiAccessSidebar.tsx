@@ -33,6 +33,7 @@ import { SharedWithYouBadge } from '@/shared/credentials/components/CredentialCa
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import { EditCredentialSheet } from '@/shared/credentials/components/EditCredentialSheet';
 import {
+	useAgentBindingEffectiveRules,
 	useAgentBindingPermissions,
 	useInvalidateCredentialBindingSurfaces,
 	useResumeAgentCredentialBinding,
@@ -41,6 +42,7 @@ import {
 } from '@/modules/agents/api';
 import { AgentBindingPermissionsEditor } from '@/modules/agents/components/detail/AgentBindingPermissionsEditor';
 import { AgentBindingRuleTester } from '@/modules/agents/components/detail/AgentBindingRuleTester';
+import { BindingRuleSetPanel } from '@/modules/agents/components/detail/BindingRuleSetPanel';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import {
 	MultiCredentialNote,
@@ -150,6 +152,8 @@ export function ApiAccessSidebar({
 		shown?.credentialCreatedBy !== undefined &&
 		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
+	// What the broker evaluates: an attached rule set's rules, else the inline ones.
+	const effective = useAgentBindingEffectiveRules(open ? agent.id : null, credentialId);
 
 	// The API this tile resolves to, for the rule editor's operation suggestions
 	// and the effective-access preview. Only a concrete (imported) API has a
@@ -246,9 +250,13 @@ export function ApiAccessSidebar({
 	};
 
 	// "1 agent" is this agent alone; anything more is the shared-secret warning
-	// the operator needs before editing or deleting.
-	const usedByLabel =
-		boundAgentRows.length === 1 ? 'this agent only' : `${boundAgentRows.length} agents`;
+	// the operator needs before editing or deleting. A viewer the credential is
+	// shared with sees only their own agents, so the count is "of your agents".
+	const usedByLabel = credentialReadOnly
+		? `${boundAgentRows.length} of your agents`
+		: boundAgentRows.length === 1
+			? 'this agent only'
+			: `${boundAgentRows.length} agents`;
 	const credentialAge = shown?.credentialUpdatedAt
 		? `updated ${timeAgo(shown.credentialUpdatedAt)}`
 		: shown?.credentialCreatedAt
@@ -470,7 +478,19 @@ export function ApiAccessSidebar({
 							{/* 2 — The permission rules, keyed by agent+credential so a
 							    different tile never inherits a stale draft. */}
 							<section aria-label="Permission rules" className="space-y-3">
-								{permissions.isPending ? (
+								{effective.ruleSetId ? (
+									<BindingRuleSetPanel
+										agentId={agent.id}
+										credentialId={shown.credentialId}
+										credentialLabel={shown.credentialName}
+										ruleSet={effective.ruleSet}
+										isPending={effective.isPending}
+										isError={effective.isError}
+										onRetry={effective.refetch}
+										inlineRules={permissions.data}
+										canDetach={!credentialReadOnly}
+									/>
+								) : permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
 										<span className="sr-only">Loading rules…</span>
 										<Skeleton className="h-32 rounded-lg" />
@@ -494,10 +514,10 @@ export function ApiAccessSidebar({
 								{/* What the SAVED rules let this agent reach, against the
 								    API's real operations — always visible, not gated on
 								    editing, so the binding's surface reads at a glance. */}
-								{apiReference && !permissions.isPending && !permissions.isError && (
+								{apiReference && !effective.isPending && !effective.isError && (
 									<OperationImpactPreview
 										api={apiReference}
-										rules={(permissions.data ?? [])
+										rules={(effective.rules ?? [])
 											.filter((r) => !r._system)
 											.map((r) => ({
 												effect: r.effect === 'deny' ? 'deny' : 'allow',
@@ -525,7 +545,7 @@ export function ApiAccessSidebar({
 								<AgentBindingRuleTester
 									agentId={agent.id}
 									credentialId={shown.credentialId}
-									savedRules={permissions.data ?? []}
+									savedRules={effective.rules ?? []}
 									disabled={rulesDirty}
 								/>
 							</section>
