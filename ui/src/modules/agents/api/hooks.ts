@@ -47,6 +47,8 @@ import {
 	listAgentBindingPermissions,
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
+	getBindingRuleSet,
+	detachAgentBindingRuleSet,
 	fetchActorUsageDetail,
 	fetchCredentialUsageTotals,
 	fetchActorExecutions,
@@ -72,6 +74,7 @@ import type {
 	ApiKeyResult,
 	BindingPermissionRule,
 	BindingPermissionTestResult,
+	BindingRuleSetEntity,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
 	McpLastSeen,
@@ -108,6 +111,10 @@ const agentsKeys = {
 		[...agentsKeys.all, 'binding-permissions', agentId, credentialId] as const,
 	/** Prefix over every (agent, credential) rule slice. */
 	bindingPermissionsRoot: () => [...agentsKeys.all, 'binding-permissions'] as const,
+	/** One shared permission rule set a binding points at. */
+	ruleSet: (ruleSetId: string) => [...agentsKeys.all, 'rule-set', ruleSetId] as const,
+	/** Prefix over every rule-set read — a detach changes a set's binding count. */
+	ruleSetRoot: () => [...agentsKeys.all, 'rule-set'] as const,
 };
 
 /** Test-only handle on the agents key factory so the cross-module-key guard
@@ -287,43 +294,97 @@ export function useAgentBindingRuleCounts(
 	});
 }
 
-/** Effect breakdown of one binding's OPERATOR rules; `_system` rules excluded. */
+/** Effect breakdown of one binding's EFFECTIVE operator rules; `_system` rules
+ * excluded. */
 export interface BindingRuleSummary {
 	total: number;
 	allow: number;
 	deny: number;
+	/** Set when a shared rule set governs the binding: the counts are the set's
+	 * rules, and the binding's inline rules are dormant. */
+	ruleSet?: { name: string; curated: boolean };
+}
+
+function summarizeRules(rules: BindingPermissionRule[]): Omit<BindingRuleSummary, 'ruleSet'> {
+	const operator = rules.filter((rule) => !rule._system);
+	return {
+		total: operator.length,
+		allow: operator.filter((rule) => String(rule.effect) === 'allow').length,
+		deny: operator.filter((rule) => String(rule.effect) === 'deny').length,
+	};
+}
+
+/** The shared rule sets behind `ruleSetIds`, keyed by id. Failed or pending
+ * reads are absent from the map. */
+function useBindingRuleSets(ruleSetIds: string[]): ReadonlyMap<string, BindingRuleSetEntity> {
+	return useQueries({
+		queries: ruleSetIds.map((ruleSetId) => ({
+			queryKey: agentsKeys.ruleSet(ruleSetId),
+			queryFn: () => getBindingRuleSet(ruleSetId),
+		})),
+		combine: (results) => {
+			const map = new Map<string, BindingRuleSetEntity>();
+			results.forEach((result, index) => {
+				const ruleSetId = ruleSetIds[index];
+				if (ruleSetId != null && result.data) map.set(ruleSetId, result.data);
+			});
+			return map;
+		},
+	});
 }
 
 /**
  * Rule summaries for one agent's bindings, keyed by credential id. Same reads as
  * {@link useAgentBindingRuleCounts}, combined into effects instead of a length.
+ *
+ * A binding that points at a shared rule set is summarised from the SET's rules
+ * (what the broker evaluates), never its dormant inline list; until the set is
+ * read its entry is absent rather than guessed from the inline rules.
  */
 export function useAgentBindingRuleSummaries(
 	agentId: string | null,
 	credentialIds: string[],
 ): ReadonlyMap<string, BindingRuleSummary> {
-	return useQueries({
+	const bindings = useAgentCredentialBindings(agentId).data;
+	const ruleSetIdByCredential = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const binding of bindings ?? []) {
+			if (binding.ruleSetId) map.set(binding.credentialId, binding.ruleSetId);
+		}
+		return map;
+	}, [bindings]);
+	const ruleSetIds = useMemo(
+		() => Array.from(new Set(ruleSetIdByCredential.values())).sort(),
+		[ruleSetIdByCredential],
+	);
+	const ruleSets = useBindingRuleSets(ruleSetIds);
+	const inline = useQueries({
 		queries: credentialIds.map((credentialId) => ({
 			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
 			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
 			enabled: agentId != null,
 		})),
-		combine: (results) => {
-			const map = new Map<string, BindingRuleSummary>();
-			results.forEach((result, index) => {
-				const credentialId = credentialIds[index];
-				if (credentialId != null && result.data) {
-					const rules = result.data.filter((rule) => !rule._system);
+		combine: (results) => results.map((result) => result.data),
+	});
+	return useMemo(() => {
+		const map = new Map<string, BindingRuleSummary>();
+		credentialIds.forEach((credentialId, index) => {
+			const ruleSetId = ruleSetIdByCredential.get(credentialId);
+			if (ruleSetId) {
+				const ruleSet = ruleSets.get(ruleSetId);
+				if (ruleSet) {
 					map.set(credentialId, {
-						total: rules.length,
-						allow: rules.filter((rule) => String(rule.effect) === 'allow').length,
-						deny: rules.filter((rule) => String(rule.effect) === 'deny').length,
+						...summarizeRules(ruleSet.rules),
+						ruleSet: { name: ruleSet.name, curated: ruleSet.curated },
 					});
 				}
-			});
-			return map;
-		},
-	});
+				return;
+			}
+			const rules = inline[index];
+			if (rules) map.set(credentialId, summarizeRules(rules));
+		});
+		return map;
+	}, [credentialIds, ruleSetIdByCredential, ruleSets, inline]);
 }
 
 /**
@@ -496,6 +557,95 @@ export function useAgentBindingPermissions(agentId: string | null, credentialId:
 		queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId ?? ''),
 		queryFn: () => listAgentBindingPermissions(agentId as string, credentialId as string),
 		enabled: agentId != null && credentialId != null,
+	});
+}
+
+/** What governs one direct binding, and the rules the broker evaluates for it. */
+export interface AgentBindingEffectiveRules {
+	/** The shared rule set the binding points at; null when its inline rules
+	 * apply; undefined until the binding row is read. */
+	ruleSetId: string | null | undefined;
+	/** The attached rule set, when there is one. */
+	ruleSet: BindingRuleSetEntity | undefined;
+	/** The effective ordered rules: the set's while one is attached, else the
+	 * binding's inline rules. Undefined while loading or after an error. */
+	rules: BindingPermissionRule[] | undefined;
+	isPending: boolean;
+	isError: boolean;
+	refetch: () => void;
+}
+
+/**
+ * The effective policy of one direct binding. While a shared rule set is
+ * attached the broker and `permissions:test` evaluate the SET, and the inline
+ * rules (still returned by `GET …/permissions`) are dormant — so a surface that
+ * shows "what this agent can reach" reads this, not the inline list.
+ */
+export function useAgentBindingEffectiveRules(
+	agentId: string | null,
+	credentialId: string | null,
+): AgentBindingEffectiveRules {
+	const bindings = useAgentCredentialBindings(agentId);
+	const ruleSetId =
+		credentialId == null || bindings.data === undefined
+			? undefined
+			: (bindings.data.find((b) => b.credentialId === credentialId)?.ruleSetId ?? null);
+	// Read either way: the inline list is what a detach would make effective.
+	const inline = useAgentBindingPermissions(agentId, credentialId);
+	const ruleSet = useQuery<BindingRuleSetEntity>({
+		queryKey: agentsKeys.ruleSet(ruleSetId ?? ''),
+		queryFn: () => getBindingRuleSet(ruleSetId as string),
+		enabled: typeof ruleSetId === 'string',
+	});
+	if (typeof ruleSetId === 'string') {
+		return {
+			ruleSetId,
+			ruleSet: ruleSet.data,
+			rules: ruleSet.data?.rules,
+			isPending: ruleSet.isPending,
+			isError: ruleSet.isError,
+			refetch: () => void ruleSet.refetch(),
+		};
+	}
+	if (ruleSetId === null) {
+		return {
+			ruleSetId,
+			ruleSet: undefined,
+			rules: inline.data,
+			isPending: inline.isPending,
+			isError: inline.isError,
+			refetch: () => void inline.refetch(),
+		};
+	}
+	return {
+		ruleSetId,
+		ruleSet: undefined,
+		rules: undefined,
+		isPending: !bindings.isError,
+		isError: bindings.isError,
+		refetch: () => void bindings.refetch(),
+	};
+}
+
+/**
+ * Detach a binding's shared rule set (idempotent `DELETE …/rule-set`). Its
+ * inline rules become the effective policy, so every surface reading the
+ * binding (its row, its rules, the credential's roster) is refreshed.
+ */
+export function useDetachAgentBindingRuleSet(agentId: string, credentialId: string) {
+	const qc = useQueryClient();
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<void, Error, void>({
+		mutationFn: () => detachAgentBindingRuleSet(agentId, credentialId),
+		onSuccess: async () => {
+			invalidate(credentialId);
+			qc.invalidateQueries({ queryKey: agentsKeys.ruleSetRoot() });
+			// Await the binding row: until it reads `ruleSetId: null` the host keeps
+			// rendering the attached set.
+			await qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+			toast({ title: 'Rule set detached', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to detach the rule set.'),
 	});
 }
 

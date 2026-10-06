@@ -271,6 +271,13 @@ export type { CredentialAgentResponse } from '@/shared/api/generated/models/Cred
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
 export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
 
+// Shared permission rule sets a direct binding can point at (the binding's
+// `rule_set_id`). Read here so a governed binding shows the set's rules — the
+// ones the broker evaluates — instead of its dormant inline rules. Append-only,
+// like the rest.
+export { PermissionRuleSetsService } from '@/shared/api/generated/services/PermissionRuleSetsService';
+export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetResponse';
+
 // RFC 9457 problem bodies: the string `detail` callers surface over the
 // transport's status text. Append-only, like the rest.
 export { problemDetailText } from '@/shared/api/problem';

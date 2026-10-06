@@ -162,6 +162,71 @@ export function seedCredentialBindings(
 	for (const over of rows) credentialBindings.push(seedBinding(over));
 }
 
+/** One shared permission rule set (`RuleSetResponse` minus `binding_count`,
+ * which is derived from the binding store on read). */
+interface RuleSetRow {
+	rule_set_id: string;
+	name: string;
+	description: string | null;
+	curated: boolean;
+	created_by: string | null;
+	created_at: string;
+	rules: BindingRule[];
+}
+
+let ruleSets: RuleSetRow[] = [];
+
+/** Test-only: add shared rule sets a binding's `rule_set_id` can point at.
+ * Resets with `resetAgentsStore()`. */
+export function seedPermissionRuleSets(
+	rows: Array<Partial<RuleSetRow> & Pick<RuleSetRow, 'rule_set_id' | 'name'>>,
+): void {
+	for (const over of rows) {
+		ruleSets.push({
+			description: null,
+			curated: false,
+			created_by: null,
+			created_at: now(-60),
+			rules: [],
+			...over,
+		});
+	}
+}
+
+/**
+ * The caller the binding-rule write gate judges. The default mock user is an org
+ * admin; a test sets a non-admin to exercise the owner-or-admin refusal. Resets
+ * with `resetAgentsStore()`.
+ */
+let bindingWriteCaller: { id: string; admin: boolean } = { id: '', admin: true };
+
+/** Test-only: who `PUT`/`DELETE …/rule-set` treat as the caller. */
+export function setBindingWriteCaller(caller: { id: string; admin: boolean }): void {
+	bindingWriteCaller = caller;
+}
+
+/** RFC 9457 body, as the control surface's problem-details handler emits it. */
+function problemJson(status: number, type: string, detail: string) {
+	return HttpResponse.json(
+		{ type, title: type, status, detail, instance: null },
+		{ status, headers: { 'Content-Type': 'application/problem+json' } },
+	);
+}
+
+/**
+ * The backend's write gate for a binding's rules and rule-set pointer
+ * (`_require_visible_binding(for_write=True)`): an org admin, or the
+ * credential's creator. Anyone else gets the same 404 as a missing credential.
+ */
+function bindingWriteRefusal(credentialId: string) {
+	if (bindingWriteCaller.admin) return null;
+	const credential = findMockCredential(credentialId);
+	if (credential?.created_by != null && credential.created_by === bindingWriteCaller.id) {
+		return null;
+	}
+	return problemJson(404, 'credential_not_found', `Credential ${credentialId} not found.`);
+}
+
 /** Wire projection of a binding row (strips the mock-internal rule list). */
 function bindingJson(row: CredentialBindingRow) {
 	const { permissions: _permissions, ...wire } = row;
@@ -370,6 +435,8 @@ export const agentsE2eHooks = {
 };
 
 export function resetAgentsStore(): void {
+	ruleSets = [];
+	bindingWriteCaller = { id: '', admin: true };
 	agents = [
 		// Distinct registration times so the pending-approval banner's
 		// "longest waiting" pick is observable: the backend serves
@@ -1390,6 +1457,45 @@ export const agentsHandlers = [
 		row.permissions = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
 		return HttpResponse.json({ data: row.permissions });
 	}),
+	// Shared rule sets: the detail read and the binding attach/detach pointer.
+	http.get('/permission-rule-sets/:rsid', ({ params }) => {
+		const set = ruleSets.find((r) => r.rule_set_id === params.rsid);
+		if (!set) return problemJson(404, 'rule_set_not_found', 'Rule set not found.');
+		return HttpResponse.json({
+			...set,
+			binding_count: credentialBindings.filter((b) => b.rule_set_id === set.rule_set_id)
+				.length,
+		});
+	}),
+	http.put('/credentials/:cid/agents/:aid/rule-set', async ({ params, request }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) {
+			return problemJson(404, 'agent_binding_not_found', 'Binding not found.');
+		}
+		const refusal = bindingWriteRefusal(row.credential_id);
+		if (refusal) return refusal;
+		const body = (await request.json()) as { rule_set_id: string };
+		if (!ruleSets.some((r) => r.rule_set_id === body.rule_set_id)) {
+			return problemJson(404, 'rule_set_not_found', 'Rule set not found.');
+		}
+		row.rule_set_id = body.rule_set_id;
+		return new HttpResponse(null, { status: 204 });
+	}),
+	// Idempotent detach: the inline rules (left untouched) apply again.
+	http.delete('/credentials/:cid/agents/:aid/rule-set', ({ params }) => {
+		const row = credentialBindings.find(
+			(b) => b.agent_id === params.aid && b.credential_id === params.cid,
+		);
+		if (!row) {
+			return problemJson(404, 'agent_binding_not_found', 'Binding not found.');
+		}
+		const refusal = bindingWriteRefusal(row.credential_id);
+		if (refusal) return refusal;
+		row.rule_set_id = null;
+		return new HttpResponse(null, { status: 204 });
+	}),
 	// Broker dry-run against ONE binding's rules (`POST …/permissions:test`).
 	// Unlike the toolkit-era mock there is NO vendor pooling — the direct
 	// binding's own ordered list is the whole policy. Same evaluation
@@ -1406,8 +1512,14 @@ export const agentsHandlers = [
 			operation_id?: string | null;
 		};
 		const method = body.method.toUpperCase();
-		for (let i = 0; i < row.permissions.length; i++) {
-			const rule = row.permissions[i];
+		// An attached rule set is the binding's effective policy; its inline rules
+		// are dormant (mirrors `test_agent_permissions`).
+		const policy =
+			row.rule_set_id != null
+				? (ruleSets.find((r) => r.rule_set_id === row.rule_set_id)?.rules ?? [])
+				: row.permissions;
+		for (let i = 0; i < policy.length; i++) {
+			const rule = policy[i];
 			if (
 				!rule.methods?.length &&
 				!rule.path &&
