@@ -210,7 +210,7 @@ async def test_approve_grants_default_scopes_when_no_existing_grants(
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent(status="pending")
-    mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
     mock_agent_repo.set_approval = AsyncMock(return_value=_mock_agent(status="active"))
     mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
     mock_scope_repo.grant = AsyncMock()
@@ -231,7 +231,7 @@ async def test_approve_preserves_existing_scopes(
 ) -> None:
     ctx = _make_ctx()
     agent = _mock_agent(status="pending")
-    mock_agent_repo.get_by_id = AsyncMock(return_value=agent)
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
     mock_agent_repo.set_approval = AsyncMock(return_value=_mock_agent(status="active"))
 
     existing_grant = MagicMock()

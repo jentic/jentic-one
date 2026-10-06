@@ -526,6 +526,7 @@ def _admin_identity(admin_id: str) -> Identity:
     return Identity(
         sub=admin_id,
         email=f"{admin_id}@grants.test",
+        permissions=["org:admin"],
         actor_type=ActorType.USER,
         origin=Origin.API,
     )

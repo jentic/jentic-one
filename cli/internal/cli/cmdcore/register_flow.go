@@ -322,7 +322,7 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 	default:
 		fmt.Fprintln(a.Out, "\n"+st.Heading.Render("Approve this agent in the Jentic console:"))
 		fmt.Fprintf(a.Out, "    %s\n", st.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
-		fmt.Fprintf(a.Out, "    %s\n\n", st.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
+		fmt.Fprintf(a.Out, "    %s\n\n", st.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires org:admin, or the agent's owner with agents:write)", creds.BaseURL, clientID)))
 		fmt.Fprintln(a.Out, st.Dim.Render(registerResumeHint))
 	}
 

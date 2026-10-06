@@ -498,6 +498,12 @@ export class AgentsService {
     /**
      * Approve Agent
      * Approve a pending agent.
+     *
+     * Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+     * (an unclaimed self-registration) can be approved only by an ``org:admin``,
+     * who becomes its owner. Any other caller gets a 404, whatever the agent's
+     * status, so the response does not reveal agents outside the caller's
+     * ownership.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -572,6 +578,10 @@ export class AgentsService {
     /**
      * Deny Agent
      * Deny a pending agent.
+     *
+     * Same authorization as approve: the agent's owner or an ``org:admin``, and
+     * only an ``org:admin`` for an agent with no owner. Any other caller gets a
+     * 404.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */

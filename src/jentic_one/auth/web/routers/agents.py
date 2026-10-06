@@ -123,7 +123,14 @@ async def approve_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
-    """Approve a pending agent."""
+    """Approve a pending agent.
+
+    Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+    (an unclaimed self-registration) can be approved only by an ``org:admin``,
+    who becomes its owner. Any other caller gets a 404, whatever the agent's
+    status, so the response does not reveal agents outside the caller's
+    ownership.
+    """
     view = await agent_svc.approve(agent_id, identity=identity)
     return _agent_response(view)
 
@@ -166,7 +173,12 @@ async def deny_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
-    """Deny a pending agent."""
+    """Deny a pending agent.
+
+    Same authorization as approve: the agent's owner or an ``org:admin``, and
+    only an ``org:admin`` for an agent with no owner. Any other caller gets a
+    404.
+    """
     view = await agent_svc.deny(agent_id, reason=body.reason, identity=identity)
     return _agent_response(view)
 

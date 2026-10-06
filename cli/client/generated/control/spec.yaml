@@ -8625,7 +8625,14 @@ paths:
       - Agents
   /agents/{agent_id}:approve:
     post:
-      description: Approve a pending agent.
+      description: |-
+        Approve a pending agent.
+
+        Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+        (an unclaimed self-registration) can be approved only by an ``org:admin``,
+        who becomes its owner. Any other caller gets a 404, whatever the agent's
+        status, so the response does not reveal agents outside the caller's
+        ownership.
       operationId: approveAgent
       parameters:
       - in: path
@@ -8778,7 +8785,12 @@ paths:
       - Agents
   /agents/{agent_id}:deny:
     post:
-      description: Deny a pending agent.
+      description: |-
+        Deny a pending agent.
+
+        Same authorization as approve: the agent's owner or an ``org:admin``, and
+        only an ``org:admin`` for an agent with no owner. Any other caller gets a
+        404.
       operationId: denyAgent
       parameters:
       - in: path
