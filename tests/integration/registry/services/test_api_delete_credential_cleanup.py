@@ -22,6 +22,7 @@ from sqlalchemy import delete, select
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.credentials import Credential
@@ -32,6 +33,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, StoredCredentialType
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.integration
 
@@ -237,6 +239,21 @@ async def test_delete_api_suspends_agent_bindings(
         )
         assert {e.target_id for e in entries} == {"cred_exact", "cred_inactive"}
         assert all(e.action == AuditAction.DISABLE for e in entries)
+        # The suspension events name the agent as their subject, so its owner
+        # sees them; the caller who deleted the API is the actor.
+        events = (
+            (
+                await session.execute(
+                    select(Event)
+                    .where(Event.type == EventType.CREDENTIAL_UNBOUND_FROM_AGENT)
+                    .where(Event.created_by == agent_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 2
+        assert all(e.actor_id == _IDENTITY.sub for e in events)
         api_delete = (
             await session.execute(
                 select(AuditEntry)

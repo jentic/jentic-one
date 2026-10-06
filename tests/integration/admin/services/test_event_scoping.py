@@ -15,8 +15,9 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.users import User
@@ -30,9 +31,26 @@ from jentic_one.admin.services.schemas.events import (
     EventView,
     Heartbeat,
 )
+from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.broker.core.exceptions import (
+    CredentialNeedsReconnectError,
+    CredentialUndecryptableError,
+)
+from jentic_one.broker.services.credentials.errors import RefreshInvalidGrantError
+from jentic_one.broker.services.credentials.orchestrator import (
+    CredentialService as BrokerCredentialService,
+)
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.services.credentials.service import (
+    CredentialService as ControlCredentialService,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ActorStatus, ActorType, InviteState
+from jentic_one.shared.models import ActorStatus, ActorType, InviteState, StoredCredentialType
+from jentic_one.shared.models.events import EventType
 
 pytestmark = pytest.mark.integration
 
@@ -321,3 +339,271 @@ async def test_stream_resumes_after_a_visible_event(
     finally:
         await gen.aclose()
     assert ids == {seed.agent_event_id, seed.subject_event_id}
+
+
+_CRED_VENDOR = "evtscope.example"
+_CRED_OK = "cred_evtscope_ok"
+_CRED_BAD = "cred_evtscope_bad"
+_CRED_OAUTH = "cred_evtscope_oauth"
+_ADMIN = Identity(
+    sub="usr_evtscope_admin", email="usr_evtscope_admin@test.local", permissions=["org:admin"]
+)
+
+
+@dataclass(frozen=True)
+class _CrossOwner:
+    """A credential owned by one user, used by an agent owned by another."""
+
+    credential_owner_id: str
+    agent_owner_id: str
+    agent_id: str
+
+    @property
+    def agent(self) -> Identity:
+        return Identity(
+            sub=self.agent_id,
+            actor_type=ActorType.AGENT,
+            permissions=["execute"],
+            parent_actor_id=self.agent_owner_id,
+        )
+
+
+@pytest.fixture()
+async def cross_owner(integration_context: Context) -> AsyncGenerator[_CrossOwner, None]:
+    """User A owns three credentials (a working API key, an API key whose
+    ciphertext does not decrypt, and an OAuth token); user B owns the agent."""
+    ctx = integration_context
+    cred_ids = [_CRED_OK, _CRED_BAD, _CRED_OAUTH]
+
+    async def _clean_control() -> None:
+        async with ctx.control_db.session() as session:
+            await session.execute(
+                delete(AgentPermissionRule).where(AgentPermissionRule.credential_id.in_(cred_ids))
+            )
+            await session.execute(delete(OAuthToken).where(OAuthToken.credential_id.in_(cred_ids)))
+            await session.execute(
+                delete(CustomerAPIKey).where(CustomerAPIKey.credential_id.in_(cred_ids))
+            )
+            await session.execute(delete(Credential).where(Credential.id.in_(cred_ids)))
+            await session.commit()
+
+    await _clean_control()
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Event))
+        users = []
+        for role in ("credowner", "agentowner"):
+            users.append(
+                await UserRepository.create(
+                    session,
+                    email=f"evtscope-{role}@test.local",
+                    first_name="Event",
+                    last_name=role,
+                    invite_state=InviteState.REDEEMED,
+                    created_by="usr_test",
+                )
+            )
+        credential_owner, agent_owner = users
+        agent = await AgentRepository.create(
+            session,
+            name="evtscope-cross-agent",
+            owner_id=agent_owner.id,
+            registered_by=agent_owner.id,
+            created_by=agent_owner.id,
+            status=ActorStatus.ACTIVE,
+        )
+        await session.commit()
+        seeded = _CrossOwner(
+            credential_owner_id=credential_owner.id,
+            agent_owner_id=agent_owner.id,
+            agent_id=agent.id,
+        )
+
+    async with ctx.control_db.session() as session:
+        for cred_id, stored_type in (
+            (_CRED_OK, StoredCredentialType.API_KEY),
+            (_CRED_BAD, StoredCredentialType.API_KEY),
+            (_CRED_OAUTH, StoredCredentialType.OAUTH2_AUTHORIZATION_CODE),
+        ):
+            session.add(
+                Credential(
+                    id=cred_id,
+                    type=stored_type,
+                    name=f"cred-{cred_id}",
+                    api_vendor=_CRED_VENDOR,
+                    provider="static",
+                    created_by=seeded.credential_owner_id,
+                )
+            )
+        await session.flush()
+        session.add(
+            CustomerAPIKey(
+                id=f"key-{_CRED_OK}",
+                credential_id=_CRED_OK,
+                encrypted_key=ctx.encryption.encrypt("sk-evtscope"),
+                location="header",
+                field_name="X-Api-Key",
+            )
+        )
+        session.add(
+            CustomerAPIKey(
+                id=f"key-{_CRED_BAD}",
+                credential_id=_CRED_BAD,
+                encrypted_key="not-a-ciphertext",
+                location="header",
+                field_name="X-Api-Key",
+            )
+        )
+        session.add(
+            OAuthToken(
+                id=f"oat-{_CRED_OAUTH}",
+                credential_id=_CRED_OAUTH,
+                encrypted_access_token=ctx.encryption.encrypt("access"),
+                encrypted_refresh_token=ctx.encryption.encrypt("refresh"),
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+    yield seeded
+
+    await _clean_control()
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Event))
+        await session.execute(
+            delete(AgentCredentialBinding).where(AgentCredentialBinding.agent_id == seeded.agent_id)
+        )
+        await session.execute(delete(Agent).where(Agent.id == seeded.agent_id))
+        await session.execute(
+            delete(User).where(User.id.in_([seeded.credential_owner_id, seeded.agent_owner_id]))
+        )
+        await session.commit()
+
+
+async def _events_by_type(ctx: Context, *types: str) -> dict[str, list[Event]]:
+    async with ctx.admin_db.session() as session:
+        rows = (await session.execute(select(Event).where(Event.type.in_(types)))).scalars()
+        grouped: dict[str, list[Event]] = {t: [] for t in types}
+        for row in rows:
+            grouped[row.type].append(row)
+    return grouped
+
+
+async def test_credential_use_events_reach_the_credential_owner(
+    integration_context: Context, cross_owner: _CrossOwner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Use and health events for A's credential, raised by B's agent, name A in
+    ``created_by`` and the agent in ``actor_id``: A and B see them, C does not."""
+    ctx = integration_context
+    broker = BrokerCredentialService(ctx)
+    agent = cross_owner.agent
+
+    await broker.inject(
+        api_vendor=_CRED_VENDOR,
+        api_name="",
+        api_version="",
+        identity=agent,
+        credential_id=_CRED_OK,
+    )
+    with pytest.raises(CredentialUndecryptableError):
+        await broker.inject(
+            api_vendor=_CRED_VENDOR,
+            api_name="",
+            api_version="",
+            identity=agent,
+            credential_id=_CRED_BAD,
+        )
+
+    # The token endpoint is the out-of-process boundary: it rejects the refresh.
+    class _RejectingRefresher:
+        def __init__(self, _ctx: Context) -> None:
+            pass
+
+        async def ensure_fresh(self, **_kwargs: object) -> str:
+            raise RefreshInvalidGrantError(_CRED_OAUTH)
+
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.TokenRefresher", _RejectingRefresher
+    )
+    with pytest.raises(CredentialNeedsReconnectError):
+        await broker.inject(
+            api_vendor=_CRED_VENDOR,
+            api_name="",
+            api_version="",
+            identity=agent,
+            credential_id=_CRED_OAUTH,
+        )
+
+    types = (
+        EventType.CREDENTIAL_ACCESSED,
+        EventType.CREDENTIAL_UNDECRYPTABLE,
+        EventType.CREDENTIAL_REFRESH_FAILED,
+    )
+    grouped = await _events_by_type(ctx, *types)
+    event_ids: set[str] = set()
+    for event_type in types:
+        [event] = grouped[event_type]
+        assert event.actor_id == cross_owner.agent_id
+        assert event.created_by == cross_owner.credential_owner_id
+        event_ids.add(event.id)
+
+    credential_owner = _user(cross_owner.credential_owner_id, "events:read")
+    agent_owner = _user(cross_owner.agent_owner_id, "events:read")
+    outsider = _user(_OTHER_SUB, "events:read")
+    assert await _listed_ids(ctx, credential_owner) == event_ids
+    assert await _listed_ids(ctx, agent_owner) == event_ids
+    assert await _listed_ids(ctx, outsider) == set()
+    assert await _streamed_ids(ctx, credential_owner) == event_ids
+    for event_id in event_ids:
+        assert (await EventService(ctx).get_by_id(event_id, identity=credential_owner)).id == (
+            event_id
+        )
+        with pytest.raises(EventNotFoundError):
+            await EventService(ctx).get_by_id(event_id, identity=outsider)
+
+
+async def test_binding_events_reach_the_agent_owner(
+    integration_context: Context, cross_owner: _CrossOwner
+) -> None:
+    """Binding lifecycle and per-binding rule events name the agent in
+    ``created_by`` and the acting caller in ``actor_id``, so the agent's owner sees
+    changes made by someone else."""
+    ctx = integration_context
+    agents = AgentService(ctx)
+    await agents.bind_credential(cross_owner.agent_id, credential_id=_CRED_OK, identity=_ADMIN)
+    credential_owner = _user(cross_owner.credential_owner_id, "credentials:write")
+    await ControlCredentialService(ctx).replace_agent_permissions(
+        _CRED_OK,
+        cross_owner.agent_id,
+        [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+        identity=credential_owner,
+    )
+    await agents.unbind_credential(
+        cross_owner.agent_id, credential_id=_CRED_OK, purge=False, identity=_ADMIN
+    )
+    await agents.resume_credential(cross_owner.agent_id, credential_id=_CRED_OK, identity=_ADMIN)
+
+    grouped = await _events_by_type(
+        ctx,
+        EventType.CREDENTIAL_BOUND_TO_AGENT,
+        EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
+        EventType.CREDENTIAL_PERMISSION_RULE_SET,
+    )
+    bound = grouped[EventType.CREDENTIAL_BOUND_TO_AGENT]
+    unbound = grouped[EventType.CREDENTIAL_UNBOUND_FROM_AGENT]
+    [rules] = grouped[EventType.CREDENTIAL_PERMISSION_RULE_SET]
+    assert len(bound) == 2
+    assert len(unbound) == 1
+    for event in (*bound, *unbound):
+        assert event.actor_id == _ADMIN.sub
+        assert event.created_by == cross_owner.agent_id
+    assert rules.actor_id == cross_owner.credential_owner_id
+    assert rules.created_by == cross_owner.agent_id
+
+    every_id = {e.id for e in (*bound, *unbound, rules)}
+    assert await _listed_ids(ctx, _user(cross_owner.agent_owner_id, "events:read")) == every_id
+    assert await _listed_ids(ctx, cross_owner.agent) == every_id
+    # The credential owner sees only the change they made.
+    assert await _listed_ids(ctx, _user(cross_owner.credential_owner_id, "events:read")) == {
+        rules.id
+    }
+    assert await _listed_ids(ctx, _user(_OTHER_SUB, "events:read")) == set()

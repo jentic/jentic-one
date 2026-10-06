@@ -565,7 +565,8 @@ class CredentialService:
                     summary=(
                         f"Permission rules set on agent {agent_id} for credential {credential_id}"
                     ),
-                    created_by=identity.sub,
+                    # Subject is the agent, so its owner sees the rules change.
+                    created_by=agent_id,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                 )
