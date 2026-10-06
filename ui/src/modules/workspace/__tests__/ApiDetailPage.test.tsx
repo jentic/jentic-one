@@ -640,9 +640,9 @@ describe('ApiDetailPage', () => {
 
 				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
 				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
-				expect(within(dialog).getByTestId('bind-agent-create-note')).toHaveTextContent(
-					'BigCo (no auth)',
-				);
+				expect(
+					await within(dialog).findByTestId('bind-agent-create-note'),
+				).toHaveTextContent('BigCo (no auth)');
 				// Opening the dialog creates nothing.
 				expect(bodies).toHaveLength(0);
 
