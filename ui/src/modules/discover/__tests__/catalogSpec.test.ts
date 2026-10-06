@@ -10,6 +10,20 @@ describe('parseCatalogSpecUrl', () => {
 		).toBe('2024-01-01');
 	});
 
+	it('reads the version off a fully qualified ref (`refs/heads/main`), as the live manifest serves', () => {
+		const live =
+			'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi';
+		expect(
+			parseCatalogSpecUrl(`${live}/stripe.com/main/2024-01-01/openapi.json`, 'stripe.com'),
+		).toBe('2024-01-01');
+		expect(
+			parseCatalogSpecUrl(
+				`${live}/nytimes.com/books/3.0.0/openapi.json`,
+				'nytimes.com/books',
+			),
+		).toBe('3.0.0');
+	});
+
 	it('reads the version off an umbrella sub-API (`{domain}/{sub}/{version}`)', () => {
 		expect(
 			parseCatalogSpecUrl(`${RAW}/nytimes.com/books/3.0.0/openapi.json`, 'nytimes.com/books'),
@@ -43,6 +57,11 @@ describe('parseCatalogSpecUrl', () => {
 			'a sub-API URL for the bare domain',
 			`${RAW}/nytimes.com/books/3.0.0/openapi.json`,
 			'nytimes.com',
+		],
+		[
+			'a ref with other path segments',
+			'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/tags/v1/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
+			'stripe.com',
 		],
 		['a query string', `${RAW}/stripe.com/main/2024-01-01/openapi.json?x=1`, 'stripe.com'],
 	])('returns null for %s — never guesses', (_label, url, apiId) => {

@@ -7,9 +7,12 @@
  * implicitly: every entry the backend builds (`manifest_builder.parse_apis_json`)
  * points `spec_url` at the jentic-public-apis layout
  *
- *   https://raw.githubusercontent.com/jentic/jentic-public-apis/{branch}/apis/openapi/{domain}/{sub}/{version}/openapi.json
+ *   https://raw.githubusercontent.com/jentic/jentic-public-apis/{ref}/apis/openapi/{domain}/{sub}/{version}/openapi.json
  *
- * where `{sub}` is the umbrella sub-API (`nytimes.com/books/…`) or a
+ * where `{ref}` is a branch, bare (`main`) or fully qualified
+ * (`refs/heads/main`, which the live manifest serves),
+ *
+ * and `{sub}` is the umbrella sub-API (`nytimes.com/books/…`) or a
  * version/branch marker when there is none (`stripe.com/main/2024-01-01/…`).
  * We read `{version}` ONLY when the URL matches that layout exactly AND its
  * `{domain}`/`{sub}` agree with the entry's own `api_id` — anything else (a
@@ -18,7 +21,7 @@
  */
 
 const PUBLIC_APIS_SPEC_URL_RE =
-	/^https:\/\/raw\.githubusercontent\.com\/jentic\/jentic-public-apis\/[^/]+\/apis\/openapi\/([^/]+)\/([^/]+)\/([^/]+)\/openapi\.(json|ya?ml)$/;
+	/^https:\/\/raw\.githubusercontent\.com\/jentic\/jentic-public-apis\/(?:refs\/heads\/)?[^/]+\/apis\/openapi\/([^/]+)\/([^/]+)\/([^/]+)\/openapi\.(json|ya?ml)$/;
 
 /**
  * A `{sub}` that's a version/branch marker (so the api_id is the bare domain).

@@ -92,6 +92,13 @@ describe('catalogEntryToEntity', () => {
 					'https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
 			}).version,
 		).toBe('2024-01-01');
+		expect(
+			catalogEntryToEntity({
+				...registeredEntry,
+				spec_url:
+					'https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/stripe.com/main/2024-01-01/openapi.json',
+			}).version,
+		).toBe('2024-01-01');
 		expect(catalogEntryToEntity(registeredEntry).version).toBeUndefined();
 	});
 
