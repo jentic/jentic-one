@@ -113,6 +113,8 @@ const agentsKeys = {
 	bindingPermissionsRoot: () => [...agentsKeys.all, 'binding-permissions'] as const,
 	/** One shared permission rule set a binding points at. */
 	ruleSet: (ruleSetId: string) => [...agentsKeys.all, 'rule-set', ruleSetId] as const,
+	/** Prefix over every rule-set read — a detach changes a set's binding count. */
+	ruleSetRoot: () => [...agentsKeys.all, 'rule-set'] as const,
 };
 
 /** Test-only handle on the agents key factory so the cross-module-key guard
@@ -637,6 +639,7 @@ export function useDetachAgentBindingRuleSet(agentId: string, credentialId: stri
 		mutationFn: () => detachAgentBindingRuleSet(agentId, credentialId),
 		onSuccess: async () => {
 			invalidate(credentialId);
+			qc.invalidateQueries({ queryKey: agentsKeys.ruleSetRoot() });
 			// Await the binding row: until it reads `ruleSetId: null` the host keeps
 			// rendering the attached set.
 			await qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });

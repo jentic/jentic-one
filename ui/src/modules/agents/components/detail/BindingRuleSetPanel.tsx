@@ -31,6 +31,9 @@ export interface BindingRuleSetPanelProps {
 	/** The binding's dormant inline rules — what a detach makes effective.
 	 * Undefined while unknown. */
 	inlineRules: BindingPermissionRule[] | undefined;
+	/** Whether the viewer may detach the set — the backend's write gate is the
+	 * credential's owner or an org admin. Others get read-only copy instead. */
+	canDetach: boolean;
 }
 
 /** One rule in the shared `ruleSummary` voice, without the trailing period. */
@@ -51,6 +54,7 @@ export function BindingRuleSetPanel({
 	isError,
 	onRetry,
 	inlineRules,
+	canDetach,
 }: BindingRuleSetPanelProps) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const detach = useDetachAgentBindingRuleSet(agentId, credentialId);
@@ -132,21 +136,31 @@ export function BindingRuleSetPanel({
 							? 'This binding has no inline rules of its own.'
 							: `${ruleCount(dormant.length)} of this binding's own ${dormant.length === 1 ? 'is' : 'are'} dormant while the set is attached.`}
 				</p>
-				<Button size="sm" variant="secondary" onClick={() => setConfirmOpen(true)}>
-					<Unlink className="h-4 w-4" /> Detach rule set to edit inline rules
-				</Button>
+				{canDetach ? (
+					<Button size="sm" variant="secondary" onClick={() => setConfirmOpen(true)}>
+						<Unlink className="h-4 w-4" /> Detach rule set to edit inline rules
+					</Button>
+				) : (
+					<p
+						className="text-muted-foreground text-xs"
+						data-testid="rule-set-detach-locked"
+					>
+						Only the credential&apos;s owner or an org admin can detach this set.
+					</p>
+				)}
 			</div>
 
 			{/* A stateless confirm, so conditional mounting is the sanctioned lifecycle. */}
-			{confirmOpen && (
+			{canDetach && confirmOpen && (
 				<ConfirmDialog
 					open
 					title="Detach rule set"
 					body={
 						<div className="space-y-2">
 							<p>
-								Detach <strong>{setName}</strong> from {credentialLabel}? The broker
-								then applies this binding&apos;s own inline rules
+								Detach <strong>{setName}</strong> from {credentialLabel}? Within a
+								short time — the broker caches rules briefly — calls are decided by
+								this binding&apos;s own inline rules
 								{dormant === undefined
 									? '.'
 									: dormant.length === 0

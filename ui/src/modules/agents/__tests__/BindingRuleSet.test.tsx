@@ -17,6 +17,7 @@ import {
 	resetAgentsStore,
 	seedCredentialBindings,
 	seedPermissionRuleSets,
+	setBindingWriteCaller,
 } from '@/modules/agents/mocks/handlers';
 import {
 	makeMockCredential,
@@ -24,6 +25,7 @@ import {
 	resetCredentialsStore,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType, type ApiResponse } from '@/shared/credentials/api';
+import { AuthProvider } from '@/shared/auth';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 /**
@@ -53,7 +55,10 @@ function apiRow(vendor: string, displayName: string): ApiResponse {
 
 const RULE_SET_ID = 'prs_support_read';
 
-function seedStores({ inlineRules = false }: { inlineRules?: boolean } = {}) {
+function seedStores({
+	inlineRules = false,
+	stripeOwner,
+}: { inlineRules?: boolean; stripeOwner?: string } = {}) {
 	resetCredentialsStore([
 		makeMockCredential({
 			credential_id: 'cred_slack_1',
@@ -72,6 +77,7 @@ function seedStores({ inlineRules = false }: { inlineRules?: boolean } = {}) {
 			name: 'Stripe key',
 			type: CredentialType.BEARER_TOKEN,
 			api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+			...(stripeOwner ? { created_by: stripeOwner } : {}),
 		}),
 	]);
 	resetApisStore([
@@ -225,6 +231,50 @@ describe('a credential binding governed by a shared rule set', () => {
 		expect(await tileSummary('Stripe')).toHaveTextContent('No rules — all calls blocked');
 	});
 
+	it('the confirm lists the non-empty inline rules a detach makes live', async () => {
+		const user = userEvent.setup();
+		seedStores({ inlineRules: true });
+		renderPage();
+		await screen.findByText('Rule set Support read-only · 1 access rule');
+
+		const inDialog = within(await openSidebar('Stripe'));
+		await inDialog.findByTestId('binding-rule-set-panel');
+		await user.click(
+			inDialog.getByRole('button', { name: /Detach rule set to edit inline rules/ }),
+		);
+
+		const confirm = await screen.findByRole('dialog', { name: 'Detach rule set' });
+		expect(confirm).toHaveTextContent('the broker caches rules briefly');
+		expect(confirm).toHaveTextContent('#1 Allows POST, scoped to exactly path /v1/refunds');
+		expect(confirm).not.toHaveTextContent('every call is blocked');
+		await user.click(within(confirm).getByRole('button', { name: 'Detach rule set' }));
+
+		// The dormant rule is now the binding's live policy.
+		expect(await tileSummary('Stripe')).toHaveTextContent(/^1 access rule$/);
+	});
+
+	it('a refused detach surfaces the error and keeps the set attached', async () => {
+		const user = userEvent.setup();
+		// The backend's owner-or-admin gate refuses this caller with a 404.
+		setBindingWriteCaller({ id: 'usr_not_owner', admin: false });
+		seedStores();
+		renderPage();
+		await screen.findByText('Rule set Support read-only · 1 access rule');
+
+		const inDialog = within(await openSidebar('Stripe'));
+		await inDialog.findByTestId('binding-rule-set-panel');
+		await user.click(
+			inDialog.getByRole('button', { name: /Detach rule set to edit inline rules/ }),
+		);
+		const confirm = await screen.findByRole('dialog', { name: 'Detach rule set' });
+		await user.click(within(confirm).getByRole('button', { name: 'Detach rule set' }));
+
+		expect(await screen.findByText('Failed to detach the rule set.')).toBeInTheDocument();
+		expect(screen.getByText('Credential cred_stripe_1 not found.')).toBeInTheDocument();
+		expect(inDialog.getByTestId('binding-rule-set-panel')).toBeInTheDocument();
+		expect(await tileSummary('Stripe')).toHaveTextContent('Rule set Support read-only');
+	});
+
 	it('a failed rule-set read keeps the inline editor out of reach', async () => {
 		worker.use(
 			createErrorHandler('get', '/permission-rule-sets/:rsid', {
@@ -279,5 +329,50 @@ describe('a credential binding governed by a shared rule set', () => {
 		await inDialog.findByTestId('binding-rule-set-panel');
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		await checkA11y(container);
+	});
+});
+
+describe('a governed binding on a credential shared with the viewer', () => {
+	const VIEWER = 'usr_viewer_1';
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		seedStores({ stripeOwner: 'usr_someone_else' });
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: VIEWER,
+					email: 'viewer@local',
+					first_name: 'View',
+					last_name: 'Er',
+					active: true,
+					permissions: [],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	});
+
+	it('shows the set read-only with no Detach button', async () => {
+		renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<Toaster />
+			</AuthProvider>,
+			{ route: '/?agent=agnt_active_1' },
+		);
+		await screen.findByText('Rule set Support read-only · 1 access rule');
+
+		const inDialog = within(await openSidebar('Stripe'));
+		const panel = await inDialog.findByTestId('binding-rule-set-panel');
+		expect(within(panel).getByTestId('rule-set-name')).toHaveTextContent('Support read-only');
+		expect(within(panel).getByTestId('rule-set-detach-locked')).toHaveTextContent(
+			"Only the credential's owner or an org admin can detach this set.",
+		);
+		expect(inDialog.queryByRole('button', { name: /Detach rule set/ })).not.toBeInTheDocument();
 	});
 });

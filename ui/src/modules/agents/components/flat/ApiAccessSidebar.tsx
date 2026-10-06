@@ -484,6 +484,7 @@ export function ApiAccessSidebar({
 										isError={effective.isError}
 										onRetry={effective.refetch}
 										inlineRules={permissions.data}
+										canDetach={!credentialReadOnly}
 									/>
 								) : permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
