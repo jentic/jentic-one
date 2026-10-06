@@ -12,7 +12,6 @@ from typing import Any
 
 import structlog
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.db import DatabaseSession
@@ -38,42 +37,6 @@ RETIRED_SERVICE_ACCOUNT_KEY_DETAIL = (
 def is_retired_service_account_key(token: str) -> bool:
     """Whether ``token`` is a retired ``sak_`` service-account key."""
     return token.startswith(RETIRED_SERVICE_ACCOUNT_KEY_PREFIX)
-
-
-#: Postgres SQLSTATE for ``undefined_table`` (``relation ... does not exist``).
-_PG_UNDEFINED_TABLE = "42P01"
-
-
-def _is_missing_table_error(exc: OperationalError | ProgrammingError) -> bool:
-    """Whether *exc* is specifically a "table does not exist" error.
-
-    Narrow by design: only a genuinely-missing grant table may be swallowed
-    (so a mid-migration request falls through to the legacy table name).
-    Everything else an ``OperationalError``/``ProgrammingError`` can mean —
-    a lock (``database is locked``), a connection drop/timeout, a syntax bug —
-    must propagate, or key auth would silently blank an agent's permissions to
-    ``[]`` on a transient fault.
-
-    - Postgres: the driver exposes ``exc.orig.pgcode``; ``42P01`` is
-      ``undefined_table``.
-    - SQLite: ``aiosqlite``/``pysqlite`` has no SQLSTATE, so match the stable
-      ``no such table`` text on the driver message.
-    """
-    orig = getattr(exc, "orig", None)
-
-    # Postgres (asyncpg/psycopg): authoritative SQLSTATE on the wrapped error.
-    pgcode = getattr(orig, "pgcode", None)
-    if pgcode is not None:
-        return bool(pgcode == _PG_UNDEFINED_TABLE)
-    sqlstate = getattr(orig, "sqlstate", None)
-    if sqlstate is not None:
-        return bool(sqlstate == _PG_UNDEFINED_TABLE)
-
-    # SQLite: no SQLSTATE — fall back to the driver's stable message text.
-    # Also covers a Postgres driver that didn't surface pgcode on ``orig``
-    # (older wrappers): ``relation "..." does not exist`` is its 42P01 text.
-    message = (str(orig) if orig is not None else str(exc)).lower()
-    return "no such table" in message or "does not exist" in message
 
 
 # Theme-5 Phase 4 (key retirement): a retired toolkit key's plaintext keeps
@@ -234,34 +197,12 @@ class ApiKeyResolver:
         )
 
     async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
-        # The grant table is ``actor_permission_grants`` at head; during a rolling
-        # upgrade a request can land after the service-account drop but before the
-        # tail rename (``e3f4a5b6c7d8``) completes, when it is still
-        # ``actor_scope_grants``. Resolve against whichever exists so key auth
-        # never blanks out mid-migration.
-        for table, column in (
-            ("actor_permission_grants", "permission"),
-            ("actor_scope_grants", "scope"),
-        ):
-            try:
-                async with self._admin_db.session() as session:
-                    result = await session.execute(
-                        text(
-                            f"SELECT {column} AS permission FROM {table}"
-                            " WHERE actor_id = :actor_id AND actor_type = :actor_type"
-                        ),
-                        {"actor_id": actor_id, "actor_type": actor_type.value},
-                    )
-                    return [row.permission for row in result.all()]
-            except (OperationalError, ProgrammingError) as exc:
-                # Only a genuinely-missing grant table may be swallowed (fall
-                # through to the legacy name during a rolling upgrade). SQLite
-                # raises OperationalError and Postgres ProgrammingError
-                # (UndefinedTable, SQLSTATE 42P01) for that. Any OTHER such
-                # error — a lock, a dropped/timed-out connection, a syntax bug —
-                # must propagate: swallowing it would strip the agent's
-                # permissions to [] on a transient fault (a silent authz drop).
-                if _is_missing_table_error(exc):
-                    continue
-                raise
-        return []
+        stmt = text(
+            "SELECT permission FROM actor_permission_grants"
+            " WHERE actor_id = :actor_id AND actor_type = :actor_type"
+        )
+        async with self._admin_db.session() as session:
+            result = await session.execute(
+                stmt, {"actor_id": actor_id, "actor_type": actor_type.value}
+            )
+            return [row.permission for row in result.all()]

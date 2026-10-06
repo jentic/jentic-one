@@ -65,8 +65,8 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     RegistrationAccessDeniedError: (401, "registration_access_denied"),
     OperationNotSupportedError: (403, "operation_not_supported"),
     OwnerTransferForbiddenError: (403, "owner_transfer_forbidden"),
-    PermissionNotGrantableError: (403, "permission_not_grantable"),
-    UnknownPermissionError: (422, "unknown_permission"),
+    PermissionNotGrantableError: (403, "agent_permission_not_grantable"),
+    UnknownPermissionError: (422, "unknown_agent_permission"),
 }
 
 

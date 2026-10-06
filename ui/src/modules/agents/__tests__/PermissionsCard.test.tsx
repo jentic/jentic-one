@@ -169,7 +169,7 @@ describe('PermissionsCard', () => {
 	);
 
 	it('surfaces a clear message if the backend rejects a grant with 403', async () => {
-		// The actor-permission PUT 403s (`permission_not_grantable`) a permission above
+		// The actor-permission PUT 403s (`agent_permission_not_grantable`) a permission above
 		// the caller's ceiling — normally pre-empted by the disabled rows, but it
 		// can still happen (e.g. a perms change mid-session). Inject one to cover it.
 		const user = userEvent.setup();

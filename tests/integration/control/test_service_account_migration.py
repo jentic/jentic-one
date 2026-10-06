@@ -225,6 +225,27 @@ async def _seed_sa(
     return sa_id
 
 
+class _PreDropApiKeyResolver(ApiKeyResolver):
+    """The head resolver, reading grants from the pre-drop schema this module runs on.
+
+    The retirement service runs before ``e2f3a4b5c6d7``, where grants still
+    live in ``actor_scope_grants.scope``; the head resolver reads the renamed
+    ``actor_permission_grants.permission``. Only the grant read is swapped, so
+    the key-resolution logic under test is the shipped one.
+    """
+
+    async def _load_permissions(self, actor_id: str, actor_type: ActorType) -> list[str]:
+        async with self._admin_db.session() as session:
+            result = await session.execute(
+                text(
+                    "SELECT scope FROM actor_scope_grants"
+                    " WHERE actor_id = :actor_id AND actor_type = :actor_type"
+                ),
+                {"actor_id": actor_id, "actor_type": actor_type.value},
+            )
+            return [row.scope for row in result.all()]
+
+
 async def _rows(admin_db: DatabaseSession, query: str, params: dict[str, object]) -> list[Any]:
     async with admin_db.session() as session:
         return list((await session.execute(text(query), params)).all())
@@ -501,7 +522,7 @@ async def test_unexpected_row_error_is_isolated_and_the_loop_continues(
 async def test_zero_grant_sa_yields_zero_grant_successor_and_never_pending(
     integration_context: Context, admin_db: DatabaseSession, seed_owner: None
 ) -> None:
-    """F1: raw SQL bypasses DEFAULT_AGENT_SCOPES — empty stays empty."""
+    """F1: raw SQL bypasses DEFAULT_AGENT_PERMISSIONS — empty stays empty."""
     sa_id = await _seed_sa(admin_db, suffix="zero", api_key_plaintext="sak_t8m_zero")
 
     outcomes = await ServiceAccountMigrationService(integration_context).run()
@@ -558,7 +579,7 @@ async def test_converted_jntc_live_key_authenticates_as_successor_with_identical
         scopes=("capabilities:execute", "toolkit:read"),
         api_key_plaintext=plaintext,
     )
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     # Theme-8 Phase 4: no SA fallback — an unmigrated key does not resolve.
     assert await resolver.resolve(plaintext) is None
 
@@ -594,7 +615,7 @@ async def test_sak_key_never_authenticates_migrated_or_not(
         )
         assert [r.api_key_hash for r in held] == [_digest(plaintext)]
 
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
@@ -619,7 +640,7 @@ async def test_disabled_sa_successor_created_disabled_and_key_dead_until_agent_e
     agents = await _rows(admin_db, "SELECT status FROM agents WHERE id = :id", {"id": agent_id})
     assert [r.status for r in agents] == ["disabled"]
 
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     assert await resolver.resolve(plaintext) is None  # both arms refuse non-active
 
     async with admin_db.session() as session:
@@ -658,7 +679,7 @@ async def test_disabling_the_successor_fails_closed_never_falls_back_to_active_s
     )
     assert [r.status for r in sa_status] == [("active")]
 
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
@@ -691,7 +712,7 @@ async def test_revoking_the_successor_key_fails_closed(
         )
         await session.commit()
 
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     with structlog.testing.capture_logs() as logs:
         identity = await resolver.resolve(plaintext)
 
@@ -876,7 +897,7 @@ async def test_sweep_clears_sa_satellites_and_archives(
     assert len(archives) == 1
 
     # Post-sweep: the agent arm still serves (T-6c).
-    resolver = ApiKeyResolver(admin_db)
+    resolver = _PreDropApiKeyResolver(admin_db)
     identity = await resolver.resolve(plaintext)
     assert identity is not None and identity.sub == agent_id
 

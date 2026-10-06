@@ -199,6 +199,7 @@
         "type": "string"
       },
       "AgentCreateRequest": {
+        "additionalProperties": false,
         "description": "Request body for creating an agent manually.",
         "properties": {
           "description": {
@@ -323,6 +324,7 @@
         "type": "object"
       },
       "AgentPermissionsRequest": {
+        "additionalProperties": false,
         "description": "Request body for replacing an agent's permissions.",
         "properties": {
           "permissions": {

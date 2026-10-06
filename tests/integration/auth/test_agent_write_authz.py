@@ -162,14 +162,14 @@ async def test_create_rejects_permission_above_caller_ceiling(
     async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.post("/agents", json={"name": "escalate", "permissions": [permission]})
     assert resp.status_code == 403
-    assert resp.json()["type"] == "permission_not_grantable"
+    assert resp.json()["type"] == "agent_permission_not_grantable"
 
 
 async def test_create_rejects_unknown_permission(integration_context: Context, users: None) -> None:
     async with _client(integration_context, _writer(OWNER)) as client:
         resp = await client.post("/agents", json={"name": "bogus", "permissions": ["made:up"]})
     assert resp.status_code == 422
-    assert resp.json()["type"] == "unknown_permission"
+    assert resp.json()["type"] == "unknown_agent_permission"
 
 
 async def test_create_without_permissions_grants_defaults_and_audits_them(
@@ -224,7 +224,7 @@ async def test_replace_permissions_rejects_permission_above_caller_ceiling(
             f"/agents/{agent_id}/permissions", json={"permissions": [permission]}
         )
     assert resp.status_code == 403
-    assert resp.json()["type"] == "permission_not_grantable"
+    assert resp.json()["type"] == "agent_permission_not_grantable"
     assert await _permissions(integration_context, agent_id) == set(DEFAULT_AGENT_PERMISSIONS)
 
 
@@ -237,7 +237,7 @@ async def test_replace_permissions_rejects_unknown_permission(
             f"/agents/{agent_id}/permissions", json={"permissions": ["made:up"]}
         )
     assert resp.status_code == 422
-    assert resp.json()["type"] == "unknown_permission"
+    assert resp.json()["type"] == "unknown_agent_permission"
 
 
 async def test_owner_can_narrow_permissions(integration_context: Context, users: None) -> None:
@@ -524,7 +524,7 @@ async def test_non_admin_owner_cannot_activate_requested_permission_above_ceilin
     async with _client(integration_context, _writer(OTHER)) as client:
         resp = await client.post(f"/agents/{agent_id}:approve")
     assert resp.status_code == 403
-    assert resp.json()["type"] == "permission_not_grantable"
+    assert resp.json()["type"] == "agent_permission_not_grantable"
     assert (await _agent(integration_context, agent_id)).status == ActorStatus.PENDING
 
     async with _client(integration_context, _admin()) as client:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -89,6 +89,11 @@ class AgentPatchRequest(BaseModel):
 class AgentCreateRequest(BaseModel):
     """Request body for creating an agent manually."""
 
+    # Unknown keys are a 422: a body that spells the grant list ``scopes`` would
+    # otherwise be ignored, leave ``permissions`` unset, and grant the full
+    # default baseline.
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1024)
     permissions: list[PermissionStr] | None = Field(default=None, max_length=100)
@@ -96,6 +101,8 @@ class AgentCreateRequest(BaseModel):
 
 class AgentPermissionsRequest(BaseModel):
     """Request body for replacing an agent's permissions."""
+
+    model_config = ConfigDict(extra="forbid")
 
     permissions: list[PermissionStr] = Field(max_length=100)
 

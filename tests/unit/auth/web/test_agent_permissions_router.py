@@ -94,3 +94,11 @@ def test_replace_permissions_empty(client: TestClient, mock_agent_svc: MagicMock
 def test_replace_permissions_requires_write(readonly_client: TestClient) -> None:
     resp = readonly_client.put("/agents/agnt_test1/permissions", json={"permissions": ["x"]})
     assert resp.status_code == 403
+
+
+def test_replace_permissions_rejects_unknown_field(client: TestClient) -> None:
+    resp = client.put(
+        "/agents/agnt_test1/permissions",
+        json={"permissions": ["x"], "scopes": ["x"]},
+    )
+    assert resp.status_code == 422
