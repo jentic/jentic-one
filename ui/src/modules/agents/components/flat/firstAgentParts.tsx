@@ -100,15 +100,14 @@ function CardHeader({
 // Listening: the register command
 // ---------------------------------------------------------------------------
 
-/** How each word of the displayed command reads: one accent (the values the
- * operator chose), the rest in the foreground scale. */
+/** How each word of the displayed command is coloured. */
 const TONE_CLASS: Record<CommandTone, string | undefined> = {
-	program: 'text-foreground font-semibold',
+	program: 'text-accent-yellow',
 	plain: undefined,
-	flag: 'text-foreground-faint',
-	url: 'text-foreground-sub',
-	value: 'text-primary',
-	placeholder: 'text-foreground-faint italic',
+	flag: 'text-muted-foreground',
+	url: 'text-accent-blue',
+	value: 'text-success',
+	placeholder: 'text-muted-foreground',
 };
 
 /** The command's words, a flag held together with its value, so a wrapped
@@ -200,33 +199,40 @@ export function RegisterCommand({
 				</div>
 			</div>
 
-			{/* The app's code-block chrome (as `CodeSnippet`): one tonal well,
-			    an eyebrow naming where it runs, the copy in its corner. */}
-			<p className="text-muted-foreground mb-1 text-[10px] tracking-wider uppercase">
-				Run where your agent runs
-			</p>
-			<div className="bg-field relative rounded-lg">
-				<div className="absolute top-2 right-2">
+			<div className="border-border bg-background overflow-hidden rounded-[10px] border">
+				<div className="border-border/60 bg-card/70 flex h-[34px] items-center gap-2 border-b pr-2 pl-3">
+					<span aria-hidden="true" className="flex gap-1.5">
+						{[0, 1, 2].map((i) => (
+							<span key={i} className="bg-border h-[9px] w-[9px] rounded-full" />
+						))}
+					</span>
+					<span className="text-muted-foreground flex-1 text-center font-mono text-[11px]">
+						where your agent runs
+					</span>
 					<CopyButton
 						value={commandText(tokens)}
 						label="Copy"
 						ariaLabel="Copy the register command"
 						toastMessage="Command copied"
 						variant="ghost"
-						className="text-muted-foreground hover:text-foreground h-7 gap-1.5 px-2 text-xs font-semibold [&_svg]:h-3.5 [&_svg]:w-3.5"
+						className="text-muted-foreground hover:text-foreground h-6 gap-1.5 px-2 text-xs font-semibold [&_svg]:h-3.5 [&_svg]:w-3.5"
 					/>
 				</div>
+				{/* A hanging indent: when the command wraps, it breaks only between
+				    a flag and the next (see `commandWordGroups`), and each
+				    continuation line sits under `jentic`, clear of the `$`. */}
 				<pre
 					data-testid="register-command"
-					className="text-foreground/90 py-3 pr-20 pl-3.5 font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
+					className="text-foreground/90 py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
 				>
-					<span className="text-foreground-faint select-none">$</span>
+					<span className="text-success select-none">$</span>
 					{commandWordGroups(tokens).map((group, i) => (
 						<span key={i}>
 							{' '}
 							{/* A line breaks only between groups; a group wider than the
-							    whole line (a long URL) still breaks inside. */}
-							<span className="inline-block max-w-full">
+							    whole line (a long URL) still breaks inside. Its own
+							    lines take no indent of their own. */}
+							<span className="inline-block max-w-full [text-indent:0]">
 								{group.map((token, j) => (
 									<span key={j}>
 										{j > 0 && ' '}
