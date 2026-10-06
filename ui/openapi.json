@@ -14040,7 +14040,7 @@
     },
     "/agents/{agent_id}/oauth-grants": {
       "get": {
-        "description": "List OAuth consent grants binding clients to this agent.\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics.",
+        "description": "List OAuth consent grants binding clients to this agent.\n\nThe \"Connected clients\" surface: every grant carries the client's display\nname and redirect-URI origin, the granted scopes, the consenting user,\nand created/last-used timestamps. Allowed for the agent's owner or an\nadmin — authorization is enforced in the service layer, mirroring the\n``:revoke`` semantics. An agent the caller cannot see answers 404, the\nsame as an agent that does not exist.",
         "operationId": "listAgentOauthGrants",
         "parameters": [
           {
