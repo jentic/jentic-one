@@ -510,4 +510,24 @@ describe('CatalogLedger', () => {
 		const { container } = renderWithProviders(<Harness />);
 		await checkA11y(container);
 	});
+
+	it('keeps the sr-only announcer inside the list, so the document never scrolls', () => {
+		// A shell-like frame: viewport-tall, clipped, with an unpositioned inner
+		// scroller holding a long catalog. An absolutely positioned descendant
+		// with no positioned ancestor would make the document scroll.
+		const many = Array.from({ length: 120 }, (_, i) =>
+			api(`v${String(i).padStart(3, '0')}.example.com`),
+		);
+		renderWithProviders(
+			<div style={{ height: '100dvh', overflow: 'hidden' }}>
+				<div style={{ height: '100%', overflowY: 'auto' }}>
+					<Harness entities={many} />
+				</div>
+			</div>,
+		);
+		const announcer = screen.getByTestId('catalog-announcer');
+		expect(getComputedStyle(announcer).position).toBe('absolute');
+		const doc = document.scrollingElement!;
+		expect(doc.scrollHeight).toBeLessThanOrEqual(window.innerHeight + 1);
+	});
 });

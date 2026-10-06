@@ -74,7 +74,10 @@ export function Layout() {
 						id={SHELL_SCROLL_ID}
 						// Focusable from script only, so keyboard scrolling reaches it.
 						tabIndex={-1}
-						className="min-w-0 flex-1 overflow-y-auto pb-20 outline-none md:pb-12 print:overflow-visible"
+						// `relative`: the containing block for any absolutely positioned
+						// descendant (e.g. `sr-only` live regions), so none can escape to the
+						// document and make the viewport-tall shell scroll.
+						className="relative min-w-0 flex-1 overflow-y-auto pb-20 outline-none md:pb-12 print:overflow-visible"
 					>
 						<UpdateBanner />
 						<ErrorBoundary resetKey={location.pathname}>

@@ -696,7 +696,11 @@ export function CatalogLedger({
 	};
 
 	const table = (
-		<div className="min-w-0">
+		// `relative` holds the `sr-only` announcer (absolutely positioned) inside
+		// the list: with no positioned ancestor its containing block is the
+		// document, which then scrolls as tall as the catalog and lets the wheel
+		// push the whole shell off-screen once the shell's scroller hits bottom.
+		<div className="relative min-w-0">
 			<Ledger
 				label="API catalog"
 				columnsClassName={model.mode === 'flat' ? FLAT_COLS : GROUPED_COLS}
