@@ -194,6 +194,19 @@ export async function getAdminUserId(request: APIRequestContext): Promise<string
 	return id;
 }
 
+/**
+ * Mark the first-run suggestion as left for `agentId`, before the page boots —
+ * the same `localStorage` key the Agents page writes when the operator leaves
+ * it (`firstRunDismissedKey` in `src/modules/agents/lib/firstRun.ts`). On a
+ * fresh DB a lone active agent with no APIs otherwise resumes the first-run
+ * landing at its last step instead of the fleet view a spec is asserting.
+ */
+export async function dismissFirstRunFor(page: Page, agentId: string): Promise<void> {
+	await page.addInitScript((id) => {
+		window.localStorage.setItem(`j1.agents.firstRun.dismissed.${id}`, new Date().toISOString());
+	}, agentId);
+}
+
 /** A short unique suffix so repeated runs against a persistent DB don't collide. */
 export function uniqueSuffix(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
