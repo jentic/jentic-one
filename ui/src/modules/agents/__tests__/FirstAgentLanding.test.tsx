@@ -68,7 +68,7 @@ describe('Agents page — zero agents', () => {
 		clearAgentsStore();
 	});
 
-	it('shows both routes in and the dashed fleet preview', async () => {
+	it('shows both routes in and the fleet preview', async () => {
 		const { container } = renderPage();
 		await landing();
 
@@ -703,6 +703,28 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'active');
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('once approved, the granted scopes fold into a summary that opens on demand', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		await screen.findByTestId('first-api-panel');
+
+		const summary = await screen.findByTestId('scopes-summary');
+		expect(summary).toHaveTextContent(`${DEFAULT_AGENT_SCOPES.length} scopes granted`);
+		expect(screen.queryByRole('list', { name: 'Granted scopes' })).toBeNull();
+		const toggle = within(summary).getByRole('button', { name: 'Show' });
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+		await user.click(toggle);
+		const list = screen.getByRole('list', { name: 'Granted scopes' });
+		expect(within(list).getAllByRole('listitem')).toHaveLength(DEFAULT_AGENT_SCOPES.length);
+		const hide = within(summary).getByRole('button', { name: 'Hide' });
+		expect(hide).toHaveAttribute('aria-expanded', 'true');
+		expect(hide).toHaveAttribute('aria-controls', list.id);
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {

@@ -93,15 +93,18 @@ export function toActorStatus(status: string): ActorStatus {
 /** Status pill for an actor (agent) using its lifecycle status. */
 export function ActorStatusBadge({
 	status,
+	dot,
 	className,
 	...props
 }: {
 	status: ActorStatus | string;
+	/** Lead with a status dot — for a card header, where the pill stands alone. */
+	dot?: boolean;
 	className?: string;
 } & HTMLAttributes<HTMLSpanElement>) {
 	const s = toActorStatus(status);
 	return (
-		<Badge variant={STATUS_BADGE_VARIANT[s]} className={className} {...props}>
+		<Badge variant={STATUS_BADGE_VARIANT[s]} dot={dot} className={className} {...props}>
 			{STATUS_LABELS[s]}
 		</Badge>
 	);

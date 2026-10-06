@@ -1,10 +1,11 @@
 /**
  * GhostFleet — the zero-agents preview of the fleet view: the agent strip, the
- * APIs band, a row of API tiles and the dock, drawn as dashed outlines in the
- * theme's own colours (not loading skeletons — nothing is loading).
+ * APIs band, a row of API tiles and the dock, drawn as faint tonal shapes in
+ * the theme's own surfaces — no edges, no glow (and not loading skeletons:
+ * they don't shimmer, because nothing is loading).
  *
  * Its first tab is the slot a self-registering agent lands in: it reads
- * "Waiting for your agent…", turns solid with the agent's pending glyph and
+ * "Waiting for your agent…", fills in with the agent's pending glyph and
  * name once one registers, and flips to its active glyph once approved.
  * Purely decorative: the live status line in the landing card is what
  * assistive tech hears.
@@ -21,9 +22,9 @@ export const EASE_OUT_SOFT = [0.22, 1, 0.36, 1] as const;
 /** When the preview's one real-looking tile warms up after mount. */
 const FILL_DELAY_MS = 450;
 
-/** A dashed text-line placeholder. */
+/** A text-line placeholder: a faint tonal bar. */
 function GhostLine({ className }: { className?: string }) {
-	return <span className={cn('border-border/60 block h-2.5 rounded border', className)} />;
+	return <span className={cn('bg-surface-tonal/70 block h-2 rounded-full', className)} />;
 }
 
 /** The agent in the preview's first slot. */
@@ -58,7 +59,7 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 			data-testid="ghost-fleet"
 			className="pointer-events-none [mask-image:linear-gradient(180deg,#000_40%,transparent_100%)] select-none"
 		>
-			<div className="border-border/70 flex min-h-10 items-center gap-0.5 rounded-lg border border-dashed px-1.5 py-1">
+			<div className="bg-surface-1/70 flex min-h-10 items-center gap-1 rounded-lg px-1.5 py-1">
 				<motion.span
 					ref={slotRef}
 					data-testid="ghost-tab"
@@ -73,12 +74,10 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 					}
 					transition={{ duration: 0.52, ease: EASE_OUT_SOFT }}
 					className={cn(
-						'inline-flex h-[30px] items-center gap-2 rounded-md border px-3 text-[13px] font-semibold transition-[border-color,background-color,color,box-shadow] duration-[400ms] ease-(--ease-out-soft)',
+						'inline-flex h-[30px] items-center gap-2 rounded-md px-3 text-[13px] font-semibold transition-[background-color,color] duration-[400ms] ease-(--ease-out-soft)',
 						arrived == null
-							? 'border-primary/35 text-primary/70 border-dashed'
-							: arrived.status === 'pending'
-								? 'border-accent-orange/55 bg-accent-orange/[0.08] text-foreground shadow-[0_0_0_4px_hsl(var(--accent-orange)/0.08)]'
-								: 'border-success/55 bg-success/[0.08] text-foreground shadow-[0_0_0_4px_hsl(var(--success)/0.08)]',
+							? 'text-muted-foreground'
+							: 'bg-surface-tonal text-foreground',
 					)}
 				>
 					{arrived != null && StatusIcon ? (
@@ -88,13 +87,13 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 						</>
 					) : (
 						<>
-							<span className="bg-primary/60 animate-soft-pulse h-1.5 w-1.5 rounded-full" />
+							<span className="bg-primary/60 animate-soft-pulse h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
 							Waiting for your agent…
 						</>
 					)}
 				</motion.span>
-				<span className="border-border/70 inline-flex h-[30px] items-center rounded-md border border-dashed px-2.5">
-					<Bot className="text-muted-foreground h-3.5 w-3.5 opacity-60" />
+				<span className="inline-flex h-[30px] items-center rounded-md px-2.5">
+					<Bot className="text-foreground-faint h-3.5 w-3.5 opacity-60" />
 				</span>
 			</div>
 
@@ -103,18 +102,18 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 					<GhostLine className="w-10" />
 					<GhostLine className="w-3.5" />
 				</span>
-				<span className="border-border/60 block h-[30px] w-[92px] rounded-lg border" />
+				<span className="bg-surface-1/70 block h-[30px] w-[92px] rounded-lg" />
 			</div>
 
 			<div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				<div
 					className={cn(
-						'flex h-[150px] flex-col gap-3 rounded-xl border border-dashed p-4 transition-[border-color,background-color] duration-[800ms] ease-(--ease-out-soft)',
-						filled ? 'border-primary/40 bg-primary/[0.03]' : 'border-border/80',
+						'flex h-[150px] flex-col gap-3 rounded-lg p-4 transition-[background-color] duration-[800ms] ease-(--ease-out-soft)',
+						filled ? 'bg-surface-1' : 'bg-surface-1/60',
 					)}
 				>
 					<div className="flex items-center gap-3">
-						<span className="border-border/90 grid h-7 w-7 shrink-0 place-items-center rounded-md border border-dashed">
+						<span className="grid h-7 w-7 shrink-0 place-items-center">
 							<VendorMark
 								slug="github"
 								size="sm"
@@ -133,32 +132,32 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 							GitHub
 						</span>
 					</div>
-					<div className="border-border/60 mt-auto grid gap-2 border-t border-dashed pt-3">
+					<div className="mt-auto grid gap-2 pt-3">
 						<GhostLine className="w-3/5" />
 						<GhostLine className="w-2/5" />
 					</div>
 				</div>
-				<div className="border-border/80 hidden h-[150px] flex-col gap-3 rounded-xl border border-dashed p-4 sm:flex">
+				<div className="bg-surface-1/60 hidden h-[150px] flex-col gap-3 rounded-lg p-4 sm:flex">
 					<div className="flex items-center gap-3">
-						<span className="border-border/90 h-7 w-7 shrink-0 rounded-md border border-dashed" />
+						<span className="bg-surface-tonal/70 h-7 w-7 shrink-0 rounded-md" />
 						<GhostLine className="w-20" />
 					</div>
-					<div className="border-border/60 mt-auto grid gap-2 border-t border-dashed pt-3">
+					<div className="mt-auto grid gap-2 pt-3">
 						<GhostLine className="w-[55%]" />
 						<GhostLine className="w-[35%]" />
 					</div>
 				</div>
-				<div className="border-border/80 text-primary/70 hidden h-[150px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-4 text-[13px] font-semibold lg:flex">
-					<span className="border-primary/35 text-primary/60 grid h-7 w-7 place-items-center rounded-md border border-dashed">
+				<div className="bg-surface-1/60 text-foreground-faint hidden h-[150px] flex-col items-center justify-center gap-2 rounded-lg p-4 text-[13px] font-semibold lg:flex">
+					<span className="bg-surface-tonal/70 grid h-7 w-7 place-items-center rounded-md">
 						<Plus className="h-3.5 w-3.5" />
 					</span>
 					Add API
 				</div>
 			</div>
 
-			<div className="border-border/80 text-primary/35 mx-auto mt-6 flex w-fit items-center gap-3.5 rounded-full border border-dashed px-4 py-2.5">
-				<span className="border-success/30 block h-6 w-[84px] rounded-full border border-dashed" />
-				<span className="bg-border/70 h-[18px] w-px" />
+			<div className="bg-surface-1/60 text-foreground-faint/60 mx-auto mt-6 flex w-fit items-center gap-3.5 rounded-full px-4 py-2.5">
+				<span className="bg-surface-tonal/70 block h-6 w-[84px] rounded-full" />
+				<span className="bg-hairline-field h-[18px] w-px" />
 				<KeyRound className="h-[18px] w-[18px]" />
 				<ShieldCheck className="h-[18px] w-[18px]" />
 				<Activity className="h-[18px] w-[18px]" />
