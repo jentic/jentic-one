@@ -6,19 +6,25 @@
  * placeholder "unknown". Shows the outcome up top, then who made the call,
  * what it hit, and the raw ids with copy buttons. "View in audit" (org:admin)
  * opens the audit log scoped to this trace.
+ *
+ * A call the caller can't see reads as not found, whichever way it was opened:
+ * an execution id the server answers 404 for, or a trace whose list comes back
+ * with no execution the caller may see.
  */
 import { useMemo } from 'react';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, SearchX } from 'lucide-react';
 import {
 	ActorLabel,
 	AppLink,
 	CopyButton,
+	EmptyState,
 	ErrorAlert,
 	LoadingState,
 	StatusBadge,
 	VendorIcon,
 } from '@/shared/ui';
 import {
+	MonitorApiError,
 	useActorForTrace,
 	useExecution,
 	useExecutions,
@@ -99,6 +105,12 @@ export function TraceDetail({
 		return single ? [single] : [];
 	}, [traceable, listQuery.data, single, effectiveTraceId]);
 
+	// Opened by execution id alone: the server's 404 is the answer. Opened by
+	// trace: an empty list is — the server scopes it to what the caller may see.
+	const notFound = traceable
+		? listQuery.isSuccess && executions.length === 0
+		: singleQuery.error instanceof MonitorApiError && singleQuery.error.status === 404;
+
 	const first = executions[0];
 	const heading =
 		executions.length > 1
@@ -116,6 +128,12 @@ export function TraceDetail({
 		>
 			{isResolving || query.isLoading ? (
 				<LoadingState />
+			) : notFound ? (
+				<EmptyState
+					icon={<SearchX className="h-8 w-8" />}
+					title="Call not found"
+					description="It doesn't exist, or you don't have access to it."
+				/>
 			) : query.isError ? (
 				<ErrorAlert
 					message={

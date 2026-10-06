@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { page } from 'vitest/browser';
 import {
 	renderWithProviders,
@@ -20,6 +21,7 @@ import {
 	resetCredentialsStore,
 } from '@/shared/credentials/mocks/handlers';
 import { CredentialType, type ApiResponse } from '@/shared/credentials/api';
+import { AuthProvider } from '@/shared/auth';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 /**
@@ -914,5 +916,88 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// Let the sheet's entrance animation settle for axe's contrast checks.
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		await checkA11y(container);
+	});
+});
+
+describe('ApiAccessSidebar — a credential shared with the viewer', () => {
+	const VIEWER = 'usr_viewer_1';
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		seedComposedStores();
+		// Slack is someone else's credential; GitHub is the viewer's own.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_by: 'usr_someone_else',
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+		]);
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: VIEWER,
+					email: 'viewer@local',
+					first_name: 'View',
+					last_name: 'Er',
+					active: true,
+					permissions: [],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	});
+
+	function renderAuthed() {
+		return renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<Toaster />
+			</AuthProvider>,
+			{ route: '/?agent=agnt_active_1' },
+		);
+	}
+
+	it('reads as shared with you: no Edit credential, no org-wide delete, unbind stays', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+
+		expect(inDialog.getByTestId('credential-shared-badge')).toHaveTextContent(
+			'Shared with you',
+		);
+		expect(inDialog.queryByRole('button', { name: /Edit credential/ })).not.toBeInTheDocument();
+		expect(
+			inDialog.queryByRole('button', { name: 'Delete credential Slack bot token org-wide' }),
+		).not.toBeInTheDocument();
+		// The binding is the agent's — unbinding it is still offered.
+		expect(
+			inDialog.getByRole('button', { name: 'Unbind Slack bot token from support-agent' }),
+		).toBeInTheDocument();
+	});
+
+	it('keeps Edit and Delete on a credential the viewer created', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('GitHub'));
+
+		expect(inDialog.queryByTestId('credential-shared-badge')).not.toBeInTheDocument();
+		expect(inDialog.getByRole('button', { name: /Edit credential/ })).toBeInTheDocument();
+		expect(
+			inDialog.getByRole('button', { name: 'Delete credential GitHub PAT org-wide' }),
+		).toBeInTheDocument();
 	});
 });

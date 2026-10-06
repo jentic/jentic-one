@@ -118,6 +118,22 @@ export function NotificationsMenu() {
 									<div className="px-3 py-3">
 										<SkeletonRows rows={2} />
 									</div>
+								) : count === 0 && failedSources.length > 0 ? (
+									// "All caught up" would be a claim the failed
+									// sources can't back; the note below names them.
+									<div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
+										<Inbox
+											className="text-muted-foreground h-6 w-6"
+											aria-hidden="true"
+										/>
+										<p className="text-foreground text-sm font-medium">
+											Nothing to show right now
+										</p>
+										<p className="text-muted-foreground text-xs">
+											Some notifications couldn't be checked, so there may be
+											items waiting.
+										</p>
+									</div>
 								) : count === 0 ? (
 									<div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
 										<CheckCircle2

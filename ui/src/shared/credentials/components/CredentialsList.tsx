@@ -42,6 +42,12 @@ interface CredentialsListProps {
 	 * only the host knows which. Omit it and the cards carry no usage clauses.
 	 */
 	usageFor?: (cred: Credential) => CredentialUsage;
+	/**
+	 * Which credentials are shared with the viewer rather than theirs to change —
+	 * those cards carry a "Shared with you" badge and no edit or delete. Omit it
+	 * and every card is editable.
+	 */
+	readOnlyFor?: (cred: Credential) => boolean;
 }
 
 interface CredentialUsage {
@@ -86,6 +92,7 @@ export function CredentialsList({
 	emptyState,
 	columns = 3,
 	usageFor,
+	readOnlyFor,
 }: CredentialsListProps) {
 	// `dense`, so single cards backfill the gap a full-width group leaves.
 	const gridClass =
@@ -141,6 +148,7 @@ export function CredentialsList({
 							onEdit={onEdit}
 							onDelete={onDelete}
 							onConnect={onConnect}
+							readOnly={readOnlyFor?.(group[0]) ?? false}
 							{...usage(group[0])}
 						/>
 					</motion.div>
@@ -156,6 +164,7 @@ export function CredentialsList({
 							onDelete={onDelete}
 							onConnect={onConnect}
 							usageFor={usage}
+							readOnlyFor={readOnlyFor}
 						/>
 					</motion.div>
 				),

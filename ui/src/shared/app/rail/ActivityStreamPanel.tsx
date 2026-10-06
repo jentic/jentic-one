@@ -17,7 +17,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Card, CardBody, CardHeader, CardTitle, SegmentedToggle } from '@/shared/ui';
 import { LiveDot, type LiveDotTone } from '@/shared/app/rail/LiveDot';
-import { RailFeed, type RailFeedProps } from '@/shared/app/rail/RailFeed';
+import { RailFeed, RailForbidden, type RailFeedProps } from '@/shared/app/rail/RailFeed';
 import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
 import { useActorDirectory } from '@/shared/hooks';
 import { useAgentStreamOptional } from '@/shared/lib';
@@ -40,6 +40,7 @@ const STATUS_COPY: Record<Status, { label: string; tone: LiveDotTone }> = {
 	error: { label: 'Reconnecting…', tone: 'warning' },
 	// Not "Paused": that word is the rail's pause, a different thing.
 	idle: { label: 'Offline', tone: 'idle' },
+	forbidden: { label: 'No access', tone: 'idle' },
 };
 
 export interface ActivityStreamPanelProps {
@@ -61,7 +62,8 @@ export function ActivityStreamPanel({
 }: ActivityStreamPanelProps) {
 	const stream = useAgentStreamOptional();
 	const navigate = useNavigate();
-	const directory = useActorDirectory();
+	const events = stream?.events ?? [];
+	const directory = useActorDirectory(events.map((ev) => ev.actorId));
 	// Failures only is the rail's own toggle (shared via the provider), so the
 	// stream keeps the same filter as it morphs between rail and panel.
 	const failuresOnly = stream?.failuresOnly ?? false;
@@ -69,7 +71,6 @@ export function ActivityStreamPanel({
 	const filters = useMemo(() => ({ failuresOnly }), [failuresOnly]);
 
 	const status = STATUS_COPY[stream?.status ?? 'idle'];
-	const events = stream?.events ?? [];
 
 	function resolveActor(ev: StreamEvent): string | undefined {
 		return ev.actorId ? directory.resolve(ev.actorId) : undefined;
@@ -120,7 +121,9 @@ export function ActivityStreamPanel({
 						aria-relevant="additions"
 						aria-label="Activity feed"
 					>
-						{stream ? (
+						{stream?.status === 'forbidden' ? (
+							<RailForbidden />
+						) : stream ? (
 							<RailFeed
 								events={events}
 								filters={filters}

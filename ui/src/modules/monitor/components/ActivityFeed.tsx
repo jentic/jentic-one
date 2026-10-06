@@ -20,6 +20,9 @@
  *
  * Viewing a fixed range (brushed on the timeline) turns the live stream off —
  * nothing new can land inside a window that has already closed.
+ *
+ * A caller without event access reads neither feed and sees a plain "No access"
+ * state; a 401/403 from either read lands there too, and nothing retries it.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
@@ -31,9 +34,12 @@ import {
 	ChevronRight,
 	Pause,
 	Play,
+	ShieldX,
 } from 'lucide-react';
 import { ActorLabel, Button, EmptyState, ErrorAlert, SkeletonRows } from '@/shared/ui';
+import { useCanReadEvents } from '@/shared/auth';
 import {
+	EVENTS_FORBIDDEN_COPY,
 	adaptEvent,
 	formatStreamDayLabel,
 	formatStreamTime,
@@ -50,6 +56,7 @@ import { cn } from '@/shared/lib/utils';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	EventSeverity,
+	isMonitorAccessDenied,
 	useAcknowledgeEvent,
 	useEventFeed,
 	useEventStream,
@@ -153,11 +160,17 @@ export function ActivityFeed() {
 	// eslint-disable-next-line react-hooks/exhaustive-deps -- re-anchor on a real filter change only
 	const streamSince = useMemo(() => new Date().toISOString(), [paramsKey]);
 	const streamFloor = Date.parse(streamSince) - STREAM_SKEW_MS;
-	const history = useEventFeed(params);
+	const canReadEvents = useCanReadEvents();
+	const history = useEventFeed(params, { enabled: canReadEvents });
 	const fixedRange = filters.to != null;
-	const stream = useEventStream({ ...params, from: streamSince, to: null }, !fixedRange, 200, {
-		toastOnError: false,
-	});
+	const stream = useEventStream(
+		{ ...params, from: streamSince, to: null },
+		!fixedRange && canReadEvents,
+		200,
+		{ toastOnError: false },
+	);
+	const forbidden =
+		!canReadEvents || stream.status === 'forbidden' || isMonitorAccessDenied(history.error);
 
 	// A dropped stream retries on its own with backoff; the header says so.
 	const [attempt, setAttempt] = useState(0);
@@ -271,18 +284,20 @@ export function ActivityFeed() {
 
 	const filtered = statusFilter !== 'all' || filters.actorId != null || filters.range != null;
 	const initialLoading = history.isLoading && events.length === 0;
-	const showEmpty = !initialLoading && !history.isError && events.length === 0;
+	const showEmpty = !forbidden && !initialLoading && !history.isError && events.length === 0;
 
 	const liveBar = (
 		<header className="border-hairline flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
-			{fixedRange ? (
+			{forbidden ? (
+				<LiveIndicator status="forbidden" paused={false} />
+			) : fixedRange ? (
 				<span className="text-muted-foreground text-xs font-medium">
 					Fixed range — live updates off
 				</span>
 			) : (
 				<LiveIndicator status={stream.status} paused={paused} />
 			)}
-			{!fixedRange && (
+			{!fixedRange && !forbidden && (
 				<Button
 					variant="ghost"
 					size="sm"
@@ -338,11 +353,13 @@ export function ActivityFeed() {
 		>
 			<div className="space-y-3">
 				<p className="sr-only" role="status" aria-live="polite">
-					{fixedRange
-						? 'Viewing a fixed range; live updates off.'
-						: paused
-							? 'Live updates paused.'
-							: `Live updates ${STATUS_TEXT[stream.status]}.`}
+					{forbidden
+						? 'No access to activity.'
+						: fixedRange
+							? 'Viewing a fixed range; live updates off.'
+							: paused
+								? 'Live updates paused.'
+								: `Live updates ${STATUS_TEXT[stream.status]}.`}
 				</p>
 
 				{pending.length > 0 && (
@@ -365,7 +382,13 @@ export function ActivityFeed() {
 					header={liveBar}
 					footer={loadOlder}
 				>
-					{history.isError && events.length === 0 ? (
+					{forbidden ? (
+						<EmptyState
+							icon={<ShieldX className="h-8 w-8" />}
+							title={EVENTS_FORBIDDEN_COPY.title}
+							description={EVENTS_FORBIDDEN_COPY.description}
+						/>
+					) : history.isError && events.length === 0 ? (
 						<div className="p-4">
 							<ErrorAlert
 								message={
@@ -458,17 +481,26 @@ const STATUS_TEXT: Record<LiveStreamStatus, string> = {
 	connecting: 'connecting',
 	live: 'live',
 	error: 'reconnecting',
+	forbidden: 'unavailable',
 };
 
 function LiveIndicator({ status, paused }: { status: LiveStreamStatus; paused: boolean }) {
-	const label = paused
-		? 'Paused'
-		: status === 'live'
-			? 'Live'
-			: status === 'error'
-				? 'Reconnecting…'
-				: 'Connecting…';
-	const tone = paused ? 'bg-muted-foreground' : status === 'live' ? 'bg-success' : 'bg-caution';
+	const label =
+		status === 'forbidden'
+			? 'No access'
+			: paused
+				? 'Paused'
+				: status === 'live'
+					? 'Live'
+					: status === 'error'
+						? 'Reconnecting…'
+						: 'Connecting…';
+	const tone =
+		paused || status === 'forbidden'
+			? 'bg-muted-foreground'
+			: status === 'live'
+				? 'bg-success'
+				: 'bg-caution';
 	return (
 		<span className="text-muted-foreground inline-flex items-center gap-2 text-xs font-medium">
 			<span className="relative flex h-2 w-2" aria-hidden="true">

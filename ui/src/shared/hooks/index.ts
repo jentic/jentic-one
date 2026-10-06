@@ -5,7 +5,11 @@ export { useHotkey } from '@/shared/hooks/useHotkey';
 export { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 export { useConsumedFlagParam } from '@/shared/hooks/useConsumedFlagParam';
 export { usePendingAgentsCount, pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
-export { useActorDirectory, actorDirectoryKey } from '@/shared/hooks/useActorDirectory';
+export {
+	useActorDirectory,
+	useCanListActors,
+	actorDirectoryKey,
+} from '@/shared/hooks/useActorDirectory';
 export type { ActorDirectory } from '@/shared/hooks/useActorDirectory';
 export { useVersionInfo, versionInfoKey } from '@/shared/hooks/useVersionInfo';
 export { useApiUsageWeek, apiUsageKeyFor } from '@/shared/hooks/useApiUsageWeek';

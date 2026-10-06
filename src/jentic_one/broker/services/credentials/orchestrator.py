@@ -158,6 +158,7 @@ class CredentialService:
                         f"for '{api.vendor}'"
                     ),
                     identity=identity,
+                    credential_owner=resolved.created_by,
                     requires_action=True,
                 )
                 raise CredentialUndecryptableError(
@@ -197,6 +198,7 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
+                    credential_owner=resolved.created_by,
                     # Sanitised: emit_event raises on a malformed trace_id, and
                     # a 500 here would fail the whole execute request (#903).
                     trace_id=valid_trace_id_or_none(trace_id),
@@ -234,6 +236,7 @@ class CredentialService:
                 type=EventType.CREDENTIAL_REFRESH_FAILED,
                 summary=f"Credential refresh failed for '{api.vendor}'",
                 identity=identity,
+                credential_owner=resolved.created_by,
                 tags={ErrorSource.AUTH_JENTIC},
             )
             raise CredentialNeedsReconnectError(
@@ -366,10 +369,17 @@ class CredentialService:
         type: str,
         summary: str,
         identity: Identity,
+        credential_owner: str | None = None,
         tags: set[EventTag] | None = None,
         requires_action: bool = False,
     ) -> None:
-        """Emit a credential-health event on the admin DB (best-effort)."""
+        """Emit a credential-health event on the admin DB (best-effort).
+
+        ``actor_id`` is the identity whose request hit the failure. When the
+        failure concerns a resolved credential, ``credential_owner`` names its
+        owner as the event's ``created_by`` so the owner sees it under
+        owner-scoped event reads; otherwise ``created_by`` is the actor.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -377,7 +387,7 @@ class CredentialService:
                     type=type,
                     severity=EventSeverity.WARNING,
                     summary=summary,
-                    created_by=identity.sub,
+                    created_by=credential_owner or identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                     tags=tags,

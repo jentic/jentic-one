@@ -22,6 +22,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -39,6 +40,7 @@ import {
 } from '@/shared/credentials/api';
 import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -215,6 +217,14 @@ export function CredentialInventorySheet({
 		[agentsPerCredential, fleetJoinLoading, usage.isLoading, usage.data],
 	);
 
+	// The list includes credentials shared with the viewer; only the owner or an
+	// admin can change those, so their cards offer no edit or delete.
+	const viewer = useOptionalCurrentUser();
+	const readOnlyFor = useCallback(
+		(cred: Credential) => !credentialEditableBy(cred, viewer),
+		[viewer],
+	);
+
 	// The nested sheets each have a document-level Escape handler firing on the same
 	// keydown, so the guard reads still-unflushed state. The delete confirm needs none.
 	const nestedSheetOpen = editId != null || createOpen;
@@ -376,6 +386,7 @@ export function CredentialInventorySheet({
 								// what clip a credential's name mid-word.
 								columns={2}
 								usageFor={usageFor}
+								readOnlyFor={readOnlyFor}
 								emptyState={
 									credentials.length > 0 ? (
 										<EmptyState

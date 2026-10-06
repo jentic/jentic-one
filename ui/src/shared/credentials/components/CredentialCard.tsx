@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Link2, Moon, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { Button, Card, Skeleton, StatusText, VendorIcon } from '@/shared/ui';
+import { Link2, Moon, RefreshCw, Settings, Trash2, Users } from 'lucide-react';
+import { Button, Card, Skeleton, StatusText, Tag, VendorIcon } from '@/shared/ui';
 import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import {
@@ -27,6 +27,9 @@ interface CredentialCardProps {
 	usedByAgentCount?: number | null;
 	/** Calls brokered with this credential over the last 7 days — same contract. */
 	callsLast7d?: number | null;
+	/** Shared with the viewer rather than theirs to change: the card carries a
+	 * "Shared with you" badge and offers no edit or delete. */
+	readOnly?: boolean;
 }
 
 /**
@@ -42,7 +45,8 @@ interface CredentialCardProps {
  *   [added date]
  *
  * The whole card is a click target that opens the edit sheet (a full-card
- * `<button>` sits behind the content). The explicit action buttons
+ * `<button>` sits behind the content) — except a read-only card, which has
+ * nothing to edit. The explicit action buttons
  * (connect / edit / delete) sit *above* that overlay and `stopPropagation`
  * so each control stays independently clickable and focusable without
  * nesting interactive elements inside the overlay button.
@@ -54,6 +58,7 @@ export function CredentialCard({
 	onConnect,
 	usedByAgentCount,
 	callsLast7d,
+	readOnly = false,
 }: CredentialCardProps) {
 	const connected = credentialIsConnected(cred);
 	const pendingSignIn = credentialIsPendingSignIn(cred);
@@ -95,14 +100,16 @@ export function CredentialCard({
 			    a11y tree (aria-hidden + tabIndex=-1) so screen-reader/keyboard
 			    users get a single, clearly-labelled "Edit" control (the explicit
 			    button below) instead of two competing "edit" affordances. */}
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-hidden="true"
-				data-testid="credential-card-overlay"
-				onClick={(): void => onEdit(cred)}
-				className="absolute inset-0 z-0 cursor-pointer rounded-lg focus:outline-none"
-			/>
+			{!readOnly && (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-hidden="true"
+					data-testid="credential-card-overlay"
+					onClick={(): void => onEdit(cred)}
+					className="absolute inset-0 z-0 cursor-pointer rounded-lg focus:outline-none"
+				/>
+			)}
 
 			<div className="pointer-events-none relative flex items-start gap-3">
 				<VendorIcon name={vendor} vendor={vendor} size="md" />
@@ -129,6 +136,7 @@ export function CredentialCard({
 							</StatusText>
 						)}
 						<CredentialTypeBadge credential={cred} />
+						{readOnly && <SharedWithYouBadge />}
 					</div>
 					{apiLine && (
 						<p className="text-foreground-sub mt-1 truncate text-xs">{apiLine}</p>
@@ -153,9 +161,23 @@ export function CredentialCard({
 					onEdit={onEdit}
 					onDelete={onDelete}
 					onConnect={onConnect}
+					readOnly={readOnly}
 				/>
 			</div>
 		</Card>
+	);
+}
+
+/** Marks a credential listed for the viewer that someone else owns. */
+export function SharedWithYouBadge() {
+	return (
+		<Tag
+			icon={Users}
+			data-testid="credential-shared-badge"
+			title="Shared with you — only its owner or an admin can edit or delete it"
+		>
+			Shared with you
+		</Tag>
 	);
 }
 
@@ -306,13 +328,22 @@ interface CredentialActionsProps {
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
+	/** Hide edit and delete — the credential is shared with the viewer, not theirs. */
+	readOnly?: boolean;
 }
 
 /**
  * Connect (OAuth only) · edit · delete. Sits above a host's full-surface edit
  * overlay and stops propagation, so each control stays independently clickable.
+ * A read-only credential keeps Connect and drops edit and delete.
  */
-export function CredentialActions({ cred, onEdit, onDelete, onConnect }: CredentialActionsProps) {
+export function CredentialActions({
+	cred,
+	onEdit,
+	onDelete,
+	onConnect,
+	readOnly = false,
+}: CredentialActionsProps) {
 	const isOAuth = cred.type === CredentialType.OAUTH2;
 	const managed = isManagedProvider(cred.provider);
 	const connected = credentialIsConnected(cred);
@@ -348,22 +379,26 @@ export function CredentialActions({ cred, onEdit, onDelete, onConnect }: Credent
 					)}
 				</Button>
 			)}
-			<Button
-				variant="tonal"
-				size="icon-xs"
-				onClick={stop((): void => onEdit(cred))}
-				aria-label={`Edit credential ${cred.name}`}
-			>
-				<Settings className="h-3.5 w-3.5" />
-			</Button>
-			<Button
-				variant="danger"
-				size="icon-xs"
-				onClick={stop((): void => onDelete(cred))}
-				aria-label={`Delete credential ${cred.name}`}
-			>
-				<Trash2 className="h-3.5 w-3.5" />
-			</Button>
+			{!readOnly && (
+				<>
+					<Button
+						variant="tonal"
+						size="icon-xs"
+						onClick={stop((): void => onEdit(cred))}
+						aria-label={`Edit credential ${cred.name}`}
+					>
+						<Settings className="h-3.5 w-3.5" />
+					</Button>
+					<Button
+						variant="danger"
+						size="icon-xs"
+						onClick={stop((): void => onDelete(cred))}
+						aria-label={`Delete credential ${cred.name}`}
+					>
+						<Trash2 className="h-3.5 w-3.5" />
+					</Button>
+				</>
+			)}
 		</div>
 	);
 }

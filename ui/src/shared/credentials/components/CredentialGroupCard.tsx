@@ -6,6 +6,7 @@ import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
 	CredentialActions,
 	CredentialMetaLine,
+	SharedWithYouBadge,
 	credentialApiLine,
 	credentialAuthPlacement,
 	credentialIsConnected,
@@ -21,6 +22,8 @@ interface CredentialGroupCardProps {
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
 	usageFor: (cred: Credential) => Usage;
+	/** Which rows are shared with the viewer rather than theirs to change. */
+	readOnlyFor?: (cred: Credential) => boolean;
 }
 
 /**
@@ -40,7 +43,7 @@ interface CredentialGroupCardProps {
  *
  * A row whose name another row shares carries its id tail — then it is the only
  * thing telling the two apart; a unique name needs nothing more. Each row is a
- * click target for edit, the way a single card is.
+ * click target for edit, the way a single card is — unless it is read-only.
  */
 export function CredentialGroupCard({
 	credentials,
@@ -48,6 +51,7 @@ export function CredentialGroupCard({
 	onDelete,
 	onConnect,
 	usageFor,
+	readOnlyFor,
 }: CredentialGroupCardProps) {
 	const [first] = credentials;
 	const vendor = first.api.vendor ?? first.name;
@@ -124,6 +128,7 @@ export function CredentialGroupCard({
 						onDelete={onDelete}
 						onConnect={onConnect}
 						usage={usageFor(cred)}
+						readOnly={readOnlyFor?.(cred) ?? false}
 					/>
 				))}
 			</ul>
@@ -171,6 +176,7 @@ function CredentialRow({
 	onDelete,
 	onConnect,
 	usage,
+	readOnly,
 }: {
 	cred: Credential;
 	placement: string | null;
@@ -181,6 +187,7 @@ function CredentialRow({
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
 	usage: Usage;
+	readOnly: boolean;
 }) {
 	return (
 		<li
@@ -189,14 +196,16 @@ function CredentialRow({
 		>
 			{/* Full-row click target → edit, hidden from the a11y tree so keyboard and
 			    screen-reader users get the one labelled "Edit" button instead. */}
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-hidden="true"
-				data-testid="credential-card-overlay"
-				onClick={(): void => onEdit(cred)}
-				className="absolute inset-0 z-0 focus:outline-none"
-			/>
+			{!readOnly && (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-hidden="true"
+					data-testid="credential-card-overlay"
+					onClick={(): void => onEdit(cred)}
+					className="absolute inset-0 z-0 focus:outline-none"
+				/>
+			)}
 			<div className="pointer-events-none relative min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
 					<h4 className="text-foreground-name min-w-0 text-sm font-semibold break-words">
@@ -213,6 +222,7 @@ function CredentialRow({
 						</StatusText>
 					)}
 					<CredentialTypeBadge credential={cred} />
+					{readOnly && <SharedWithYouBadge />}
 				</div>
 				<p
 					className="text-muted-foreground mt-0.5 truncate font-mono text-xs"
@@ -238,6 +248,7 @@ function CredentialRow({
 				onEdit={onEdit}
 				onDelete={onDelete}
 				onConnect={onConnect}
+				readOnly={readOnly}
 			/>
 		</li>
 	);

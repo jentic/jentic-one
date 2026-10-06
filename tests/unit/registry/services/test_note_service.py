@@ -176,7 +176,7 @@ async def test_get_returns_note_view() -> None:
         return_value=note,
     ):
         svc = NoteService(ctx)
-        view = await svc.get("note_abc123def456ghi789")
+        view = await svc.get("note_abc123def456ghi789", identity=_IDENTITY)
 
     assert view.id == note.id
     assert view.body == "Test body"
@@ -193,7 +193,7 @@ async def test_get_raises_not_found_for_missing() -> None:
     ):
         svc = NoteService(ctx)
         with pytest.raises(NoteNotFoundError):
-            await svc.get("note_doesnotexist0000000")
+            await svc.get("note_doesnotexist0000000", identity=_IDENTITY)
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_get_raises_not_found_for_invalid_prefix() -> None:
     ctx = _make_ctx()
     svc = NoteService(ctx)
     with pytest.raises(NoteNotFoundError):
-        await svc.get("bad-id-no-prefix")
+        await svc.get("bad-id-no-prefix", identity=_IDENTITY)
 
 
 @pytest.mark.asyncio
@@ -300,7 +300,7 @@ async def test_list_page_unresolvable_api_filter_returns_empty() -> None:
         ) as mock_list,
     ):
         svc = NoteService(ctx)
-        page = await svc.list_page(api="ghost:api:v1")
+        page = await svc.list_page(api="ghost:api:v1", identity=_IDENTITY)
 
     assert page.data == []
     assert page.has_more is False
@@ -326,7 +326,7 @@ async def test_list_page_resolves_api_filter_to_ids() -> None:
         ) as mock_list,
     ):
         svc = NoteService(ctx)
-        page = await svc.list_page(api="stripe")
+        page = await svc.list_page(api="stripe", identity=_IDENTITY)
 
     assert len(page.data) == 1
     assert mock_resolve.call_args.kwargs == {"vendor": "stripe", "name": None, "version": None}

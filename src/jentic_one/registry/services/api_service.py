@@ -371,7 +371,8 @@ class ApiService:
                             f"Credential {binding.credential_id} suspended for agent "
                             f"{binding.agent_id} because its API was deleted"
                         ),
-                        created_by=identity.sub,
+                        # Subject is the agent, so its owner sees the suspension.
+                        created_by=binding.agent_id,
                         actor_id=identity.sub,
                         actor_type=identity.actor_type.value,
                     )

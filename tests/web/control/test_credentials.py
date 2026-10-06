@@ -22,7 +22,7 @@ from jentic_one.admin.repos import AgentCredentialBindingRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
-from tests.web.control.conftest import _build_app, _effective
+from tests.web.control.conftest import CRED_WRITER_IDENTITY, _build_app, _effective
 
 pytestmark = pytest.mark.integration
 
@@ -52,6 +52,28 @@ def _create_api_key(client: TestClient) -> str:
     assert resp.status_code == 201, resp.text
     credential_id: str = resp.json()["credential"]["credential_id"]
     return credential_id
+
+
+def test_create_response_carries_created_by(cred_writer_client: TestClient) -> None:
+    """The create echo names the caller as ``created_by``, matching later reads."""
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "api_key",
+            "name": "web-cred-created-by",
+            "api": {"vendor": "openweathermap.org", "name": "onecall", "version": "3.0"},
+            "provider": "static",
+            "key": "sk-web-test-key-created-by",
+            "location": "query",
+            "field_name": "appid",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()["credential"]
+    assert created["created_by"] == CRED_WRITER_IDENTITY.sub
+
+    got = cred_writer_client.get(f"/credentials/{created['credential_id']}").json()
+    assert got["created_by"] == created["created_by"]
 
 
 def test_patch_changing_field_name_is_rejected(cred_writer_client: TestClient) -> None:

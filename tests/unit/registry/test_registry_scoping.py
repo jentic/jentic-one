@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.scoping.filters import build_access_filters
 from jentic_one.shared.auth.identity import Identity
@@ -39,10 +41,10 @@ def test_user_identity_returns_created_by_filter() -> None:
     assert "created_by" in sql
 
 
-def test_sentinel_identity_returns_empty_filters() -> None:
+def test_empty_sub_raises() -> None:
     identity = _identity(sub="", permissions=[])
-    filters = build_access_filters(identity, Note)
-    assert filters == []
+    with pytest.raises(ValueError, match="empty sub"):
+        build_access_filters(identity, Note)
 
 
 def test_non_admin_always_scoped() -> None:

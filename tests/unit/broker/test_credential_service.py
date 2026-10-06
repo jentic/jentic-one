@@ -510,3 +510,114 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
     # Only an operator can fix an undecryptable credential, so the event must
     # be flagged actionable to surface in the Action Inbox — not just the rail.
     assert kwargs["requires_action"] is True
+
+
+def _owned(resolved: ResolvedCredential, owner: str | None) -> ResolvedCredential:
+    return resolved.model_copy(update={"created_by": owner})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["usr_cred_owner", None])
+async def test_access_event_names_the_credential_owner(
+    monkeypatch: pytest.MonkeyPatch, owner: str | None
+) -> None:
+    """``credential.accessed`` passes the resolved credential's owner through; the
+    actor stays the caller."""
+    _patch_resolved(monkeypatch, _owned(_resolved(), owner))
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.inject_auth",
+        lambda resolved, *, ctx, access_token=None: MagicMock(
+            headers={}, query_params={}, cookies={}
+        ),
+    )
+    audit = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
+    )
+
+    await CredentialService(_ctx()).inject(
+        api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+    )
+
+    assert audit.await_args is not None
+    assert audit.await_args.kwargs["actor_id"] == "agent_42"
+    assert audit.await_args.kwargs["credential_owner"] == owner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "resolved", "fail"),
+    [
+        (
+            "credential.undecryptable",
+            _resolved(),
+            ("inject_auth", DecryptionError("boom")),
+        ),
+        (
+            "credential.refresh_failed",
+            _resolved_oauth2(),
+            ("refresher", RefreshInvalidGrantError("cred_oauth")),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("owner", "expected_created_by"), [("usr_cred_owner", "usr_cred_owner"), (None, "agent_42")]
+)
+async def test_health_events_name_the_credential_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
+    resolved: ResolvedCredential,
+    fail: tuple[str, Exception],
+    owner: str | None,
+    expected_created_by: str,
+) -> None:
+    """Health events about a resolved credential set ``created_by`` to its owner
+    (the caller when the owner is unknown) and ``actor_id`` to the caller."""
+    _patch_resolved(monkeypatch, _owned(resolved, owner))
+    seam, exc = fail
+    if seam == "refresher":
+        _patch_refresher(monkeypatch, exc)
+    else:
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise exc
+
+        monkeypatch.setattr(
+            "jentic_one.broker.services.credentials.orchestrator.inject_auth", _boom
+        )
+    emit_evt = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_event_best_effort", emit_evt
+    )
+
+    with pytest.raises((CredentialUndecryptableError, CredentialNeedsReconnectError)):
+        await CredentialService(_ctx()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    assert emit_evt.await_args is not None
+    kwargs = emit_evt.await_args.kwargs
+    assert kwargs["type"] == event_type
+    assert kwargs["actor_id"] == "agent_42"
+    assert kwargs["created_by"] == expected_created_by
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_event_names_the_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no credential resolved there is no owner: the caller is both fields."""
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+    emit_evt = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_event_best_effort", emit_evt
+    )
+
+    with pytest.raises(CredentialNotProvisionedError):
+        await CredentialService(_ctx()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    assert emit_evt.await_args is not None
+    kwargs = emit_evt.await_args.kwargs
+    assert kwargs["type"] == "credential.not_provisioned"
+    assert kwargs["actor_id"] == "agent_42"
+    assert kwargs["created_by"] == "agent_42"

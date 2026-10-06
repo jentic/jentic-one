@@ -36,6 +36,9 @@ export interface ApiTileModel {
 	/** Null when the credential's org row is unreachable. */
 	credentialCreatedAt: string | null;
 	credentialUpdatedAt: string | null;
+	/** Who created the credential (`null` when it records no owner). Absent when
+	 * the credential's org row is unreachable — its owner is then unknown. */
+	credentialCreatedBy?: string | null;
 	boundAt: string;
 	/** Soft-suspended — the broker excludes the binding until resumed. */
 	suspended: boolean;
@@ -181,6 +184,7 @@ export function composeApiTiles(
 			credentialName: binding.name || credential?.name || binding.credentialId,
 			credentialCreatedAt: credential?.created_at ?? null,
 			credentialUpdatedAt: credential?.updated_at ?? null,
+			...(credential && { credentialCreatedBy: credential.created_by ?? null }),
 			boundAt: binding.boundAt,
 			suspended: binding.suspended,
 			suspendedReason: binding.suspendedReason,

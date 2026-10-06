@@ -11,7 +11,13 @@ import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { EventSeverity, type EventResponse } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { acknowledgeEvent, listEvents, streamEvents } from '@/shared/lib/railEvents';
+import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
+import {
+	acknowledgeEvent,
+	isEventAccessDenied,
+	listEvents,
+	streamEvents,
+} from '@/shared/lib/railEvents';
 
 /*
   SSE → QUERY-CACHE BRIDGE.
@@ -441,7 +447,18 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 /* Provider                                                            */
 /* ------------------------------------------------------------------ */
 
-export type StreamStatus = 'idle' | 'connecting' | 'live' | 'error';
+/**
+ * `forbidden`: the caller cannot read events — no `events:read`, or the server
+ * refused the feed with a 401/403. Nothing is fetched or retried in that state.
+ */
+export type StreamStatus = 'idle' | 'connecting' | 'live' | 'error' | 'forbidden';
+
+/** What every activity surface says to a caller who cannot read events. */
+export const EVENTS_FORBIDDEN_COPY = {
+	title: 'No access to activity',
+	description:
+		"Your account doesn't have permission to view platform events. An organisation admin can grant events:read.",
+} as const;
 
 /**
  * A snapshot of the feed's head: what was loaded, and how new the newest of it
@@ -539,6 +556,10 @@ const MAX_EVENTS = 300;
  *
  * `live` defaults to `true`; tests pass `live={false}` to skip the SSE
  * subscription and drive a deterministic, backlog-only feed.
+ *
+ * A caller without event access ({@link useCanReadEvents}) gets neither the
+ * backlog nor the stream, and `status` reads `forbidden`. A 401/403 from either
+ * read lands in the same state, and the stream does not retry it.
  */
 export function AgentStreamProvider({
 	children,
@@ -561,6 +582,9 @@ export function AgentStreamProvider({
 	const [failuresOnly, setFailuresOnly] = useState(false);
 	const [categories, setCategories] = useState<ReadonlySet<ActivityCategory>>(() => new Set());
 	const [frozen, setFrozen] = useState<FeedFreeze | null>(null);
+	const canReadEvents = useCanReadEvents();
+	// The server refused an event read (401/403) — terminal for this session.
+	const [accessDenied, setAccessDenied] = useState(false);
 	const queryClient = useQueryClient();
 	const setScope = useCallback((next: ActivityScope) => {
 		setScopeState((prev) =>
@@ -682,6 +706,7 @@ export function AgentStreamProvider({
 
 	// 1. Backlog seed. Retired-namespace history is tolerated but dropped.
 	useEffect(() => {
+		if (!canReadEvents) return undefined;
 		let cancelled = false;
 		void (async () => {
 			try {
@@ -690,21 +715,23 @@ export function AgentStreamProvider({
 				upsert(page.data.filter((e) => !isRetiredEventType(e.type)).map(adaptEvent), false);
 				setCursor(page.next_cursor ?? null);
 				setHasMore(page.has_more);
-			} catch {
-				// A failed backlog is non-fatal — the live stream may still connect.
+			} catch (error) {
+				// A refusal means no event access. Any other failed backlog is
+				// non-fatal — the live stream may still connect.
+				if (!cancelled && isEventAccessDenied(error)) setAccessDenied(true);
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [upsert]);
+	}, [upsert, canReadEvents]);
 
 	// 1b. Scoped backlog. The shared list only holds the newest unfiltered page,
 	// which may contain nothing from a quiet agent — seed that actor's history.
 	useEffect(() => {
 		setScopedCursor(null);
 		setScopedHasMore(false);
-		if (!scope) return undefined;
+		if (!scope || !canReadEvents) return undefined;
 		let cancelled = false;
 		void (async () => {
 			try {
@@ -724,11 +751,11 @@ export function AgentStreamProvider({
 		return () => {
 			cancelled = true;
 		};
-	}, [scope, upsert]);
+	}, [scope, upsert, canReadEvents]);
 
 	// 2. Live SSE subscription (with auto-reconnect inside `streamEvents`).
 	useEffect(() => {
-		if (!live) {
+		if (!live || !canReadEvents) {
 			setStatus('idle');
 			return undefined;
 		}
@@ -808,7 +835,11 @@ export function AgentStreamProvider({
 						invalidateOAuthSurfaces();
 					}
 				},
-				onError: () => setStatus('error'),
+				onError: (error) => {
+					// A refusal ends the subscription (the client does not retry it).
+					if (isEventAccessDenied(error)) setAccessDenied(true);
+					setStatus('error');
+				},
 				// The client fires onError then onReconnecting back-to-back on
 				// every failed attempt; keep 'error' until a connect succeeds
 				// (onOpen) so the header doesn't flicker Offline ↔ Connecting.
@@ -818,6 +849,7 @@ export function AgentStreamProvider({
 		return unsubscribe;
 	}, [
 		live,
+		canReadEvents,
 		upsert,
 		invalidateAgentSurfaces,
 		invalidateOAuthSurfaces,
@@ -864,7 +896,7 @@ export function AgentStreamProvider({
 
 	const loadOlderEvents = useCallback(async () => {
 		const from = scope ? scopedCursor : cursor;
-		if (!from) return;
+		if (!from || !canReadEvents) return;
 		setLoadingOlder(true);
 		try {
 			const page = await listEvents({
@@ -887,13 +919,14 @@ export function AgentStreamProvider({
 		} finally {
 			setLoadingOlder(false);
 		}
-	}, [cursor, scope, scopedCursor, upsert]);
+	}, [cursor, scope, scopedCursor, upsert, canReadEvents]);
 
 	const setPaused = useCallback(
 		(next: boolean) => setFrozen(next ? freezeFeed(events) : null),
 		[events],
 	);
 
+	const forbidden = !canReadEvents || accessDenied;
 	const value = useMemo<AgentStreamValue>(
 		() => ({
 			events,
@@ -907,12 +940,14 @@ export function AgentStreamProvider({
 			setPaused,
 			frozen,
 			latest,
-			status,
+			status: forbidden ? 'forbidden' : status,
 			acknowledge,
 			settleOAuthClientRegistration,
 			resolveEvent,
 			loadOlderEvents,
-			canLoadOlder: scope ? scopedHasMore && scopedCursor != null : hasMore && cursor != null,
+			canLoadOlder:
+				!forbidden &&
+				(scope ? scopedHasMore && scopedCursor != null : hasMore && cursor != null),
 			loadingOlder,
 		}),
 		[
@@ -927,6 +962,7 @@ export function AgentStreamProvider({
 			scopedCursor,
 			latest,
 			status,
+			forbidden,
 			acknowledge,
 			settleOAuthClientRegistration,
 			resolveEvent,

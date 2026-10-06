@@ -68,7 +68,9 @@ const MEMBER = {
 	first_name: 'Member',
 	last_name: 'User',
 	active: true,
-	permissions: [],
+	// A non-admin who can read the event feed; callers without it get the
+	// feed's no-access state (eventAccess.test.tsx).
+	permissions: ['events:read'],
 	must_change_password: false,
 	created_at: '2026-01-01T00:00:00Z',
 	updated_at: null,
@@ -144,6 +146,42 @@ describe('MonitorPage', () => {
 		);
 		expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
 		expect(usageCalls).toBe(0);
+	});
+
+	it('resolves actor names for non-admins by id, without the full directory', async () => {
+		let listCalls = 0;
+		const lookedUp = new Set<string>();
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(MEMBER)),
+			http.get('/actors', () => {
+				listCalls += 1;
+				return new HttpResponse(null, { status: 403 });
+			}),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				ids.forEach((id) => lookedUp.add(id));
+				return HttpResponse.json({
+					data: ids.map((id) => ({
+						id,
+						actor_type: 'user',
+						name: `Name of ${id}`,
+						active: true,
+					})),
+				});
+			}),
+		);
+		renderMonitor();
+		await screen.findByText('GET /repos/{owner}/{repo}');
+		await waitFor(() => expect(lookedUp.size).toBeGreaterThan(0));
+		const [someId] = [...lookedUp];
+		expect((await screen.findAllByText(`Name of ${someId}`)).length).toBeGreaterThan(0);
+		expect(listCalls).toBe(0);
+		// The actor picker has nothing to list without the directory.
+		expect(
+			within(screen.getByRole('combobox', { name: 'Filter by actor' })).getAllByRole(
+				'option',
+			),
+		).toHaveLength(1);
 	});
 
 	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
@@ -531,9 +569,10 @@ describe('MonitorPage', () => {
 		renderMonitor();
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
+		// The picker's options load once `/users/me` confirms the caller may list actors.
 		await user.selectOptions(
 			screen.getByRole('combobox', { name: 'Filter by actor' }),
-			screen.getByRole('option', { name: /Admin User/ }),
+			await screen.findByRole('option', { name: /Admin User/ }),
 		);
 		await waitFor(() => {
 			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();

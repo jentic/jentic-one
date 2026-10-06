@@ -146,6 +146,10 @@ export { ActorsService } from '@/shared/api/generated/services/ActorsService';
 export { ActorType } from '@/shared/api/generated/models/ActorType';
 export type { ActorListResponse } from '@/shared/api/generated/models/ActorListResponse';
 export type { ActorSummaryResponse } from '@/shared/api/generated/models/ActorSummaryResponse';
+// By-id name lookup (`GET /actors/lookup`, `ActorsService.lookupActors`): the
+// directory's fallback for callers without `users:read`.
+export type { ActorLookupEntryResponse } from '@/shared/api/generated/models/ActorLookupEntryResponse';
+export type { ActorLookupResponse } from '@/shared/api/generated/models/ActorLookupResponse';
 
 // Session lifecycle (#610/#608): expiry-aware token adoption + proactive
 // refresh scheduling + the one-shot "session expired" login notice.
