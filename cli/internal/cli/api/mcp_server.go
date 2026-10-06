@@ -60,6 +60,11 @@ type mcpServer struct {
 	// (mcp_catalog.go: import-job tracking); zero means the default. A field
 	// only so tests can inject short budgets.
 	importWaitBudget time.Duration
+	// heldWaitBudget / heldWaitPoll override the held-execute short wait
+	// (mcp_held.go); zero means the defaults. Fields only so tests can inject
+	// short budgets.
+	heldWaitBudget time.Duration
+	heldWaitPoll   time.Duration
 
 	// sessionID is the per-process UUID fallback for X-Jentic-Session-Id. The
 	// RoundTripper stamps it ONLY when the header is absent, so an env-set

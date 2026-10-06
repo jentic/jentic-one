@@ -79,9 +79,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import Receive, Scope, Send
 
+from jentic_one.mcp.approvals import client_capabilities
 from jentic_one.mcp.resources import read_skill_resource, skill_resources
 from jentic_one.mcp.spec import served_tools
-from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
+from jentic_one.mcp.tools import CallEnv, dispatch_mcp_tool_call
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
@@ -323,7 +324,11 @@ def request_client_info(body: bytes) -> tuple[str | None, str | None]:
 # ── the SDK server (stateless; handlers read identity off the request state) ──
 
 
-def _call_env(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> CallEnv:
+def _call_env(
+    ctx: Context,
+    sctx: ServerRequestContext[Any, Any],
+    params: mcp_types.CallToolRequestParams | None = None,
+) -> CallEnv:
     """Rebuild the per-call env the gate stashed on the request's ASGI state."""
     request = sctx.request
     state = getattr(request, "scope", {}).get("state", {}) if request is not None else {}
@@ -333,12 +338,21 @@ def _call_env(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> CallEnv:
         # Structurally unreachable — the gate whitelists tools/call away from
         # the pre-auth path — but fail closed if a transport change breaks it.
         raise _auth_required_error()
+    meta = params.meta if params is not None else None
+    client_info = meta.get(CLIENT_INFO_META_KEY) if isinstance(meta, dict) else None
+    if not isinstance(client_info, dict):
+        client_info = {}
+    name, version = client_info.get("name"), client_info.get("version")
     return CallEnv(
         ctx=ctx,
         identity=identity,
         credential=credential,
         base_url=state.get("mcp_base_url", ""),
         session_id=state.get("mcp_session_id"),
+        client_capabilities=client_capabilities(meta),
+        client_name=name if isinstance(name, str) else None,
+        client_version=version if isinstance(version, str) else None,
+        request_state=params.request_state if params is not None else None,
     )
 
 
@@ -385,9 +399,9 @@ def build_mcp_server(ctx: Context) -> Server[Any]:
     async def on_call_tool(
         sctx: ServerRequestContext[Any, Any],
         params: mcp_types.CallToolRequestParams,
-    ) -> mcp_types.CallToolResult:
-        env = _call_env(ctx, sctx)
-        return await dispatch_tool_call(env, params.name, params.arguments)
+    ) -> mcp_types.CallToolResult | mcp_types.InputRequiredResult:
+        env = _call_env(ctx, sctx, params)
+        return await dispatch_mcp_tool_call(env, params.name, params.arguments)
 
     async def on_list_resources(
         sctx: ServerRequestContext[Any, Any],

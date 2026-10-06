@@ -204,9 +204,13 @@ upstream credential server-side; credentials never pass through your
 session.
 
 A held or async execution does not answer inline: it returns a **job
-envelope** (`{job_id, status, …}`). Poll the job until its status is
-terminal — and **never re-send the original call while a job is pending**:
-approval happens out-of-band, and re-sending duplicates the side effect.
+envelope** (`{job_id, status, …}`). A call held for human approval answers
+`status: "held"` with an `approval.review_url`: **show the user that link**
+— a reviewer signs in there to approve or deny it. Poll the job until its
+status is terminal (`completed` ran it; `failed` with a permission-denied
+problem means denied or expired; `cancelled` means withdrawn) — and **never
+re-send the original call while a job is pending**: approval happens
+out-of-band, and re-sending duplicates the side effect.
 
 A denied or failed execute carries a coded recovery (the CLI's stderr
 `agent_directive` + exit codes; MCP's coded error envelopes). Follow the

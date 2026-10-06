@@ -159,15 +159,21 @@ execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets
 
 **The job-poll idiom.** A held or async execution does not answer inline: a
 202 HELD response (human approval required) or a tracked import returns a
-**job envelope** (`{job_id, status, …}`). Poll it with the job id until the
-status is terminal (`completed`, `failed`, `cancelled`, `dead_letter`):
+**job envelope** (`{job_id, status, …}`). For a held call, **show the user
+its `approval.review_url`** — a reviewer signs in there to approve or deny
+it. Poll it with the job id until the status is terminal (`completed`,
+`failed`, `cancelled`, `dead_letter`); a `failed` held call carries the
+permission-denied problem (denied or expired) as its result:
 
 ```
 get_execution_result {"job_id": "<id from the held response>"}
 ```
 
 **Never re-send the original call while a job is pending** — approval
-happens out-of-band, and re-sending duplicates the side effect.
+happens out-of-band, and re-sending duplicates the side effect. A client
+that supports URL-mode elicitation may instead be asked to open the review
+page for the user; its accept only means the link was opened — the
+reviewer still decides on that page.
 
 **The recovery mapping.** What the CLI lane surfaces as a stderr
 `agent_directive` + exit codes arrives on MCP as a **coded error envelope**:

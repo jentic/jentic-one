@@ -331,41 +331,6 @@ func TestMCPExecute_UpstreamErrorIsNormalResult(t *testing.T) {
 	}
 }
 
-func TestMCPExecute_HeldEnvelopePassesThrough(t *testing.T) {
-	// The ask-tier 202-held broker behavior has not shipped; this mocks its
-	// envelope (§3.4) and pins the passthrough: NOT an error, directive and
-	// job pointer intact, so the model can poll with get_execution_result.
-	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Jentic-Execution-Id", "exec_held")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"job_id":"job_9","status":"held","agent_directive":{"strategy":"wait","parameters":{"job_id":"job_9","retry_after_seconds":30},"human_readable_instruction":"This call is held for human approval; poll the job for the outcome."}}`))
-	}))
-	defer broker.Close()
-
-	s := stampedTestMCPServer(t)
-	res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
-		callToolRequest("execute", `{"operation_id":"POST:/v1/pets"}`))
-	if err != nil {
-		t.Fatalf("handleExecute: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("a held (202) envelope is a normal result, got soft error: %s", toolResultText(res))
-	}
-	payload := decodeToolJSON(t, res)
-	if payload["status"] != float64(http.StatusAccepted) || payload["execution_id"] != "exec_held" {
-		t.Fatalf("envelope = %v, want the 202 + execution id relayed", payload)
-	}
-	body, _ := payload["body"].(map[string]any)
-	if body["job_id"] != "job_9" {
-		t.Errorf("body = %v, want the job pointer intact", payload["body"])
-	}
-	directive, _ := body["agent_directive"].(map[string]any)
-	if directive["strategy"] != "wait" {
-		t.Errorf("held directive = %v, want the wait strategy passed through", body["agent_directive"])
-	}
-}
-
 func TestMCPExecute_TransportFailureIsRetryableSoftError(t *testing.T) {
 	// A broker that is down: bind a listener, note the address, close it.
 	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
