@@ -94,7 +94,7 @@ export type LedgerItem =
 
 export interface RailEntry {
 	letter: RailLetter;
-	/** Vendors under this letter among the loaded rows, in order. */
+	/** Vendors under this letter among the loaded rows (in your workspace or not), in order. */
 	vendors: string[];
 	/**
 	 * Every vendor under this letter is loaded: a loaded range covers the
@@ -459,9 +459,32 @@ export function buildCatalogLedger(
 			return part.frontier !== '' && letter < railLetterOf(part.frontier);
 		});
 	};
+	// A letter's vendors count every loaded catalog row under it — including
+	// ones already in the workspace, which list in the top group rather than
+	// under their letter — so importing a row never shrinks its letter's count.
+	const importedVendors = new Map<RailLetter, string[]>();
+	for (const e of loaded) {
+		if (!e.registered) continue;
+		const letter = railLetterOf(e.apiId);
+		if (letter === '#' && !symbolsReady) continue;
+		importedVendors.set(letter, [...(importedVendors.get(letter) ?? []), vendorOf(e)]);
+	}
+	const railVendorsOf = (letter: RailLetter): string[] => {
+		const listed = railVendors.get(letter) ?? [];
+		const imported = importedVendors.get(letter);
+		if (!imported) return listed;
+		const byKey = new Map<string, string>();
+		for (const v of [...listed, ...imported]) {
+			const k = v.toLowerCase();
+			if (!byKey.has(k)) byKey.set(k, v);
+		}
+		return [...byKey.entries()]
+			.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+			.map(([, v]) => v);
+	};
 	const rail: RailEntry[] = RAIL_LETTERS.map((letter) => ({
 		letter,
-		vendors: railVendors.get(letter) ?? [],
+		vendors: railVendorsOf(letter),
 		settled: settled(letter),
 		anchorKey: anchors.get(letter) ?? null,
 	}));

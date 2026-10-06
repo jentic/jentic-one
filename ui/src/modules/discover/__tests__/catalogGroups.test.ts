@@ -197,6 +197,18 @@ describe('catalogGroups', () => {
 		expect(railLetterLabel(q, false)).toBe('Q — no vendors');
 	});
 
+	it("keeps a letter's vendor count when one of its rows is imported", () => {
+		const rows = [api('abc.com'), api('acme.com'), api('azure.com/vm'), api('box.com')];
+		const count = (entities: typeof rows) =>
+			buildCatalogLedger(entities, { searching: false, hasNextPage: false }).rail.find(
+				(r) => r.letter === 'A',
+			)!.vendors;
+		expect(count(rows)).toEqual(['abc.com', 'acme.com', 'azure.com']);
+		// acme.com moves to "In your workspace" — still a vendor under A.
+		const imported = rows.map((e) => (e.id === 'acme.com' ? { ...e, registered: true } : e));
+		expect(count(imported)).toEqual(['abc.com', 'acme.com', 'azure.com']);
+	});
+
 	it('offers an unloaded letter while paging, labelled from loaded rows only', () => {
 		// cat.io sits at the frontier with 6 loaded APIs (a summary row, still growing).
 		const cats = ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => api(`cat.io/${n}`));
