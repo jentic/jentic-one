@@ -88,7 +88,7 @@ qualitative one, not just an ordering:
 | `critical` | A failure *pattern* crossed an operator-configured threshold — not one failure but many of the same kind in a short window. |
 
 `critical` is reserved to a single event type today,
-`execution.repeated_failure`: it emits `error` once an actor+toolkit+
+`execution.repeated_failure`: it emits `error` once an actor+credential+
 operation's failures cross `security.execution_repeated_failure_threshold`
 within `security.execution_repeated_failure_window_s`, and escalates to
 `critical` only past the higher

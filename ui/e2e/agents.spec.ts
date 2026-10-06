@@ -106,7 +106,9 @@ test('the Activity sheet feeds per-agent executions and deep-links to Monitor', 
 
 	await page.getByTestId('agent-dock').getByRole('button', { name: 'Activity' }).click();
 	const sheet = page.getByRole('dialog', { name: 'Activity' });
-	await expect(sheet.getByText('github.create_issue')).toBeVisible();
+	// The feed renders the human-readable operation identity (credential ·
+	// METHOD path-template) — never the opaque operation id.
+	await expect(sheet.getByText('github · POST /repos/{owner}/{repo}/issues')).toBeVisible();
 	await expect(sheet.getByText('Recent changes')).toBeVisible();
 
 	// The Monitor deep link carries the actor filter (Monitor's URL contract).

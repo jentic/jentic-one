@@ -369,3 +369,82 @@ async def test_unknown_token_is_silent_noop(
     mock_at_repo.get_by_hash.assert_awaited_once()
     mock_rt_repo.get_by_hash.assert_awaited_once()
     mock_audit.assert_not_awaited()
+
+
+# --- residual rows of a retired actor type (theme-8 Phase 4) -----------------
+#
+# ``ActorType`` no longer has a ``service_account`` member; a token row minted
+# for a since-retired service account must still revoke cleanly (the audit row
+# keeps the historical label) instead of raising ValueError -> 500.
+
+
+@patch(f"{_SVC}.record_audit", new_callable=AsyncMock)
+@patch(f"{_SVC}.RefreshTokenRepository")
+@patch(f"{_SVC}.AccessTokenRepository")
+async def test_residual_service_account_access_token_revokes(
+    mock_at_repo: MagicMock, mock_rt_repo: MagicMock, mock_audit: AsyncMock
+) -> None:
+    ctx, _session = _make_ctx()
+    at = _access_row()
+    at.actor_type = "service_account"
+    at.actor_id = "sva_legacy"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=at)
+    mock_at_repo.revoke = AsyncMock()
+
+    await OAuthRevocationService(ctx).revoke_client_token("at_tok", client_id=_CLIENT_ID)
+
+    mock_at_repo.revoke.assert_awaited_once()
+    assert mock_audit.await_args is not None
+    assert mock_audit.await_args.kwargs["actor_type"] == "service_account"
+    assert mock_audit.await_args.kwargs["actor_id"] == "sva_legacy"
+
+
+@patch(f"{_SVC}.revoke_grant_and_sweep_tokens", new_callable=AsyncMock)
+@patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.RefreshTokenRepository")
+@patch(f"{_SVC}.AccessTokenRepository")
+async def test_residual_service_account_refresh_token_full_disconnect(
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+    mock_sweep: AsyncMock,
+) -> None:
+    ctx, _session = _make_ctx()
+    rt = _refresh_row()
+    rt.actor_type = "service_account"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=None)
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt)
+    mock_rt_repo.revoke_family = AsyncMock()
+    mock_at_repo.revoke_family = AsyncMock()
+    mock_grant_repo.get_by_id = AsyncMock(return_value=_grant_row())
+
+    await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id=_CLIENT_ID)
+
+    mock_sweep.assert_awaited_once()
+    assert mock_sweep.await_args is not None
+    assert mock_sweep.await_args.kwargs["actor_type"] == "service_account"
+
+
+@patch(f"{_SVC}.record_audit", new_callable=AsyncMock)
+@patch(f"{_SVC}.OAuthClientGrantRepository")
+@patch(f"{_SVC}.RefreshTokenRepository")
+@patch(f"{_SVC}.AccessTokenRepository")
+async def test_residual_service_account_refresh_token_without_grant_revokes(
+    mock_at_repo: MagicMock,
+    mock_rt_repo: MagicMock,
+    mock_grant_repo: MagicMock,
+    mock_audit: AsyncMock,
+) -> None:
+    ctx, _session = _make_ctx()
+    rt = _refresh_row(oauth_grant_id=None)
+    rt.actor_type = "service_account"
+    mock_at_repo.get_by_hash = AsyncMock(return_value=None)
+    mock_rt_repo.get_by_hash = AsyncMock(return_value=rt)
+    mock_rt_repo.revoke_family = AsyncMock()
+    mock_at_repo.revoke_family = AsyncMock()
+
+    await OAuthRevocationService(ctx).revoke_client_token("rt_tok", client_id=_CLIENT_ID)
+
+    mock_rt_repo.revoke_family.assert_awaited_once()
+    assert mock_audit.await_args is not None
+    assert mock_audit.await_args.kwargs["actor_type"] == "service_account"

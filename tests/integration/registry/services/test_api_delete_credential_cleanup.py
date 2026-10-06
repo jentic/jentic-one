@@ -24,11 +24,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
-from jentic_one.broker.repos.rule_evaluator import RuleEvaluator
 from jentic_one.control.core.schema.credentials import Credential
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
-from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
-from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.services.api_service import ApiService
 from jentic_one.shared.auth.identity import Identity
@@ -45,7 +41,6 @@ _VERSION = "v1"
 
 _IDENTITY = Identity(sub="usr_test", actor_type=ActorType.USER, permissions=["org:admin"])
 _AGENT_PREFIX = "acme643-agent"
-_TOOLKIT_ID = "tk_acme643"
 
 
 @pytest.fixture()
@@ -57,15 +52,6 @@ async def clean_state(
             await session.execute(delete(Api).where(Api.vendor == _VENDOR))
             await session.commit()
         async with control_db.session() as session:
-            await session.execute(
-                delete(ToolkitPermissionRule).where(ToolkitPermissionRule.toolkit_id == _TOOLKIT_ID)
-            )
-            await session.execute(
-                delete(ToolkitCredentialBinding).where(
-                    ToolkitCredentialBinding.toolkit_id == _TOOLKIT_ID
-                )
-            )
-            await session.execute(delete(Toolkit).where(Toolkit.id == _TOOLKIT_ID))
             await session.execute(delete(Credential).where(Credential.api_vendor == _VENDOR))
             await session.commit()
         async with admin_db.session() as session:
@@ -262,6 +248,7 @@ async def test_delete_api_suspends_agent_bindings(
         ).scalar_one()
         assert api_delete.after == {
             "deactivated_credentials": 1,
+            # Always empty since the 6b toolkit-table drop; kept for audit shape.
             "removed_toolkit_bindings": [],
             "suspended_bindings": 2,
         }
@@ -317,105 +304,3 @@ async def test_manual_resuspend_keeps_api_deleted_reason(
     binding = await _binding(admin_db, agent_id, "cred_exact")
     assert binding.suspended is True
     assert binding.suspended_reason == "api_deleted"
-
-
-async def _seed_toolkit(control_db: DatabaseSession, rules: dict[str, str]) -> None:
-    """Bind each credential to one toolkit with a single allow rule on ``path``."""
-    async with control_db.session() as session:
-        session.add(Toolkit(id=_TOOLKIT_ID, name="acme643-toolkit", created_by="usr_test"))
-        await session.flush()
-        for credential_id, path in rules.items():
-            session.add(
-                ToolkitCredentialBinding(
-                    toolkit_id=_TOOLKIT_ID, credential_id=credential_id, created_by="usr_test"
-                )
-            )
-            session.add(
-                ToolkitPermissionRule(
-                    toolkit_id=_TOOLKIT_ID,
-                    credential_id=credential_id,
-                    effect="allow",
-                    methods=["GET"],
-                    path=path,
-                    match_mode="regex",
-                    sequence=0,
-                    created_by="usr_test",
-                )
-            )
-        await session.commit()
-
-
-async def _toolkit_pairs(control_db: DatabaseSession) -> set[str]:
-    async with control_db.session() as session:
-        bound = (
-            await session.execute(
-                select(ToolkitCredentialBinding.credential_id).where(
-                    ToolkitCredentialBinding.toolkit_id == _TOOLKIT_ID
-                )
-            )
-        ).scalars()
-        return set(bound)
-
-
-async def _toolkit_rule_credentials(control_db: DatabaseSession) -> set[str]:
-    async with control_db.session() as session:
-        rules = (
-            await session.execute(
-                select(ToolkitPermissionRule.credential_id).where(
-                    ToolkitPermissionRule.toolkit_id == _TOOLKIT_ID
-                )
-            )
-        ).scalars()
-        return set(rules)
-
-
-async def _toolkit_allows(control_db: DatabaseSession, path: str) -> bool:
-    evaluation = await RuleEvaluator(control_db, cache_ttl_seconds=0).evaluate(
-        toolkit_id=_TOOLKIT_ID, method="GET", path=path, operation_id=None, api_vendor=_VENDOR
-    )
-    return evaluation.allowed
-
-
-async def test_delete_api_removes_toolkit_bindings(
-    integration_context: Context,
-    registry_db: DatabaseSession,
-    control_db: DatabaseSession,
-    admin_db: DatabaseSession,
-    clean_state: None,
-) -> None:
-    """Legacy toolkit bindings to the deleted API's credentials go, with their rules.
-
-    The toolkit path pools a toolkit's rules per vendor, so a surviving rule
-    authored for the deleted API would keep authorizing requests through the
-    toolkit's vendor-wide credential, and re-activating the exact credential
-    would bring its toolkit access straight back.
-    """
-    await _seed_api(registry_db)
-    await _seed_credential(control_db, cred_id="cred_exact")
-    await _seed_credential(control_db, cred_id="cred_vendor_wide", api_name=None, api_version=None)
-    await _seed_toolkit(control_db, {"cred_exact": "/pets.*", "cred_vendor_wide": "/stores.*"})
-    assert await _toolkit_allows(control_db, "/pets/1") is True
-
-    await ApiService(integration_context).delete(_VENDOR, _NAME, _VERSION, identity=_IDENTITY)
-
-    assert await _toolkit_pairs(control_db) == {"cred_vendor_wide"}
-    assert await _toolkit_rule_credentials(control_db) == {"cred_vendor_wide"}
-    # The deleted API's rule no longer lends itself to the vendor-wide
-    # credential; that credential's own rule still applies.
-    assert await _toolkit_allows(control_db, "/pets/1") is False
-    assert await _toolkit_allows(control_db, "/stores/1") is True
-
-    async with admin_db.session() as session:
-        api_delete = (
-            await session.execute(
-                select(AuditEntry)
-                .where(AuditEntry.target_type == AuditTargetType.API)
-                .where(AuditEntry.action == AuditAction.DELETE)
-                .order_by(AuditEntry.occurred_at.desc())
-                .limit(1)
-            )
-        ).scalar_one()
-        assert api_delete.after is not None
-        assert api_delete.after["removed_toolkit_bindings"] == [
-            {"toolkit_id": _TOOLKIT_ID, "credential_id": "cred_exact"}
-        ]

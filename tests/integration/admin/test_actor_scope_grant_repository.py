@@ -56,19 +56,19 @@ async def test_grant_and_list(admin_db: DatabaseSession, clean_grants: None) -> 
 
 
 async def test_revoke(admin_db: DatabaseSession, clean_grants: None) -> None:
-    actor_id = "sva_test000000000000000000"
+    actor_id = "agnt_test00000000000000000"
     async with admin_db.session() as session:
         await ActorScopeGrantRepository.grant(
             session,
             actor_id=actor_id,
-            actor_type="service_account",
+            actor_type="agent",
             scope="read:apis",
             created_by="usr_test",
         )
         await ActorScopeGrantRepository.grant(
             session,
             actor_id=actor_id,
-            actor_type="service_account",
+            actor_type="agent",
             scope="write:apis",
             created_by="usr_test",
         )

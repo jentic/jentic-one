@@ -115,9 +115,9 @@ async def test_create_stores_empty_name_and_version_as_null(
 
     APIReferenceRequest defaults name/version to "" (not None). NULL is the
     "covers all names/versions" wildcard both the bind-time resolver and the
-    broker's toolkit_binding_resolver rely on; an empty string matches NEITHER
-    NULL nor a concrete value, so a versionless credential would make its toolkit
-    serve nothing at execute time (issue #775). The service must coerce "" -> NULL.
+    broker's credential_binding_resolver rely on; an empty string matches
+    NEITHER NULL nor a concrete value, so a versionless credential would serve
+    nothing at execute time (issue #775). The service must coerce "" -> NULL.
     """
     result = await svc.create(
         CredentialCreate(

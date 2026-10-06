@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import String, Table, func, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -22,15 +22,18 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateTable
 
+import jentic_one.shared.events.repeated_failure as repeated_failure_mod
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.protocols import UpstreamExecResult
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
+from jentic_one.shared.schemas import OperationInfo
 
 _ACTOR = "agt_repeat"
 _TOOLKIT = "tk_repeat0000000000000000000"
@@ -102,13 +105,18 @@ async def _add_failures(
     await session.flush()
 
 
-async def _emit(session: AsyncSession, config: SecurityConfig | None = None) -> None:
+async def _emit(
+    session: AsyncSession,
+    config: SecurityConfig | None = None,
+    *,
+    operation: OperationInfo | None = None,
+) -> None:
     await maybe_emit_repeated_failure(
         session,
         actor_id=_ACTOR,
         actor_type="agent",
         toolkit_id=_TOOLKIT,
-        operation_id=_OPERATION,
+        operation=operation or OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=config or SecurityConfig(),
     )
@@ -146,6 +154,88 @@ async def test_at_threshold_emits_one_error(session: AsyncSession) -> None:
     # Cross-check against the documented severity matrix (issue #907).
     allowed = EVENT_TYPE_SEVERITIES[EventType.EXECUTION_REPEATED_FAILURE]
     assert EventSeverity(events[0].severity) in allowed
+
+
+async def test_summary_renders_the_human_operation_identity(session: AsyncSession) -> None:
+    """The summary shows method + path template — never the opaque op_… hash
+    when the human identity is available (the id stays in ``data`` for
+    machines and keeps keying the aggregation)."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(
+        session,
+        config,
+        operation=OperationInfo(id=_OPERATION, path="/v1/things/{id}", method="GET"),
+    )
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert "GET /v1/things/{id}" in events[0].summary
+    assert _OPERATION not in events[0].summary
+    assert events[0].data["operation_id"] == _OPERATION
+    # The structured human identity rides ``data`` too, so the UI can render
+    # and filter it the same way it does execution rows.
+    assert events[0].data["operation_path"] == "/v1/things/{id}"
+    assert events[0].data["operation_method"] == "GET"
+
+
+async def test_summary_falls_back_to_the_id_for_legacy_operations(
+    session: AsyncSession,
+) -> None:
+    """A legacy in-flight job carries only the id — the summary uses it rather
+    than naming no operation at all (an ops signal needs an identity)."""
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(session, config, operation=OperationInfo(id=_OPERATION))
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert _OPERATION in events[0].summary
+
+
+async def test_summary_fits_the_event_column_for_a_long_path(session: AsyncSession) -> None:
+    """The operation label cannot overflow ``Event.summary``: the registry path
+    template it renders is unbounded Text, and Postgres rejecting the INSERT
+    would abort the caller's transaction and discard the execution record
+    already flushed into it. SQLite accepts any width, so assert the bound."""
+    summary_width = cast(String, Event.__table__.c.summary.type).length
+    assert summary_width is not None, "Event.summary must be a bounded String column"
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+    await _emit(
+        session,
+        config,
+        operation=OperationInfo(id=_OPERATION, path="/v1/" + "x" * 900, method="GET"),
+    )
+
+    events = await _repeated_events(session)
+    assert len(events) == 1
+    assert len(events[0].summary) <= summary_width
+    # The cut is marked, so a clipped template isn't read as the real one.
+    assert "…" in events[0].summary
+
+
+async def test_failed_emit_rolls_back_only_its_own_writes(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The detector runs in a SAVEPOINT: a failure after the event INSERT rolls
+    back just that write — the caller's already-flushed ExecutionRecords survive
+    and the session stays usable (on Postgres a bare try/except would leave the
+    whole transaction aborted, losing the execution record)."""
+
+    async def emit_then_fail(*args: Any, **kwargs: Any) -> None:
+        await emit_event(*args, **kwargs)
+        raise RuntimeError("simulated failure after the event INSERT")
+
+    monkeypatch.setattr(repeated_failure_mod, "emit_event", emit_then_fail)
+    config = SecurityConfig(execution_repeated_failure_threshold=5)
+    await _add_failures(session, 5)
+
+    await _emit(session, config)
+
+    assert await _repeated_events(session) == []
+    records = await session.execute(select(func.count()).select_from(ExecutionRecord))
+    assert records.scalar_one() == 5
 
 
 async def test_repeated_calls_within_window_dedup(session: AsyncSession) -> None:
@@ -256,9 +346,20 @@ async def test_missing_toolkit_or_operation_is_noop(session: AsyncSession) -> No
         actor_id=_ACTOR,
         actor_type="agent",
         toolkit_id=None,
-        operation_id=_OPERATION,
+        operation=OperationInfo(id=_OPERATION),
         trace_id=_TRACE,
         config=SecurityConfig(execution_repeated_failure_threshold=5),
+    )
+    assert await _repeated_events(session) == []
+
+
+async def test_empty_operation_id_is_noop(session: AsyncSession) -> None:
+    """An operation with an empty id has no aggregation key — nothing to count."""
+    await _add_failures(session, 10)
+    await _emit(
+        session,
+        SecurityConfig(execution_repeated_failure_threshold=5),
+        operation=OperationInfo(id=""),
     )
     assert await _repeated_events(session) == []
 

@@ -94,24 +94,13 @@ components:
       type: object
     ActorType:
       description: |-
-        Type of authenticated actor.
+        Type of authenticated actor: a human user or an agent.
 
-        ``toolkit`` is retired (theme-5 Phase 4): toolkit keys resolve as the
-        agents the key-retirement job created, so no code path mints a
-        toolkit identity. Persisted ``actor_type='toolkit'`` strings survive in
-        historical rows (events, audit entries, execution records) until the
-        Phase-6b scope-data sweep; read paths must tolerate the string without
-        round-tripping it through this enum.
-
-        ``service_account`` is deserialization-only (theme-8 Phase 2): the
-        service-account surface is gone and no issuance path produces it, but
-        stored token rows, grant rows, audit/execution records, and telemetry
-        history carry the value, and the Phase-1 resolver fallback still resolves
-        unmigrated ``sak_`` keys as it. Deletion is a Phase-4/5 decision.
+        Historical records may carry older actor-type values that are no longer
+        issued; treat unrecognised values as opaque labels.
       enum:
       - user
       - agent
-      - service_account
       title: ActorType
       type: string
     AgentCreateRequest:
@@ -2238,6 +2227,18 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+          title: Operation Method
+        operation_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The operation''s spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.'
+          title: Operation Path
         origin:
           anyOf:
           - type: string
@@ -2339,10 +2340,11 @@ components:
       description: |-
         Grouping dimension for usage statistics.
 
-        ``TOOLKIT`` is deprecated (theme-5 Phase 5b) and will be removed one
-        release later, with the toolkit tables (Phase 6b): execution records
-        carry a ``credential_id`` since Phase 2 and the direct-binding path
-        writes no ``toolkit_id``, so ``CREDENTIAL`` is the replacement axis.
+        ``TOOLKIT`` is a legacy axis: it groups over the surviving
+        ``execution_records.toolkit_id`` attribution column, which nothing writes
+        since the toolkit path was deleted (theme-5 Phase 6b). It stays so
+        historical dashboards keep working; ``CREDENTIAL`` is the live
+        consumer axis (execution records carry ``credential_id`` since Phase 2).
       enum:
       - api
       - toolkit
@@ -2734,11 +2736,6 @@ components:
             type: string
           title: Token Scopes
           type: array
-        toolkit_bindings:
-          items:
-            $ref: '#/components/schemas/ToolkitBindingEntry'
-          title: Toolkit Bindings
-          type: array
         type:
           const: agent
           default: agent
@@ -2750,57 +2747,7 @@ components:
       - status
       - scopes
       - token_scopes
-      - toolkit_bindings
       title: MeAgent
-      type: object
-    MeServiceAccount:
-      description: |-
-        Identity response for a (retired) service-account actor.
-
-        Served only to callers whose unmigrated ``sak_``/``jntc_live_`` key
-        resolved through the Phase-1 SA-table fallback (theme 8). Deleted with the
-        fallback in Phase 4.
-      properties:
-        approved_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Approved By
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        registered_by:
-          title: Registered By
-          type: string
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-        status:
-          title: Status
-          type: string
-        token_scopes:
-          items:
-            type: string
-          title: Token Scopes
-          type: array
-        type:
-          const: service_account
-          default: service_account
-          title: Type
-          type: string
-      required:
-      - id
-      - name
-      - status
-      - scopes
-      - token_scopes
-      - registered_by
-      title: MeServiceAccount
       type: object
     MeUser:
       description: Identity response for a user actor.
@@ -2848,7 +2795,7 @@ components:
         Create request for no_auth credentials.
 
         A no-auth credential carries no secret — it represents "this API is called
-        without authentication". It still exists as a credential row so a toolkit
+        without authentication". It still exists as a credential row so an agent
         binding (and its permission rules) can hang off it, and the broker resolves
         it as a no-op auth (see broker credential resolver / injection).
       properties:
@@ -4030,6 +3977,10 @@ components:
         relevance_score:
           title: Relevance Score
           type: number
+        target:
+          description: 'The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.'
+          title: Target
+          type: string
         type:
           const: operation
           default: operation
@@ -4043,6 +3994,7 @@ components:
       - operation_id
       - method
       - url
+      - target
       - relevance_score
       - _links
       title: OperationResultResponse
@@ -5391,7 +5343,7 @@ components:
       type: object
     ServedApiRef:
       description: |-
-        An API served by a toolkit's bound credential, keyed by its stored identity.
+        An API served by an agent's bound credential, keyed by its stored identity.
 
         Distinct from ``APIReference`` on purpose: this carries the *stored* credential
         identity, where ``api_name``/``api_version`` may be NULL (the "covers all
@@ -5592,32 +5544,6 @@ components:
       - access_token
       - expires_in
       title: TokenResponse
-      type: object
-    ToolkitBindingEntry:
-      description: Toolkit binding summary for the /me response.
-      properties:
-        bound_at:
-          format: date-time
-          title: Bound At
-          type: string
-        name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Name
-        serves:
-          default: []
-          items:
-            $ref: '#/components/schemas/ServedApiRef'
-          title: Serves
-          type: array
-        toolkit_id:
-          title: Toolkit Id
-          type: string
-      required:
-      - toolkit_id
-      - bound_at
-      title: ToolkitBindingEntry
       type: object
     TopOperation:
       description: Aggregated execution counts for a single operation.
@@ -6136,7 +6062,7 @@ info:
       edit.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
-      from it. To walk all executions under one logical request, use
+      from it. To walk the executions you can see under one logical request, use
       `GET /executions?trace_id=…`.
     - **Event stream.** The dashboard / operator UI consumes the
       `/events` resource (paginated list + SSE stream). Some events
@@ -6156,8 +6082,8 @@ info:
 
       | Prefix | Resource | Notes |
       |---|---|---|
-      | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-      | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the agent it was migrated to. |
+      | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+      | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
       | `cred_` | Credential ID | |
       | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
       | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -6169,7 +6095,8 @@ info:
       | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
       | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated agent — for the deprecation window; rotate holders to agent (`jak_`) keys. |
+      | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+      | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
       Surfaces still being designed (agent identity, OAuth brokers)
       will add their own prefixes when they land.
@@ -6178,7 +6105,7 @@ info:
     name: Apache-2.0
   summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, direct agent bindings), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
   title: Jentic Control Plane API
-  version: 0.40.1
+  version: 0.41.0
 openapi: 3.1.0
 paths:
   /.well-known/jwks.json:
@@ -13162,7 +13089,8 @@ paths:
         List agents directly bound to a credential with cursor-based pagination.
 
         The reverse lookup for the credential-detail "Agents" view (theme 5
-        phase 1) — the direct-binding mirror of ``GET /toolkits/{id}/agents``.
+        phase 1) — the direct-binding successor of the removed
+        ``GET /toolkits/{id}/agents``.
         Suspended bindings are included with their flag set.
       operationId: listCredentialAgents
       parameters:
@@ -15352,13 +15280,11 @@ paths:
                 discriminator:
                   mapping:
                     agent: '#/components/schemas/MeAgent'
-                    service_account: '#/components/schemas/MeServiceAccount'
                     user: '#/components/schemas/MeUser'
                   propertyName: type
                 oneOf:
                 - $ref: '#/components/schemas/MeUser'
                 - $ref: '#/components/schemas/MeAgent'
-                - $ref: '#/components/schemas/MeServiceAccount'
                 title: Response Getme
           description: Successful Response
         '400':
@@ -18880,8 +18806,10 @@ paths:
 security:
 - BearerAuth: []
 servers:
-- description: Same-origin (relative)
-  url: /
+- description: Production (placeholder — set to your deployment's Control Plane host)
+  url: https://control.your-instance.example
+- description: Development (placeholder — set to your deployment's Control Plane host)
+  url: https://control-dev.your-instance.example
 tags:
 - description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once** at creation (and on rotation via `PATCH`). Read paths return a redacted projection — last-N characters, hints, never the secret itself.
   name: Credentials
@@ -18959,11 +18887,11 @@ tags:
 
     **Authentication.** Any authenticated principal (agent or human) can submit, edit, confirm, or deprecate overlays. Platform-side rate limits gate abuse.
   name: Overlays
-- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`.
+- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
 - description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs
-- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter.
+- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter. An event is visible only to the actor (`actor_id`) or creator (`created_by`) it names, to the human owner of either when that is an agent, and to `org:admin`; system events with no subject are visible only to `org:admin`. To any other caller an event is indistinguishable from a missing one (`404`), including on acknowledgement.
   name: Events
 - description: |-
     Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).
@@ -18987,7 +18915,7 @@ tags:
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
-- description: Identity introspection for the calling principal (human, agent, or service account) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
+- description: Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents

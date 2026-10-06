@@ -25,26 +25,12 @@ import (
 )
 
 // Canonical mode strings (impl/3.1 §0, 14 BC-12; mirrored in client/config Context.Mode docs).
+// The retired `service-account` alias is gone (14 BC-12 removal): it is now an
+// unknown mode like any other and fails closed to AgentUX in the interceptor.
 const (
 	ModeHuman = "human"
 	ModeAgent = "agent"
-	// LegacyModeServiceAccount is a deprecated alias of ModeAgent (14 BC-12). It
-	// is accepted from --mode, $JENTIC_MODE and persisted contexts, canonicalized
-	// to agent by the ladder, and the root interceptor warns on stderr. It shares
-	// AgentUX byte-for-byte (impl/3.1 §0).
-	LegacyModeServiceAccount = "service-account"
 )
-
-// CanonicalMode maps a deprecated mode alias onto its canonical mode.
-// deprecated is the alias that was rewritten, or "" when mode was already
-// canonical (or unknown — unknown values are left for the interceptor to fail
-// closed on).
-func CanonicalMode(mode string) (canonical, deprecated string) {
-	if mode == LegacyModeServiceAccount {
-		return ModeAgent, mode
-	}
-	return mode, ""
-}
 
 // ActiveState is the CLI's resolved view of the world: the SDK's UX-free
 // ResolvedState plus the CLI-only Mode/ThemeName the SDK deliberately leaves
@@ -53,13 +39,9 @@ func CanonicalMode(mode string) (canonical, deprecated string) {
 type ActiveState struct {
 	*sdkconfig.ResolvedState
 
-	// Mode is the resolved canonical mode ("human"/"agent"; a deprecated alias is
-	// already rewritten, see DeprecatedMode).
+	// Mode is the resolved mode ("human"/"agent"; any other value is unknown and
+	// fails closed to agent in the root interceptor).
 	Mode string
-	// DeprecatedMode is the deprecated alias the ladder rewrote into Mode
-	// ("service-account"), or "" when none was used. The root interceptor warns
-	// on it.
-	DeprecatedMode string
 	// ModeExplicit records whether Mode came from an explicit source (--mode,
 	// $JENTIC_MODE, or the persisted context mode) rather than the ladder's
 	// human default. Output rendering uses it (UX-5): an EXPLICIT human mode
@@ -99,13 +81,12 @@ func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, err
 		return nil, err
 	}
 
-	mode, explicit, deprecated := ResolveModeLadder(modeOverride, rs.PersistedMode)
+	mode, explicit := ResolveModeExplicit(modeOverride, rs.PersistedMode)
 	return &ActiveState{
-		ResolvedState:  rs,
-		Mode:           mode,
-		ModeExplicit:   explicit,
-		DeprecatedMode: deprecated,
-		ThemeName:      rs.PersistedTheme,
+		ResolvedState: rs,
+		Mode:          mode,
+		ModeExplicit:  explicit,
+		ThemeName:     rs.PersistedTheme,
 	}, nil
 }
 
@@ -128,20 +109,6 @@ func ResolveMode(flagOverride, persisted string) string {
 // needs the distinction (UX-5): explicit human pins pretty output in pipes,
 // default human keeps the non-TTY→JSON heuristic.
 func ResolveModeExplicit(flagOverride, persisted string) (mode string, explicit bool) {
-	mode, explicit, _ = ResolveModeLadder(flagOverride, persisted)
-	return mode, explicit
-}
-
-// ResolveModeLadder is ResolveModeExplicit plus the deprecated alias (if any)
-// the winning rung carried: a "service-account" rung resolves to agent and
-// reports the alias so the interceptor can warn.
-func ResolveModeLadder(flagOverride, persisted string) (mode string, explicit bool, deprecated string) {
-	raw, explicit := rawMode(flagOverride, persisted)
-	mode, deprecated = CanonicalMode(raw)
-	return mode, explicit, deprecated
-}
-
-func rawMode(flagOverride, persisted string) (string, bool) {
 	if flagOverride != "" {
 		return flagOverride, true
 	}

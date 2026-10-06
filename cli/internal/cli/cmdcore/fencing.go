@@ -77,13 +77,12 @@ func installInterceptor(app *App, root *cobra.Command) {
 			// The embedded ResolvedState must be non-nil: commands that reach
 			// clictx.GetControlClient on this degraded state would otherwise
 			// nil-deref (panic, runtime exit 2 — colliding with ExitDenied).
-			fallbackMode, fallbackExplicit, fallbackDeprecated := clictx.ResolveModeLadder(flagValue(cmd, "mode"), "")
+			fallbackMode, fallbackExplicit := clictx.ResolveModeExplicit(flagValue(cmd, "mode"), "")
 			state = &clictx.ActiveState{
-				ResolvedState:  &sdkconfig.ResolvedState{},
-				Mode:           fallbackMode,
-				ModeExplicit:   fallbackExplicit,
-				DeprecatedMode: fallbackDeprecated,
-				ThemeName:      "no-color",
+				ResolvedState: &sdkconfig.ResolvedState{},
+				Mode:          fallbackMode,
+				ModeExplicit:  fallbackExplicit,
+				ThemeName:     "no-color",
 			}
 		}
 
@@ -119,14 +118,14 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// the mode-appropriate, secret-scrubbed handler.
 		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
 
-		// The retired service-account mode runs as agent (same AgentUX). Warn on
-		// stderr only, so stdout stays one JSON document (13 §1).
-		if state.DeprecatedMode != "" {
-			slog.Warn("deprecated mode; running in agent mode",
-				"code", "DEPRECATED_MODE",
-				"mode", state.DeprecatedMode,
-				"replacement", clictx.ModeAgent,
-				"actionable_step", "use --mode agent or JENTIC_MODE=agent; for a persisted context, set mode: agent in config.yaml")
+		// An unknown mode (typo, or the retired `service-account` alias — 14
+		// BC-12) already failed closed to AgentUX above; say so on stderr only,
+		// so stdout stays one JSON document (13 §1).
+		if state.Mode != clictx.ModeHuman && state.Mode != clictx.ModeAgent {
+			slog.Warn("unknown mode; running in agent mode",
+				"code", "UNKNOWN_MODE",
+				"mode", state.Mode,
+				"actionable_step", "use --mode agent|human or JENTIC_MODE=agent|human; for a persisted context, set mode in config.yaml")
 		}
 
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS

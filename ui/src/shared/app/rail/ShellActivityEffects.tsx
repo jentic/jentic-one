@@ -3,7 +3,7 @@
  * page, so they live in the shell rather than in the rail (which is hidden on
  * Monitor, where the page itself shows the stream):
  *
- *   • the opt-in sound on failures — org-wide like the failure toasts, and
+ *   • the opt-in sound on failures — on the same feed as the failure toasts, and
  *     mounted once so the docked rail and the drawer never double-beep. The
  *     switch lives in the Notifications settings.
  */

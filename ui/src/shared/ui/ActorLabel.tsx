@@ -14,8 +14,8 @@
  * Directory scope is `user` / `agent` — the only actor types `GET /actors`
  * returns (toolkits and service accounts are retired actor types). Either can
  * still appear as the `actor_id` of a HISTORICAL execution/audit/event record
- * (`actor_type === "toolkit"` / `"service_account"`; live `jntc_live_…` and
- * `sak_…` keys now resolve as successor agents), so we render those
+ * (`actor_type === "toolkit"` / `"service_account"`; live `jntc_live_…` keys
+ * now resolve as successor agents, `sak_…` keys are refused), so we render those
  * gracefully with a type prefix + the raw `tk_…` / `sva_…` id rather than
  * trying — and failing — to resolve a name that the directory never holds.
  *
@@ -35,8 +35,8 @@ import {
 /** Subtle, human-friendly noun for each actor type. Keyed by the wire string
  * (not the enum) because historical rows persist the retired
  * `actor_type='toolkit'` / `'service_account'` — the enum no longer carries
- * (or will soon drop) them, but read paths must still label them rather than
- * round-trip them through `ActorType`. */
+ * them, but read paths must still label them rather than round-trip them
+ * through `ActorType`. */
 const ACTOR_TYPE_LABEL: Record<string, string> = {
 	[ActorType.USER]: 'User',
 	[ActorType.AGENT]: 'Agent',

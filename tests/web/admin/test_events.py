@@ -13,7 +13,10 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.events import EventView, Heartbeat
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+
+_ADMIN = Identity(sub="usr_event_admin", permissions=["org:admin"])
 
 pytestmark = pytest.mark.integration
 
@@ -94,7 +97,7 @@ async def test_stream_yields_heartbeat_when_idle(web_context: Context) -> None:
     svc = EventStreamService(web_context)
     stream = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
-        svc.stream(poll_interval_seconds=0.01),
+        svc.stream(identity=_ADMIN, poll_interval_seconds=0.01),
     )
     try:
         first = await stream.__anext__()

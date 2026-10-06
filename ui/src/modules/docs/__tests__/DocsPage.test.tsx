@@ -13,6 +13,7 @@
  *  - the native API reference renders an operation with its scope panel,
  *    enriched from the reference payload (the join the portal exists to show);
  *  - the Broker reference renders as its own section from its own spec;
+ *  - the Broker base URL is the one `/instance` advertises, else the spec's own;
  *  - a missing reference endpoint degrades to a graceful, retryable notice
  *    instead of a blank route;
  *  - no critical/serious a11y violations on the assembled page.
@@ -219,6 +220,34 @@ describe('DocsPage', () => {
 				{},
 				{ timeout: 3000 },
 			),
+		).toBeInTheDocument();
+	});
+
+	it('shows the broker URL advertised by /instance as the Broker base URL', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: 'https://broker.acme.test',
+				}),
+			),
+		);
+		renderWithProviders(<DocsPage />);
+
+		expect(
+			await screen.findByText('https://broker.acme.test', {}, { timeout: 3000 }),
+		).toBeInTheDocument();
+		expect(screen.queryByText('https://broker.example.com')).not.toBeInTheDocument();
+	});
+
+	it("keeps the Broker spec's own servers when /instance withholds a broker URL", async () => {
+		renderWithProviders(<DocsPage />);
+
+		expect(
+			await screen.findByText('https://broker.example.com', {}, { timeout: 3000 }),
 		).toBeInTheDocument();
 	});
 

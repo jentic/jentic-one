@@ -242,14 +242,50 @@ class ServicesConfig(BaseModel):
     request_timeout_s: float = 30.0
     retry_max: int = 3
     retry_backoff_s: float = 1.0
-    # Theme-8 Phase 1 (N3): minimum age of a service account's migration
-    # stamp before the boot job's automatic sweep archives the SA-side
-    # originals — the full-fleet-rollout proxy (old-image pods resolve
-    # migrated keys through the SA arm until every pod is upgraded).
-    # ``0`` disables the age gate (CI / fresh installs); a negative value
-    # disables the automatic sweep arm entirely (CLI-only sweeps via
-    # ``jentic_one migrate-service-accounts --sweep-migrated``).
-    service_account_sweep_min_stamp_age_hours: int = 24
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_sa_sweep_age(cls, data: Any) -> Any:
+        """Ignore ``services.service_account_sweep_min_stamp_age_hours``.
+
+        The 0.40 age gate of the automatic service-account sweep. Theme-8
+        Phase 4 removed the sweep's boot job: the upgrade now migrates, verifies
+        and sweeps every service account before dropping the tables, so the
+        setting has nothing left to gate. Harmless when left behind — dropped
+        with a one-time warning, never a boot failure.
+        """
+        if isinstance(data, dict) and _RETIRED_SA_SWEEP_AGE_KEY in data:
+            _warn_retired_sa_sweep_age_once()
+            data = {k: v for k, v in data.items() if k != _RETIRED_SA_SWEEP_AGE_KEY}
+        return data
+
+
+_RETIRED_SA_SWEEP_AGE_KEY = "service_account_sweep_min_stamp_age_hours"
+_retired_sa_sweep_age_warned = threading.Event()
+
+
+def _warn_retired_sa_sweep_age_once() -> None:
+    """One WARNING per process for the leftover setting (it is ignored).
+
+    Latched like :func:`_warn_retired_direct_bindings_flag_once`: config is
+    validated more than once per process.
+    """
+    if _retired_sa_sweep_age_warned.is_set():
+        return
+    _retired_sa_sweep_age_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting=f"services.{_RETIRED_SA_SWEEP_AGE_KEY}",
+        detail=(
+            "removed in theme-8 Phase 4 with the automatic service-account sweep; "
+            "the upgrade migrates and sweeps every service account itself, and the "
+            "value is ignored"
+        ),
+        actionable_step=(
+            f"Remove services.{_RETIRED_SA_SWEEP_AGE_KEY} from the config file or "
+            "JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS from the environment."
+        ),
+    )
 
 
 class WorkerConfig(BaseModel):
@@ -1459,34 +1495,26 @@ class BrokerConfig(BaseModel):
         ),
     )
     resolve_cache_ttl_seconds: float = 3.0
-    # Short TTL (seconds) for the per-instance toolkit-derivation cache.
-    # Wraps the cross-DB `derive_toolkits` lookup so the per-request Admin+Control
-    # double hit is served from cache for header-less requests. Agent/credential
-    # bindings change infrequently, so a short TTL bounds revocation staleness
-    # (the cache is per instance, so a grant/revoke is consistent cluster-wide
-    # only after the TTL lapses on each node) while removing the hot-path lookup.
+    # Short TTL (seconds) for the per-instance credential-binding derivation
+    # cache. Wraps the cross-DB `derive_credentials` lookup so the per-request
+    # Admin+Control double hit is served from cache. Agent/credential bindings
+    # change infrequently, so a short TTL bounds revocation staleness (the
+    # cache is per instance, so a grant/revoke is consistent cluster-wide only
+    # after the TTL lapses on each node) while removing the hot-path lookup.
     # Authorization correctness never depends on the cache — it is a latency
     # optimization over the authoritative DB lookup. 0 disables it.
+    # Key name is legacy (it originally bounded the toolkit-derivation cache,
+    # deleted in theme-5 Phase 6b); kept for operator config compatibility.
     toolkit_cache_ttl_s: float = 3.0
     # Short TTL (seconds) for the per-instance permission-rule cache.
-    # Caches the ordered toolkit_permission_rules per toolkit_id. Same staleness
+    # Caches the ordered rules per (agent, credential) binding. Same staleness
     # trade-off as toolkit_cache_ttl_s — a rule change propagates after the TTL.
     rule_cache_ttl_s: float = 3.0
-    # Upper bound on entries in each per-worker permission-rule LRU (toolkit and
-    # direct-binding evaluators alike). Size against agents x credentials for the
-    # direct path — each active (agent, credential) binding is one entry — and
-    # against toolkits x vendors for the toolkit path. Eviction is LRU by entry
-    # count (the TTL only bounds staleness, never memory).
+    # Upper bound on entries in the per-worker permission-rule LRU. Size
+    # against agents x credentials — each active (agent, credential) binding
+    # is one entry. Eviction is LRU by entry count (the TTL only bounds
+    # staleness, never memory).
     rule_cache_max_entries: int = 5_000
-    # Theme-5 Phase 2 cutover flag, default-on since Phase 5b: callers are
-    # authorized through **direct agent→credential bindings**
-    # (agent_credential_bindings + agent_permission_rules /
-    # permission_rule_sets). Setting False is an emergency fallback onto the
-    # legacy toolkit-derivation path, which survives until Phase 6b removes it
-    # (and this flag with it). Successor agents cut from jntc_live_ toolkit
-    # keys (theme-5 Phase 4, re-homed onto agents by theme-8) hold both
-    # binding forms, so they work under either setting.
-    direct_bindings_enabled: bool = True
     # Absolute public base URL of the admin jobs API, used to build the 202
     # `_links.self` pointer for async executions (e.g. "https://api.example.com").
     # None keeps the legacy broker-relative `/jobs/{id}` link.
@@ -1512,6 +1540,59 @@ class BrokerConfig(BaseModel):
 
     _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
         _normalize_optional_base_url
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_direct_bindings_flag(cls, data: Any) -> Any:
+        """Fail loudly on ``broker.direct_bindings_enabled: false``.
+
+        The flag was deleted in theme-5 Phase 6b along with the toolkit
+        path it selected — direct bindings are the only path. Unknown keys
+        are otherwise ignored here, so without this check an operator who
+        pinned ``false`` to stay on toolkits would boot on direct bindings
+        without noticing. ``true`` (the old default) is harmless: ignored,
+        with a one-time deprecation warning.
+        """
+        if isinstance(data, dict) and "direct_bindings_enabled" in data:
+            value = data["direct_bindings_enabled"]
+            if value is False or str(value).strip().lower() in {"false", "0", "no", "off"}:
+                raise ValueError(
+                    "broker.direct_bindings_enabled was removed in theme-5 Phase 6b: "
+                    "the toolkit path it selected no longer exists and direct "
+                    "agent-credential bindings are the only access path. Remove "
+                    "the setting (config file or JENTIC__BROKER__DIRECT_BINDINGS_ENABLED); "
+                    "if toolkit-bound agents lose access, run the Phase-6a flattening "
+                    "(docs/development/releasing.md)."
+                )
+            _warn_retired_direct_bindings_flag_once()
+            data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
+        return data
+
+
+_retired_direct_bindings_flag_warned = threading.Event()
+
+
+def _warn_retired_direct_bindings_flag_once() -> None:
+    """One deprecation WARNING per process for a leftover ``true`` (it is ignored).
+
+    Config is validated more than once per process (reloads, per-surface
+    copies), so the line is latched to avoid repeating on every validation.
+    """
+    if _retired_direct_bindings_flag_warned.is_set():
+        return
+    _retired_direct_bindings_flag_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting="broker.direct_bindings_enabled",
+        detail=(
+            "removed in theme-5 Phase 6b; direct agent-credential bindings are the "
+            "only access path and the value is ignored"
+        ),
+        actionable_step=(
+            "Remove broker.direct_bindings_enabled from the config file or "
+            "JENTIC__BROKER__DIRECT_BINDINGS_ENABLED from the environment."
+        ),
     )
 
 

@@ -27,6 +27,7 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.streaming import guarded_body, open_streaming_response
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.resilience.circuit import _FAIL_PREFIX
+from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.state.backend import MemoryStateBackend
 
 
@@ -173,8 +174,7 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
         upstream_url="https://api.example.com/x",
         method="GET",
         trace_id="t",
-        toolkit_id="tk",
-        operation_id="op",
+        operation=OperationInfo(id="op"),
         api_vendor="vendor",
     )
     resp = await open_streaming_response(
@@ -189,7 +189,6 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
     assert resp.headers[JenticHeader.EXECUTION_ID.value] == "exec-1"
     assert resp.headers[JenticHeader.UPSTREAM_STATUS.value] == "503"
     assert resp.headers[JenticHeader.ERROR_ORIGIN.value] == "upstream"
-    assert resp.headers[JenticHeader.TOOLKIT_ID.value] == "tk"
     # x-vendor passed through; content-length not present (chunked transfer).
     assert resp.headers["x-vendor"] == "v"
 

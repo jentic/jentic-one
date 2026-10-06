@@ -10,9 +10,9 @@ import (
 
 // getMe fetches the caller's identity via GET /me and returns the AGENT variant.
 //
-// GET /me returns a discriminated union (MeUser | MeAgent | MeServiceAccount)
+// GET /me returns a discriminated union (MeUser | MeAgent)
 // keyed on `type`. The generated AsMeAgent() does NOT validate the discriminator
-// — it would happily decode a user/service-account body into an agent-shaped
+// — it would happily decode a user body into an agent-shaped
 // value with empty bindings, which reads as an approved agent bound to nothing.
 // So we probe the raw body's `type` first and reject a non-agent token, matching
 // the guard the deleted accessclient.Me() enforced.
@@ -28,7 +28,7 @@ func (a *app) getMe(ctx context.Context) (*control.MeAgent, error) {
 	// Decode straight from the raw body rather than resp.JSON200: /me is a
 	// discriminated union and we need the `type` discriminator to reject a
 	// non-agent token (AsMeAgent does not validate it — it would decode a
-	// user/service-account into an empty-bindings agent). Reading resp.Body also
+	// user into an empty-bindings agent). Reading resp.Body also
 	// avoids depending on the response Content-Type (the generated typed field
 	// is only populated for an application/json content type).
 	var probe struct {

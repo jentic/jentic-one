@@ -219,7 +219,7 @@ async def test_explicit_agent_id_argument_is_dropped_never_forwarded() -> None:
 
 
 async def test_non_agent_caller_connects_an_unbound_credential() -> None:
-    """A user/service-account over this mount connects WITHOUT an agent
+    """A user over this mount connects WITHOUT an agent
     binding (the route's semantics when agent_id is omitted) — the tool
     surface carries no agent_id, so it can never bind on someone's behalf."""
     result = await dispatch_tool_call(

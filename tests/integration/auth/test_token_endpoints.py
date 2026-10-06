@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,7 +15,6 @@ from jentic_one.admin.core.schema.access_tokens import AccessToken
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
-from jentic_one.admin.core.schema.service_accounts import ServiceAccount
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AccessTokenRepository,
@@ -46,9 +46,6 @@ async def clean_tokens(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(RefreshToken))
             await session.execute(delete(ActorScopeGrant))
             await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
-            await session.execute(
-                delete(ServiceAccount).where(ServiceAccount.created_by == _SEED_MARKER)
-            )
             await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
             await session.commit()
 
@@ -86,26 +83,6 @@ async def _seed_agent(
         )
         await session.commit()
         return agent.id
-
-
-async def _seed_service_account(
-    ctx: Context, *, owner_id: str, status: ActorStatus = ActorStatus.ACTIVE
-) -> str:
-    # The SA repositories were deleted with the surface (theme-8 Phase 2);
-    # the ORM model survives until the Phase-4 table drop.
-    async with ctx.admin_db.session() as session:
-        sa = ServiceAccount(
-            name="token-test-sa",
-            owner_id=owner_id,
-            registered_by=owner_id,
-            created_by=_SEED_MARKER,
-            status=status,
-        )
-        session.add(sa)
-        await session.flush()
-        sa_id = sa.id
-        await session.commit()
-        return sa_id
 
 
 @pytest.fixture()
@@ -481,19 +458,17 @@ async def test_disabled_agent_cannot_refresh_to_fresh_tokens(
     assert refresh2.startswith("rt_")
 
 
-async def test_service_account_token_is_refused_even_when_sa_active(
-    token_service: TokenService, integration_context: Context, clean_tokens: None
+async def test_residual_service_account_token_is_refused(
+    token_service: TokenService, clean_tokens: None
 ) -> None:
-    """Theme-8 Phase 2 (M-3): an SA token fails CLOSED — even for an ``active``
-    SA row. The ``_actor_is_active`` SA arm refuses explicitly; a bare arm
-    deletion would have fallen through to ``return True`` (fail open)."""
-    owner_id = await _seed_user(integration_context, "usr_sa_owner")
-    sa_id = await _seed_service_account(integration_context, owner_id=owner_id)
-    access, refresh = await token_service.issue_pair(sa_id, ActorType.SERVICE_ACCOUNT, [])
+    """Theme-8 Phase 4: ``service_account`` is no longer an actor type, and the
+    drop migration leaves residual SA token rows in place. Such a row fails
+    CLOSED on every path (resolve, introspect, refresh) and never raises."""
+    # A raw string, not an ActorType member: the enum value was deleted.
+    retired = cast(ActorType, "service_account")
+    access, refresh = await token_service.issue_pair("sva_residual", retired, [])
 
-    resolved = await token_service.resolve_access_token(access)
-    assert resolved is not None
-    assert resolved.active is False
+    assert await token_service.resolve_access_token(access) is None
     assert (await token_service.introspect(access))["active"] is False
     assert (await token_service.introspect(refresh))["active"] is False
     with pytest.raises(InvalidGrantError, match="not active"):

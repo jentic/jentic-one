@@ -38,7 +38,7 @@ class UnregisteredUrlHandler(Protocol):
       reach it (discovery precedes the async branch); the handler's response
       is returned synchronously. The async worker and the pinned re-resolve
       run post-discovery and never see an unregistered URL.
-    - Runs **after** authentication (``RequireToolkitAccess``), so anonymous
+    - Runs **after** authentication (``RequireExecuteAccess``), so anonymous
       traffic to unregistered hosts never reaches it — it 401s first.
 
     Egress contract:
@@ -59,8 +59,8 @@ class UnregisteredUrlHandler(Protocol):
     registered-operation pipeline, so **none** of the built-in controls apply:
 
     - The only controls that have run are authentication
-      (``RequireToolkitAccess``), the per-actor execute rate limit, and the
-      egress pre-check. No toolkit derivation, no permission-rule (PBAC)
+      (``RequireExecuteAccess``), the per-actor execute rate limit, and the
+      egress pre-check. No binding derivation, no permission-rule (PBAC)
       evaluation, no credential injection. An implementation that forwards is
       making a policy decision (e.g. monitor mode) and owns that decision's
       audit trail.

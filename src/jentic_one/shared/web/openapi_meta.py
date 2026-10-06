@@ -52,6 +52,21 @@ LICENSE_INFO = {
 
 SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
 
+# The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
+# outside any deployment (API catalogues, client generators), where a relative
+# server is meaningless. It carries placeholder hosts mirroring the Broker spec;
+# the live app serves ``deployment_servers`` (its real origin, else same-origin).
+PUBLISHED_SERVERS = [
+    {
+        "url": "https://control.your-instance.example",
+        "description": "Production (placeholder — set to your deployment's Control Plane host)",
+    },
+    {
+        "url": "https://control-dev.your-instance.example",
+        "description": "Development (placeholder — set to your deployment's Control Plane host)",
+    },
+]
+
 API_DESCRIPTION = """## Overview ##
 The **Jentic Control Plane API** is the unified HTTP surface of the
 Jentic platform's control plane — every administrative and
@@ -171,7 +186,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   edit.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
-  from it. To walk all executions under one logical request, use
+  from it. To walk the executions you can see under one logical request, use
   `GET /executions?trace_id=…`.
 - **Event stream.** The dashboard / operator UI consumes the
   `/events` resource (paginated list + SSE stream). Some events
@@ -191,8 +206,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
 
   | Prefix | Resource | Notes |
   |---|---|---|
-  | `tk_` | Toolkit ID | Retired (theme-5 Phase 5b): the toolkit management surface is gone. Ids still appear in stored records (bindings, audit) until the tables retire in Phase 6b. |
-  | `ck_` | Toolkit-key record | Retired (theme-5 Phase 4): no new keys are issued and the key-management routes are gone (Phase 5b). Each surviving plaintext authenticates as the agent it was migrated to. |
+  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -204,7 +219,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore (issuance died in Phase 4, the management routes in Phase 5b). A surviving value keeps authenticating — as its migrated agent — for the deprecation window; rotate holders to agent (`jak_`) keys. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.
@@ -445,7 +461,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not "
             "stored. Records are written by the Broker; this surface is read-only. To walk the "
             "history of a single logical request that fanned out into multiple upstream calls, "
-            "list with `?trace_id={trace_id}`."
+            "list with `?trace_id={trace_id}`. An execution is visible only to the actor "
+            "that ran it, the owner of the agent that ran it, and `org:admin`; to any other "
+            "caller it is indistinguishable from a missing execution (`404`)."
         ),
     },
     {
@@ -471,7 +489,12 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`execution.repeated_failure`). Events reference the underlying `ExecutionRecord` "
             "or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via "
             "`GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` "
-            "filter."
+            "filter. An event is visible only to the actor (`actor_id`) or creator "
+            "(`created_by`) it names, to the human owner of either when that is an agent, "
+            "and to `org:admin`; system events with no subject are visible only to "
+            "`org:admin`. To "
+            "any other caller an event is indistinguishable from a missing one (`404`), "
+            "including on acknowledgement."
         ),
     },
     {
@@ -556,9 +579,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Identity",
         "description": (
-            "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
-            "the presented token."
+            "Identity introspection for the calling principal (human or agent) — `GET /me` "
+            "returns the resolved subject, scopes, and permissions behind the presented token."
         ),
     },
     {
@@ -934,14 +956,27 @@ def generate_operation_id(route: APIRoute) -> str:
     return _camelize(route.name)
 
 
-def fastapi_metadata_kwargs() -> dict[str, Any]:
+def deployment_servers(public_base_url: str = "") -> list[dict[str, str]]:
+    """The live document's ``servers``: the deployment's public origin, else ``SERVERS``.
+
+    ``server.public_base_url`` names the origin clients reach the control
+    surfaces on, so a spec downloaded from a configured deployment stays
+    callable outside the browser. Unset, the same-origin relative server is the
+    only honest value.
+    """
+    if public_base_url:
+        return [{"url": public_base_url, "description": "This deployment"}]
+    return SERVERS
+
+
+def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     """Keyword arguments to spread into ``FastAPI(...)`` for document metadata."""
     return {
         "title": API_TITLE,
         "summary": API_SUMMARY,
         "description": API_DESCRIPTION,
         "version": API_VERSION,
-        "servers": SERVERS,
+        "servers": deployment_servers(public_base_url),
         "contact": CONTACT,
         "license_info": LICENSE_INFO,
         "openapi_tags": OPENAPI_TAGS,

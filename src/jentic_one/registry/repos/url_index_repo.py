@@ -17,6 +17,15 @@ from jentic_one.registry.core.url_index import URLIndexEntry
 from jentic_one.shared.schemas import APIReference
 
 
+@dataclass(frozen=True, slots=True)
+class OperationContext:
+    """A resolved operation's API identity plus its spec path template + method."""
+
+    api: APIReference
+    path: str
+    method: str
+
+
 @dataclass(frozen=True)
 class LiveHostOwner:
     """A host already served by another vendor's live API revision."""
@@ -137,18 +146,21 @@ class UrlIndexRepository:
         await session.flush()
 
     @staticmethod
-    async def get_api_reference_for_operation(
+    async def get_operation_context(
         session: AsyncSession, operation_id: str
-    ) -> APIReference | None:
-        """Return the ``APIReference`` for an operation, or ``None`` if unknown.
+    ) -> OperationContext | None:
+        """Return the operation's API identity + path/method, or ``None`` if unknown.
 
         ``name`` is always the API's canonical ``name``, never its editable
         ``display_name``: the broker matches credentials and revision pins on
         this identity, so it must not change when the display label does.
-        Joins operations → api_revisions → apis.
+        Joins operations → api_revisions → apis; the operation's own ``path`` +
+        ``method`` ride along so the resolver returns the human-readable
+        operation identity in the same single query.
         """
         stmt = (
             select(Api.vendor, Api.name, Api.version)
+            .add_columns(Operation.path, Operation.method)
             .select_from(Operation)
             .join(ApiRevision, ApiRevision.id == Operation.revision_id)
             .join(Api, Api.id == ApiRevision.api_id)
@@ -157,8 +169,12 @@ class UrlIndexRepository:
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return None
-        vendor, name, version = row
-        return APIReference(vendor=vendor, name=name, version=version)
+        vendor, name, version, path, method = row
+        return OperationContext(
+            api=APIReference(vendor=vendor, name=name, version=version),
+            path=path,
+            method=method,
+        )
 
     @staticmethod
     async def upsert_entry(

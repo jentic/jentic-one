@@ -111,9 +111,10 @@ func TestActiveStateContextRoundTrip(t *testing.T) {
 	}
 }
 
-// The retired service-account mode resolves to agent on every rung and reports
-// the alias so the interceptor can warn (14 BC-12).
-func TestResolveModeLadder_ServiceAccountAliasesAgent(t *testing.T) {
+// The retired service-account alias is no longer rewritten (14 BC-12 removal):
+// like any unknown value it passes through the ladder untouched, for the
+// interceptor to fail closed on.
+func TestResolveModeExplicit_ServiceAccountIsUnknown(t *testing.T) {
 	t.Setenv("JENTIC_MODE", "")
 	os.Unsetenv("JENTIC_MODE")
 
@@ -130,19 +131,10 @@ func TestResolveModeLadder_ServiceAccountAliasesAgent(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv("JENTIC_MODE", tc.env)
 			}
-			mode, explicit, deprecated := ResolveModeLadder(tc.flag, tc.pers)
-			if mode != ModeAgent || !explicit || deprecated != LegacyModeServiceAccount {
-				t.Errorf("got (%q, %v, %q), want (agent, true, service-account)", mode, explicit, deprecated)
+			mode, explicit := ResolveModeExplicit(tc.flag, tc.pers)
+			if mode != "service-account" || !explicit {
+				t.Errorf("got (%q, %v), want (service-account, true)", mode, explicit)
 			}
 		})
-	}
-
-	// A canonical or unknown value is never reported as a deprecated alias;
-	// unknown values stay as-is for the interceptor to fail closed on.
-	for _, raw := range []string{"agent", "human", "agnet"} {
-		mode, _, deprecated := ResolveModeLadder(raw, "")
-		if mode != raw || deprecated != "" {
-			t.Errorf("%q: got (%q, %q)", raw, mode, deprecated)
-		}
 	}
 }

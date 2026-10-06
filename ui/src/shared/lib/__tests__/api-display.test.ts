@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	apiIdentityTuple,
 	apiRefDisplayName,
+	formatOperation,
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
@@ -391,6 +392,42 @@ describe('apiIdentityTuple', () => {
 		expect(apiIdentityTuple({ vendor: 'posthog-com', name: null })).toBe('posthog-com');
 		expect(apiIdentityTuple({ vendor: '', name: 'posthog-api' })).toBe('posthog-api');
 		expect(apiIdentityTuple({ vendor: null, name: null })).toBe('');
+	});
+});
+
+describe('formatOperation', () => {
+	it('renders method + path template when both are present', () => {
+		expect(
+			formatOperation({
+				operation_path: '/repos/{owner}/{repo}',
+				operation_method: 'GET',
+			}),
+		).toBe('GET /repos/{owner}/{repo}');
+	});
+
+	it('renders the path template alone when the method is missing', () => {
+		expect(
+			formatOperation({
+				operation_path: '/v1/charges',
+				operation_method: null,
+			}),
+		).toBe('/v1/charges');
+	});
+
+	it('returns null on legacy path-less rows — the opaque op_… id never renders', () => {
+		// Deliberate product rule: the machine hash is meaningless to humans,
+		// so a row predating the path/method columns shows the caller's empty
+		// placeholder, not the id.
+		expect(
+			formatOperation({
+				operation_path: null,
+				operation_method: null,
+			}),
+		).toBeNull();
+	});
+
+	it('returns null when the row has no operation identity at all', () => {
+		expect(formatOperation({})).toBeNull();
 	});
 });
 

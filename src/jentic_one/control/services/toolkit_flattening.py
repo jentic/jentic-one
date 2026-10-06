@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -61,13 +61,12 @@ from jentic_one.control.repos.toolkit_flattening_repo import (
     SYSTEM_ACTOR,
     FlatteningAdminRepository,
     FlatteningControlRepository,
+    ToolkitPermissionRuleRow,
+    legacy_state_digest,
 )
 from jentic_one.shared.audit import record_audit
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
-
-if TYPE_CHECKING:
-    from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 
 logger = structlog.get_logger(__name__)
 
@@ -84,11 +83,45 @@ CROSS_OWNER_BINDING_CATEGORY = "cross_owner_binding"
 _EXECUTE_SCOPE = "capabilities:execute"
 
 
+#: Remediation for a live (unrevoked, unmigrated) ``jntc_live_`` key. Such a
+#: key blocks ``--verify`` (and so ``--acknowledge``): once the toolkit tables
+#: are dropped it stops authenticating, so the drop must not proceed while any
+#: holder still depends on it. The successor-agent ``jak_`` key is what the
+#: holder should move to; ``retire-toolkit-keys`` (0.40.x only) does it.
+_LIVE_KEY_REMEDIATION = (
+    "upgrade via 0.40.x and run retire-toolkit-keys, or revoke the key; then "
+    "rotate the holder to a jak_ key minted for the successor agent"
+)
+
+
+def _live_unmigrated_keys(snapshot: _Snapshot) -> list[Any]:
+    """Keys that still authenticate on the toolkit path and have no successor."""
+    return [k for k in snapshot.toolkit_keys if not k.revoked and k.migrated_actor_id is None]
+
+
 def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _rule_row(rule: ToolkitPermissionRule | Any) -> dict[str, Any]:
+def _control_state_digest(snapshot: _Snapshot) -> str:
+    """Digest of the control legacy rows the acknowledgement covers."""
+    return legacy_state_digest(
+        {
+            "toolkits": list(snapshot.toolkits),
+            "toolkit_credential_bindings": [row.id for row in snapshot.tcb_rows],
+            "toolkit_permission_rules": [
+                rule.id for rules in snapshot.pair_rules.values() for rule in rules
+            ],
+        }
+    )
+
+
+def _admin_state_digest(snapshot: _Snapshot) -> str:
+    """Digest of the admin legacy rows (``agent_toolkit_bindings``) the ack covers."""
+    return legacy_state_digest({"agent_toolkit_bindings": [row[0] for row in snapshot.atb_rows]})
+
+
+def _rule_row(rule: ToolkitPermissionRuleRow | Any) -> dict[str, Any]:
     """One legacy rule row, verbatim — report lines must survive the drop."""
     return {
         "id": rule.id,
@@ -137,6 +170,7 @@ class FlatteningRunResult:
     pairs_total: int = 0
     created: int = 0
     already_present: int = 0
+    backfilled_execution_names: int = 0
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -148,6 +182,8 @@ class VerificationResult:
     legacy_pair_count: int
     direct_binding_count: int
     missing_pair_count: int
+    unbackfilled_execution_name_count: int = 0
+    live_unmigrated_key_count: int = 0
     findings: list[Finding] = field(default_factory=list)
     acknowledged: bool = False
 
@@ -378,9 +414,10 @@ class ToolkitFlatteningService:
     @staticmethod
     def _hygiene_findings(snapshot: _Snapshot, findings: list[Finding]) -> None:
         """Report categories independent of the pair derivation."""
+        live = {k.id for k in _live_unmigrated_keys(snapshot)}
         for key in snapshot.toolkit_keys:
             # Hash material (hashed_key, lookup_hash) stays out of the report.
-            if not key.revoked and key.migrated_actor_id is None:
+            if key.id in live:
                 findings.append(
                     Finding(
                         "active_toolkit_key",
@@ -391,7 +428,7 @@ class ToolkitFlatteningService:
                             "key_preview": key.key_preview,
                             "last_used_at": _iso(key.last_used_at),
                             "created_at": _iso(key.created_at),
-                            "remediation": "run `jentic_one retire-toolkit-keys` (or revoke)",
+                            "remediation": _LIVE_KEY_REMEDIATION,
                         },
                     )
                 )
@@ -403,7 +440,7 @@ class ToolkitFlatteningService:
                         Finding(
                             "scope_exceeds_execute",
                             {
-                                "service_account_id": key.migrated_actor_id,
+                                "actor_id": key.migrated_actor_id,
                                 "key_id": key.id,
                                 "toolkit_id": key.toolkit_id,
                                 "scopes": sorted(scopes),
@@ -587,15 +624,47 @@ class ToolkitFlatteningService:
             result.findings.append(Finding(creation_category, detail))
             logger.info("toolkit_flattening_binding", diff_only=diff_only, **detail)
 
+        # Historical-name backfill (Phase 6b prerequisite): denormalize
+        # control toolkit names onto admin ``execution_records.toolkit_name``
+        # so the read path survives the toolkits drop. Skipped in
+        # ``--diff-only`` (it would have to add the column — a write);
+        # ``verify`` reports any resolvable rows still missing it.
+        if not diff_only:
+            result.backfilled_execution_names = await self._backfill_execution_names(snapshot)
+
         logger.info(
             "toolkit_flattening_run",
             diff_only=diff_only,
             pairs_total=result.pairs_total,
             created=result.created,
             already_present=result.already_present,
+            backfilled_execution_names=result.backfilled_execution_names,
             findings=len(result.findings),
         )
         return result
+
+    async def _backfill_execution_names(self, snapshot: _Snapshot) -> int:
+        """Copy toolkit names onto unnamed historical execution rows.
+
+        App-level cross-DB (control names were loaded in the snapshot; the
+        writes go to admin), batched per distinct toolkit id. Rows whose
+        toolkit no longer exists keep NULL — exactly what the old read-time
+        resolver reported for them.
+        """
+        total = 0
+        async with self._ctx.admin_db.transaction() as admin_session:
+            await FlatteningAdminRepository.ensure_execution_toolkit_name_column(admin_session)
+            toolkit_ids = await FlatteningAdminRepository.list_unbackfilled_toolkit_ids(
+                admin_session
+            )
+            for toolkit_id in toolkit_ids:
+                toolkit = snapshot.toolkits.get(toolkit_id)
+                if toolkit is None:
+                    continue
+                total += await FlatteningAdminRepository.backfill_execution_toolkit_name(
+                    admin_session, toolkit_id=toolkit_id, name=toolkit.name
+                )
+        return total
 
     @staticmethod
     async def _ensure_rule_set(
@@ -673,6 +742,47 @@ class ToolkitFlatteningService:
                 )
             )
 
+        # Historical-name coverage: execution rows whose toolkit still exists
+        # in control but whose denormalized name is missing would lose their
+        # name forever at the 6b drop — fail verification (remediation: run
+        # the flatten job on this release; its backfill step fills them).
+        # Rows whose toolkit is already gone are unresolvable either way and
+        # do not block.
+        async with self._ctx.admin_db.session() as admin_session:
+            unbackfilled_ids = await FlatteningAdminRepository.list_unbackfilled_toolkit_ids(
+                admin_session
+            )
+        unbackfilled = sorted(t for t in unbackfilled_ids if t in snapshot.toolkits)
+        if unbackfilled:
+            findings.append(
+                Finding(
+                    "verify_unbackfilled_execution_names",
+                    {
+                        "toolkit_ids": unbackfilled,
+                        "remediation": (
+                            "run `jentic_one flatten-toolkits` on this release; its "
+                            "backfill step denormalizes toolkit names onto "
+                            "execution_records before the drop"
+                        ),
+                    },
+                )
+            )
+
+        # Live toolkit keys: a key that is neither revoked nor migrated to a
+        # successor agent stops authenticating the moment the tables drop.
+        # Fail closed — the drop must not strand a holder silently.
+        live_keys = _live_unmigrated_keys(snapshot)
+        if live_keys:
+            findings.append(
+                Finding(
+                    "verify_live_toolkit_keys",
+                    {
+                        "key_ids": sorted(k.id for k in live_keys),
+                        "remediation": _LIVE_KEY_REMEDIATION,
+                    },
+                )
+            )
+
         async with self._ctx.control_db.session() as control_session:
             for key in sorted(pairs):
                 if key in snapshot.existing_pairs:
@@ -684,10 +794,12 @@ class ToolkitFlatteningService:
                     )
 
         result = VerificationResult(
-            passed=not missing,
+            passed=not missing and not unbackfilled and not live_keys,
             legacy_pair_count=len(pairs),
             direct_binding_count=len(snapshot.existing_pairs),
             missing_pair_count=len(missing),
+            unbackfilled_execution_name_count=len(unbackfilled),
+            live_unmigrated_key_count=len(live_keys),
             findings=findings,
         )
         findings.append(
@@ -698,6 +810,8 @@ class ToolkitFlatteningService:
                     "legacy_pair_count": result.legacy_pair_count,
                     "direct_binding_count": result.direct_binding_count,
                     "missing_pair_count": result.missing_pair_count,
+                    "unbackfilled_execution_name_count": (result.unbackfilled_execution_name_count),
+                    "live_unmigrated_key_count": result.live_unmigrated_key_count,
                     "tool_version": __version__,
                 },
             )
@@ -708,10 +822,21 @@ class ToolkitFlatteningService:
             legacy_pair_count=result.legacy_pair_count,
             direct_binding_count=result.direct_binding_count,
             missing_pair_count=result.missing_pair_count,
+            unbackfilled_execution_name_count=result.unbackfilled_execution_name_count,
+            live_unmigrated_key_count=result.live_unmigrated_key_count,
         )
 
         if acknowledge and result.passed:
             async with self._ctx.control_db.transaction() as control_session:
+                if not await FlatteningControlRepository.ack_evidence_columns_exist(
+                    control_session
+                ):
+                    raise RuntimeError(
+                        "toolkit_flattening_acks lacks the Phase-6b evidence columns; run "
+                        "`python -m jentic_one.migrations.run --db control --target "
+                        "f2b3c4d5e6a7` first, then re-run `flatten-toolkits --verify "
+                        "--acknowledge`"
+                    )
                 ack = await FlatteningControlRepository.record_acknowledgement(
                     control_session,
                     acknowledged_at=dt.datetime.now(dt.UTC),
@@ -719,6 +844,8 @@ class ToolkitFlatteningService:
                     direct_binding_count=result.direct_binding_count,
                     report_finding_count=len(result.findings),
                     tool_version=__version__,
+                    control_state_digest=_control_state_digest(snapshot),
+                    admin_state_digest=_admin_state_digest(snapshot),
                 )
                 ack_id = ack.id
             result.acknowledged = True
@@ -728,6 +855,8 @@ class ToolkitFlatteningService:
                 "toolkit_flattening_acknowledge_refused",
                 detail="verification failed; sentinel not written",
                 missing_pair_count=result.missing_pair_count,
+                unbackfilled_execution_name_count=result.unbackfilled_execution_name_count,
+                live_unmigrated_key_count=result.live_unmigrated_key_count,
             )
         return result
 

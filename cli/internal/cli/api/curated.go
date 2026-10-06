@@ -49,7 +49,7 @@ func CuratedBindings() []CuratedBinding {
 				"limit":    "limit",
 			},
 			NotExposed: map[string]string{
-				"toolkit_id": "niche filter; reachable via `jentic api ListExecutions`",
+				"toolkit_id": "legacy filter over historical toolkit attribution; reachable via `jentic api ListExecutions`",
 				"status":     "--include-failures covers the success/failure split; full status filtering via `jentic api`",
 				"actor_id":   "an agent's history is already scoped to itself; cross-actor queries are an operator task",
 				"origin":     "niche filter; reachable via `jentic api ListExecutions`",

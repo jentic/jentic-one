@@ -38,7 +38,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models.actors import ActorType, actor_type_from_id
+from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.web.container import AppContainer
 
 _logger = structlog.get_logger(__name__)
@@ -98,8 +98,12 @@ class InProcessCatalogAutoImporter:
 
     Actor attribution: the ``initiator_actor_id`` is threaded through as the
     identity ``sub`` and its ``actor_type`` is derived from the id prefix
-    (``usr_`` / ``agnt_`` / ``sva_``), so audit + job telemetry attribute the
-    (re-)import to whoever finished the connect. The service method itself
+    (``usr_`` / ``agnt_``), so audit + job telemetry attribute the
+    (re-)import to whoever finished the connect. Any other prefix — notably a
+    residual ``sva_`` id on a connect session that pre-dates the theme-8
+    Phase-4 retirement — is **not** relabelled as a user (that would forge the
+    audit trail): the auto-import is skipped with an info log and the operator
+    keeps the manual import route. The service method itself
     does not enforce ``catalog:import`` scope; the router does, and we do not
     go through the router.
     """
@@ -116,7 +120,16 @@ class InProcessCatalogAutoImporter:
             try:
                 actor_type = actor_type_from_id(initiator_actor_id)
             except ValueError:
-                actor_type = ActorType.USER
+                _logger.info(
+                    "catalog_auto_import.skipped_retired_initiator",
+                    api_id=api_id,
+                    initiator=initiator_actor_id,
+                    actionable_step=(
+                        "The connect was started by a retired actor (not a user or "
+                        "agent); import the API manually via POST /catalog/{api_id}:import."
+                    ),
+                )
+                return None
             identity = Identity(sub=initiator_actor_id, actor_type=actor_type)
             job_id = await svc.import_entry(api_id, identity)
             _logger.info(

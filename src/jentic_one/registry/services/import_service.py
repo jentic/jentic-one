@@ -103,7 +103,10 @@ class ImportHandler:
             sources = payload.get("sources", [])
             overlay_id = payload.get("overlay_id")
             supersede_overlay_id = payload.get("supersede_overlay_id")
-            resolved_actor_type = ActorType(actor_type) if actor_type else ActorType.USER
+            # Opaque string, not ``ActorType(...)``: a job enqueued on 0.40 by a
+            # since-retired service account carries ``actor_type='service_account'``
+            # and must still import (the audit row keeps the historical label).
+            resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
             recovered_overlay_link = False

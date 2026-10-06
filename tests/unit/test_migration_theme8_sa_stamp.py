@@ -8,7 +8,8 @@ natively — NULL-exempt — because it is the migration job's double-mint
 backstop (H-A x F6). The Postgres twin of the enforcement probe lives in
 ``tests/integration/control/test_service_account_migration.py``
 (``test_concurrent_double_run_mints_no_duplicate_digest_row``), which CI runs
-on both dialects.
+on both dialects. Upgrades stop at ``c0d1e2f3a4b5``: theme-8 Phase 4
+(``e2f3a4b5c6d7``) drops ``service_accounts``.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def _indexes(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_upgrade_adds_stamp_sentinel_and_partial_index(sqlite_stack: Path) -> None:
-    run_mod.upgrade(_DB)
+    run_mod.upgrade(_DB, _REVISION)
     with _connect(sqlite_stack) as conn:
         assert {"migrated_to_actor_id", "migrated_at"} <= _columns(conn, "service_accounts")
         assert "service_account_migration_acks" in _tables(conn)
@@ -73,7 +74,7 @@ def test_upgrade_adds_stamp_sentinel_and_partial_index(sqlite_stack: Path) -> No
 
 
 def test_downgrade_removes_exactly_what_upgrade_added(sqlite_stack: Path) -> None:
-    run_mod.upgrade(_DB)
+    run_mod.upgrade(_DB, _REVISION)
     run_mod.downgrade(_DB, f"{_REVISION}-1")
     with _connect(sqlite_stack) as conn:
         assert "migrated_to_actor_id" not in _columns(conn, "service_accounts")
@@ -81,7 +82,7 @@ def test_downgrade_removes_exactly_what_upgrade_added(sqlite_stack: Path) -> Non
         assert "service_account_migration_acks" not in _tables(conn)
         assert "uq_agent_credentials_api_key_hash" not in _indexes(conn)
     # And back up: the pair round-trips.
-    run_mod.upgrade(_DB)
+    run_mod.upgrade(_DB, _REVISION)
     with _connect(sqlite_stack) as conn:
         assert "service_account_migration_acks" in _tables(conn)
 
@@ -89,7 +90,7 @@ def test_downgrade_removes_exactly_what_upgrade_added(sqlite_stack: Path) -> Non
 def test_partial_index_enforces_digest_uniqueness_null_exempt(sqlite_stack: Path) -> None:
     """The double-mint backstop, probed directly: SQLite enforces the partial
     unique index natively; NULL digests stay exempt."""
-    run_mod.upgrade(_DB)
+    run_mod.upgrade(_DB, _REVISION)
     with _connect(sqlite_stack) as conn:
         conn.execute(
             "INSERT INTO users (id, email, first_name, last_name)"

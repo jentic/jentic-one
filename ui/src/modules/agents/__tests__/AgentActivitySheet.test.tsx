@@ -89,8 +89,14 @@ describe('AgentActivitySheet — the dock Activity surface', () => {
 		renderPage('/?agent=agnt_active_1');
 		const sheet = await openSheet(user);
 
-		// The feed lists this agent's executions only (agents-module fixture).
-		expect(await sheet.findByText('github.create_issue')).toBeInTheDocument();
+		// The feed lists this agent's executions only (agents-module fixture) —
+		// with the human-readable operation (method + path template) when the
+		// record carries one; the opaque operation_id never renders (legacy
+		// rows show just the credential attribution).
+		expect(
+			await sheet.findByText('github · POST /repos/{owner}/{repo}/issues'),
+		).toBeInTheDocument();
+		expect(sheet.queryByText(/search_issues/)).not.toBeInTheDocument();
 		expect(sheet.getByText(/pbac_denied/)).toBeInTheDocument();
 		expect(sheet.getByText('Execution volume · 7d')).toBeInTheDocument();
 

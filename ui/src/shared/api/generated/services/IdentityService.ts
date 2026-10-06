@@ -3,7 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { MeAgent } from '../models/MeAgent';
-import type { MeServiceAccount } from '../models/MeServiceAccount';
 import type { MeUser } from '../models/MeUser';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -15,7 +14,7 @@ export class IdentityService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static getMe(): CancelablePromise<(MeUser | MeAgent | MeServiceAccount)> {
+    public static getMe(): CancelablePromise<(MeUser | MeAgent)> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/me',

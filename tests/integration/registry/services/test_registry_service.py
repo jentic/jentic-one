@@ -110,7 +110,9 @@ async def test_resolve_operation_returns_operation_and_api_context(
         result = await svc.resolve_operation(method="GET", url="https://api.acme.com/v1/pets/123")
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
+    assert result.operation.path == "/v1/pets/{petId}"
+    assert result.operation.method == "GET"
     assert result.api.vendor == "acme.com"
     assert result.api.name == "pets-api"
     assert result.api.version == "v1"
@@ -183,6 +185,46 @@ async def test_resolve_operation_unknown_url_returns_none(
         result = await svc.resolve_operation(method="GET", url="https://api.acme.com/v1/unknown")
 
     assert result is None
+
+
+async def test_resolve_operation_index_hit_without_operation_context_returns_none(
+    registry_db: DatabaseSession, clean_url_index: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A URL-index hit whose operation context can't be loaded yields None —
+    never a ``ResolveResult`` with a fabricated (id-only) operation identity.
+
+    The index row's FK cascades on operation delete, so this is only reachable
+    in a race (the operation goes between the index lookup and the context
+    join); the context lookup is stubbed to model that window.
+    """
+    await _seed_operation(
+        registry_db,
+        vendor="acme.com",
+        name="pets-api",
+        version="v1",
+        host="api.acme.com",
+        path_template="/v1/pets",
+    )
+
+    async def _vanished(_session: object, _operation_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(UrlIndexRepository, "get_operation_context", staticmethod(_vanished))
+
+    async with registry_db.session() as session:
+        result = await RegistryService(session).resolve_operation(
+            method="GET", url="https://api.acme.com/v1/pets"
+        )
+
+    assert result is None
+
+
+async def test_get_operation_context_unknown_operation_returns_none(
+    registry_db: DatabaseSession, clean_url_index: None
+) -> None:
+    """The context join returns None for an operation id with no row."""
+    async with registry_db.session() as session:
+        assert await UrlIndexRepository.get_operation_context(session, "op_missing") is None
 
 
 async def test_resolve_operation_ambiguous_match_raises(
@@ -263,7 +305,7 @@ async def test_resolve_operation_trailing_slash_combinations(
         )
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
 
 
 @pytest.mark.parametrize("path_template", ["/v1/pets/{petId}", "/v1/pets/{petId}/"])
@@ -292,7 +334,7 @@ async def test_resolve_operation_parameterized_trailing_slash_combinations(
         )
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id
     assert result.path_params == {"petId": "123"}
 
 
@@ -325,4 +367,4 @@ async def test_advertised_url_round_trip_for_trailing_slash_spec(
         result = await svc.resolve_operation(method="GET", url=advertised)
 
     assert result is not None
-    assert result.operation_id == op_id
+    assert result.operation.id == op_id

@@ -58,6 +58,8 @@ async def test_create_and_get_by_id(
             status="completed",
             duration_ms=1500,
             operation_id="listUsers",
+            operation_path="/v1/users",
+            operation_method="GET",
             api_vendor="github",
             api_name="rest",
             api_version="v3",
@@ -77,6 +79,8 @@ async def test_create_and_get_by_id(
         assert loaded.status == "completed"
         assert loaded.duration_ms == 1500
         assert loaded.operation_id == "listUsers"
+        assert loaded.operation_path == "/v1/users"
+        assert loaded.operation_method == "GET"
         assert loaded.api_vendor == "github"
         assert loaded.http_status == 200
         assert loaded.pinned_revisions == {"rev": 1}
