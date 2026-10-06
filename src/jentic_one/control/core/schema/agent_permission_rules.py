@@ -48,8 +48,7 @@ class AgentPermissionRule(AuditableMixin, ControlBase):
     credential_id: Mapped[str] = mapped_column(
         String(30), ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False
     )
-    # String(16) holds "require-approval" (16 chars); widened from the original
-    # String(10) which only fit "allow" / "deny".
+    # Sized for the longest effect, "require-approval" (16 chars).
     effect: Mapped[str] = mapped_column(String(16), nullable=False)
     methods: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
     path: Mapped[str | None] = mapped_column(String(1000), nullable=True)

@@ -114,8 +114,8 @@ async def test_require_approval_rule_returns_verdict() -> None:
         operation_id=None,
     )
     assert result.verdict == RuleVerdict.REQUIRE_APPROVAL
-    # allowed is False so existing deny-path code gates the execution until
-    # the hold path is wired (phase 3).
+    # A held call is not allowed outright: callers that read only ``allowed``
+    # never run it.
     assert result.allowed is False
     assert result.rules_loaded == 1
     assert result.matched_rule_id == "apr_hold"
