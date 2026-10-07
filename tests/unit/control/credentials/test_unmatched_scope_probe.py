@@ -32,22 +32,22 @@ _SCOPE = canonical_credential_scope(vendor="posthog-com", name="posthog-api", ve
 async def test_probe_skipped_when_registry_db_not_allowed() -> None:
     """Standalone control (registry not in allowed_dbs) skips without touching it."""
     ctx = Context(_config(), allowed_dbs={"control", "admin"})
-    assert await CredentialService(ctx)._unmatched_scope_warnings(_SCOPE) == []
+    assert await CredentialService(ctx)._unmatched_scope_warning(_SCOPE) is None
 
 
 async def test_probe_skipped_when_registry_db_never_connected() -> None:
     """Allowed-but-unconnected (startup never ran) skips instead of raising on
     every create — the gate is ``has_db``, which stays False until connect."""
     ctx = Context(_config())
-    assert await CredentialService(ctx)._unmatched_scope_warnings(_SCOPE) == []
+    assert await CredentialService(ctx)._unmatched_scope_warning(_SCOPE) is None
 
 
 async def test_probe_swallows_registry_read_errors() -> None:
     """A connected registry DB whose read fails (no ``apis`` table here)
-    degrades to no warnings — the advisory must never fail the create."""
+    degrades to no warning — the advisory must never fail the create."""
     ctx = Context(_config())
     await ctx.registry_db.connect()
     try:
-        assert await CredentialService(ctx)._unmatched_scope_warnings(_SCOPE) == []
+        assert await CredentialService(ctx)._unmatched_scope_warning(_SCOPE) is None
     finally:
         await ctx.registry_db.close()

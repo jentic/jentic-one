@@ -30,8 +30,9 @@ class EventType:
     # identity — the create succeeds (importing the API later is a legitimate
     # order of operations), but every execute through it would 403 with
     # ``no_toolkit_binding`` until the identity matches (#1020). Advisory,
-    # warning severity; the summary carries a nearest-identity hint when the
-    # vendor has other imported APIs.
+    # warning severity; ``detail`` carries a nearest-identity hint when the
+    # vendor has other imported APIs, and ``data`` the canonical scope, which an
+    # import landing a covered identity uses to acknowledge (settle) the event.
     CREDENTIAL_UNMATCHED_API = "credential.unmatched_api"
     # The four ``access_request.*`` kinds were retired in theme 7 (the
     # access-request flow is gone). Stored event rows still carry those kind

@@ -29,6 +29,7 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.events import settle_unmatched_api_events
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventType
 
@@ -194,3 +195,51 @@ async def test_name_wildcard_version_pinned_mismatch_renders_wildcard_axis(
     assert result.warnings is not None
     [warning] = result.warnings
     assert "'posthog-com/*/2.0'" in warning
+
+
+async def test_unmatched_event_carries_the_canonical_scope(
+    integration_context: Context, svc: CredentialService, clean_tables: None
+) -> None:
+    """The scope rides in ``data`` so a later import can settle the warning."""
+    result = await svc.create(
+        _payload(APIReference(vendor="posthog.com", name="PostHog API", version="")),
+        identity=_ADMIN_IDENTITY,
+    )
+    [event] = await _unmatched_events(integration_context)
+    assert event.data == {
+        "credential_id": result.credential_id,
+        "api_vendor": "posthog-com",
+        "api_name": "posthog-api",
+        "api_version": None,
+    }
+
+
+async def test_import_of_a_covered_identity_settles_the_warning(
+    integration_context: Context, svc: CredentialService, clean_tables: None
+) -> None:
+    """Pins the create-while-import-is-queued race: once a covered identity is
+    imported the create-time warning is false, so it must be acknowledged —
+    while a warning whose scope the import does not cover stays open."""
+    await svc.create(
+        _payload(APIReference(vendor="posthog-com", name="posthog-api", version="")),
+        identity=_ADMIN_IDENTITY,
+    )
+    await svc.create(
+        _payload(APIReference(vendor="posthog-com", name="other-api", version="")),
+        identity=_ADMIN_IDENTITY,
+    )
+    async with integration_context.admin_db.transaction() as session:
+        settled = await settle_unmatched_api_events(
+            session,
+            vendor="posthog-com",
+            name="posthog-api",
+            version="1.0",
+            acknowledged_by="usr_importer",
+        )
+    assert settled == 1
+    by_name = {
+        (e.data or {}).get("api_name"): e for e in await _unmatched_events(integration_context)
+    }
+    assert by_name["posthog-api"].acknowledged is True
+    assert by_name["posthog-api"].acknowledged_by == "usr_importer"
+    assert by_name["other-api"].acknowledged is False

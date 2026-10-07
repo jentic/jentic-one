@@ -27,7 +27,11 @@ from jentic_one.registry.services.catalog.flow3_metrics import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.events import (
+    emit_event_best_effort,
+    settle_actionable_events,
+    settle_unmatched_api_events,
+)
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
     ORIGIN_OVERLAY,
@@ -192,6 +196,16 @@ class ImportHandler:
             adopted = [rev for rev in revisions if not rev.get("held_for_review")]
             for rev in adopted:
                 await self._settle_update_available(job_id, created_by, rev["api"], session)
+
+            # Every imported identity now exists in ``apis``, so a create-time
+            # ``credential.unmatched_api`` warning whose scope covers it (typically a
+            # credential created while this very import was still queued) is false —
+            # settle it so it doesn't linger on the events page. Held revisions count:
+            # the Api row exists either way, which is what the warning keyed on.
+            for rev in revisions:
+                await self._settle_unmatched_credential_warnings(
+                    job_id, created_by, rev["api"], session
+                )
 
             # A4b worker step: an authorized catalog re-import that supersedes a live
             # confirmed overlay. The re-ingest archived the overlay's revision (the
@@ -723,6 +737,39 @@ class ImportHandler:
                     job_id=job_id,
                     event_type=event_type,
                 )
+
+    async def _settle_unmatched_credential_warnings(
+        self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
+    ) -> None:
+        """Ack ``credential.unmatched_api`` warnings the imported identity resolves.
+
+        Same session + SAVEPOINT discipline as ``_settle_update_available`` (events
+        live in the admin DB the handler already holds open): a failed settle rolls
+        back only itself and never fails the import.
+        """
+        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
+        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
+            return
+        try:
+            async with session.begin_nested():
+                settled = await settle_unmatched_api_events(
+                    session,
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                    acknowledged_by=actor_id,
+                )
+            if settled:
+                logger.info(
+                    "credential_unmatched_api_settled",
+                    job_id=job_id,
+                    api_vendor=vendor,
+                    api_name=name,
+                    api_version=version,
+                    settled=settled,
+                )
+        except Exception:
+            logger.exception("credential_unmatched_api_settle_failed", job_id=job_id)
 
     async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
         """Link an overlay to its already-materialized revision after a duplicate re-ingest.

@@ -78,7 +78,11 @@ from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_RE
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
-from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
+from jentic_one.shared.models.api_identity import (
+    CredentialScope,
+    canonical_credential_scope,
+    credential_covers,
+)
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -92,6 +96,8 @@ logger = structlog.get_logger()
 # node) must not drag POST /credentials to the driver's connect timeout (~60s);
 # on expiry the TimeoutError lands in the probe's own except-and-skip fallback.
 _REGISTRY_PROBE_TIMEOUT_S = 2.0
+# How many of the vendor's imported identities the unmatched-scope hint names.
+_SIBLING_HINT_LIMIT = 5
 
 
 class _UnmatchedScopeWarning(NamedTuple):
@@ -183,10 +189,6 @@ class CredentialService:
         # identity at execute time (#775), and stores github.com as github-com
         # rather than a dead-on-arrival identity (#746).
         api_scope = self._canonical_api_scope(payload.api)
-        # Advisory pre-check (#1020): a scope that covers no imported API is
-        # legal (the API may be imported later) but every execute through it
-        # would 403 — surface the mismatch now instead of at execute time.
-        warnings = await self._unmatched_scope_warnings(api_scope)
 
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
@@ -375,8 +377,15 @@ class CredentialService:
                 created_at=credential.created_at,
                 server_variables=credential.server_variables,
                 secret=secret,
-                warnings=[w.message for w in warnings] or None,
             )
+
+        # Advisory check (#1020), run only once the create has committed: a scope
+        # that covers no imported API is legal (the API may be imported later) but
+        # every execute through it would 403 — surface the mismatch now instead of
+        # at execute time.
+        unmatched = await self._unmatched_scope_warning(api_scope)
+        if unmatched is not None:
+            view = view.model_copy(update={"warnings": [unmatched.message]})
 
         await record_audit_best_effort(
             self._ctx,
@@ -395,37 +404,51 @@ class CredentialService:
         )
         try:
             async with self._ctx.admin_db.transaction() as session:
-                await emit_event_best_effort(
-                    session,
-                    type=EventType.CREDENTIAL_STORED,
-                    severity=EventSeverity.INFO,
-                    summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
-                    data={"credential_id": view.credential_id},
-                    created_by=identity.sub,
-                    actor_id=identity.sub,
-                    actor_type=identity.actor_type.value,
-                )
-                for warning in warnings:
+                # Each best-effort emit runs in its own SAVEPOINT: a failed INSERT
+                # aborts the enclosing Postgres transaction, so without it one
+                # emit's swallowed failure would make the commit raise and drop
+                # every other event in this transaction with it.
+                async with session.begin_nested():
                     await emit_event_best_effort(
                         session,
-                        type=EventType.CREDENTIAL_UNMATCHED_API,
-                        severity=EventSeverity.WARNING,
-                        # Keep the summary short and bounded (the events column
-                        # caps at 512 chars and every UI surface truncates to
-                        # one line); the actionable remedy + sibling-identity
-                        # hint travel in `detail`, which the events page renders
-                        # in full. The reference is caller-shaped (version is
-                        # free-text), so clamp it defensively.
-                        summary=(
-                            f"Credential {view.credential_id}: API scope "
-                            f"'{warning.reference[:200]}' matches no imported API"
-                        ),
-                        detail=warning.message,
+                        type=EventType.CREDENTIAL_STORED,
+                        severity=EventSeverity.INFO,
+                        summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
                         data={"credential_id": view.credential_id},
                         created_by=identity.sub,
                         actor_id=identity.sub,
                         actor_type=identity.actor_type.value,
                     )
+                if unmatched is not None:
+                    async with session.begin_nested():
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.CREDENTIAL_UNMATCHED_API,
+                            severity=EventSeverity.WARNING,
+                            # Keep the summary short and bounded (the events column
+                            # caps at 512 chars and every UI surface truncates to
+                            # one line); the actionable remedy + sibling-identity
+                            # hint travel in `detail`, which the events page renders
+                            # in full. The reference is caller-shaped (version is
+                            # free-text), so clamp it defensively.
+                            summary=(
+                                f"Credential {view.credential_id}: API scope "
+                                f"'{unmatched.reference[:200]}' matches no imported API"
+                            ),
+                            detail=unmatched.message,
+                            # The canonical scope rides along so an import that
+                            # lands a covered identity can settle this warning
+                            # (``settle_unmatched_api_events``).
+                            data={
+                                "credential_id": view.credential_id,
+                                "api_vendor": api_scope.vendor,
+                                "api_name": api_scope.name,
+                                "api_version": api_scope.version,
+                            },
+                            created_by=identity.sub,
+                            actor_id=identity.sub,
+                            actor_type=identity.actor_type.value,
+                        )
         except Exception:
             # Per-emit failures are swallowed inside emit_event_best_effort; what
             # lands here is the shared admin transaction itself failing, which
@@ -1458,34 +1481,40 @@ class CredentialService:
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
 
-    async def _unmatched_scope_warnings(
+    async def _unmatched_scope_warning(
         self, scope: CredentialScope
-    ) -> list[_UnmatchedScopeWarning]:
+    ) -> _UnmatchedScopeWarning | None:
         """Advisory check: does the canonical scope cover any imported API? (#1020)
 
         Creating a credential before importing its API is a legitimate order of
         operations (and a standalone control process is not granted the registry
         DB), so this never blocks or fails the create — best-effort only, with a
         hard time bound so a hung registry DB can't stall the create either.
-        When the scope covers nothing, the warning names the vendor's imported
-        identities so a near-miss (e.g. a #1020 vendor-doubled workspace name)
-        is visible at create time rather than as an execute-time 403.
+        One registry read fetches the vendor's identities; coverage is evaluated
+        here with the broker's ``credential_covers`` semantics, and when nothing is
+        covered the same rows name the vendor's imported identities so a near-miss
+        (e.g. a #1020 vendor-doubled workspace name) is visible at create time
+        rather than as an execute-time 403. A warning raised while the matching
+        import is still queued is settled by that import when it lands.
         """
         if not self._ctx.has_db("registry"):
-            return []
+            return None
         try:
             async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
                 async with self._ctx.registry_db.session() as session:
-                    if await RegistryApiLookupRepository.scope_covers_any(session, scope):
-                        return []
-                    siblings = await RegistryApiLookupRepository.identities_for_vendor(
+                    identities = await RegistryApiLookupRepository.identities_for_vendor(
                         session, scope.vendor
                     )
         except Exception:
             logger.warning(
                 "credential_api_match_check_failed", api_vendor=scope.vendor, exc_info=True
             )
-            return []
+            return None
+        if any(
+            credential_covers(scope, vendor=scope.vendor, name=name, version=version)
+            for name, version in identities
+        ):
+            return None
         reference = _scope_reference(scope)
         # The scope is immutable after create, so "import the API" is only half
         # the remedy — a mis-scoped credential must be re-created.
@@ -1494,8 +1523,11 @@ class CredentialService:
             "credential will fail. Import a matching API, or delete this credential "
             "and re-create it scoped to an imported identity"
         )
-        if siblings:
-            listed = ", ".join(f"{scope.vendor}/{name} ({version})" for name, version in siblings)
+        if identities:
+            listed = ", ".join(
+                f"{scope.vendor}/{name} ({version})"
+                for name, version in identities[:_SIBLING_HINT_LIMIT]
+            )
             message += f"; imported APIs for this vendor: {listed}"
         logger.warning(
             "credential_unmatched_api",
@@ -1503,4 +1535,4 @@ class CredentialService:
             api_name=scope.name,
             api_version=scope.version,
         )
-        return [_UnmatchedScopeWarning(reference=reference, message=message)]
+        return _UnmatchedScopeWarning(reference=reference, message=message)
