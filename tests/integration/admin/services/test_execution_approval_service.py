@@ -646,3 +646,120 @@ async def test_withdraw_route_answers_409_once_settled(
     assert resp.status_code == 409
     assert resp.json()["type"].endswith("execution_approval_already_decided")
     assert (await _job(ctx, hold.job_id)).status == JobStatus.FAILED
+
+
+async def test_approval_routes_reject_an_unauthenticated_caller(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, None) as client:
+        listed = await client.get("/executions/approvals")
+        detail = await client.get(f"/executions/approvals/{hold.approval_id}")
+        decided = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+        )
+    assert (listed.status_code, detail.status_code, decided.status_code) == (401, 401, 401)
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
+
+
+async def test_list_route_shows_each_reviewer_only_what_they_may_review(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    owned = await _hold(ctx, actors.agent, path="/v1/owned")
+    orphan = await _hold(ctx, actors.ownerless_agent, path="/v1/orphan")
+
+    async def _ids(identity: Identity, query: str = "") -> set[str]:
+        async with _client(ctx, identity) as client:
+            resp = await client.get(f"/executions/approvals{query}")
+        assert resp.status_code == 200, resp.text
+        return {row["id"] for row in resp.json()["data"]}
+
+    assert await _ids(actors.owner) == {owned.approval_id}
+    assert await _ids(actors.outsider) == set()
+    assert await _ids(actors.admin) == {owned.approval_id, orphan.approval_id}
+    assert await _ids(actors.admin, "?state=approved") == set()
+
+
+async def test_get_route_returns_the_detail_and_hides_it_from_outsiders(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.owner) as client:
+        resp = await client.get(f"/executions/approvals/{hold.approval_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == hold.approval_id
+    assert body["state"] == "pending"
+    assert body["agent_owner_id"] == actors.owner.sub
+    assert body["request"]["body"] == _BODY.decode()
+    assert body["_links"]["job"].endswith(f"/jobs/{hold.job_id}")
+
+    async with _client(ctx, actors.outsider) as client:
+        hidden = await client.get(f"/executions/approvals/{hold.approval_id}")
+    assert hidden.status_code == 404
+    assert hidden.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_decide_route_approves_for_the_owner_and_conflicts_after(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.owner) as client:
+        resp = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide",
+            json={"decision": "approve", "reason": "looks right"},
+        )
+        again = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "deny"}
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["state"] == "approved"
+    assert resp.json()["decision_reason"] == "looks right"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.QUEUED
+    assert again.status_code == 409
+    assert (await _approval(ctx, hold.approval_id)).state == "approved"
+
+
+async def test_decide_route_denies_with_a_readable_result(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with _client(ctx, actors.admin) as client:
+        resp = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide",
+            json={"decision": "deny", "reason": "not today"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["state"] == "denied"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.FAILED
+    assert (await _result_body(ctx, hold.job_id, actors.admin))["status"] == 403
+
+
+async def test_decide_route_refuses_agents_and_hides_from_outsiders(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    admin_agent = actors.agent.model_copy(update={"permissions": ["org:admin"]})
+    async with _client(ctx, admin_agent) as client:
+        as_agent = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+        )
+    async with _client(ctx, actors.outsider) as client:
+        as_outsider = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "approve"}
+        )
+    async with _client(ctx, actors.owner) as client:
+        malformed = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": "maybe"}
+        )
+    assert as_agent.status_code == 403
+    assert as_outsider.status_code == 404
+    assert malformed.status_code == 422
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
