@@ -54,6 +54,7 @@ pytestmark = pytest.mark.integration
 
 _ADMIN_PRE_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 _ADMIN_DROP = "e2f3a4b5c6d7"  # pragma: allowlist secret
+_ADMIN_PRE_TOOLKIT_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
 _SA_TABLES = (
     "service_accounts",
     "service_account_credentials",
@@ -111,6 +112,7 @@ async def _cleanup(admin_db: DatabaseSession, control_db: DatabaseSession) -> No
         await _exec(admin_db, "DELETE FROM service_account_migration_acks")
     await _exec(admin_db, f"DELETE FROM agents WHERE registered_by = '{_SUCCESSOR_REGISTRAR}'")
     await _exec(admin_db, "DELETE FROM agents WHERE id LIKE '%p4test%'")
+    await _exec(admin_db, "DELETE FROM oauth_clients WHERE id LIKE '%p4test%'")
     await _exec(admin_db, "DELETE FROM audit_entries WHERE actor_id = 'migrate-service-accounts'")
     await _exec(admin_db, "DELETE FROM users WHERE id = :id", {"id": _OWNER})
     await _exec(
@@ -666,6 +668,46 @@ async def test_drop_sweeps_retired_scope_strings(
     assert grants == {"agents:read"}
     scopes = json.loads(raw_scopes) if isinstance(raw_scopes, str) else raw_scopes
     assert scopes == ["agents:read"]
+
+
+async def test_both_sweeps_rewrite_a_client_allowlist(
+    integration_config: AppConfig,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    restore_admin_head: None,
+) -> None:
+    """``oauth_clients.allowed_scopes`` is ``VARCHAR[]`` on PostgreSQL, not
+    JSONB: the toolkit sweep (``d1e2f3a4b5c6``) and the service-account sweep
+    rewrite it in its own type, keeping the live scopes in order."""
+    await _downgrade(integration_config, admin_db, control_db)
+    await asyncio.to_thread(
+        command.downgrade, _admin_cfg(integration_config), _ADMIN_PRE_TOOLKIT_DROP
+    )
+    async with admin_db.session() as session:
+        pg = session.bind is not None and session.bind.dialect.name == "postgresql"
+
+    def array(values: list[str]) -> object:
+        return values if pg else json.dumps(values)
+
+    await _exec(
+        admin_db,
+        "INSERT INTO oauth_clients (id, client_id, name, redirect_uris, allowed_scopes)"
+        " VALUES ('oac_p4test_1', 'p4test-client', 'p4test client', :uris, :scopes)",
+        {
+            "uris": array(["https://p4test.example/callback"]),
+            "scopes": array(
+                ["apis:read", "toolkits:read", "agents:write", "service-accounts:write"]
+            ),
+        },
+    )
+
+    await _upgrade(integration_config)
+
+    raw = await _scalar(
+        admin_db, "SELECT allowed_scopes FROM oauth_clients WHERE id = 'oac_p4test_1'"
+    )
+    scopes = json.loads(raw) if isinstance(raw, str) else raw
+    assert scopes == ["apis:read", "agents:write"]
 
 
 async def test_downgrade_is_irreversible_and_changes_nothing(
