@@ -1,33 +1,51 @@
 /**
  * Which requested permissions the approval card flags: anything that administers
- * the organisation or writes. A miss here lets a risky permission read as routine
+ * the organisation, writes or runs upstream calls. A miss here lets a risky permission read as routine
  * at the moment it is granted.
  */
 import { describe, it, expect } from 'vitest';
 import {
 	approvalGrant,
 	DEFAULT_AGENT_PERMISSIONS,
+	groupPermissionsByArea,
+	permissionArea,
 	permissionRisk,
 } from '@/modules/agents/lib/requestedPermissions';
 
 describe('permissionRisk', () => {
-	it('flags an admin segment anywhere as admin', () => {
+	it('flags any permission mentioning admin as admin', () => {
 		expect(permissionRisk('org:admin')).toBe('admin');
 		expect(permissionRisk('admin:read')).toBe('admin');
+		// Errs towards a flag: a look-alike is flagged too.
+		expect(permissionRisk('administrators:read')).toBe('admin');
 	});
 
-	it('flags a trailing write action as write', () => {
+	it('flags the permissions known to act, by name', () => {
+		expect(permissionRisk('overlays:confirm')).toBe('write');
+		expect(permissionRisk('credentials:connect')).toBe('write');
+		expect(permissionRisk('capabilities:execute')).toBe('execute');
+		expect(permissionRisk(' Capabilities:Execute ')).toBe('execute');
+	});
+
+	it('falls back to flagging a trailing write action as write', () => {
 		expect(permissionRisk('agents:write')).toBe('write');
 		expect(permissionRisk('credentials:write')).toBe('write');
 		expect(permissionRisk('Events:WRITE')).toBe('write');
 	});
 
-	it('leaves reads, executes and look-alikes unflagged', () => {
+	it('leaves reads and look-alikes unflagged', () => {
 		expect(permissionRisk('apis:read')).toBeNull();
-		expect(permissionRisk('capabilities:execute')).toBeNull();
+		expect(permissionRisk('capabilities:read')).toBeNull();
 		expect(permissionRisk('owner:agents:read')).toBeNull();
 		expect(permissionRisk('writers:read')).toBeNull();
-		expect(permissionRisk('administrators:read')).toBeNull();
+		expect(permissionRisk('constructor')).toBeNull();
+	});
+
+	it('flags the acting default agent permissions', () => {
+		expect(DEFAULT_AGENT_PERMISSIONS.filter((p) => permissionRisk(p) != null)).toEqual([
+			'capabilities:execute',
+			'credentials:connect',
+		]);
 	});
 });
 
@@ -82,5 +100,40 @@ describe('approvalGrant', () => {
 
 	it('counts org:admin as recognised though the catalogue hides it from non-admins', () => {
 		expect(approvalGrant(['org:admin'], catalogue).granted).toEqual(['org:admin']);
+	});
+});
+
+describe('groupPermissionsByArea', () => {
+	it('groups the default permissions by area, in reading order, keeping their order within', () => {
+		expect(groupPermissionsByArea(DEFAULT_AGENT_PERMISSIONS)).toEqual([
+			{ area: 'Capabilities', permissions: ['capabilities:execute', 'capabilities:read'] },
+			{ area: 'APIs & catalog', permissions: ['apis:read', 'catalog:import'] },
+			{
+				area: 'Executions, jobs & events',
+				permissions: ['executions:read', 'jobs:read', 'events:read'],
+			},
+			{ area: 'Credentials', permissions: ['credentials:connect'] },
+			{
+				area: "Its owner's resources",
+				permissions: [
+					'owner:resources:read',
+					'owner:agents:read',
+					'owner:credentials:read',
+				],
+			},
+		]);
+	});
+
+	it('puts the organisation permissions together and anything unknown last', () => {
+		expect(permissionArea('org:admin')).toBe('Organisation');
+		expect(permissionArea('users:read')).toBe('Organisation');
+		expect(permissionArea('workflows:write')).toBe('Other');
+		// Nothing dropped: every permission lands in exactly one area.
+		const permissions = ['workflows:write', 'org:admin', 'apis:read'];
+		expect(
+			groupPermissionsByArea(permissions)
+				.flatMap((g) => g.permissions)
+				.sort(),
+		).toEqual([...permissions].sort());
 	});
 });

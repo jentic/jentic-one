@@ -1,6 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Loader2, X } from 'lucide-react';
-import { Button, ErrorAlert, Input, Label, LoadingState, SheetPrimitive, toast } from '@/shared/ui';
+import {
+	Button,
+	ErrorAlert,
+	Input,
+	Label,
+	LoadingState,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
+	SheetPrimitive,
+	toast,
+} from '@/shared/ui';
 import {
 	CredentialType,
 	credentialDetails,
@@ -195,28 +206,31 @@ export function EditCredentialSheet({
 			initialFocus={closeButtonRef}
 		>
 			<form onSubmit={handleSubmit} className="flex h-full flex-col">
-				<header className="border-border flex items-center justify-between gap-2 border-b px-5 py-3">
+				<SheetHeader className="justify-between">
 					<div className="min-w-0">
-						<h2 id={headingId} className="text-foreground text-base font-semibold">
+						<h2
+							id={headingId}
+							className="font-heading text-foreground-name text-lg leading-tight font-semibold"
+						>
 							Edit credential
 						</h2>
 						{cred?.name && (
-							<p className="text-muted-foreground truncate text-xs">{cred.name}</p>
+							<p className="text-foreground-sub mt-1 truncate text-xs">{cred.name}</p>
 						)}
 					</div>
 					<Button
 						ref={closeButtonRef}
 						variant="ghost"
-						size="sm"
+						size="icon"
 						aria-label="Close"
 						onClick={onClose}
-						className="text-muted-foreground hover:text-foreground"
+						className="-mt-1 -mr-1.5 shrink-0"
 					>
 						<X className="h-4 w-4" />
 					</Button>
-				</header>
+				</SheetHeader>
 
-				<div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+				<SheetBody className="space-y-5">
 					{credentialId && isLoading && (
 						<LoadingState
 							message="Loading credential…"
@@ -226,9 +240,9 @@ export function EditCredentialSheet({
 
 					{cred && (
 						<>
-							<div className="bg-muted/40 border-border flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+							<div className="bg-surface-inset flex items-center justify-between gap-3 rounded-lg px-3 py-2">
 								<div className="min-w-0">
-									<p className="text-muted-foreground font-mono text-xs">
+									<p className="text-foreground-sub font-mono text-xs">
 										{apiLabel}
 									</p>
 								</div>
@@ -272,8 +286,8 @@ export function EditCredentialSheet({
 							</div>
 
 							{cred.type === CredentialType.OAUTH2 && (
-								<div className="border-border space-y-2 rounded-lg border border-dashed p-3">
-									<p className="text-foreground text-sm font-medium">
+								<div className="bg-surface-inset space-y-2 rounded-lg p-3">
+									<p className="text-foreground-name text-sm font-semibold">
 										OAuth connection
 									</p>
 									<p className="text-muted-foreground text-xs">
@@ -281,12 +295,12 @@ export function EditCredentialSheet({
 										tokens.
 									</p>
 									<Button
-										variant="outline"
-										size="sm"
+										variant="tonal"
+										size="xs"
 										onClick={handleConnect}
 										loading={connectMutation.isPending}
 									>
-										<ExternalLink className="h-4 w-4" />
+										<ExternalLink className="h-3.5 w-3.5" />
 										Connect
 									</Button>
 								</div>
@@ -307,14 +321,10 @@ export function EditCredentialSheet({
 							)}
 						</>
 					)}
-				</div>
+				</SheetBody>
 
-				<footer className="border-border flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3">
-					<Button
-						variant="secondary"
-						onClick={onClose}
-						disabled={updateMutation.isPending}
-					>
+				<SheetFooter>
+					<Button variant="ghost" onClick={onClose} disabled={updateMutation.isPending}>
 						Cancel
 					</Button>
 					<Button
@@ -326,7 +336,7 @@ export function EditCredentialSheet({
 					>
 						Save changes
 					</Button>
-				</footer>
+				</SheetFooter>
 			</form>
 		</SheetPrimitive>
 	);

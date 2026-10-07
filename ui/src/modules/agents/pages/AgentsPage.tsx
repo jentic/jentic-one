@@ -103,7 +103,7 @@ export default function AgentsPage() {
 				subtitle="Approve, deny, and govern agents across their lifecycle."
 				actions={
 					<>
-						<div className="relative">
+						<div className="relative min-w-0 flex-1 sm:flex-none">
 							<SearchInput
 								ref={filterRef}
 								size="sm"
@@ -112,8 +112,8 @@ export default function AgentsPage() {
 								icon={<Filter className="h-3.5 w-3.5" />}
 								placeholder="Filter agents…"
 								aria-label="Filter agents"
-								// Narrower on a phone, so the header's buttons stay on screen at 390px.
-								className="w-28 sm:w-40 lg:w-48"
+								// Fills the row's spare width on a phone; fixed from `sm`.
+								className="w-full sm:w-40 lg:w-48"
 							/>
 							{!agentFilter && (
 								<Kbd className="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 sm:inline-flex">
@@ -135,9 +135,15 @@ export default function AgentsPage() {
 						</Button>
 						{/* The org-wide inventory trigger — page level, not the dock, whose every
 						    verb is agent-scoped. */}
-						<Button variant="outline" size="sm" onClick={() => setInventoryOpen(true)}>
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => setInventoryOpen(true)}
+						>
 							<Wallet className="h-4 w-4" />
-							Credentials
+							{/* Icon-only on a phone, so the header's verbs fit one row at
+							    390px; the name stays for assistive tech. */}
+							<span className="sr-only sm:not-sr-only">Credentials</span>
 						</Button>
 						<PageHelp
 							title="About Agents"

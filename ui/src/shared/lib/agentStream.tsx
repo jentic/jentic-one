@@ -304,7 +304,7 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
  * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
  * links with the same rules instead of re-deriving them.
  */
-export function idFromLink(link: string | null | undefined): string | undefined {
+function idFromLink(link: string | null | undefined): string | undefined {
 	if (!link) return undefined;
 	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
 	return id.length > 0 ? id : undefined;
@@ -511,15 +511,6 @@ type AgentStreamValue = {
 	latest: StreamEvent | null;
 	status: StreamStatus;
 	/**
-	 * Resolve every unresolved actionable `oauth_client.registered` row for
-	 * one client (matched on the internal `oauth_client_id` token). The approve
-	 * arm resolves through its `oauth_client.approved` event
-	 * (`resolveSupersededRows`); a DENY emits no event (§4.8 / D7), so the deny
-	 * mutation — which knows the client id — calls this on success so a stale
-	 * "Review" prompt doesn't linger in the live session.
-	 */
-	settleOAuthClientRegistration: (oauthClientId: string) => void;
-	/**
 	 * Flip an event's local `resolved` flag — for consumers that took the
 	 * event's action through their own mutation and need the live session's
 	 * in-memory copy to reflect it without waiting for a decision event.
@@ -675,23 +666,6 @@ export function AgentStreamProvider({
 			return resolveSupersededRows(merged.slice(0, cap));
 		});
 	}, []);
-
-	// The deny arm of an `oauth_client.registered` decision (the approve arm
-	// resolves through `resolveSupersededRows`).
-	const settleOAuthClientRegistration = useCallback(
-		(oauthClientId: string) => {
-			setEvents((prev) =>
-				prev.map((row) =>
-					row.type === 'oauth_client.registered' &&
-					row.tokens.oauth_client_id === oauthClientId &&
-					!row.resolved
-						? markResolved(row)
-						: row,
-				),
-			);
-		},
-		[markResolved],
-	);
 
 	// 1. Backlog seed. Retired-namespace history is tolerated but dropped.
 	useEffect(() => {
@@ -865,7 +839,6 @@ export function AgentStreamProvider({
 			frozen,
 			latest,
 			status: forbidden ? 'forbidden' : status,
-			settleOAuthClientRegistration,
 			resolveEvent,
 			loadOlderEvents,
 			canLoadOlder:
@@ -886,7 +859,6 @@ export function AgentStreamProvider({
 			latest,
 			status,
 			forbidden,
-			settleOAuthClientRegistration,
 			resolveEvent,
 			loadOlderEvents,
 			hasMore,
@@ -972,17 +944,46 @@ export function recentFailureCount(events: StreamEvent[]): number {
 }
 
 /**
- * Decision event → the actionable row type it supersedes, and the token both
- * carry. Events are append-only, so this is how an actionable row is known to
- * be handled: its decision is present in the loaded feed. (An OAuth deny emits
- * no event; the deny mutation resolves that row via
- * `settleOAuthClientRegistration`.)
+ * Decision event → the actionable row type(s) it supersedes, and the token(s)
+ * that join the two. Events are append-only, so this is how an actionable row
+ * is known to be handled: its decision is present in the loaded feed.
+ *
+ * A decision can resolve more than one actionable type (an adopted import
+ * clears both the plain "update available" nudge and the "conflicts overlay"
+ * variant for that API), and the join can be a composite of several tokens
+ * (the catalog identity triple) when there is no single shared id.
  */
-const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens }> = {
-	'agent.registration_approved': { target: 'agent.self_registered', token: 'agent_id' },
-	'agent.registration_denied': { target: 'agent.self_registered', token: 'agent_id' },
-	'oauth_client.approved': { target: 'oauth_client.registered', token: 'oauth_client_id' },
+type SupersedeRule = {
+	target: string;
+	/** Token key(s) that form the join key; a composite is matched in order. */
+	tokens: (keyof StreamTokens)[];
 };
+
+const SUPERSEDED_BY: Record<string, SupersedeRule[]> = {
+	'agent.registration_approved': [{ target: 'agent.self_registered', tokens: ['agent_id'] }],
+	'agent.registration_denied': [{ target: 'agent.self_registered', tokens: ['agent_id'] }],
+	'oauth_client.approved': [{ target: 'oauth_client.registered', tokens: ['oauth_client_id'] }],
+	'oauth_client.denied': [{ target: 'oauth_client.registered', tokens: ['oauth_client_id'] }],
+	// Adopting an upstream update (`import.completed` stamped with the API's
+	// vendor/name/version by the job worker) clears that API's outstanding
+	// catalog alerts. Keyed on the identity triple because `import.completed`
+	// carries no `api_id` (the catalog events carry both the triple and api_id).
+	'import.completed': [
+		{ target: 'catalog.update_available', tokens: ['vendor', 'name', 'version'] },
+		{ target: 'catalog.update_conflicts_overlay', tokens: ['vendor', 'name', 'version'] },
+	],
+};
+
+/** Composite join key for a rule, or `null` when any component token is absent. */
+function joinKey(tokens: StreamTokens, keys: (keyof StreamTokens)[]): string | null {
+	const parts: string[] = [];
+	for (const k of keys) {
+		const v = tokens[k];
+		if (v == null || v === '') return null;
+		parts.push(String(v));
+	}
+	return parts.join('\u0000');
+}
 
 /**
  * Mark every actionable row whose superseding decision is in `events` as
@@ -990,23 +991,30 @@ const SUPERSEDED_BY: Record<string, { target: string; token: keyof StreamTokens 
  * Applied on every upsert, so it covers the backlog seed, "load older" pages
  * (a decision and its actionable row can land on different pages, in either
  * order) and live re-deliveries — without it a reload would resurrect Review
- * prompts on agents and OAuth clients that were already decided.
+ * prompts on agents, OAuth clients and catalog updates that were already
+ * decided.
  */
 export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
 	const decided = new Set<string>();
 	for (const ev of events) {
-		const rule = SUPERSEDED_BY[ev.type];
-		const id = rule ? ev.tokens[rule.token] : undefined;
-		if (rule && id) decided.add(`${rule.target}|${id}`);
+		const rules = SUPERSEDED_BY[ev.type];
+		if (!rules) continue;
+		for (const rule of rules) {
+			const key = joinKey(ev.tokens, rule.tokens);
+			if (key !== null) decided.add(`${rule.target}|${key}`);
+		}
 	}
 	if (decided.size === 0) return events;
 	let changed = false;
+	const allRules = Object.values(SUPERSEDED_BY).flat();
 	const out = events.map((ev) => {
 		if (ev.resolved || !ev.requiresAction) return ev;
-		const hit = Object.values(SUPERSEDED_BY).find(
-			(r) => r.target === ev.type && ev.tokens[r.token],
-		);
-		if (!hit || !decided.has(`${ev.type}|${ev.tokens[hit.token]}`)) return ev;
+		const superseded = allRules.some((r) => {
+			if (r.target !== ev.type) return false;
+			const key = joinKey(ev.tokens, r.tokens);
+			return key !== null && decided.has(`${ev.type}|${key}`);
+		});
+		if (!superseded) return ev;
 		changed = true;
 		return { ...ev, resolved: true };
 	});
@@ -1023,27 +1031,6 @@ export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
 export function formatFailurePillCount(count: number): string {
 	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
 	return n > 99 ? '99+' : String(n);
-}
-
-/**
- * Left-edge stripe class for a rail row, keyed by severity.
- *
- * CRITICAL and ERROR share the danger colour (both are failures — see
- * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
- * doubled-width stripe. Before this, the two tiers were pixel-identical on
- * the rail (`border-l-danger` for both, `border-l-2` from the row's base
- * class) — an operator had no way to tell "one failure" from "this failure
- * pattern crossed the critical threshold" without opening the row (issue
- * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
- * row's base `border-l-2` (later class in the merge wins on the same
- * property group) — do not reorder the row's `cn(...)` call without
- * preserving that.
- */
-export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-4 border-l-danger';
-	if (s === 'error') return 'border-l-danger';
-	if (s === 'warning') return 'border-l-warning';
-	return 'border-l-primary';
 }
 
 export function formatStreamTime(tsMs: number): string {
@@ -1171,6 +1158,16 @@ export type InlineActionSpec = {
 const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
 	traceId != null && traceId !== '' && traceId !== 'unknown';
 
+/**
+ * Overlay-lifecycle events — the backend's `overlay.*` types (today
+ * `overlay.deprecated`) and `catalog.update_conflicts_overlay` (an upstream
+ * update colliding with a confirmed overlay). Their natural home is the hub's
+ * Versions tab (revisions + overlays), not the Overview.
+ */
+function isOverlayEvent(ev: StreamEvent): boolean {
+	return ev.type.startsWith('overlay.') || ev.type === 'catalog.update_conflicts_overlay';
+}
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
@@ -1191,15 +1188,21 @@ const NAV = {
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
-	// Catalog/overlay events deep-link to the affected API's Workspace detail
-	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
-	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
-	// shared-layer code, so the path shape is inlined rather than imported from a
-	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	// Catalog/overlay events deep-link to the affected API's hub in the
+	// Library: `/library/workspace/:vendor/:name/:version`, each segment
+	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
+	// here since shared/lib can't import the route registry). Router-relative — the
+	// rail prepends the `/app` basename. (The retired `/workspace/...` form still
+	// redirects, so events rendered by older builds keep working.)
 	workspaceApi: (ev: StreamEvent) => {
 		const { vendor, name, version } = ev.tokens;
 		if (!vendor || !name || !version) return null;
-		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		const hub = `/library/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		// Overlay-lifecycle events (`overlay.deprecated`, and an upstream update
+		// that conflicts with a confirmed overlay) land on the hub's Versions tab,
+		// where the overlays live. A plain `catalog.update_available` keeps the
+		// Overview (default tab), where Re-import lives.
+		return isOverlayEvent(ev) ? `${hub}?tab=versions` : hub;
 	},
 	// The Settings OAuth approval queue (D7) — where the
 	// approve/deny verbs for a pending DCR registration live. Static target:

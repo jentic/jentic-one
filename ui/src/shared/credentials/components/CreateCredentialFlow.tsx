@@ -1,12 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Download, Info, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Download, Info, Loader2, LockOpen, Upload, X } from 'lucide-react';
 import {
 	Button,
 	Dialog,
 	ErrorAlert,
 	Input,
 	Label,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
 	toast,
@@ -44,6 +47,10 @@ import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDial
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
+	CredentialVersionScope,
+	pinnableVersionOf,
+} from '@/shared/credentials/components/CredentialVersionScope';
+import {
 	VendorConnectFlow,
 	type PostConnectInfo,
 } from '@/shared/credentials/components/VendorConnectFlow';
@@ -51,6 +58,7 @@ import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
+	specDeclaresNoAuth,
 	type OAuth2FlowDef,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
@@ -106,6 +114,17 @@ interface CreateCredentialFlowProps {
 	 */
 	pinnedApi?: SelectedApi;
 	/**
+	 * Open on the form (step 2) for this API — a host that is already about one
+	 * API (its hub) shouldn't make the operator find it again. Unlike
+	 * `pinnedApi` it is only a starting point: Back and `Change` still reach the
+	 * picker. Each (re)open starts from it; a different API re-seeds the flow.
+	 * `pinnedApi` wins when both are set.
+	 *
+	 * Like every pick, the credential defaults to "Any version"; the form's
+	 * "Use for" picker offers this API's registered version to pin instead.
+	 */
+	initialApi?: SelectedApi;
+	/**
 	 * When provided, the flow opens directly into the vendor connect in
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
@@ -155,8 +174,15 @@ type Step = 'pick' | 'form' | 'vendor';
  * dialog for a host in the top layer. Everything between the header and the action
  * row is one implementation, so the two surfaces cannot drift.
  *
- * Neither surface dismisses on a backdrop click — a stray click would discard a
- * half-typed secret.
+ * The drawer closes on a backdrop click exactly as it does on Escape / X / Cancel:
+ * every close wipes the draft (see the reset effect — a half-typed secret is not
+ * kept around). Two exceptions keep the backdrop inert:
+ *  - a live vendor / approval connect (`step === 'vendor'`, `approvalSession`):
+ *    `VendorConnectFlow` opens a connect session on mount and cancels it on
+ *    unmount, so a stray click would silently abandon a sign-in in progress.
+ *    Escape and the flow's own Cancel still close it deliberately.
+ *  - the `dialog` surface: the native-`<dialog>` backdrop test in `Dialog` can't
+ *    tell a drag that ends outside from a click, so it would close mid-select.
  */
 export function CreateCredentialFlow({
 	open,
@@ -164,14 +190,25 @@ export function CreateCredentialFlow({
 	onCreated,
 	initialType,
 	pinnedApi,
+	initialApi,
 	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
 	renderPostConnect,
 	back,
 }: CreateCredentialFlowProps) {
-	const [step, setStep] = useState<Step>(pinnedApi ? 'form' : 'pick');
-	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(pinnedApi ?? null);
+	// The API the flow starts on: fixed (`pinnedApi`) or just preselected
+	// (`initialApi`). Only `pinnedApi` hides the way back to the picker.
+	const seedApi = pinnedApi ?? initialApi;
+	// Every credential starts on "Any version"; a workspace API's registered
+	// version is offered as the pin (a catalog pick has no real one yet).
+	const seedVersion = seedApi ? pinnableVersionOf(seedApi) : '';
+	const seedForm = (): CredentialFormState =>
+		seedApi ? seedFormFromSelectedApi(EMPTY_FORM, seedApi, false) : EMPTY_FORM;
+	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
+	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
+	/** The registry version the form's "Use for" picker can pin to (`''` hides it). */
+	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
@@ -179,9 +216,12 @@ export function CreateCredentialFlow({
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
-	const [state, setState] = useState<CredentialFormState>(() =>
-		pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM,
-	);
+	/**
+	 * The operator chose to set up authentication although the spec declares
+	 * none — a spec can be wrong, so "no authentication" is a default, not a lock.
+	 */
+	const [authOverride, setAuthOverride] = useState(false);
+	const [state, setState] = useState<CredentialFormState>(seedForm);
 	const [errors, setErrors] = useState<Partial<Record<keyof CredentialFormState, string>>>({});
 	const [serverVarErrors, setServerVarErrors] = useState<Record<string, string>>({});
 	const [oauth2Flows, setOAuth2Flows] = useState<OAuth2FlowDef[]>([]);
@@ -289,6 +329,27 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedApi, schemesResult.loading, schemesResult.options.length]);
 
+	// A spec that was read and declares no security scheme (and no global
+	// requirement) is an API called without authentication — not an unknown
+	// one. Offering a token for it would make the operator invent a secret the
+	// API never checks; an unreadable spec still falls back to free choice.
+	const declaresNoAuth =
+		!manualMode &&
+		!!selectedApi &&
+		!schemesResult.loading &&
+		!schemesResult.error &&
+		schemesResult.spec != null &&
+		specDeclaresNoAuth(schemesResult.spec);
+	const noAuthDetected = declaresNoAuth && !authOverride;
+
+	useEffect(() => {
+		if (noAuthDetected) setType(CredentialType.NO_AUTH);
+		else if (type === CredentialType.NO_AUTH)
+			setType(initialType ?? CredentialType.BEARER_TOKEN);
+		// `type` is read, not tracked: only a change in what the spec says moves it.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [noAuthDetected]);
+
 	const patch = (p: Partial<CredentialFormState>): void => {
 		setState((s) => ({ ...s, ...p }));
 	};
@@ -324,15 +385,16 @@ export function CreateCredentialFlow({
 	};
 
 	const reset = (): void => {
-		// A pinned API is the caller's premise, not a user choice, so a reset returns
-		// to that API's empty form rather than to the picker.
-		setStep(pinnedApi ? 'form' : 'pick');
-		setSelectedApi(pinnedApi ?? null);
+		// A pinned or preselected API is the caller's premise, not a user choice, so
+		// a reset returns to that API's empty form rather than to the picker.
+		setStep(seedApi ? 'form' : 'pick');
+		setSelectedApi(seedApi ?? null);
 		setSelectedVendor(null);
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
-		setState(pinnedApi ? seedFormFromSelectedApi(EMPTY_FORM, pinnedApi, false) : EMPTY_FORM);
+		setState(seedForm());
+		setPinnableVersion(seedVersion);
 		setErrors({});
 		setServerVarErrors({});
 		setOAuth2Flows([]);
@@ -340,6 +402,7 @@ export function CreateCredentialFlow({
 		hasUserInteractedWithScopes.current = false;
 		nameDirty.current = false;
 		formTouched.current = false;
+		setAuthOverride(false);
 		setType(initialType ?? CredentialType.BEARER_TOKEN);
 		createMutation.reset();
 		importMutation.reset();
@@ -354,10 +417,24 @@ export function CreateCredentialFlow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
 
+	// Seed-from-props: a host that stays mounted while its API changes (one hub
+	// to another) re-seeds only when the preselected API itself changes — never
+	// on an `open` flip, which the effect above already covers.
+	const seedKey = seedApi ? `${seedApi.vendor}\u0000${seedApi.name}\u0000${seedApi.version}` : '';
+	const lastSeedKey = useRef(seedKey);
+	useEffect(() => {
+		if (lastSeedKey.current === seedKey) return;
+		lastSeedKey.current = seedKey;
+		reset();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [seedKey]);
+
 	const handlePickApi = (api: SelectedApi): void => {
 		setSelectedApi(api);
 		setSelectedVendor(null);
 		setManualMode(false);
+		setAuthOverride(false);
+		setPinnableVersion(pinnableVersionOf(api));
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
@@ -374,6 +451,7 @@ export function CreateCredentialFlow({
 		setSelectedApi(null);
 		setSelectedVendor(null);
 		setManualMode(true);
+		setPinnableVersion('');
 		setState(EMPTY_FORM);
 		setStep('form');
 	};
@@ -538,9 +616,9 @@ export function CreateCredentialFlow({
 
 	// The picked-API summary banner shown atop the form step (label + the
 	// vendor/name triple + whether saving will trigger a catalog import). The
-	// version shown is the one the credential is saved with: a catalog pick is
+	// version shown is the one the credential is saved with: every pick starts
 	// unpinned (`apiVersion: ''`, see `seedFormFromSelectedApi`), so it reads
-	// "any version" rather than the catalog's version string.
+	// "any version" until the operator pins the API's version in "Use for".
 	const pinnedVersion = state.apiVersion.trim();
 	const apiSummary = useMemo(() => {
 		if (!selectedApi) return null;
@@ -558,13 +636,14 @@ export function CreateCredentialFlow({
 	//    deduped & in canonical order; we still render the single card so the
 	//    user sees what was detected and can confirm.
 	const typeOptions = useMemo<CredentialType[]>(() => {
+		if (noAuthDetected) return [CredentialType.NO_AUTH];
 		if (showManualType) return [...CREDENTIAL_TYPE_ORDER];
 		const fromSpec = schemesResult.options
 			.map((o) => schemeTypeToCredentialType(o.type))
 			.filter((t): t is CredentialType => t != null);
 		const deduped = CREDENTIAL_TYPE_ORDER.filter((t) => fromSpec.includes(t));
 		return deduped.length > 0 ? deduped : [type];
-	}, [showManualType, schemesResult.options, type]);
+	}, [noAuthDetected, showManualType, schemesResult.options, type]);
 
 	const detectedSingle = !showManualType && typeOptions.length === 1;
 
@@ -594,13 +673,13 @@ export function CreateCredentialFlow({
 		<span>Fill in the credential details for {pinnedApi.label}</span>
 	) : step === 'pick' ? (
 		<span>
-			<span className="font-mono text-[10px] tracking-widest uppercase">Step 1 of 2</span> ·
-			Choose a one-click sign-in, or pick an API to authenticate against
+			<span className="text-[10.5px] font-bold tracking-[0.08em] uppercase">Step 1 of 2</span>{' '}
+			· Choose a one-click sign-in, or pick an API to authenticate against
 		</span>
 	) : (
 		<span>
-			<span className="font-mono text-[10px] tracking-widest uppercase">Step 2 of 2</span> ·
-			Fill in the credential details
+			<span className="text-[10.5px] font-bold tracking-[0.08em] uppercase">Step 2 of 2</span>{' '}
+			· Fill in the credential details
 		</span>
 	);
 
@@ -629,7 +708,7 @@ export function CreateCredentialFlow({
 				size="sm"
 				onClick={openUpload}
 				type="button"
-				className="text-muted-foreground hover:text-foreground mr-auto"
+				className="mr-auto"
 			>
 				<Upload className="h-3.5 w-3.5" />
 				Upload an API
@@ -675,7 +754,7 @@ export function CreateCredentialFlow({
 					loading={createMutation.isPending || importMutation.isPending}
 					disabled={specPending}
 				>
-					Create credential
+					{noAuthDetected ? 'Add without a secret' : 'Create credential'}
 				</Button>
 			</>
 		) : undefined;
@@ -735,12 +814,12 @@ export function CreateCredentialFlow({
 				>
 					{apiSummary && (
 						<div
-							className="bg-muted/40 border-border flex items-center gap-3 rounded-xl border px-3 py-2.5"
+							className="bg-surface-inset flex items-center gap-3 rounded-lg px-3 py-2.5"
 							data-testid="selected-api-summary"
 						>
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2">
-									<p className="text-foreground truncate text-sm font-medium">
+									<p className="text-foreground-name truncate text-sm font-semibold">
 										{apiSummary.label}
 									</p>
 									{specPending && (
@@ -753,21 +832,35 @@ export function CreateCredentialFlow({
 								<p className="text-muted-foreground mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs">
 									{apiSummary.triple}
 									{apiSummary.willImport && (
-										<span className="text-muted-foreground/80 inline-flex items-center gap-1">
+										<span className="text-muted-foreground inline-flex items-center gap-1">
 											<span aria-hidden>·</span>
 											<Download className="h-3 w-3" />
 											imports on save
 										</span>
 									)}
 								</p>
+								{pinnableVersion && (
+									<div className="mt-2">
+										<CredentialVersionScope
+											version={pinnableVersion}
+											value={pinnedVersion ? 'pinned' : 'any'}
+											onChange={(scope): void =>
+												patch({
+													apiVersion:
+														scope === 'pinned' ? pinnableVersion : '',
+												})
+											}
+										/>
+									</div>
+								)}
 							</div>
 							{!pinnedApi && (
 								<Button
 									type="button"
 									variant="ghost"
-									size="sm"
+									size="xs"
 									onClick={goBackToPick}
-									className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
+									className="shrink-0"
 								>
 									Change
 								</Button>
@@ -776,11 +869,11 @@ export function CreateCredentialFlow({
 					)}
 
 					{manualMode && (
-						<fieldset className="border-border space-y-3 rounded-lg border p-3">
-							<legend className="text-muted-foreground px-1 text-xs font-medium">
+						<fieldset className="bg-surface-inset space-y-3 rounded-lg p-3">
+							<legend className="text-foreground-sub float-left mb-3 w-full text-xs font-medium">
 								API reference
 							</legend>
-							<div className="space-y-1.5">
+							<div className="clear-both space-y-1.5">
 								<Label htmlFor={`${fieldId}-vendor`} required>
 									Vendor
 								</Label>
@@ -866,7 +959,7 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.15 }}
-								className="border-border border-t pt-5"
+								className="border-hairline border-t pt-5"
 							>
 								<AuthSectionSkeleton />
 							</motion.div>
@@ -877,11 +970,11 @@ export function CreateCredentialFlow({
 								animate={{ opacity: 1, y: 0 }}
 								exit={{ opacity: 0 }}
 								transition={{ duration: 0.2, ease: 'easeOut' }}
-								className="border-border space-y-5 border-t pt-5"
+								className="border-hairline space-y-5 border-t pt-5"
 							>
 								{!manualMode && schemesResult.error && (
 									<p
-										className="border-border bg-muted/40 text-muted-foreground rounded-lg border p-3 text-xs leading-snug"
+										className="bg-surface-inset text-foreground-sub rounded-lg p-3 text-xs leading-snug"
 										role="note"
 									>
 										We couldn&apos;t read the API spec — pick the type manually
@@ -889,12 +982,23 @@ export function CreateCredentialFlow({
 									</p>
 								)}
 
-								<AuthTypeCards
-									options={typeOptions}
-									value={type}
-									onChange={handleTypeChange}
-									detected={detectedSingle}
-								/>
+								{noAuthDetected ? (
+									<NoAuthNote
+										onSetUpAnyway={(): void => {
+											setAuthOverride(true);
+											handleTypeChange(
+												initialType ?? CredentialType.BEARER_TOKEN,
+											);
+										}}
+									/>
+								) : (
+									<AuthTypeCards
+										options={typeOptions}
+										value={type}
+										onChange={handleTypeChange}
+										detected={detectedSingle}
+									/>
+								)}
 
 								{serverVars.length > 0 && (
 									<ServerVariablesSection
@@ -945,7 +1049,7 @@ export function CreateCredentialFlow({
 
 								{usingPipedream && (
 									<div
-										className="border-primary/20 bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg border p-3 text-xs leading-snug"
+										className="bg-primary/5 text-primary/90 flex items-start gap-2 rounded-lg p-3 text-xs leading-snug"
 										role="note"
 									>
 										<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -979,6 +1083,9 @@ export function CreateCredentialFlow({
 		</>
 	);
 
+	/** A connect session is open (created on `VendorConnectFlow` mount). */
+	const connectInPlay = !!approvalSession || step === 'vendor';
+
 	if (surface === 'dialog') {
 		return (
 			<Dialog
@@ -1000,35 +1107,38 @@ export function CreateCredentialFlow({
 			open={open}
 			onClose={onClose}
 			ariaLabelledBy={headingId}
-			dismissOnBackdrop={false}
+			// Same close as Escape / X (see the doc comment); inert only while a
+			// vendor / approval connect session is live.
+			dismissOnBackdrop={!connectInPlay}
 			className="sm:w-[640px] xl:w-[760px]"
 		>
 			<div className="flex h-full flex-col">
-				<header className="border-border flex shrink-0 items-start justify-between gap-3 border-b px-5 py-4">
+				<SheetHeader className="justify-between">
 					<div className="min-w-0">
-						<h2 id={headingId} className="text-foreground text-base font-semibold">
+						<h2
+							id={headingId}
+							className="font-heading text-foreground-name text-lg leading-tight font-semibold"
+						>
 							{title}
 						</h2>
-						<div className="text-muted-foreground text-xs">{subtitle}</div>
+						<div className="text-foreground-sub mt-1 text-xs">{subtitle}</div>
 					</div>
 					<Button
 						variant="ghost"
-						size="sm"
+						size="icon"
 						aria-label="Close"
 						onClick={onClose}
-						className="text-muted-foreground hover:text-foreground shrink-0"
+						className="-mt-1 -mr-1.5 shrink-0"
 					>
 						<X className="h-4 w-4" />
 					</Button>
-				</header>
+				</SheetHeader>
 
-				<div className="flex-1 overflow-y-auto px-5 py-4">{body}</div>
+				{/* The connect flow draws its own action band flush with the body's
+				    bottom edge, so the body keeps a matching bottom padding then. */}
+				<SheetBody className={connectInPlay ? 'pb-4' : undefined}>{body}</SheetBody>
 
-				{footer && (
-					<footer className="border-border flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-5 py-3">
-						{footer}
-					</footer>
-				)}
+				{footer && <SheetFooter className="flex-wrap gap-2">{footer}</SheetFooter>}
 			</div>
 		</SheetPrimitive>
 	);
@@ -1041,9 +1151,51 @@ export function CreateCredentialFlow({
  */
 function FormSectionLabel({ children }: { children: React.ReactNode }) {
 	return (
-		<p className="text-muted-foreground px-0.5 font-mono text-[10px] tracking-widest uppercase">
+		<p className="text-foreground-faint px-0.5 text-[10.5px] font-bold tracking-[0.08em] uppercase">
 			{children}
 		</p>
+	);
+}
+
+/**
+ * The auth section for an API whose spec declares no authentication. States
+ * only what is known — the spec declares none, not that the API needs none —
+ * says what saving makes (a credential with no secret, for binding), that
+ * agents still need access granted, and offers the method picker for a spec
+ * that leaves its auth out.
+ */
+function NoAuthNote({ onSetUpAnyway }: { onSetUpAnyway: () => void }) {
+	return (
+		<div
+			className="bg-surface-tonal flex items-start gap-3 rounded-lg p-3.5"
+			data-testid="credential-no-auth-note"
+		>
+			<span
+				aria-hidden="true"
+				className="bg-surface-field text-foreground-sub grid h-8 w-8 shrink-0 place-items-center rounded-full"
+			>
+				<LockOpen className="h-4 w-4" />
+			</span>
+			<div className="min-w-0 flex-1">
+				<p className="text-foreground text-sm font-medium">No authentication declared</p>
+				<p className="text-muted-foreground mt-0.5 text-xs leading-snug">
+					This API&apos;s spec lists no way to sign in, so there&apos;s no secret to
+					enter. Saving adds a credential without one, which you can then bind to agents —
+					they still need access granted before they can call it.
+				</p>
+				<p className="text-muted-foreground mt-2.5 text-xs">
+					Does the API actually need a key or token?{' '}
+					<button
+						type="button"
+						onClick={onSetUpAnyway}
+						className="text-primary rounded-sm font-semibold underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+						data-testid="credential-no-auth-override"
+					>
+						Choose an authentication method
+					</button>
+				</p>
+			</div>
+		</div>
 	);
 }
 
@@ -1060,19 +1212,19 @@ function AuthSectionSkeleton() {
 				<Skeleton className="h-4 w-44" />
 				<Skeleton className="h-3 w-64" />
 				<div className="grid gap-2.5 sm:grid-cols-2">
-					<Skeleton className="h-[4.5rem] rounded-xl" />
-					<Skeleton className="h-[4.5rem] rounded-xl" />
+					<Skeleton className="h-[4.5rem] rounded-lg" />
+					<Skeleton className="h-[4.5rem] rounded-lg" />
 				</div>
 			</div>
 			{/* Field stack */}
 			<div className="space-y-4">
 				<div className="space-y-1.5">
 					<Skeleton className="h-3.5 w-20" />
-					<Skeleton className="h-9 w-full rounded-lg" />
+					<Skeleton className="rounded-field h-9 w-full" />
 				</div>
 				<div className="space-y-1.5">
 					<Skeleton className="h-3.5 w-24" />
-					<Skeleton className="h-9 w-full rounded-lg" />
+					<Skeleton className="rounded-field h-9 w-full" />
 				</div>
 			</div>
 		</div>

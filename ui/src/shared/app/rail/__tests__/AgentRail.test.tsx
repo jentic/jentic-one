@@ -24,10 +24,8 @@ import {
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
-	severityStripeClass,
 	streamDayKey,
 	recentFailureCount,
-	useAgentStream,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	writeToastScope,
@@ -134,26 +132,6 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(severityForWire('error')).toBe('error');
 		expect(severityForWire('warning')).toBe('warning');
 		expect(severityForWire('info')).toBe('info');
-	});
-
-	// Issue #907: critical and error shared an IDENTICAL rail stripe
-	// (`border-l-danger` for both, same width) — an operator had no visual way
-	// to tell a single failure from a chronic-failure escalation without
-	// opening the row. Critical now renders a wider stripe on top of the same
-	// danger colour, so the two failure tiers stay visually related but not
-	// indistinguishable.
-	it('severityStripeClass gives critical a distinct treatment from error', () => {
-		const critical = severityStripeClass('critical');
-		const error = severityStripeClass('error');
-		expect(critical).not.toBe(error);
-		// Both stay in the danger colour family — they're still both failures.
-		expect(critical).toContain('border-l-danger');
-		expect(error).toContain('border-l-danger');
-	});
-
-	it('severityStripeClass gives warning and info their own colours', () => {
-		expect(severityStripeClass('warning')).toContain('border-l-warning');
-		expect(severityStripeClass('info')).toContain('border-l-primary');
 	});
 
 	it('adaptEvent lifts tokens, links and flags off the wire shape', () => {
@@ -1245,42 +1223,63 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 		);
 	});
 
-	it('settles the actionable registration row on DENY via the context (no SSE event exists)', async () => {
-		// A deny emits no oauth_client.* event (§4.8/D7) — the deny mutation
-		// calls `settleOAuthClientRegistration` itself. Drive the context handle
-		// exactly like `useDenyOAuthClient` does and watch the row settle.
+	it('settles the actionable registration row when the DENY event arrives over SSE', async () => {
+		// A deny now emits a durable `oauth_client.denied` event (mirroring
+		// approve), so the registration row resolves through the same stream
+		// path — no in-memory settle, and it survives a reload.
+		const registered = registeredWire();
+		const denied = wireEvent({
+			event_id: 'evt_oauth_denied',
+			type: 'oauth_client.denied',
+			summary: 'OAuth client denied: MCP App',
+			data: { oauth_client_id: OAUTH_CLIENT_ID },
+		});
 		worker.use(
 			http.get('/events', () =>
-				HttpResponse.json({
-					data: [registeredWire()],
-					has_more: false,
-					next_cursor: null,
-				}),
+				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
 			),
+			http.get('/events/stream', () => {
+				const frames = [registered, denied]
+					.map(
+						(e) =>
+							`event: ${e.type}\nid: ${e.event_id}\ndata: ${JSON.stringify(e)}\n\n`,
+					)
+					.join('');
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(frames));
+					},
+				});
+				return new HttpResponse(stream, {
+					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+				});
+			}),
 		);
-		let settle: ((oauthClientId: string) => void) | undefined;
-		function SettleProbe() {
-			settle = useAgentStream().settleOAuthClientRegistration;
-			return null;
-		}
-		renderRail(
-			<>
-				<AgentRail />
-				<SettleProbe />
-			</>,
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({
+						defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+					})
+				}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<Routes>
+							<Route path="/*" element={<AgentRail />} />
+						</Routes>
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
 		);
-		await screen.findByRole('button', { name: 'Review' });
-
-		// A settle for a DIFFERENT client must not touch the row.
-		act(() => settle?.('oc_other_client'));
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
-
-		act(() => settle?.(OAUTH_CLIENT_ID));
+		// Both rows land in the feed…
+		await screen.findByText(/OAuth client registered: MCP App/i);
+		await screen.findByText(/OAuth client denied: MCP App/i);
+		// …and the registration's actionable Review prompt is gone (resolved).
 		await waitFor(() =>
 			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
 		);
-		// The row itself stays in the feed — only its actionable slot settled.
-		expect(screen.getByText(/OAuth client registered: MCP App/i)).toBeInTheDocument();
 	});
 });
 

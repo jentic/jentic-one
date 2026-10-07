@@ -22,7 +22,6 @@ import {
 	type OAuthGrantAdminResponse,
 	type PermissionResponse,
 } from '@/shared/api';
-import { useAgentStreamOptional } from '@/shared/lib';
 
 export type OAuthClient = OAuthClientResponse;
 export type OAuthClientGrant = OAuthGrantAdminResponse;
@@ -105,21 +104,18 @@ export function useApproveOAuthClient() {
 /** Deny a client (D7: the row is kept, so approve can reverse the decision). */
 export function useDenyOAuthClient() {
 	const qc = useQueryClient();
-	// A deny emits no SSE event (unlike approve, whose `oauth_client.approved`
-	// event settles the rail's actionable row via the stream mirror), so this
-	// mutation settles the `oauth_client.registered` row itself — it knows the
-	// client id. Provider-optional: tests and embedded surfaces without the
-	// rail's stream still work.
-	const stream = useAgentStreamOptional();
+	// A deny emits an `oauth_client.denied` event (mirroring approve's
+	// `oauth_client.approved`), so the rail's actionable `oauth_client.registered`
+	// row resolves durably through the stream — including across reloads and in
+	// other sessions. No in-memory settle needed.
 	return useMutation({
 		mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
 			OAuthClientsService.denyOauthClient({
 				id,
 				requestBody: reason ? { reason } : undefined,
 			}),
-		onSuccess: (_data, { id }) => {
+		onSuccess: () => {
 			void qc.invalidateQueries({ queryKey: QUERY_KEY });
-			stream?.settleOAuthClientRegistration(id);
 		},
 	});
 }

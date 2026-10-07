@@ -17,7 +17,7 @@
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
-import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
+import { ActorLabel, Badge, Button, DetailSection, LoadingState, ConfirmDialog } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { MIGRATED_SERVICE_ACCOUNT_KEY_WARNING, holdsMigratedServiceAccountKey } from '@/shared/lib';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
@@ -29,7 +29,6 @@ import {
 	type AgentEntity,
 } from '@/modules/agents/api';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 
 export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
@@ -161,7 +160,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					{history.map((entry) => (
 						<div
 							key={entry.id}
-							className="border-border/60 flex items-center justify-between rounded-lg border px-3 py-2"
+							className="bg-surface-field flex items-center justify-between rounded-md px-3 py-2"
 						>
 							<div className="flex items-center gap-2">
 								<Badge
@@ -178,7 +177,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 								)}
 							</div>
 							<span
-								className="text-muted-foreground/70 shrink-0 text-[11px]"
+								className="text-muted-foreground shrink-0 text-[11px]"
 								title={formatTimestamp(entry.occurredAt)}
 							>
 								{timeAgo(entry.occurredAt)}

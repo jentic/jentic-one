@@ -31,6 +31,9 @@ _ACTOR = "usr_worker_events"
 class _OkHandler:
     """Completes any job with a fixed result body."""
 
+    def __init__(self, body: dict[str, Any] | None = None) -> None:
+        self._body = body if body is not None else {"status": "ok"}
+
     async def execute(
         self,
         job_id: str,
@@ -40,7 +43,7 @@ class _OkHandler:
         created_by: str | None = None,
         actor_type: str | None = None,
     ) -> JobResultPayload:
-        return JobResultPayload(body={"status": "ok"})
+        return JobResultPayload(body=self._body)
 
 
 @pytest.fixture()
@@ -57,7 +60,9 @@ async def clean_jobs(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
     await _cleanup()
 
 
-async def _run_one_job(admin_db: DatabaseSession, kind: JobKind) -> str:
+async def _run_one_job(
+    admin_db: DatabaseSession, kind: JobKind, *, result_body: dict[str, Any] | None = None
+) -> str:
     """Queue one job of ``kind``, let the worker complete it, and return its id."""
     job = Job(kind=kind, status=JobStatus.QUEUED, created_by=_ACTOR, actor_type="user")
     async with admin_db.session() as session:
@@ -66,7 +71,7 @@ async def _run_one_job(admin_db: DatabaseSession, kind: JobKind) -> str:
         job_id = job.id
 
     registry = JobHandlerRegistry()
-    registry.register(kind, _OkHandler())
+    registry.register(kind, _OkHandler(result_body))
     worker = WorkerLoop(admin_db, registry, worker_config=WorkerConfig())
     assert await worker._tick() is True
 
@@ -112,3 +117,38 @@ async def test_import_job_completion_emits_import_event(
         )
     assert len(events) == 1
     assert events[0].actor_id == _ACTOR
+
+
+async def test_import_job_completion_stamps_imported_api_identity(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A single-API import stamps the API's vendor/name/version onto the event
+    (the join key the UI uses to resolve that API's catalog-update alerts) and
+    lists every imported API under ``apis``."""
+    job_id = await _run_one_job(
+        admin_db,
+        JobKind.IMPORT,
+        result_body={
+            "revisions": [
+                {"api": {"vendor": "stripe", "name": "stripe-api", "version": "1"}},
+            ]
+        },
+    )
+
+    async with admin_db.session() as session:
+        event = (
+            (
+                await session.execute(
+                    select(Event).where(
+                        Event.job_id == job_id,
+                        Event.type == EventType.IMPORT_COMPLETED,
+                    )
+                )
+            )
+            .scalars()
+            .one()
+        )
+    assert event.data["vendor"] == "stripe"
+    assert event.data["name"] == "stripe-api"
+    assert event.data["version"] == "1"
+    assert event.data["apis"] == [{"vendor": "stripe", "name": "stripe-api", "version": "1"}]

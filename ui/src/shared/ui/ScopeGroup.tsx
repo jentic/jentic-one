@@ -74,14 +74,14 @@ export function ScopeGroup({
 	);
 
 	return (
-		<div className="border-border overflow-hidden rounded-xl border">
+		<div className="bg-field overflow-hidden rounded-lg">
 			{/*
 			 * Header row is a non-interactive flex container holding two sibling
 			 * controls — the expand toggle and the select-all checkbox — so neither
 			 * interactive element nests inside the other (avoids axe
 			 * `nested-interactive`).
 			 */}
-			<div className="bg-muted/30 hover:bg-muted/50 flex w-full items-center gap-3 px-3 py-2.5 transition-colors">
+			<div className="hover:bg-tint-2 flex w-full items-center gap-3 px-3 py-2.5 transition-colors">
 				<button
 					type="button"
 					aria-expanded={isExpanded}
@@ -146,7 +146,7 @@ export function ScopeGroup({
 						transition={{ duration: 0.2 }}
 						className="overflow-hidden"
 					>
-						<div className="divide-border/50 border-border divide-y border-t">
+						<div className="divide-hairline border-hairline divide-y border-t">
 							{group.scopes.map((scope) => (
 								<ScopeItem
 									key={scope.scope}
@@ -193,7 +193,7 @@ function ScopeItem({
 			className={cn(
 				'group flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
 				disabled && 'cursor-not-allowed opacity-50',
-				isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/50',
+				isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-tint-2',
 			)}
 		>
 			<span className="min-w-0 flex-1">

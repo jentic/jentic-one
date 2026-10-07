@@ -1,12 +1,14 @@
 import { Bot } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { avatarToneIndex, avatarToneStyle } from '@/shared/ui/avatarPalette';
 
 /**
  * AgentBadge — a deterministic identity chip for an actor (agent / service
- * account). The background colour is hashed from the stable id so the same
- * actor always reads the same colour across every surface (table, detail,
- * activity rows); the glyph is the actor's initials, falling back to a bot
- * icon when there's no name.
+ * account). The pastel tile is hashed from the stable id so the same actor
+ * always reads the same colour across every surface (table, detail, activity
+ * rows) — the same palette and type as `VendorIcon`, so APIs and agents share
+ * one identity grammar. The glyph is the actor's initials, falling back to a
+ * bot icon when there's no name.
  *
  * A shared primitive so the agents surfaces and any future
  * agents/monitor surface can reuse one identity treatment.
@@ -14,20 +16,11 @@ import { cn } from '@/shared/lib/utils';
 
 export type AgentBadgeSize = 'xs' | 'sm' | 'md' | 'lg';
 
-/** Accent palette — keyed by a hash of the id so colours are stable per actor. */
-const ACCENT_CLASSES = [
-	'bg-accent-blue/15 text-accent-blue',
-	'bg-accent-teal/15 text-accent-teal',
-	'bg-accent-orange/15 text-accent-orange',
-	'bg-accent-yellow/15 text-accent-yellow',
-	'bg-primary/15 text-primary',
-] as const;
-
 const SIZE_CLASSES: Record<AgentBadgeSize, string> = {
-	xs: 'h-5 w-5 text-[9px]',
-	sm: 'h-7 w-7 text-[10px]',
-	md: 'h-9 w-9 text-xs',
-	lg: 'h-11 w-11 text-sm',
+	xs: 'h-5 w-5 rounded-[6px] text-[8.5px]',
+	sm: 'h-7 w-7 rounded-[7px] text-[10.5px]',
+	md: 'h-9 w-9 rounded-field text-xs',
+	lg: 'h-11 w-11 rounded-[11px] text-sm',
 };
 
 const ICON_SIZE: Record<AgentBadgeSize, string> = {
@@ -36,14 +29,6 @@ const ICON_SIZE: Record<AgentBadgeSize, string> = {
 	md: 'h-4 w-4',
 	lg: 'h-5 w-5',
 };
-
-/** djb2-style hash → palette index. Deterministic for a given id. */
-function accentFor(id: string | undefined): string {
-	if (!id) return 'bg-muted text-muted-foreground';
-	let h = 5381;
-	for (let i = 0; i < id.length; i++) h = (h * 33) ^ id.charCodeAt(i);
-	return ACCENT_CLASSES[Math.abs(h) % ACCENT_CLASSES.length];
-}
 
 /** Up to two initials from a name (word-initials, else first two letters). */
 export function agentInitials(name: string | undefined): string {
@@ -85,15 +70,17 @@ export function AgentBadge({
 	const label = name ? `${kind} ${name}` : kind;
 
 	const content = initials ? (
-		<span className="font-semibold tracking-tight">{initials}</span>
+		<span className="font-heading font-bold tracking-[0.01em]">{initials}</span>
 	) : (
 		<Bot className={ICON_SIZE[size]} aria-hidden />
 	);
 
+	const tone = id ? avatarToneIndex(id) : null;
+	const style = tone == null ? undefined : avatarToneStyle(tone);
 	const classes = cn(
-		'inline-flex shrink-0 items-center justify-center rounded-lg font-mono select-none',
+		'inline-flex shrink-0 items-center justify-center leading-none select-none',
 		SIZE_CLASSES[size],
-		accentFor(id),
+		tone == null && 'bg-muted text-muted-foreground',
 		dimmed && 'opacity-40',
 		onClick && 'cursor-pointer transition-transform hover:scale-105',
 		className,
@@ -101,14 +88,27 @@ export function AgentBadge({
 
 	if (onClick) {
 		return (
-			<button type="button" onClick={onClick} className={classes} aria-label={label}>
+			<button
+				type="button"
+				onClick={onClick}
+				className={classes}
+				style={style}
+				data-tone={tone ?? undefined}
+				aria-label={label}
+			>
 				{content}
 			</button>
 		);
 	}
 
 	return (
-		<span className={classes} role="img" aria-label={label}>
+		<span
+			className={classes}
+			style={style}
+			data-tone={tone ?? undefined}
+			role="img"
+			aria-label={label}
+		>
 			{content}
 		</span>
 	);

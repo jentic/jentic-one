@@ -6,8 +6,10 @@
  *   2. Bubble chart     — the same entities sized by traffic
  *   3. Breakdown        — the top rows, sortable, drilling into API calls
  *
- * Every chart shares one palette indexed by busiest-first order, so an API
- * keeps its colour across all three. Fed by {@link useUsageOverview}; the
+ * Every chart assigns colours the same way — each entity's pastel avatar
+ * hue, with a per-chart collision fallback (`assignChartTones`) — over the
+ * same busiest-first rows, so an API keeps its colour across all three and
+ * matches its avatar. Fed by {@link useUsageOverview}; the
  * page owns the query so the stat strip above reads the same data.
  *
  * All-zero data swaps the charts for an EmptyState with guidance rather than
@@ -23,7 +25,11 @@ import { UsageBubbleChart } from '@/modules/monitor/components/UsageBubbleChart'
 import { UsageBreakdown } from '@/modules/monitor/components/UsageBreakdown';
 import { monitorHref } from '@/modules/monitor/lib/links';
 import type { UsageLens } from '@/modules/monitor/lib/palette';
-import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
+import {
+	UNATTRIBUTED_ID,
+	UNATTRIBUTED_LABEL,
+	type EntityUsageRow,
+} from '@/modules/monitor/lib/usage';
 import type { UsageOverviewState } from '@/modules/monitor/lib/useUsageOverview';
 
 const staggerContainer = {
@@ -47,12 +53,8 @@ export interface LinkBase {
  * `actor_type/actor_id`). The Unattributed bucket has nothing to filter on, and retired service-account
  * rows stay static (there's no live actor behind them).
  */
-export function breakdownRowHref(
-	lens: UsageLens,
-	row: EntityUsageRow,
-	base: LinkBase,
-): string | null {
-	if (row.id === '__unattributed__' || row.label === 'Unattributed') return null;
+function breakdownRowHref(lens: UsageLens, row: EntityUsageRow, base: LinkBase): string | null {
+	if (row.id === UNATTRIBUTED_ID || row.label === UNATTRIBUTED_LABEL) return null;
 	if (lens === 'agents') {
 		const slash = row.id.indexOf('/');
 		if (slash < 0 || slash === row.id.length - 1) return null;

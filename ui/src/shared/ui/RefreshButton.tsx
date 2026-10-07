@@ -52,7 +52,10 @@ export function RefreshButton({
 			variant="ghost"
 			size="icon"
 			onClick={handleRefresh}
-			className={cn('hover:bg-muted/50 shrink-0 cursor-pointer', className)}
+			className={cn(
+				'text-foreground-sub hover:bg-surface-tonal h-8 w-8 shrink-0 cursor-pointer rounded-md p-0',
+				className,
+			)}
 			disabled={isAnimating || disabled}
 			title={title}
 			aria-label={title}
@@ -66,9 +69,7 @@ export function RefreshButton({
 						: { duration: 0 }
 				}
 			>
-				<RefreshCw
-					className={cn('text-muted-foreground hover:text-foreground', iconClassName)}
-				/>
+				<RefreshCw className={cn('hover:text-foreground', iconClassName)} />
 			</motion.div>
 		</Button>
 	);

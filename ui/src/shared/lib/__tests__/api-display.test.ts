@@ -6,6 +6,8 @@ import {
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
+	vendorIconPropsFor,
+	workspaceApiTitle,
 } from '../api-display';
 
 /**
@@ -114,6 +116,13 @@ describe('titleFromApiId', () => {
 		expect(titleFromApiId('stripe.com')).toBe('stripe.com');
 		expect(titleFromApiId('github.com')).toBe('github.com');
 		expect(titleFromApiId('slack.com')).toBe('slack.com');
+	});
+
+	it('reads a sub-API that is just a host of the same domain as the bare domain', () => {
+		expect(titleFromApiId('github.com/api.github.com')).toBe('github.com');
+		expect(titleFromApiId('github.com/github.com')).toBe('github.com');
+		// A host of ANOTHER domain is still a distinguishing segment.
+		expect(titleFromApiId('example.com/api.other.com')).toBe('Api.Other.Com');
 	});
 
 	it('title-cases hyphen/underscore mixes in the sub-segment', () => {
@@ -354,6 +363,42 @@ describe('apiRefDisplayName', () => {
 	});
 });
 
+describe('formatOperation', () => {
+	it('renders method + path template when both are present', () => {
+		expect(
+			formatOperation({
+				operation_path: '/repos/{owner}/{repo}',
+				operation_method: 'GET',
+			}),
+		).toBe('GET /repos/{owner}/{repo}');
+	});
+
+	it('renders the path template alone when the method is missing', () => {
+		expect(
+			formatOperation({
+				operation_path: '/v1/charges',
+				operation_method: null,
+			}),
+		).toBe('/v1/charges');
+	});
+
+	it('returns null on legacy path-less rows — the opaque op_… id never renders', () => {
+		// Deliberate product rule: the machine hash is meaningless to humans,
+		// so a row predating the path/method columns shows the caller's empty
+		// placeholder, not the id.
+		expect(
+			formatOperation({
+				operation_path: null,
+				operation_method: null,
+			}),
+		).toBeNull();
+	});
+
+	it('returns null when the row has no operation identity at all', () => {
+		expect(formatOperation({})).toBeNull();
+	});
+});
+
 describe('apiIdentityTuple', () => {
 	it('returns the persisted catalog slug verbatim when present', () => {
 		// The slug IS the machine identity the user picked — the subtitle shows
@@ -395,42 +440,47 @@ describe('apiIdentityTuple', () => {
 	});
 });
 
-describe('formatOperation', () => {
-	it('renders method + path template when both are present', () => {
-		expect(
-			formatOperation({
-				operation_path: '/repos/{owner}/{repo}',
-				operation_method: 'GET',
-			}),
-		).toBe('GET /repos/{owner}/{repo}');
-	});
-
-	it('renders the path template alone when the method is missing', () => {
-		expect(
-			formatOperation({
-				operation_path: '/v1/charges',
-				operation_method: null,
-			}),
-		).toBe('/v1/charges');
-	});
-
-	it('returns null on legacy path-less rows — the opaque op_… id never renders', () => {
-		// Deliberate product rule: the machine hash is meaningless to humans,
-		// so a row predating the path/method columns shows the caller's empty
-		// placeholder, not the id.
-		expect(
-			formatOperation({
-				operation_path: null,
-				operation_method: null,
-			}),
-		).toBeNull();
-	});
-
-	it('returns null when the row has no operation identity at all', () => {
-		expect(formatOperation({})).toBeNull();
-	});
-});
-
 function capitalize(s: string): string {
 	return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+describe('workspaceApiTitle', () => {
+	const ref = { vendor: 'stripe', name: 'stripe-api', version: '1' };
+
+	it('follows apiRefDisplayName first (display name → catalog slug → tuple)', () => {
+		expect(workspaceApiTitle({ ...ref, displayName: '  Payments  ' })).toBe('Payments');
+		expect(workspaceApiTitle({ ...ref, catalogApiId: 'nytimes.com/books' })).toBe('Books');
+		expect(workspaceApiTitle({ ...ref, catalogApiId: 'github.com/api.github.com' })).toBe(
+			'github.com',
+		);
+		expect(workspaceApiTitle(ref)).toBe('Api');
+	});
+
+	it('is never empty, even for generic identity fields', () => {
+		expect(workspaceApiTitle({ vendor: '', name: 'main', version: '1' })).toBe('main');
+		expect(workspaceApiTitle({ vendor: '', name: '', version: '1' })).toBe('1');
+		expect(workspaceApiTitle({ vendor: '', name: '', version: '' })).toBe('Untitled API');
+	});
+});
+
+describe('vendorIconPropsFor', () => {
+	it('seeds the avatar on the host, else the registry vendor', () => {
+		expect(
+			vendorIconPropsFor({ title: 'GitHub', host: 'api.github.com', vendor: 'github.com' }),
+		).toEqual({ name: 'GitHub', vendor: 'api.github.com', iconUrl: null });
+		expect(vendorIconPropsFor({ title: 'Stripe', host: null, vendor: 'stripe.com' })).toEqual({
+			name: 'Stripe',
+			vendor: 'stripe.com',
+			iconUrl: null,
+		});
+		// A blank host is no key — fall back rather than seed every such API alike.
+		expect(vendorIconPropsFor({ title: 'X', host: '', vendor: 'x.com' }).vendor).toBe('x.com');
+	});
+
+	it('passes the logo through', () => {
+		expect(
+			vendorIconPropsFor({ title: 'S', vendor: 's', iconUrl: 'https://e.test/s.png' })
+				.iconUrl,
+		).toBe('https://e.test/s.png');
+	});
+});

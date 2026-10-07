@@ -44,4 +44,55 @@ describe('SearchInput', () => {
 		);
 		await checkA11y(container);
 	});
+
+	it('defaults to the context-aware tone, edgeless (a filter, not a form field)', () => {
+		renderWithProviders(<SearchInput aria-label="Search" value="" onValueChange={() => {}} />);
+		const input = screen.getByLabelText('Search');
+		expect(input.closest('[data-tone]')).toHaveAttribute('data-tone', 'default');
+		expect(input).toHaveClass('border', 'border-transparent');
+		expect(input).not.toHaveClass('border-control-edge');
+	});
+
+	it('`field` keeps the form-field resting edge', () => {
+		renderWithProviders(
+			<SearchInput aria-label="Search" value="" onValueChange={() => {}} field />,
+		);
+		const input = screen.getByLabelText('Search');
+		expect(input).toHaveClass('border', 'border-control-edge');
+		expect(input).not.toHaveClass('border-transparent');
+	});
+
+	it.each([
+		['surface', 'bg-surface-1', 'h-9'],
+		['inset', 'bg-surface-field', 'h-[34px]'],
+	] as const)('tone="%s" is a borderless field on its surface', (tone, bg, height) => {
+		renderWithProviders(
+			<SearchInput aria-label="Filter" value="" onValueChange={() => {}} tone={tone} />,
+		);
+		const input = screen.getByLabelText('Filter');
+		expect(input.closest('[data-tone]')).toHaveAttribute('data-tone', tone);
+		expect(input).toHaveClass(bg, height, 'border-transparent');
+		expect(input).not.toHaveClass('bg-card');
+		// No visible edge at rest: the border is transparent.
+		expect(getComputedStyle(input).borderTopColor).toBe('rgba(0, 0, 0, 0)');
+	});
+
+	it.each(['surface', 'inset'] as const)(
+		'tone="%s" keeps the clear button and has no critical a11y violations',
+		async (tone) => {
+			const { container } = renderWithProviders(
+				<div className="bg-surface-1 p-4">
+					<SearchInput
+						aria-label="Filter your APIs"
+						placeholder="Filter by name…"
+						value="abc"
+						onValueChange={() => {}}
+						tone={tone}
+					/>
+				</div>,
+			);
+			expect(screen.getByRole('button', { name: 'Clear search' })).toBeInTheDocument();
+			await checkA11y(container);
+		},
+	);
 });

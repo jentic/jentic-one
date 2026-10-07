@@ -9,9 +9,8 @@
  * dialog-state-lifecycle rule's picker/confirm exception); `DenyDialog` owns
  * its reason draft internally.
  */
-import { CascadeDeleteDialog } from '@/shared/ui';
+import { CascadeDeleteDialog, ConfirmDialog } from '@/shared/ui';
 import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 /** A destructive lifecycle action awaiting confirmation in a dialog. */
 export type PendingConfirm =

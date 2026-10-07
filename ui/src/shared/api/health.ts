@@ -4,8 +4,6 @@ import type { HealthResponse } from '@/shared/api/generated/models/HealthRespons
 import '@/shared/api/client';
 import { getAppConfig } from '@/shared/config';
 
-export type Health = HealthResponse;
-
 /**
  * Shared react-query key for the first-run health/setup probe. Centralised so
  * the SetupGate (reader) and the create-admin flow (invalidator) can never

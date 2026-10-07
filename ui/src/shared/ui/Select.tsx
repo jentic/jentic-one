@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { cn } from '@/shared/lib/utils';
+import { inputSurfaceClasses } from '@/shared/ui/Input';
 
 type SelectProps = React.ComponentProps<'select'> & {
 	error?: string;
@@ -21,8 +22,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function 
 				aria-describedby={errorId}
 				aria-invalid={error ? true : undefined}
 				className={cn(
-					'bg-muted border-border text-foreground w-full rounded-lg border px-3 py-2 text-sm transition-colors',
-					'focus:border-primary focus:outline-hidden',
+					'bg-field w-full px-3 py-2 text-sm',
+					inputSurfaceClasses,
 					error && 'border-danger focus:border-danger',
 					className,
 				)}

@@ -52,7 +52,7 @@ export function LoadingState({
 		>
 			<div className="mb-3">{spinner}</div>
 			{message && <p className="text-muted-foreground text-sm">{message}</p>}
-			{description && <p className="text-muted-foreground/70 mt-1 text-xs">{description}</p>}
+			{description && <p className="text-muted-foreground mt-1 text-xs">{description}</p>}
 		</div>
 	);
 }

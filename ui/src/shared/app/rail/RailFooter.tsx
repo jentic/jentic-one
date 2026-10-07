@@ -8,7 +8,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { AppLink } from '@/shared/ui/AppLink';
 import type { ActivityScope } from '@/shared/lib/agentStream';
 
-export function monitorEventsHref(scope: ActivityScope): string {
+function monitorEventsHref(scope: ActivityScope): string {
 	const params = new URLSearchParams({ view: 'activity' });
 	if (scope) {
 		params.set('actor_id', scope.actorId);
@@ -25,7 +25,7 @@ export type RailFooterProps = {
 
 export function RailFooter({ scope, onNavigate }: RailFooterProps) {
 	return (
-		<div className="border-border border-t px-3 py-2">
+		<div className="border-hairline border-t px-3 py-2">
 			<AppLink
 				href={monitorEventsHref(scope)}
 				onClick={onNavigate}

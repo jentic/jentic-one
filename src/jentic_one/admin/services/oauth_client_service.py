@@ -705,6 +705,26 @@ class OAuthClientService:
                     actor_id=identity.sub,
                     actor_type=identity.actor_type,
                 )
+            elif action is AuditAction.DENY:
+                # The terminal decision for a pending registration. Emitting it
+                # (rather than mutating the registered row) lets the UI resolve
+                # the `oauth_client.registered` alert durably across reloads —
+                # events are append-only, so an in-memory settle would leak the
+                # ghost alert back on refresh. Mirrors AGENT_REGISTRATION_DENIED.
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.OAUTH_CLIENT_DENIED,
+                    severity=EventSeverity.INFO,
+                    summary=f"OAuth client '{client.name}' denied",
+                    data={
+                        "oauth_client_id": client.id,
+                        "client_id": client.client_id,
+                        "client_name": client.name,
+                    },
+                    created_by=identity.sub,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type,
+                )
             return _to_view(client)
 
     async def rotate_secret(self, id: str, *, identity: Identity) -> str:

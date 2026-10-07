@@ -34,7 +34,7 @@ _SA_DROP = "e2f3a4b5c6d7"  # pragma: allowlist secret
 _ADMIN_HEAD_ABOVE_SA_DROP = "0679072d60eb"  # pragma: allowlist secret
 _RENAME_HEAD = "e3f4a5b6c7d8"  # pragma: allowlist secret
 #: The event-acknowledgement drop, stacked on the rename head.
-_ACK_DROP_HEAD = "c1d2e3f4a5b6"  # pragma: allowlist secret
+_ACK_DROP_HEAD = "d2e3f4a5b6c7"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:

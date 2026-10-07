@@ -16,7 +16,7 @@ from jentic_one.migrations.run import upgrade
 
 _DB = "admin"
 _PARENT_REV = "5c7e2a9d4f16"  # pragma: allowlist secret
-#: Stop at this revision: a later one (``c1d2e3f4a5b6``) drops the columns read here.
+#: Stop at this revision: a later one (``d2e3f4a5b6c7``) drops the columns read here.
 _REV = "f1a2b3c4d5e7"  # pragma: allowlist secret
 
 

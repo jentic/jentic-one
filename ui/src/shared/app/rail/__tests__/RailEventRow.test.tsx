@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@/__tests__/test-utils';
+import { checkA11y, render, screen } from '@/__tests__/test-utils';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import type { StreamEvent } from '@/shared/lib/agentStream';
 
@@ -66,9 +66,30 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 		});
 		const { container } = render(<RailEventRow ev={ev} onAction={() => {}} />);
 		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
-		// Handled rows just dim — no label competing with the summary.
+		// Handled rows just recede — no "Acked" label competing with the summary.
 		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
-		expect(container.querySelector('[data-rail-row]')).toHaveClass('opacity-55');
+		const row = container.querySelector<HTMLElement>('[data-rail-row]')!;
+		expect(row).toHaveAttribute('data-resolved', 'true');
+	});
+
+	it("keeps a resolved row's text and time stamp at full contrast", async () => {
+		const ev = makeEvent({
+			type: 'agent.self_registered',
+			kind: 'agent',
+			requiresAction: true,
+			resolved: true,
+			tokens: { agent_id: 'agnt_1' },
+			tsMs: Date.now() - 3_600_000,
+		});
+		const { container } = render(
+			<div className="bg-surface-1">
+				<RailEventRow ev={ev} />
+			</div>,
+		);
+		const row = container.querySelector<HTMLElement>('[data-rail-row]')!;
+		expect(getComputedStyle(row).opacity).toBe('1');
+		expect(getComputedStyle(container.querySelector('time')!).opacity).toBe('1');
+		await checkA11y(container);
 	});
 });
 

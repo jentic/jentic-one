@@ -1,10 +1,12 @@
-import { useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { Key } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert } from '@/shared/ui';
 import { CredentialCard, CredentialCardSkeleton } from './CredentialCard';
 import { CredentialGroupCard } from './CredentialGroupCard';
-import type { Credential } from '@/shared/credentials/api';
+import { useAllApis, type Credential } from '@/shared/credentials/api';
+import { apiRefDisplayName } from '@/shared/lib';
+import { workspaceApiForCredential } from '@/shared/credentials/lib/apiIdentity';
 import { credentialApiGroupKey } from '@/shared/credentials/lib/credentialIdentity';
 
 const gridVariants = {
@@ -102,6 +104,24 @@ export function CredentialsList({
 			? 'grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2'
 			: 'grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3';
 	const groups = useMemo(() => groupByApi(credentials), [credentials]);
+	// A group's header names its API the way the workspace (and its hub) does —
+	// the imported API's display name ("GitHub"), not the catalog id.
+	const apis = useAllApis();
+	const workspaceTitleFor = useCallback(
+		(cred: Credential): string | null => {
+			const api = workspaceApiForCredential(cred, apis.items);
+			if (!api) return null;
+			return (
+				apiRefDisplayName({
+					displayName: api.display_name,
+					catalogApiId: api.catalog_api_id,
+					vendor: api.api.vendor,
+					name: api.api.name,
+				}) || null
+			);
+		},
+		[apis.items],
+	);
 	const usage = (cred: Credential): CredentialUsage => ({
 		...NO_USAGE,
 		...usageFor?.(cred),
@@ -162,6 +182,7 @@ export function CredentialsList({
 					>
 						<CredentialGroupCard
 							credentials={group}
+							workspaceTitle={workspaceTitleFor(group[0])}
 							onEdit={onEdit}
 							onDelete={onDelete}
 							onConnect={onConnect}

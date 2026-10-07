@@ -19,9 +19,11 @@ import {
 	ApiSpecService,
 	ApiOperationsService,
 	CatalogService,
+	NotesService,
 	OverlaysService,
 } from '@/shared/api';
 import {
+	toApiNote,
 	toApiOperation,
 	toApiRevision,
 	toCursorPage,
@@ -30,6 +32,7 @@ import {
 } from '@/modules/workspace/api/adapters';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import type {
+	ApiNote,
 	ApiOperation,
 	ApiRevision,
 	CursorPage,
@@ -83,31 +86,6 @@ function toWorkspaceError(error: unknown, fallback: string): WorkspaceApiError {
 		return new WorkspaceApiError(error.message || fallback, null, null, error);
 	}
 	return new WorkspaceApiError(fallback, null, null, error);
-}
-
-/**
- * List the workspace's APIs via `GET /apis`.
- *
- * jentic-one's registry is local-ingest only on this branch's committed
- * contract (no `source` param yet), so a plain list IS the owned lens. When the
- * catalog rebase lands, this call can gain `source=local`; until then the
- * server returns local rows and `WorkspaceApi.source` is simply `undefined`.
- */
-export async function listApis(
-	params: {
-		cursor?: string | null;
-		limit?: number;
-	} = {},
-): Promise<CursorPage<WorkspaceApi>> {
-	try {
-		const res = await ApIsService.listApis({
-			cursor: params.cursor ?? null,
-			limit: params.limit ?? 50,
-		});
-		return toCursorPage(res, toWorkspaceApi);
-	} catch (error) {
-		throw toWorkspaceError(error, 'Failed to load your APIs.');
-	}
 }
 
 /** Fetch a single API by its triple. */
@@ -318,8 +296,8 @@ export async function deprecateOverlay(key: ApiKey, overlayId: string): Promise<
  * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
  *
  * The backend exposes `POST /catalog/{api_id}:snooze` (optional `{snoozed_until}`
- * body) + `POST /catalog/{api_id}:unsnooze`, both gated on `events:write`. Both
- * are served by the generated `CatalogService`. `snoozedUntil` omitted → mute
+ * body), gated on `events:write` and served by the generated `CatalogService`
+ * (its `:unsnooze` counterpart has no UI yet). `snoozedUntil` omitted → mute
  * until a newer upstream digest lands; a value → time-boxed snooze.
  */
 export async function snoozeCatalogEntry(
@@ -336,15 +314,23 @@ export async function snoozeCatalogEntry(
 	}
 }
 
-/** Un-snooze catalog-update notifications for an API (`POST /catalog/{id}:unsnooze`). */
-export async function unsnoozeCatalogEntry(apiId: string): Promise<void> {
-	try {
-		await CatalogService.unsnoozeCatalogEntry({ apiId });
-	} catch (error) {
-		throw toWorkspaceError(error, 'Failed to resume update notifications.');
-	}
-}
-
 // `getJob` (the `/jobs/{id}` poll) lives in `@/shared/credentials/api`
 // alongside the shared spec import that needs it; the re-import hook below
 // imports it from there rather than keeping a second wrapper in step with it.
+
+/**
+ * Notes attached to one API (`GET /notes?api=vendor:name:version`, first page
+ * of 50). The backend's `api` filter is colon-separated; any authenticated
+ * caller may read (row-level access filters apply server-side).
+ */
+export async function listApiNotes(key: ApiKey): Promise<CursorPage<ApiNote>> {
+	try {
+		const res = await NotesService.listNotes({
+			api: `${key.vendor}:${key.name}:${key.version}`,
+			limit: 50,
+		});
+		return toCursorPage(res, toApiNote);
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to load notes for this API.');
+	}
+}

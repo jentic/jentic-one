@@ -12,6 +12,7 @@ import {
 	anotherCredentialWarning,
 	coveringCountLabel,
 	defaultChoice,
+	PREFLIGHT_LABELS,
 	preflightApi,
 	preflightApis,
 	preflightTally,
@@ -338,6 +339,39 @@ describe('defaultChoice', () => {
 
 		// No covering credential: nothing to choose between.
 		expect(defaultChoice(preflightApi(makePick(), inputs()))).toBeNull();
+	});
+});
+
+describe('preflightApi — a pick whose spec declares no authentication', () => {
+	const noAuthKeys = new Set(['stripe.com/main']);
+
+	it('needs no credential to be typed in when nothing covers it', () => {
+		const item = preflightApi(makePick(), inputs({ noAuthKeys }));
+		expect(item.outcome).toBe('no-auth');
+		expect(PREFLIGHT_LABELS['no-auth']).toBe('No credential needed');
+	});
+
+	it('still offers a covering credential first', () => {
+		const item = preflightApi(
+			makePick(),
+			inputs({ noAuthKeys, credentials: [makeCredential()] }),
+		);
+		expect(item.outcome).toBe('choose');
+	});
+
+	it('is a form until the spec has been read', () => {
+		expect(preflightApi(makePick(), inputs()).outcome).toBe('form');
+	});
+
+	it('tallies apart from picks that need a secret', () => {
+		const items = preflightApis(
+			[makePick(), makePick({ vendor: 'acme.io', label: 'Acme' })],
+			inputs({ noAuthKeys }),
+		);
+		expect(preflightTally(items)).toMatchObject({ 'no-auth': 1, form: 1, total: 2 });
+		expect(preflightTallyLabel('no-auth', 1)).toBe(
+			'1 API declares no authentication — no secret to enter',
+		);
 	});
 });
 

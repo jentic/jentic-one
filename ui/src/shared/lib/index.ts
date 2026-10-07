@@ -10,11 +10,9 @@
  */
 
 // Permission-rule display primitives — the typed broker-rule shape and the
-// shared humanising summary used by the binding permissions editor/tester and
-// the rail's operations surfaces.
+// shared humanising summary used by the binding permissions editor/tester.
 export {
 	ruleSummary,
-	isUnrestrictedAllow,
 	type PermissionRule,
 	type PermissionRuleEffect,
 	type PermissionRuleMatchMode,
@@ -35,19 +33,11 @@ export {
 	filterScopeGroups,
 } from '@/shared/lib/scopes';
 
-export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
-
 // The shell scrolls `<main>`, not the window: read and drive page scroll here.
-export {
-	SHELL_SCROLL_ID,
-	shellScroller,
-	shellScrollRoot,
-	shellScrollTop,
-} from '@/shared/lib/shellScroll';
+export { shellScroller, shellScrollRoot, shellScrollTop } from '@/shared/lib/shellScroll';
 export {
 	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
 	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
-	RETIRED_SERVICE_ACCOUNT_SUFFIX,
 	retiredServiceAccountLabel,
 	MIGRATED_SERVICE_ACCOUNT_KEY_WARNING,
 	holdsMigratedServiceAccountKey,
@@ -59,7 +49,7 @@ export {
 // provider-optional stream hook (so Monitor can read the rail's in-memory feed
 // when the shell's stream is mounted, and no-op in
 // tests/embedded surfaces where it isn't).
-export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+export { useAgentStreamOptional } from '@/shared/lib/agentStream';
 
 // The event → UI adaptation and its wording helpers, so Monitor's Activity
 // feed reads an event exactly the way the rail and toasts do (same kind
@@ -82,11 +72,11 @@ export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agent
 // friendly primary line — shared so Discover, the credential picker, and the
 // binding surfaces all apply the same rule (implementation: `api-display.ts`).
 export {
-	humanizeDomainSlug,
-	humanizeName,
 	titleFromApiId,
 	apiRefDisplayName,
 	apiIdentityTuple,
+	workspaceApiTitle,
+	vendorIconPropsFor,
 	formatApiVersion,
 	formatOperation,
 } from '@/shared/lib/api-display';

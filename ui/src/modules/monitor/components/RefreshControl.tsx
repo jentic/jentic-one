@@ -154,10 +154,10 @@ export function RefreshControl({
 				aria-busy={phase === 'spinning'}
 				title={`Refresh now (auto every ${seconds}s)`}
 				className={cn(
-					'border-border bg-muted/50 text-muted-foreground relative inline-flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-lg border transition-colors',
-					'hover:text-foreground hover:bg-muted focus-visible:ring-ring/60 focus-visible:ring-2 focus-visible:outline-none',
+					'bg-field text-muted-foreground rounded-field relative inline-flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center transition-colors',
+					'hover:text-foreground hover:bg-tint-2 focus-visible:ring-ring/60 focus-visible:ring-2 focus-visible:outline-none',
 					phase === 'spinning' && 'text-primary',
-					phase === 'done' && 'border-success/50 text-success',
+					phase === 'done' && 'text-success',
 				)}
 			>
 				<AnimatePresence mode="wait" initial={false}>

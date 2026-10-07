@@ -15,7 +15,7 @@ const AGENT_PATH = /^\/agents\/([^/]+)\/?/;
 /** Sub-paths under `/agents/` that are not an agent id. */
 const NOT_AN_AGENT = new Set(['service-accounts']);
 
-export function routeAgentId(pathname: string, search: string): string | null {
+function routeAgentId(pathname: string, search: string): string | null {
 	const m = AGENT_PATH.exec(pathname);
 	if (m && !NOT_AN_AGENT.has(m[1])) return decodeURIComponent(m[1]);
 	if (pathname === '/agents' || pathname === '/agents/') {

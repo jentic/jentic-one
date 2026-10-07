@@ -335,9 +335,8 @@ export function validateUpdate(
  * re-ingest resolves no covering credential — `CredentialNotProvisionedError`
  * on a credential the operator believes they set up. A catalog pick makes that
  * immediate rather than latent: its version comes from the catalog, and the
- * registry's ingested spec need not report the same string. Pinning stays
- * available — the Version field is still editable — it is just opt-in, the way
- * the API models it.
+ * registry's ingested spec need not report the same string. Pinning is opt-in:
+ * the form's "Use for" picker (`CredentialVersionScope`) pins on request.
  *
  * A catalog pick's `name` is the whole `api_id` (`github.com/api.github.com`).
  * `POST /credentials` rejects a `/` in `api.name` as a spec path, so a catalog

@@ -127,7 +127,7 @@ export function BottomNavbar() {
 				// Its own view-transition layer, like the top bar: it holds still
 				// while pages fade underneath instead of blinking out with them.
 				style={{ viewTransitionName: 'app-bottom-nav' }}
-				className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed right-0 bottom-0 left-0 z-50 border-t backdrop-blur md:hidden"
+				className="border-hairline bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed right-0 bottom-0 left-0 z-50 border-t backdrop-blur md:hidden"
 			>
 				<div className="flex h-16 items-stretch">
 					{primary.map((item) => (
@@ -176,7 +176,7 @@ export function BottomNavbar() {
 					/>
 					<div
 						ref={sheetRef}
-						className="border-border bg-background fixed inset-x-0 bottom-0 z-50 rounded-t-xl border-t pb-[env(safe-area-inset-bottom)] md:hidden"
+						className="bg-surface-sheet fixed inset-x-0 bottom-0 z-50 rounded-t-xl pb-[env(safe-area-inset-bottom)] md:hidden"
 					>
 						<div className="flex items-center justify-between px-4 py-3">
 							<span className="text-foreground text-sm font-semibold">More</span>
@@ -202,7 +202,7 @@ export function BottomNavbar() {
 											'relative flex flex-col items-center gap-2 rounded-xl p-3 text-center transition-colors duration-150',
 											isActive
 												? 'bg-muted text-foreground'
-												: 'text-muted-foreground hover:bg-muted hover:text-foreground',
+												: 'text-muted-foreground hover:bg-tint-2 hover:text-foreground',
 										)}
 									>
 										<TileBadge navId={item.id} />

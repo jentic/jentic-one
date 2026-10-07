@@ -19,7 +19,7 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { Label } from '@/shared/ui';
+import { Badge, Label, MethodBadge, type BadgeVariant } from '@/shared/ui';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
@@ -73,7 +73,7 @@ export function OperationImpactPreview({
 	label?: string;
 }) {
 	const ops = useVendorOperations(api ?? undefined, { enabled: !!api });
-	const items = ops.data?.data ?? [];
+	const items = useMemo(() => ops.data?.data ?? [], [ops.data]);
 	const importing = !api || !api.name || !api.version || ops.data == null;
 
 	// Flat top-level grouping by first path segment. A deep hierarchical
@@ -125,20 +125,20 @@ export function OperationImpactPreview({
 		<div className="space-y-2">
 			<Label>{label}</Label>
 			{importing ? (
-				<div className="border-border bg-muted/20 rounded-lg border px-3 py-6 text-center">
+				<div className="bg-field rounded-lg px-3 py-6 text-center">
 					<Loader2 className="text-muted-foreground mx-auto h-4 w-4 animate-spin" />
-					<p className="text-muted-foreground mt-2 text-xs">
+					<p className="text-foreground-sub mt-2 text-xs">
 						Operations still importing — this preview will fill in shortly.
 					</p>
 				</div>
 			) : groups.length === 0 ? (
-				<div className="border-border bg-muted/20 rounded-lg border px-3 py-4 text-center">
-					<p className="text-muted-foreground text-xs">
+				<div className="bg-field rounded-lg px-3 py-4 text-center">
+					<p className="text-foreground-sub text-xs">
 						No operations imported for this vendor yet.
 					</p>
 				</div>
 			) : (
-				<div className="border-border max-h-96 space-y-1 overflow-y-auto rounded-lg border p-2">
+				<div className="max-h-96 space-y-1 overflow-y-auto rounded-lg">
 					{groups.map((g) => (
 						<OperationImpactGroup key={g.prefix} group={g} />
 					))}
@@ -156,11 +156,13 @@ export function OperationImpactPreview({
 function OperationImpactGroup({ group }: { group: OpGroup }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="border-border bg-background rounded-md border">
+		// Borderless group card; `overflow-hidden` clips the header's hover fill
+		// to the same curve, and the leaf rows use the inner radius (12 − 6px).
+		<div className="bg-field overflow-hidden rounded-lg">
 			<button
 				type="button"
 				onClick={(): void => setOpen((v) => !v)}
-				className="hover:bg-muted/40 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors"
+				className="hover:bg-tint-2 focus-visible:ring-ring flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
 				aria-expanded={open}
 			>
 				{open ? (
@@ -168,24 +170,20 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 				) : (
 					<ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
 				)}
-				<span className="text-foreground truncate font-mono text-[11px]">
+				<span className="text-foreground-name truncate font-mono text-[11px]">
 					{group.prefix}/
 				</span>
 				<span className="ml-auto flex items-center gap-1.5">
 					{group.allowedCount > 0 && (
-						<span className="bg-success/10 text-success border-success/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{group.allowedCount} allowed
-						</span>
+						<Badge variant="success">{group.allowedCount} allowed</Badge>
 					)}
 					{group.deniedCount > 0 && (
-						<span className="bg-danger/10 text-danger border-danger/40 rounded-md border px-1.5 py-0.5 font-mono text-[10px]">
-							{group.deniedCount} denied
-						</span>
+						<Badge variant="danger">{group.deniedCount} denied</Badge>
 					)}
 				</span>
 			</button>
 			{open && (
-				<div className="border-border space-y-1 border-t p-1.5">
+				<div className="space-y-0.5 p-1.5 pt-0">
 					{group.ops.map(({ op, coverage }) => (
 						<OperationImpactLeafRow key={op.operation_id} op={op} coverage={coverage} />
 					))}
@@ -210,20 +208,21 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
  */
 function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
 	const [expanded, setExpanded] = useState(false);
-	const verdictPill =
+	const verdictVariant: BadgeVariant =
 		coverage.verdict === 'allow'
-			? 'bg-success/10 text-success border-success/40'
+			? 'success'
 			: coverage.verdict === 'partial'
-				? 'bg-warning/10 text-warning border-warning/40'
-				: 'bg-danger/10 text-danger border-danger/40';
+				? 'warning'
+				: 'danger';
 	const verdictLabel = coverage.verdict;
 	const allowExample = coverage.allowedSamples[0];
 	const denyExample = coverage.deniedSamples[0];
 	const canExpand = coverage.verdict === 'partial' && Boolean(allowExample || denyExample);
-	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-muted/40 transition-colors' : '';
+	const rowInteractive = canExpand ? 'cursor-pointer hover:bg-tint-2 transition-colors' : '';
 	return (
 		<div
-			className={`bg-muted/20 border-border rounded-md border px-2.5 py-1 text-xs ${rowInteractive}`}
+			className={`rounded-[6px] px-2.5 py-1 text-xs ${rowInteractive}`}
+			data-testid="op-impact-row"
 			onClick={canExpand ? (): void => setExpanded((v) => !v) : undefined}
 		>
 			<div className="flex items-center gap-2.5">
@@ -233,16 +232,17 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 					) : (
 						<ChevronRight className="text-muted-foreground h-3 w-3 shrink-0" />
 					))}
-				<span
-					className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase ${verdictPill}`}
+				<Badge
+					variant={verdictVariant}
+					className="h-5 w-[58px] shrink-0 justify-center rounded-[5px]"
 					aria-label={verdictLabel}
 				>
 					{verdictLabel}
+				</Badge>
+				<MethodBadge method={op.method} />
+				<span className="text-foreground-name truncate font-mono text-[11px]">
+					{op.path}
 				</span>
-				<span className="text-muted-foreground font-mono text-[10px] uppercase">
-					{op.method}
-				</span>
-				<span className="text-foreground truncate font-mono text-[11px]">{op.path}</span>
 				{op.name && (
 					<span className="text-muted-foreground ml-auto truncate text-[10px]">
 						{op.name}
@@ -253,18 +253,18 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 				<div className="mt-0.5 space-y-0.5 pl-6 font-mono text-[10px]">
 					{allowExample && (
 						<div className="flex items-center gap-1.5">
-							<span className="bg-success/10 text-success border-success/40 rounded border px-1 py-0 text-[9px] uppercase">
+							<Badge variant="success" className="px-1.5 py-0 font-sans">
 								allow
-							</span>
+							</Badge>
 							<span className="text-muted-foreground">e.g.</span>
 							<span className="text-foreground/80 truncate">{allowExample}</span>
 						</div>
 					)}
 					{denyExample && (
 						<div className="flex items-center gap-1.5">
-							<span className="bg-danger/10 text-danger border-danger/40 rounded border px-1 py-0 text-[9px] uppercase">
+							<Badge variant="danger" className="px-1.5 py-0 font-sans">
 								deny
-							</span>
+							</Badge>
 							<span className="text-muted-foreground">e.g.</span>
 							<span className="text-foreground/80 truncate">{denyExample}</span>
 						</div>
