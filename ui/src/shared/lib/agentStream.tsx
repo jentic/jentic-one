@@ -114,11 +114,9 @@ export type StreamLinks = {
 /**
  * UI-shaped view of a single platform event. A faithful adaptation of
  * `EventResponse` — `id`/`tsMs`/`title` map to `event_id`/`created_at`/
- * `summary`; `requiresAction` + `resolved` drive the inline action slot. The
- * server keeps events as append-only history, so `resolved` is derived
- * client-side: a row resolves when its decision event is in the loaded feed
- * (see `resolveSupersededRows`), or optimistically the instant its action is
- * taken.
+ * `summary`. Events are append-only history: `requiresAction` records that the
+ * event asked for a human when it was emitted, not that anything is still
+ * outstanding — the destination an event links to carries the live state.
  */
 export type StreamEvent = {
 	id: string;
@@ -131,8 +129,6 @@ export type StreamEvent = {
 	tokens: StreamTokens;
 	links: StreamLinks;
 	requiresAction: boolean;
-	resolved: boolean;
-	resolvedAt?: number;
 	/** Who caused the event (`actor_id`/`actor_type` on the wire), when known. */
 	actorId?: string;
 	actorType?: string;
@@ -431,7 +427,6 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 			job: e._links?.job ?? null,
 		},
 		requiresAction: e.requires_action,
-		resolved: false,
 		actorId: e.actor_id ?? undefined,
 		actorType: e.actor_type ?? undefined,
 		conflict,
@@ -510,12 +505,6 @@ type AgentStreamValue = {
 	frozen: FeedFreeze | null;
 	latest: StreamEvent | null;
 	status: StreamStatus;
-	/**
-	 * Flip an event's local `resolved` flag — for consumers that took the
-	 * event's action through their own mutation and need the live session's
-	 * in-memory copy to reflect it without waiting for a decision event.
-	 */
-	resolveEvent: (eventId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -534,8 +523,7 @@ const MAX_EVENTS = 300;
  *   2. Subscribe to the live SSE (`GET /events/stream`); each new event is
  *      prepended (deduped by id) and exposed as `latest` so the ToastHost +
  *      audio cue can react.
- *   3. Each upsert re-derives `resolved` from decision events in the feed.
- *   4. `loadOlderEvents` pages backwards via the list cursor.
+ *   3. `loadOlderEvents` pages backwards via the list cursor.
  *
  * `live` defaults to `true`; tests pass `live={false}` to skip the SSE
  * subscription and drive a deterministic, backlog-only feed.
@@ -606,24 +594,6 @@ export function AgentStreamProvider({
 		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 	}, [queryClient]);
 
-	/**
-	 * Flip a single event by id with `fn`, leaving the rest untouched. Centralises
-	 * the optimistic-update pattern used by resolve so the
-	 * map-by-id boilerplate isn't repeated (and can't drift between flip and undo).
-	 */
-	const patchEvent = useCallback((eventId: string, fn: (ev: StreamEvent) => StreamEvent) => {
-		setEvents((prev) => prev.map((ev) => (ev.id === eventId ? fn(ev) : ev)));
-	}, []);
-
-	const markResolved = useCallback(
-		(ev: StreamEvent): StreamEvent => ({
-			...ev,
-			resolved: true,
-			resolvedAt: Date.now(),
-		}),
-		[],
-	);
-
 	const upsert = useCallback((incoming: StreamEvent[], front: boolean) => {
 		setEvents((prev) => {
 			const byId = new Map(prev.map((e) => [e.id, e] as const));
@@ -639,17 +609,10 @@ export function AgentStreamProvider({
 				}
 				// Same id already present. Live upserts (`front`) are authoritative
 				// — a re-delivered event carries the server's current truth, so
-				// reconcile in place. The server never carries `resolved` (it is
-				// client-derived), so a local resolve survives the reconcile.
-				// Backlog pages (`!front`) are historical and are ignored on
-				// collision.
+				// reconcile in place. Backlog pages (`!front`) are historical and
+				// are ignored on collision.
 				if (front && existing !== ev) {
-					byId.set(
-						ev.id,
-						existing.resolved
-							? { ...ev, resolved: true, resolvedAt: existing.resolvedAt }
-							: ev,
-					);
+					byId.set(ev.id, ev);
 					changed = true;
 				}
 			}
@@ -663,7 +626,7 @@ export function AgentStreamProvider({
 			// cap instead of being sorted past it and dropped on arrival; live
 			// events keep the list at whatever size it has reached.
 			const cap = Math.max(MAX_EVENTS, front ? prev.length : prev.length + appended.length);
-			return resolveSupersededRows(merged.slice(0, cap));
+			return merged.slice(0, cap);
 		});
 	}, []);
 
@@ -750,9 +713,6 @@ export function AgentStreamProvider({
 						}
 					}
 					upsert([ev], true);
-					// `upsert` re-derives `resolved` over the whole feed on every
-					// delivery (see `resolveSupersededRows`), so a decision resolves
-					// its actionable row whichever of the two lands first.
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: agent lifecycle events (CLI self-registration,
@@ -777,13 +737,6 @@ export function AgentStreamProvider({
 		);
 		return unsubscribe;
 	}, [live, canReadEvents, upsert, invalidateAgentSurfaces, invalidateOAuthSurfaces]);
-
-	const resolveEvent = useCallback(
-		(eventId: string) => {
-			patchEvent(eventId, markResolved);
-		},
-		[patchEvent, markResolved],
-	);
 
 	// The lens at call time vs. now: a Load older still in flight when the lens
 	// changes must not write its actor's cursor under the new one.
@@ -839,7 +792,6 @@ export function AgentStreamProvider({
 			frozen,
 			latest,
 			status: forbidden ? 'forbidden' : status,
-			resolveEvent,
 			loadOlderEvents,
 			canLoadOlder:
 				!forbidden &&
@@ -859,7 +811,6 @@ export function AgentStreamProvider({
 			latest,
 			status,
 			forbidden,
-			resolveEvent,
 			loadOlderEvents,
 			hasMore,
 			cursor,
@@ -941,84 +892,6 @@ export function recentFailureCount(events: StreamEvent[]): number {
 		if (isFailureSeverity(ev.severity)) n += 1;
 	}
 	return n;
-}
-
-/**
- * Decision event → the actionable row type(s) it supersedes, and the token(s)
- * that join the two. Events are append-only, so this is how an actionable row
- * is known to be handled: its decision is present in the loaded feed.
- *
- * A decision can resolve more than one actionable type (an adopted import
- * clears both the plain "update available" nudge and the "conflicts overlay"
- * variant for that API), and the join can be a composite of several tokens
- * (the catalog identity triple) when there is no single shared id.
- */
-type SupersedeRule = {
-	target: string;
-	/** Token key(s) that form the join key; a composite is matched in order. */
-	tokens: (keyof StreamTokens)[];
-};
-
-const SUPERSEDED_BY: Record<string, SupersedeRule[]> = {
-	'agent.registration_approved': [{ target: 'agent.self_registered', tokens: ['agent_id'] }],
-	'agent.registration_denied': [{ target: 'agent.self_registered', tokens: ['agent_id'] }],
-	'oauth_client.approved': [{ target: 'oauth_client.registered', tokens: ['oauth_client_id'] }],
-	'oauth_client.denied': [{ target: 'oauth_client.registered', tokens: ['oauth_client_id'] }],
-	// Adopting an upstream update (`import.completed` stamped with the API's
-	// vendor/name/version by the job worker) clears that API's outstanding
-	// catalog alerts. Keyed on the identity triple because `import.completed`
-	// carries no `api_id` (the catalog events carry both the triple and api_id).
-	'import.completed': [
-		{ target: 'catalog.update_available', tokens: ['vendor', 'name', 'version'] },
-		{ target: 'catalog.update_conflicts_overlay', tokens: ['vendor', 'name', 'version'] },
-	],
-};
-
-/** Composite join key for a rule, or `null` when any component token is absent. */
-function joinKey(tokens: StreamTokens, keys: (keyof StreamTokens)[]): string | null {
-	const parts: string[] = [];
-	for (const k of keys) {
-		const v = tokens[k];
-		if (v == null || v === '') return null;
-		parts.push(String(v));
-	}
-	return parts.join('\u0000');
-}
-
-/**
- * Mark every actionable row whose superseding decision is in `events` as
- * resolved. Pure and idempotent; returns the same array when nothing changes.
- * Applied on every upsert, so it covers the backlog seed, "load older" pages
- * (a decision and its actionable row can land on different pages, in either
- * order) and live re-deliveries — without it a reload would resurrect Review
- * prompts on agents, OAuth clients and catalog updates that were already
- * decided.
- */
-export function resolveSupersededRows(events: StreamEvent[]): StreamEvent[] {
-	const decided = new Set<string>();
-	for (const ev of events) {
-		const rules = SUPERSEDED_BY[ev.type];
-		if (!rules) continue;
-		for (const rule of rules) {
-			const key = joinKey(ev.tokens, rule.tokens);
-			if (key !== null) decided.add(`${rule.target}|${key}`);
-		}
-	}
-	if (decided.size === 0) return events;
-	let changed = false;
-	const allRules = Object.values(SUPERSEDED_BY).flat();
-	const out = events.map((ev) => {
-		if (ev.resolved || !ev.requiresAction) return ev;
-		const superseded = allRules.some((r) => {
-			if (r.target !== ev.type) return false;
-			const key = joinKey(ev.tokens, r.tokens);
-			return key !== null && decided.has(`${ev.type}|${key}`);
-		});
-		if (!superseded) return ev;
-		changed = true;
-		return { ...ev, resolved: true };
-	});
-	return changed ? out : events;
 }
 
 /**
@@ -1124,10 +997,10 @@ export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): st
   EVENT BEHAVIOUR — derived from the REAL contract.
 
   Events are append-only history; no backend mutation reaches the rail. The
-  inline-action slot is navigation only:
-    • "Review" — for an unresolved action-required event, deep-links to where
-      its action lives (agent approval, OAuth queue, API detail).
-    • "View" links — deep-link into the execution/job/trace the event references.
+  inline-action slot is navigation only — "View" links into the record the
+  event references (execution, job, trace, agent, API, OAuth queue). The
+  destination carries the live state (is the agent still pending, is the update
+  still available), so the rail never claims an event is outstanding.
   Navigation targets are router-relative (basename `/app` is prepended) to match
   jentic-one's route tree.
 */
@@ -1139,7 +1012,7 @@ export type InlineActionSpec = {
 	label: string;
 	/** Navigation target. */
 	href?: (ev: StreamEvent) => string | null;
-	/** The row's call to action (an unresolved event's "Review"). */
+	/** Render as the row's emphasised action. */
 	primary?: boolean;
 };
 
@@ -1215,36 +1088,10 @@ const NAV = {
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	const actions: InlineActionSpec[] = [];
-	if (ev.requiresAction && !ev.resolved) {
-		if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
-			// A self-registered agent awaits approval — route the operator to the
-			// agent on the Agents page (where approve/deny lives).
-			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent, primary: true });
-		} else if (ev.type === 'oauth_client.registered') {
-			// A DCR client registration awaiting approval — route
-			// the operator to the Settings approval queue, where the D7
-			// approve/deny verbs live.
-			actions.push({
-				kind: 'view_oauth_queue',
-				label: 'Review',
-				href: NAV.oauthQueue,
-				primary: true,
-			});
-		} else if (
-			(ev.type === 'catalog.update_available' ||
-				ev.type === 'catalog.update_conflicts_overlay') &&
-			NAV.workspaceApi(ev)
-		) {
-			// An upstream spec change (or a change that conflicts with a confirmed
-			// overlay) — deep-link the operator to the API's Workspace detail page
-			// (where Re-import / overlay resolution lives).
-			actions.push({
-				kind: 'view_api',
-				label: 'Review',
-				href: NAV.workspaceApi,
-				primary: true,
-			});
-		}
+	if (ev.type === 'oauth_client.registered' && ev.requiresAction) {
+		// A DCR registration that landed pending links to the Settings approval
+		// queue, which lists the clients still awaiting a decision.
+		actions.push({ kind: 'view_oauth_queue', label: 'View queue', href: NAV.oauthQueue });
 	}
 	// A deep-link into the underlying record, when the event references one.
 	if (ev.tokens.execution_id || (ev.kind === 'execution' && ev.tokens.trace_id)) {

@@ -85,7 +85,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		resolved: false,
 		groupKey: 'execution:execution.completed:',
 	};
 	return { ...base, ...partial };
@@ -336,7 +335,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: { execution_id: 'exec_1' },
 		});
 		const kinds = inlineActionsFor(ev).map((a) => a.kind);
-		// No decision lives for a bare failure — it offers the record, not a Review.
+		// A bare failure offers the record it references, nothing emphasised.
 		expect(kinds).toContain('view_execution');
 		expect(kinds).not.toContain('view_agent');
 		expect(inlineActionsFor(ev).every((a) => !a.primary)).toBe(true);
@@ -344,7 +343,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 
 	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
 		// A DCR self-registration event carries the agent as the ACTOR, not in
-		// `data` — the token must still land so Review can deep-link.
+		// `data` — the token must still land so View agent can deep-link.
 		const ev = adaptEvent(
 			wireEvent({
 				event_id: 'evt_agent',
@@ -369,7 +368,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(explicit.tokens.agent_id).toBe('agt_43');
 		// But an unguarded `data.actor_id` must NOT outrank the guarded actor:
 		// some emitters put the deciding USER's id in data.actor_id, and routing
-		// Review to /agents/<user_id> would 404.
+		// View agent to /agents/<user_id> would 404.
 		const mixed = adaptEvent(
 			wireEvent({
 				event_id: 'evt_agent3',
@@ -394,25 +393,18 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(unguarded.tokens.agent_id).toBeUndefined();
 	});
 
-	it('inlineActionsFor offers Review for a self-registered agent', () => {
+	it('inlineActionsFor links a self-registered agent to the Agents page', () => {
 		const ev = makeEvent({
 			type: 'agent.self_registered',
 			kind: 'agent',
 			requiresAction: true,
 			tokens: { agent_id: 'agt_42' },
 		});
+		// A plain deep-link: the Agents page carries whether it is still pending.
 		const actions = inlineActionsFor(ev);
-		const kinds = actions.map((a) => a.kind);
-		expect(kinds).toContain('view_agent');
-		// Review deep-links to the agent as selected on the Agents page.
-		const review = actions.find((a) => a.kind === 'view_agent');
-		expect(review?.label).toBe('Review');
-		expect(review?.primary).toBe(true);
-		expect(review?.href?.(ev)).toBe('/agents?agent=agt_42');
-		// Once resolved the row keeps only the passive deep-link.
-		const resolved = inlineActionsFor({ ...ev, resolved: true });
-		expect(resolved.map((a) => a.kind)).toEqual(['view_agent']);
-		expect(resolved[0]?.label).toBe('View agent');
+		expect(actions.map((a) => a.kind)).toEqual(['view_agent']);
+		expect(actions[0]?.label).toBe('View agent');
+		expect(actions[0]?.href?.(ev)).toBe('/agents?agent=agt_42');
 	});
 
 	it('primaryDestinationFor routes agent events to the agent on the Agents page', () => {
@@ -1123,18 +1115,6 @@ function renderLiveRailWithToasts() {
 describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 	const OAUTH_CLIENT_ID = 'oc_dcr_app';
 
-	function registeredWire(over: Partial<EventResponse> = {}): EventResponse {
-		return wireEvent({
-			event_id: 'evt_oauth_registered',
-			type: 'oauth_client.registered',
-			severity: 'info' as EventResponse['severity'],
-			summary: 'OAuth client registered: MCP App',
-			requires_action: true,
-			data: { oauth_client_id: OAUTH_CLIENT_ID },
-			...over,
-		});
-	}
-
 	it('kindForType buckets the oauth_client.* / oauth_grant.* namespaces into oauth', () => {
 		expect(kindForType('oauth_client.registered')).toBe('oauth');
 		expect(kindForType('oauth_client.approved')).toBe('oauth');
@@ -1142,7 +1122,7 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 		expect(kindForType('oauth_grant.revoked')).toBe('oauth');
 	});
 
-	it('inlineActionsFor offers Review (→ Settings queue) for a DCR registration', () => {
+	it('inlineActionsFor links a pending DCR registration to the Settings queue', () => {
 		const ev = makeEvent({
 			type: 'oauth_client.registered',
 			kind: 'oauth',
@@ -1151,15 +1131,11 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 			groupKey: `oauth:oauth_client.registered:${OAUTH_CLIENT_ID}`,
 		});
 		const actions = inlineActionsFor(ev);
-		const review = actions.find((a) => a.kind === 'view_oauth_queue');
-		expect(review?.label).toBe('Review');
-		expect(review?.primary).toBe(true);
-		// The D7 approve/deny verbs live on the Settings approval queue tab.
-		expect(review?.href?.(ev)).toBe('/settings?tab=queue');
-		// Once resolved the actionable slot goes passive.
-		expect(inlineActionsFor({ ...ev, resolved: true }).map((a) => a.kind)).not.toContain(
-			'view_oauth_queue',
-		);
+		const queue = actions.find((a) => a.kind === 'view_oauth_queue');
+		expect(queue?.label).toBe('View queue');
+		// The D7 approve/deny verbs live on the Settings approval queue tab,
+		// which lists only the clients still pending.
+		expect(queue?.href?.(ev)).toBe('/settings?tab=queue');
 	});
 
 	it('primaryDestinationFor deep-links grant events to the agent, client events to the queue', () => {
@@ -1178,124 +1154,6 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 			tokens: { oauth_client_id: OAUTH_CLIENT_ID },
 		});
 		expect(primaryDestinationFor(registered)).toBe('/settings?tab=queue');
-	});
-
-	it('settles the actionable registration row when the APPROVE event arrives over SSE', async () => {
-		// Backlog: the actionable registration alone. SSE then delivers the
-		// approve decision — the live mirror must settle the registered row
-		// (drop its Review prompt) without waiting for a backlog refetch.
-		const registered = registeredWire();
-		const approved = wireEvent({
-			event_id: 'evt_oauth_approved',
-			type: 'oauth_client.approved',
-			summary: 'OAuth client approved: MCP App',
-			data: { oauth_client_id: OAUTH_CLIENT_ID },
-		});
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
-			),
-			http.get('/events/stream', () => {
-				const frames = [registered, approved]
-					.map(
-						(e) =>
-							`event: ${e.type}\nid: ${e.event_id}\ndata: ${JSON.stringify(e)}\n\n`,
-					)
-					.join('');
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(frames));
-					},
-				});
-				return new HttpResponse(stream, {
-					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-				});
-			}),
-		);
-		render(
-			<QueryClientProvider
-				client={
-					new QueryClient({
-						defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-					})
-				}
-			>
-				<MemoryRouter initialEntries={['/dashboard']}>
-					<AgentStreamProvider live={true}>
-						<Routes>
-							<Route path="/*" element={<AgentRail />} />
-						</Routes>
-					</AgentStreamProvider>
-				</MemoryRouter>
-			</QueryClientProvider>,
-		);
-		// Both rows land in the feed…
-		await screen.findByText(/OAuth client registered: MCP App/i);
-		await screen.findByText(/OAuth client approved: MCP App/i);
-		// …and the registration's actionable Review prompt is gone (settled).
-		await waitFor(() =>
-			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
-		);
-	});
-
-	it('settles the actionable registration row when the DENY event arrives over SSE', async () => {
-		// A deny now emits a durable `oauth_client.denied` event (mirroring
-		// approve), so the registration row resolves through the same stream
-		// path — no in-memory settle, and it survives a reload.
-		const registered = registeredWire();
-		const denied = wireEvent({
-			event_id: 'evt_oauth_denied',
-			type: 'oauth_client.denied',
-			summary: 'OAuth client denied: MCP App',
-			data: { oauth_client_id: OAUTH_CLIENT_ID },
-		});
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
-			),
-			http.get('/events/stream', () => {
-				const frames = [registered, denied]
-					.map(
-						(e) =>
-							`event: ${e.type}\nid: ${e.event_id}\ndata: ${JSON.stringify(e)}\n\n`,
-					)
-					.join('');
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(frames));
-					},
-				});
-				return new HttpResponse(stream, {
-					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-				});
-			}),
-		);
-		render(
-			<QueryClientProvider
-				client={
-					new QueryClient({
-						defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-					})
-				}
-			>
-				<MemoryRouter initialEntries={['/dashboard']}>
-					<AgentStreamProvider live={true}>
-						<Routes>
-							<Route path="/*" element={<AgentRail />} />
-						</Routes>
-					</AgentStreamProvider>
-				</MemoryRouter>
-			</QueryClientProvider>,
-		);
-		// Both rows land in the feed…
-		await screen.findByText(/OAuth client registered: MCP App/i);
-		await screen.findByText(/OAuth client denied: MCP App/i);
-		// …and the registration's actionable Review prompt is gone (resolved).
-		await waitFor(() =>
-			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
-		);
 	});
 });
 

@@ -10,9 +10,8 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
-import { setToken, type EventResponse } from '@/shared/api';
+import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { AgentStreamProvider, useAgentStream } from '@/shared/lib/agentStream';
 import { resetSettingsStore } from '@/modules/settings/mocks/handlers';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 
@@ -212,61 +211,6 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 
 		expect(await screen.findByText('Cursor denied')).toBeInTheDocument();
 		expect(await screen.findByText('No pending registrations')).toBeInTheDocument();
-	});
-
-	it('resolves the actionable rail row once the oauth_client.denied event is in the feed', async () => {
-		// A deny now emits a durable `oauth_client.denied` event (mirroring
-		// approve's `oauth_client.approved`), so the registration alert resolves
-		// through `resolveSupersededRows` — the same way it would on a reload or
-		// in another operator's session. Seed both the registration and its deny
-		// decision in the backlog and watch the row derive `resolved: true`.
-		const registered: EventResponse = {
-			_links: { self: '/events/evt_oauth_registered' },
-			event_id: 'evt_oauth_registered',
-			type: 'oauth_client.registered',
-			severity: 'info' as EventResponse['severity'],
-			summary: 'OAuth client registered: Cursor',
-			requires_action: true,
-			created_at: new Date().toISOString(),
-			// The internal admin-row id — the join key both events share.
-			data: { oauth_client_id: 'oac_pending_1' },
-		};
-		const denied: EventResponse = {
-			_links: { self: '/events/evt_oauth_denied' },
-			event_id: 'evt_oauth_denied',
-			type: 'oauth_client.denied',
-			severity: 'info' as EventResponse['severity'],
-			summary: 'OAuth client denied: Cursor',
-			requires_action: false,
-			created_at: new Date().toISOString(),
-			data: { oauth_client_id: 'oac_pending_1' },
-		};
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({
-					data: [denied, registered],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
-		);
-		function SettleProbe() {
-			const { events } = useAgentStream();
-			const row = events.find((e) => e.type === 'oauth_client.registered');
-			return <div data-testid="registered-resolved">{row ? String(row.resolved) : ''}</div>;
-		}
-		renderWithProviders(
-			<AgentStreamProvider live={false}>
-				<SettingsPage />
-				<Toaster />
-				<SettleProbe />
-			</AgentStreamProvider>,
-			{ route: '/settings?tab=queue' },
-		);
-		await screen.findByText('Cursor');
-		// The decision event is present, so the registration row is resolved —
-		// no lingering ghost "Review" alert.
-		await expect.poll(() => screen.getByTestId('registered-resolved').textContent).toBe('true');
 	});
 
 	it('keeps the deny reason draft across a casual dismiss (dialog-state rule)', async () => {

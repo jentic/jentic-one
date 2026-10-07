@@ -14,7 +14,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		resolved: false,
 		groupKey: 'execution:execution.completed:',
 	};
 	return { ...base, ...partial };
@@ -22,11 +21,9 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 
 describe('RailEventRow — action slot vs severity (issue #652)', () => {
 	// Regression pin: action-required events can be emitted at INFO severity
-	// (e.g. `agent.self_registered`). The row must not force INFO events into a
-	// compact 1-line layout that omits the action slot — the Review action
-	// would never appear with real data. An event that requires action must
-	// render its actions regardless of severity.
-	it('renders Review for an INFO self-registration that requires action', () => {
+	// (e.g. `agent.self_registered`). The row must not force them into the
+	// compact 1-line layout that omits the inline links.
+	it('renders the inline link for an INFO self-registration that requires action', () => {
 		const ev = makeEvent({
 			id: 'evt_selfreg',
 			type: 'agent.self_registered',
@@ -37,7 +34,9 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 			tokens: { agent_id: 'agnt_1' },
 		});
 		render(<RailEventRow ev={ev} onAction={() => {}} />);
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'View agent' })).toBeInTheDocument();
+		// Events are history: the rail never claims a decision is still pending.
+		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
 	});
 
 	it('keeps a plain INFO event compact (no action slot) when it does not require action', () => {
@@ -50,34 +49,14 @@ describe('RailEventRow — action slot vs severity (issue #652)', () => {
 			requiresAction: false,
 		});
 		render(<RailEventRow ev={ev} onAction={() => {}} />);
-		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'View execution' })).not.toBeInTheDocument();
 	});
 
-	it('collapses a resolved action-required event to compact (no buttons)', () => {
-		const ev = makeEvent({
-			id: 'evt_resolved',
-			type: 'agent.self_registered',
-			kind: 'agent',
-			severity: 'info',
-			title: 'Agent self-registered: invoice-bot',
-			requiresAction: true,
-			resolved: true,
-			tokens: { agent_id: 'agnt_1' },
-		});
-		const { container } = render(<RailEventRow ev={ev} onAction={() => {}} />);
-		expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
-		// Handled rows just recede — no "Acked" label competing with the summary.
-		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
-		const row = container.querySelector<HTMLElement>('[data-rail-row]')!;
-		expect(row).toHaveAttribute('data-resolved', 'true');
-	});
-
-	it("keeps a resolved row's text and time stamp at full contrast", async () => {
+	it("keeps an actionable row's text and time stamp at full contrast", async () => {
 		const ev = makeEvent({
 			type: 'agent.self_registered',
 			kind: 'agent',
 			requiresAction: true,
-			resolved: true,
 			tokens: { agent_id: 'agnt_1' },
 			tsMs: Date.now() - 3_600_000,
 		});

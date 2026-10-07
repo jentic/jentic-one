@@ -564,8 +564,8 @@ async def test_approve_verb_emits_event(dcr_context: Context, clean_dcr_tables: 
 async def test_deny_verb_emits_denied_event_but_no_approved_event(
     dcr_context: Context, clean_dcr_tables: None
 ) -> None:
-    """:deny emits oauth_client.denied (the terminal decision the UI uses to
-    resolve the registration alert durably) and never oauth_client.approved.
+    """:deny records oauth_client.denied (the decision's history record) and
+    never oauth_client.approved.
     The registration event stays as append-only history."""
     dcr_svc = OAuthDcrService(dcr_context)
     result = await dcr_svc.register(

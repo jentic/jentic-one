@@ -1024,7 +1024,7 @@ describe('Monitor inter-linking', () => {
 
 /**
  * Everything-feed status chips. Failed maps to the backend's repeatable
- * `severity=` (error + critical); Needs you to `requires_action`.
+ * `severity=` (error + critical); Flagged to `requires_action`.
  */
 describe('Monitor feed status filter', () => {
 	beforeEach(() => {
@@ -1057,12 +1057,12 @@ describe('Monitor feed status filter', () => {
 		worker.events.removeAllListeners();
 	});
 
-	it('Needs you shows only action-required events', async () => {
+	it('Flagged shows only action-required events', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
 		await screen.findByRole('link', { name: 'Import completed' });
 
-		await user.click(toggle('Status', 'Needs you'));
+		await user.click(toggle('Status', 'Flagged'));
 
 		await waitFor(() => expect(currentParams().get('status')).toBe('action'));
 		await waitFor(() => {
@@ -1085,7 +1085,7 @@ describe('Monitor feed status filter', () => {
 		renderMonitor('/app/monitor?view=activity&status=action');
 
 		expect(await screen.findByText('Nothing matches')).toBeInTheDocument();
-		expect(toggle('Status', 'Needs you')).toHaveAttribute('aria-pressed', 'true');
+		expect(toggle('Status', 'Flagged')).toHaveAttribute('aria-pressed', 'true');
 
 		await user.click(screen.getByRole('button', { name: 'Show everything' }));
 		await waitFor(() => expect(currentParams().get('status')).toBeNull());

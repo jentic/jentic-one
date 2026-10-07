@@ -12,15 +12,11 @@
  *   • warning:          subtle amber stripe, full layout
  *   • info:             no stripe, one compact line
  *
- * Exception: an unresolved event that `requiresAction` always uses the full
- * layout regardless of severity, so its inline action slot is never hidden
- * (see issue #652). Resolved events (their decision is in the feed) collapse to
- * the compact line and dim — the dimming is the "handled" signal, no extra
- * label.
+ * Exception: an event that `requiresAction` always uses the full layout
+ * regardless of severity, so its inline links are never hidden (see issue #652).
  *
- * Inline-action slot — pure-navigation deep-links:
- *   • "Review" — where an actionable event's decision lives
- *   • "View …" — the execution/job/trace/agent the event references
+ * Inline-action slot — pure-navigation "View …" deep-links into the record the
+ * event references (execution/job/trace/agent/API/queue).
  */
 import { useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -71,17 +67,15 @@ function TimeTooltipContent({ tsMs }: { tsMs: number }) {
 }
 
 function isCompact(ev: StreamEvent): boolean {
-	if (ev.resolved) return true;
-	// An unresolved event that still needs a human decision must keep its
-	// full layout so the inline action slot (Review) renders —
-	// actionable events can be emitted at INFO severity. See issue #652.
+	// An event that asked for a human keeps its full layout so its inline
+	// links render — actionable events can be emitted at INFO severity. See
+	// issue #652.
 	if (ev.requiresAction) return false;
 	return ev.severity === 'info';
 }
 
 /** Left-edge stripe: red for failures, a faint amber for warnings, none otherwise. */
 function stripeClass(ev: StreamEvent): string {
-	if (ev.resolved) return 'border-l-transparent';
 	if (ev.severity === 'critical') return 'border-l-4 border-l-danger';
 	if (ev.severity === 'error') return 'border-l-danger';
 	if (ev.severity === 'warning') return 'border-l-warning/40';
@@ -155,7 +149,7 @@ function RailEventRowContent({
 	onNavigate,
 }: RailEventRowProps & { arrived: boolean }) {
 	const compact = isCompact(ev);
-	const failing = isFailureSeverity(ev.severity) && !ev.resolved;
+	const failing = isFailureSeverity(ev.severity);
 	const actions = inlineActionsFor(ev);
 	const who = hideActor ? undefined : actorName;
 	const text = groupTitle ?? railTitle(ev);
@@ -235,12 +229,9 @@ function RailEventRowContent({
 					arrived && 'animate-arrive',
 					(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 				)}
-				data-resolved={ev.resolved || undefined}
 			>
 				{overlay}
-				{/* A handled row recedes through its glyph only: dimming the whole row
-				    would take its text (and the "1h" stamp) below AA contrast. */}
-				<StreamEventIcon ev={ev} className={cn(ev.resolved && 'opacity-55')} />
+				<StreamEventIcon ev={ev} />
 				<span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
 					{sentence}
 				</span>

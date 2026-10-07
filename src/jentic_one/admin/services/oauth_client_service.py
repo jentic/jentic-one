@@ -544,9 +544,11 @@ class OAuthClientService:
            (a genuinely new client, never a resurrection);
         4. the terminal audit entry is recorded (``audit_entries`` reference
            the client by plain id strings — no FK — so the trail survives);
-        5. the pending client's ``oauth_client.registered`` queue alert stays
-           as append-only history — the queue reads live client rows, so the
-           hard-deleted row simply drops out of it.
+        5. the client's ``oauth_client.registered`` event stays as append-only
+           history. Every surface that shows pending clients (the Settings
+           queue, the Notifications inbox) reads live client rows, so the
+           hard-deleted client drops out of them; the event itself only links
+           to the queue and never claims the client is still pending.
 
         Grant/token history rows survive as revoked history (plain id
         columns, no FKs); grant listings already tolerate a missing client.
@@ -706,11 +708,8 @@ class OAuthClientService:
                     actor_type=identity.actor_type,
                 )
             elif action is AuditAction.DENY:
-                # The terminal decision for a pending registration. Emitting it
-                # (rather than mutating the registered row) lets the UI resolve
-                # the `oauth_client.registered` alert durably across reloads —
-                # events are append-only, so an in-memory settle would leak the
-                # ghost alert back on refresh. Mirrors AGENT_REGISTRATION_DENIED.
+                # The deny decision lands in the event history like approve
+                # does. Mirrors AGENT_REGISTRATION_DENIED.
                 await emit_event_best_effort(
                     session,
                     type=EventType.OAUTH_CLIENT_DENIED,

@@ -216,27 +216,6 @@ class WorkerLoop:
             session.add(job_result)
             if kind != JobKind.IMPORT:
                 return
-            # Stamp the imported API identity triples onto the event so the UI can
-            # resolve any outstanding `catalog.update_available` /
-            # `catalog.update_conflicts_overlay` alert for the same API once the
-            # update is adopted (events are append-only — the alert is cleared by
-            # the presence of this decision event, not by mutating the alert row).
-            # A catalog "adopt update" imports exactly one API, so the flat
-            # vendor/name/version is the join key; the full list rides in `apis`
-            # for the rarer multi-source import.
-            revisions = (result.body or {}).get("revisions") or []
-            apis = [
-                r["api"]
-                for r in revisions
-                if isinstance(r, dict) and isinstance(r.get("api"), dict)
-            ]
-            event_data: dict[str, Any] = {}
-            if apis:
-                event_data["apis"] = apis
-            if len(apis) == 1:
-                event_data["vendor"] = apis[0].get("vendor")
-                event_data["name"] = apis[0].get("name")
-                event_data["version"] = apis[0].get("version")
             try:
                 await emit_event(
                     session,
@@ -244,7 +223,6 @@ class WorkerLoop:
                     severity=EventSeverity.INFO,
                     summary=f"Import completed (job {job_id})",
                     job_id=job_id,
-                    data=event_data or None,
                     created_by=job.created_by,
                     actor_id=job.created_by,
                     actor_type=job.actor_type,

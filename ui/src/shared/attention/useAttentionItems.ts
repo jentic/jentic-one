@@ -3,7 +3,7 @@
  *
  * Before this hook, four surfaces each counted attention their own way (the
  * Notifications bell, the Agents nav badge, the rail's failure pill, Monitor's
- * "Needs you" filter) and the bell double-counted a self-registered agent
+ * "Flagged" filter) and the bell double-counted a self-registered agent
  * (once as a pending agent, once as its `agent.self_registered` alert). Every
  * surface that shows an attention count or list now reads this hook, so the
  * numbers agree by construction.
@@ -19,7 +19,8 @@
  *                                    `credentials:read` or `owner:credentials:read`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
- * client's registration) are dropped — the queue row is the actionable one.
+ * client's registration) are dropped — the queue row is the actionable one —
+ * as are catalog updates, whose current state lives on the Workspace page.
  *
  * Events are append-only history, so nothing clears an alert's
  * `requires_action`; the alert source is bounded to the last
@@ -86,8 +87,18 @@ const REFETCH_MS = 45_000;
 /** How far back the alert source reads `requires_action` events. */
 export const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Event types that duplicate a queue row — the queue row wins. */
-const MIRRORED_EVENT_TYPES = new Set(['agent.self_registered', 'oauth_client.registered']);
+/**
+ * Event types the inbox skips. Registrations duplicate a live queue row (the
+ * queue row wins). A catalog update's outstanding-ness lives on the API's
+ * Workspace page, not in the event — listing it here would keep an adopted
+ * update counted until it aged out.
+ */
+const SKIPPED_EVENT_TYPES = new Set([
+	'agent.self_registered',
+	'oauth_client.registered',
+	'catalog.update_available',
+	'catalog.update_conflicts_overlay',
+]);
 
 export function useAttentionItems(): AttentionState {
 	// Optional-auth read (not `usePermission`) so shell chrome that mounts this
@@ -167,7 +178,7 @@ export function useAttentionItems(): AttentionState {
 		}
 
 		for (const event of events.data?.data ?? []) {
-			if (MIRRORED_EVENT_TYPES.has(event.type)) continue;
+			if (SKIPPED_EVENT_TYPES.has(event.type)) continue;
 			const severity = severityForWire(event.severity);
 			out.push({
 				key: `event:${event.event_id}`,

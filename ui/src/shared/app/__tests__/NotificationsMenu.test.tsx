@@ -112,8 +112,8 @@ describe('NotificationsMenu', () => {
 		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 
-		// An alert is append-only history now — it offers a View link, not an
-		// inline dismiss, and persists until it ages out of the recent window.
+		// An alert is append-only history — it offers a View link, not an inline
+		// dismiss, and persists until it ages out of the recent window.
 		const alerts = within(dialog).getByRole('region', { name: 'Alerts' });
 		expect(within(alerts).getByRole('link', { name: 'View' })).toBeInTheDocument();
 		expect(within(alerts).queryByRole('button', { name: 'Acknowledge' })).toBeNull();

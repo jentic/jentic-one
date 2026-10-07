@@ -104,10 +104,6 @@ export function useApproveOAuthClient() {
 /** Deny a client (D7: the row is kept, so approve can reverse the decision). */
 export function useDenyOAuthClient() {
 	const qc = useQueryClient();
-	// A deny emits an `oauth_client.denied` event (mirroring approve's
-	// `oauth_client.approved`), so the rail's actionable `oauth_client.registered`
-	// row resolves durably through the stream — including across reloads and in
-	// other sessions. No in-memory settle needed.
 	return useMutation({
 		mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
 			OAuthClientsService.denyOauthClient({

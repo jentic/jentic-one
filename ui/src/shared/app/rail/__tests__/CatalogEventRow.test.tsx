@@ -26,7 +26,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		},
 		links: {},
 		requiresAction: true,
-		resolved: false,
 		groupKey: 'catalog:catalog.update_available:',
 	};
 	return { ...base, ...partial };
@@ -65,9 +64,9 @@ describe('catalog/overlay stream kind (L5)', () => {
 		expect(ev.tokens.version).toBe('1');
 	});
 
-	it('renders a Review action for a catalog.update_available event', () => {
+	it('links a catalog.update_available event to its API page', () => {
 		render(<RailEventRow ev={makeEvent({})} onAction={() => {}} />);
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'View API' })).toBeInTheDocument();
 	});
 
 	it('surfaces the conflict "why" hint for a catalog.update_conflicts_overlay event', () => {

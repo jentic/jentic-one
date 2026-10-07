@@ -113,10 +113,9 @@ class EventType:
     # Emitted by the admin `:approve` verb (D7) — including re-approval of a
     # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
     OAUTH_CLIENT_APPROVED = "oauth_client.approved"
-    # Emitted by the admin `:deny` verb (D7) when a pending client is rejected.
-    # The terminal decision event for a registration: the UI uses it to resolve
-    # the `oauth_client.registered` row (mirrors AGENT_REGISTRATION_DENIED).
-    # Internal-only, like OAUTH_CLIENT_REGISTERED.
+    # Emitted by the admin `:deny` verb (D7) when a client is rejected — the
+    # history record of the decision, mirroring OAUTH_CLIENT_APPROVED and
+    # AGENT_REGISTRATION_DENIED. Internal-only, like OAUTH_CLIENT_REGISTERED.
     OAUTH_CLIENT_DENIED = "oauth_client.denied"
     # Emitted at consent-approve for a `consent_model='agent'` client: a
     # fresh `oauth_client_grants` row binds the client to one of the

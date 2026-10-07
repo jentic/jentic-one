@@ -51,7 +51,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: { vendor: 'stripe', name: 'stripe-api', version: '1' },
 		links: {},
 		requiresAction: true,
-		resolved: false,
 		groupKey: 'catalog:catalog.update_available:',
 		...partial,
 	};

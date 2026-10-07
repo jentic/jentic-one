@@ -379,7 +379,7 @@ export function ActivityFeed() {
 							title={filtered ? 'Nothing matches' : 'No activity yet'}
 							description={
 								statusFilter === 'action'
-									? 'Nothing asked for a decision in this window. Failures and approvals that need one show up here.'
+									? 'No flagged events in this window. Events that asked for a human — failures, approvals, upstream updates — show up here; each links to where its current state lives.'
 									: filtered
 										? 'No events match the current filters in this window.'
 										: 'Calls, jobs, approvals and alerts will stream in here as they happen.'
