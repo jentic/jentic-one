@@ -776,6 +776,7 @@ class CatalogService:
         identity: Identity,
         *,
         vendor: str | None = None,
+        name: str | None = None,
     ) -> dict[str, str]:
         """Build a plain url IngestSource payload — never a catalog-shaped one.
 
@@ -801,10 +802,14 @@ class CatalogService:
         ``submitted_by`` attributes the resulting revision to the principal who
         triggered the (re-)import — same policy as ``POST /apis``.
 
-        ``vendor``, when given, overrides the manifest-derived vendor. A re-import
-        passes the vendor already stored on the local API so it lands on that API's
-        existing ``(vendor, name, version)`` identity even if the hostname → vendor
-        derivation has since changed.
+        ``vendor``, when given, overrides the manifest-derived vendor, and ``name``
+        likewise overrides the sub-segment ``api_name``. A re-import passes the
+        vendor and name already stored on the local API so it lands on that API's
+        existing ``(vendor, name, version)`` identity even if the derivation has
+        since changed — in particular an API first imported under a pre-#1020
+        vendor-doubled name keeps that name, so the credentials, bindings, and
+        permission rules keyed on it are not stranded on a row the re-import
+        abandons for a fresh clean-named one.
         """
         if not entry.spec_url:
             raise CatalogUnavailableError(f"catalog entry '{entry.api_id}' has no spec url")
@@ -820,7 +825,7 @@ class CatalogService:
             source["vendor"] = resolved_vendor
         if entry.api_id:
             _, _, sub = entry.api_id.partition("/")
-            source["api_name"] = sub or entry.api_id
+            source["api_name"] = name or sub or entry.api_id
             # The full id is also carried verbatim: `api_name` above only seeds
             # the slugified vendor/name identity (the separable `domain/sub`
             # structure is destroyed by slugification), while this copy is
@@ -828,20 +833,23 @@ class CatalogService:
             source["catalog_api_id"] = entry.api_id
         return source
 
-    async def _registered_vendor(self, entry: CatalogEntryView) -> str | None:
-        """The vendor stored on the local API already imported from this entry, if any.
+    async def _registered_identity(self, entry: CatalogEntryView) -> tuple[str, str] | None:
+        """The ``(vendor, name)`` stored on the local API already imported from this entry.
 
         A re-import must update the API it was first imported as. Existing rows keep
-        the vendor they were created with (hostname → vendor derivation is not
-        retroactive), so re-deriving it from the api_id could point the import at a
-        new ``(vendor, name, version)`` identity and leave the existing API, and the
-        credentials and permission rules keyed on it, behind. Keyed on ``spec_url``,
-        the same coverage key as ``registered``.
+        the vendor and name they were created with (neither the hostname → vendor
+        derivation nor the #1020 sub-segment name derivation is retroactive), so
+        re-deriving either from the api_id could point the import at a new
+        ``(vendor, name, version)`` identity and leave the existing API, and the
+        credentials and permission rules keyed on it, behind. Re-slugging existing
+        doubled identities is a coordinated registry+control migration (#1079), not
+        a side effect of re-import. Keyed on ``spec_url``, the same coverage key as
+        ``registered``.
         """
         if not entry.registered or not entry.spec_url:
             return None
         async with self._ctx.registry_db.session() as session:
-            return await ApiRevisionRepository.registered_vendor_for_source_url(
+            return await ApiRevisionRepository.registered_identity_for_source_url(
                 session, entry.spec_url
             )
 
@@ -933,8 +941,12 @@ class CatalogService:
         """
         entry = await self.get(api_id)
         supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
+        registered = await self._registered_identity(entry)
         source = self._to_import_source(
-            entry, identity, vendor=await self._registered_vendor(entry)
+            entry,
+            identity,
+            vendor=registered[0] if registered else None,
+            name=registered[1] if registered else None,
         )
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"

@@ -2264,3 +2264,81 @@ async def test_catalog_identity_conflict_surfaces_as_readable_job_failure(
         assert revisions == []
         api = (await session.execute(select(Api))).scalar_one()
         assert api.catalog_api_id == "posthog.com/posthog-api"
+
+
+async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A re-import of an API first imported under the pre-#1020 doubled name
+    lands on that existing row instead of forking a clean-named sibling.
+
+    Forking would strand every credential, binding, and permission rule keyed
+    on the doubled identity on a row the catalog no longer updates. Re-slugging
+    existing rows is the coordinated #1079 migration's job, not re-import's.
+    """
+    spec_url = "https://catalog.example.com/posthog/openapi.json"
+    # Pre-fix import: the full catalog id seeded api_name, slugifying to the
+    # vendor-doubled `posthog-com-posthog-api`.
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": spec_url,
+                        "origin": "catalog",
+                        "vendor": "posthog.com",
+                        "api_name": "posthog.com/posthog-api",
+                        "catalog_api_id": "posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url=spec_url,
+        github_url=None,
+        registered=True,
+    )
+    svc = CatalogService(integration_context)
+    registered = await svc._registered_identity(entry)
+    assert registered == ("posthog-com", "posthog-com-posthog-api")
+    source = svc._to_import_source(
+        entry,
+        Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
+        vendor=registered[0],
+        name=registered[1],
+    )
+    assert source["api_name"] == "posthog-com-posthog-api"
+
+    # The upstream changed, so the re-import produces a genuinely new revision.
+    updated_spec = json.loads(MINIMAL_OPENAPI)
+    updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(json.dumps(updated_spec)),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert [(r.vendor, r.name) for r in rows] == [("posthog-com", "posthog-com-posthog-api")]
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert len(revisions) == 2
+        assert {r.api_id for r in revisions} == {rows[0].id}

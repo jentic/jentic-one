@@ -171,7 +171,7 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value="ovr_1"
         ),
-        patch.object(svc, "_registered_vendor", new_callable=AsyncMock, return_value=None),
+        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
             "_to_import_source",
@@ -196,7 +196,7 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
-        patch.object(svc, "_registered_vendor", new_callable=AsyncMock, return_value=None),
+        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
             "_to_import_source",
@@ -283,6 +283,7 @@ async def _import_payload(perms: list[str]) -> dict[str, Any]:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
+        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
             "_to_import_source",
