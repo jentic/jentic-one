@@ -32,7 +32,8 @@ _SUSPEND_BINDINGS = text(
     "UPDATE agent_credential_bindings "
     "SET suspended = true, suspended_reason = :reason "
     "WHERE credential_id IN :credential_ids AND suspended = false "
-    "RETURNING id, agent_id, credential_id"
+    "RETURNING id, agent_id, credential_id, "
+    "(SELECT a.name FROM agents a WHERE a.id = agent_credential_bindings.agent_id) AS agent_name"
 ).bindparams(bindparam("credential_ids", expanding=True))
 
 
@@ -43,6 +44,8 @@ class SuspendedBinding:
     id: str
     agent_id: str
     credential_id: str
+    #: The bound agent's display name; ``None`` when its row is gone.
+    agent_name: str | None = None
 
 
 class AdminCredentialBindingBoundaryRepository:
@@ -62,7 +65,12 @@ class AdminCredentialBindingBoundaryRepository:
         ).all()
         await session.flush()
         suspended = [
-            SuspendedBinding(id=row.id, agent_id=row.agent_id, credential_id=row.credential_id)
+            SuspendedBinding(
+                id=row.id,
+                agent_id=row.agent_id,
+                credential_id=row.credential_id,
+                agent_name=row.agent_name,
+            )
             for row in rows
         ]
         return sorted(suspended, key=lambda b: (b.agent_id, b.credential_id))
