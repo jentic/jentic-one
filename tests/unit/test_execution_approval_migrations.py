@@ -6,7 +6,9 @@ reversible, not just syntactically paired:
 - admin ``3306fb9172f1`` creates ``execution_approvals`` with its indexes;
   downgrading to its parent drops exactly that table and leaves ``jobs``;
 - control ``9f7b048514c6`` widens the rule ``effect`` columns to 16 chars so
-  ``require-approval`` fits; downgrading to its parent restores 10.
+  ``require-approval`` fits; downgrading to its parent restores 10, and its
+  paired data step ``70ff607085b4`` first rewrites ``require-approval`` rules
+  to ``deny`` (fail closed) while leaving ``allow`` / ``deny`` untouched.
 
 Each re-upgrade restores the migrated shape.
 """
@@ -69,14 +71,47 @@ def test_execution_approvals_table_upgrade_downgrade_roundtrip(sqlite_stack: Pat
     assert _indexes(db_path, "execution_approvals") >= _APPROVAL_INDEXES
 
 
+def _seed_rules(db_path: Path) -> None:
+    """One rule per effect on each rule table (foreign keys are not enforced here)."""
+    with sqlite3.connect(db_path) as conn:
+        for i, effect in enumerate(("allow", "deny", "require-approval")):
+            conn.execute(
+                "INSERT INTO agent_permission_rules (id, agent_id, credential_id, effect, sequence)"
+                " VALUES (?, 'agnt_m', 'cred_m', ?, ?)",
+                (f"apr_{effect}", effect, i),
+            )
+            conn.execute(
+                "INSERT INTO permission_rule_set_rules (id, rule_set_id, effect, sequence)"
+                " VALUES (?, 'prs_m', ?, ?)",
+                (f"psr_{effect}", effect, i),
+            )
+
+
+def _effects(db_path: Path, table: str) -> dict[str, str]:
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(f"SELECT id, effect FROM {table}").fetchall()
+    return dict(rows)
+
+
 def test_rule_effect_widening_upgrade_downgrade_roundtrip(sqlite_stack: Path) -> None:
     db_path = sqlite_stack / "control.db"
 
     upgrade("control")
     assert {_effect_type(db_path, t) for t in _RULE_TABLES} == {"VARCHAR(16)"}
+    _seed_rules(db_path)
 
     downgrade("control", _CONTROL_PARENT_REV)
     assert {_effect_type(db_path, t) for t in _RULE_TABLES} == {"VARCHAR(10)"}
+    assert _effects(db_path, "agent_permission_rules") == {
+        "apr_allow": "allow",
+        "apr_deny": "deny",
+        "apr_require-approval": "deny",
+    }
+    assert _effects(db_path, "permission_rule_set_rules") == {
+        "psr_allow": "allow",
+        "psr_deny": "deny",
+        "psr_require-approval": "deny",
+    }
 
     upgrade("control")
     assert {_effect_type(db_path, t) for t in _RULE_TABLES} == {"VARCHAR(16)"}
