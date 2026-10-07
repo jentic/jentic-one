@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.api_repo import ApiRepository, CatalogApiIdConflictError
 
 _TRIPLE = {"vendor": "nytimes.com", "name": "nytimes-com-article-search", "version": "1.0.0"}
 
@@ -71,3 +71,45 @@ async def test_slugless_reimport_never_clears_recorded_slug(
     )
     again = await ApiRepository.upsert(apis_sqlite_session, **_TRIPLE, created_by="usr_test")
     assert again.catalog_api_id == "nytimes.com/article_search"
+
+
+@pytest.mark.asyncio
+async def test_catalog_import_onto_a_foreign_catalog_row_is_refused(
+    apis_sqlite_session: AsyncSession,
+) -> None:
+    """The guard lives in the (locked) upsert, so every caller gets it: an
+    identity already imported from a different catalog entry is never
+    re-attributed."""
+    await ApiRepository.upsert(
+        apis_sqlite_session,
+        **_TRIPLE,
+        created_by="usr_test",
+        catalog_api_id="nytimes.com/article_search",
+    )
+    with pytest.raises(CatalogApiIdConflictError) as exc:
+        await ApiRepository.upsert(
+            apis_sqlite_session,
+            **_TRIPLE,
+            created_by="usr_test",
+            catalog_api_id="api.nytimes.com/article_search",
+        )
+    assert exc.value.stored_id == "nytimes.com/article_search"
+    stored = await ApiRepository.get_by_identifier(apis_sqlite_session, **_TRIPLE)
+    assert stored is not None
+    assert stored.catalog_api_id == "nytimes.com/article_search"
+
+
+@pytest.mark.asyncio
+async def test_identity_for_catalog_api_id(apis_sqlite_session: AsyncSession) -> None:
+    await ApiRepository.upsert(
+        apis_sqlite_session,
+        **_TRIPLE,
+        created_by="usr_test",
+        catalog_api_id="nytimes.com/article_search",
+    )
+    assert await ApiRepository.identity_for_catalog_api_id(
+        apis_sqlite_session, "nytimes.com/article_search"
+    ) == ("nytimes.com", "nytimes-com-article-search")
+    assert (
+        await ApiRepository.identity_for_catalog_api_id(apis_sqlite_session, "nope.com/x") is None
+    )

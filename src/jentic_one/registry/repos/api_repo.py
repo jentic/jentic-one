@@ -10,12 +10,20 @@ from urllib.parse import urlparse
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, noload
+from sqlalchemy.orm import joinedload
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
+
+
+class CatalogApiIdConflictError(Exception):
+    """The resolved Api is already imported from a different catalog entry."""
+
+    def __init__(self, *, stored_id: str) -> None:
+        super().__init__(f"Api already carries catalog_api_id {stored_id!r}")
+        self.stored_id = stored_id
 
 
 class ApiRepository:
@@ -27,21 +35,30 @@ class ApiRepository:
 
     @staticmethod
     async def get_by_identifier(
-        session: AsyncSession, vendor: str, name: str, version: str, *, for_update: bool = False
+        session: AsyncSession, vendor: str, name: str, version: str
     ) -> Api | None:
-        stmt = select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
-        if for_update:
-            # Row lock for check-then-act callers (the catalog-identity collision
-            # guard): under Postgres READ COMMITTED a concurrent import would
-            # otherwise read the same pre-update row and both pass the guard.
-            # Lock only the apis row (`of=Api`) and skip the joined-eager
-            # current_revision — Postgres refuses FOR UPDATE on the nullable
-            # side of an outer join. SQLite ignores FOR UPDATE (writers are
-            # already serialized by BEGIN IMMEDIATE); the no-row case is
-            # backstopped by uq_apis_vendor_name_version.
-            stmt = stmt.options(noload(Api.current_revision)).with_for_update(of=Api)
-        result = await session.execute(stmt)
+        result = await session.execute(
+            select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
+        )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def identity_for_catalog_api_id(
+        session: AsyncSession, catalog_api_id: str
+    ) -> tuple[str, str] | None:
+        """The stored ``(vendor, name)`` of the local API imported from ``catalog_api_id``.
+
+        Both axes come from one row (the oldest, so the answer is deterministic when
+        several versions share the catalog id). ``None`` when nothing carries it.
+        """
+        result = await session.execute(
+            select(Api.vendor, Api.name)
+            .where(Api.catalog_api_id == catalog_api_id)
+            .order_by(Api.created_at, Api.id)
+            .limit(1)
+        )
+        row = result.first()
+        return (row.vendor, row.name) if row is not None else None
 
     @staticmethod
     async def get_by_identifier_with_current_revision(
@@ -100,17 +117,41 @@ class ApiRepository:
         created_by: str,
         catalog_api_id: str | None = None,
     ) -> Api:
+        """Create the Api for ``(vendor, name, version)`` or update the existing one.
+
+        The existing row is read ``FOR UPDATE`` so check-then-act on it (the
+        catalog-identity guard below) cannot race a concurrent import under
+        Postgres READ COMMITTED. The lock is scoped ``OF apis``: Postgres refuses
+        to lock the nullable side of the joined-eager ``current_revision`` outer
+        join, and keeping that eager load means the identity map holds the real
+        relationship rather than a placeholder ``None``. SQLite ignores
+        ``FOR UPDATE`` (writers are serialized by ``BEGIN IMMEDIATE``); the no-row
+        race is backstopped by ``uq_apis_vendor_name_version``.
+
+        Raises :class:`CatalogApiIdConflictError` — leaving the row untouched — when a
+        catalog import (non-null ``catalog_api_id``) resolves to an Api already
+        imported from a *different* catalog entry: stacking the second entry's
+        spec onto it as a new revision would silently corrupt provenance. A NULL
+        stored id (a manual import of the same identity) is backfilled, and a
+        manual re-import (``catalog_api_id=None``) never clears a recorded one.
+        """
         result = await session.execute(
-            select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
+            select(Api)
+            .where(Api.vendor == vendor, Api.name == name, Api.version == version)
+            .with_for_update(of=Api)
         )
         api = result.scalar_one_or_none()
         if api is not None:
+            if (
+                catalog_api_id is not None
+                and api.catalog_api_id
+                and api.catalog_api_id != catalog_api_id
+            ):
+                raise CatalogApiIdConflictError(stored_id=api.catalog_api_id)
             if display_name is not None:
                 api.display_name = display_name
             if description is not None:
                 api.description = description
-            # A catalog re-import refreshes (or backfills) the catalog identity;
-            # a manual re-import (None) never clears one already recorded.
             if catalog_api_id is not None:
                 api.catalog_api_id = catalog_api_id
         else:

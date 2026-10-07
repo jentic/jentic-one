@@ -171,10 +171,10 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value="ovr_1"
         ),
-        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
-            "_to_import_source",
+            "_import_source_for",
+            new_callable=AsyncMock,
             return_value={"type": "url", "url": "https://u", "origin": "catalog"},
         ),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_1") as enqueue,
@@ -196,10 +196,10 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
-        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
-            "_to_import_source",
+            "_import_source_for",
+            new_callable=AsyncMock,
             return_value={"type": "url", "url": "https://u", "origin": "catalog"},
         ),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_2") as enqueue,
@@ -283,10 +283,10 @@ async def _import_payload(perms: list[str]) -> dict[str, Any]:
         patch.object(
             svc, "_authorize_overlay_supersede", new_callable=AsyncMock, return_value=None
         ),
-        patch.object(svc, "_registered_identity", new_callable=AsyncMock, return_value=None),
         patch.object(
             svc,
-            "_to_import_source",
+            "_import_source_for",
+            new_callable=AsyncMock,
             return_value={"type": "url", "url": "https://u", "origin": "catalog"},
         ),
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_3") as enqueue,

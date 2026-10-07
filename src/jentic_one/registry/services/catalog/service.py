@@ -26,6 +26,7 @@ from typing import Any
 import structlog
 
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
+from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
@@ -789,21 +790,16 @@ class CatalogService:
         re-import dedup) deterministic from the catalog id rather than dependent on
         the upstream spec's info.
 
-        The ``api_name`` override is the catalog id's **sub segment** (``domain/sub``
-        → ``sub``): the vendor half of the id is already carried separately, so
-        slugifying the full id would fuse it into the name and produce a
-        vendor-doubled identity like ``posthog-com/posthog-com-posthog-api`` that no
-        other surface (catalog path, repo layout, broker upstream registration)
-        agrees with — and that credential bindings then silently miss (#1020). A
-        bare-domain id has no sub segment, so the full id stays the name there
-        (e.g. ``coincap.io`` → name ``coincap-io``, the established identity for
-        domain-only entries).
+        The ``api_name`` override defaults to the catalog id's **sub segment**
+        (``domain/sub`` → ``sub``; a bare-domain id keeps the full id) — see
+        :func:`manifest_builder.catalog_api_name`, which callers holding the
+        manifest use to pass a clash-aware ``name`` instead.
 
         ``submitted_by`` attributes the resulting revision to the principal who
         triggered the (re-)import — same policy as ``POST /apis``.
 
         ``vendor``, when given, overrides the manifest-derived vendor, and ``name``
-        likewise overrides the sub-segment ``api_name``. A re-import passes the
+        likewise overrides the derived ``api_name``. A re-import passes the
         vendor and name already stored on the local API so it lands on that API's
         existing ``(vendor, name, version)`` identity even if the derivation has
         since changed — in particular an API first imported under a pre-#1020
@@ -824,8 +820,7 @@ class CatalogService:
         if resolved_vendor:
             source["vendor"] = resolved_vendor
         if entry.api_id:
-            _, _, sub = entry.api_id.partition("/")
-            source["api_name"] = name or sub or entry.api_id
+            source["api_name"] = name or mb.catalog_api_name(entry.api_id, ())
             # The full id is also carried verbatim: `api_name` above only seeds
             # the slugified vendor/name identity (the separable `domain/sub`
             # structure is destroyed by slugification), while this copy is
@@ -843,15 +838,43 @@ class CatalogService:
         ``(vendor, name, version)`` identity and leave the existing API, and the
         credentials and permission rules keyed on it, behind. Re-slugging existing
         doubled identities is a coordinated registry+control migration (#1079), not
-        a side effect of re-import. Keyed on ``spec_url``, the same coverage key as
-        ``registered``.
+        a side effect of re-import.
+
+        Looked up by the stored ``catalog_api_id`` first — it survives a manifest
+        ``spec_url`` move, which would otherwise make the entry read as unregistered
+        and fork a second row carrying the same catalog id — then by ``spec_url``
+        (the ``registered`` coverage key) for rows imported before the catalog id
+        was persisted.
         """
-        if not entry.registered or not entry.spec_url:
-            return None
         async with self._ctx.registry_db.session() as session:
+            if entry.api_id:
+                by_catalog_id = await ApiRepository.identity_for_catalog_api_id(
+                    session, entry.api_id
+                )
+                if by_catalog_id is not None:
+                    return by_catalog_id
+            if not entry.registered or not entry.spec_url:
+                return None
             return await ApiRevisionRepository.registered_identity_for_source_url(
                 session, entry.spec_url
             )
+
+    async def _derived_api_name(self, entry: CatalogEntryView) -> str:
+        """The clash-aware ``api_name`` seed for a first import of ``entry``."""
+        async with self._ctx.registry_db.session() as session:
+            raw = await CatalogRepository.entries(session)
+        manifest_ids = [d["api_id"] for d in raw if isinstance(d.get("api_id"), str)]
+        return mb.catalog_api_name(entry.api_id, manifest_ids)
+
+    async def _import_source_for(
+        self, entry: CatalogEntryView, identity: Identity
+    ) -> dict[str, str]:
+        """``_to_import_source`` landing on the stored identity, else a clash-aware name."""
+        registered = await self._registered_identity(entry)
+        if registered is not None:
+            return self._to_import_source(entry, identity, vendor=registered[0], name=registered[1])
+        derived = await self._derived_api_name(entry) if entry.api_id else None
+        return self._to_import_source(entry, identity, name=derived)
 
     async def _authorize_overlay_supersede(
         self, entry: CatalogEntryView, identity: Identity
@@ -941,13 +964,7 @@ class CatalogService:
         """
         entry = await self.get(api_id)
         supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
-        registered = await self._registered_identity(entry)
-        source = self._to_import_source(
-            entry,
-            identity,
-            vendor=registered[0] if registered else None,
-            name=registered[1] if registered else None,
-        )
+        source = await self._import_source_for(entry, identity)
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         if may_approve_host_change(identity.permissions):
@@ -1071,7 +1088,7 @@ class CatalogService:
         entry = await self.get(api_id)
         if entry.registered:
             return None
-        source = self._to_import_source(entry, identity)
+        source = await self._import_source_for(entry, identity)
         async with self._ctx.admin_db.transaction() as session:
             return await enqueue_job(
                 session,

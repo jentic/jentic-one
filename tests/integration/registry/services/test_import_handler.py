@@ -2342,3 +2342,100 @@ async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
         revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(revisions) == 2
         assert {r.api_id for r in revisions} == {rows[0].id}
+
+
+async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A doubled-name API whose manifest ``spec_url`` has since moved still
+    re-imports onto its existing row.
+
+    The moved URL makes the entry read as unregistered (``registered`` is
+    spec_url-keyed), so a spec_url-only lookup would fall back to the clean
+    sub-segment name and fork a second row carrying the same ``catalog_api_id``
+    — stranding the credentials and rules keyed on the old one. The stored
+    catalog id is the lookup that survives the move.
+    """
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/posthog/old/openapi.json",
+                        "origin": "catalog",
+                        "vendor": "posthog.com",
+                        "api_name": "posthog.com/posthog-api",
+                        "catalog_api_id": "posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url="https://catalog.example.com/posthog/new/openapi.json",
+        github_url=None,
+        registered=False,
+    )
+    svc = CatalogService(integration_context)
+    source = await svc._import_source_for(
+        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    )
+    assert (source["vendor"], source["api_name"]) == ("posthog-com", "posthog-com-posthog-api")
+
+    updated_spec = json.loads(MINIMAL_OPENAPI)
+    updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(json.dumps(updated_spec)),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert [(r.vendor, r.name) for r in rows] == [("posthog-com", "posthog-com-posthog-api")]
+
+
+async def test_upsert_keeps_current_revision_loaded_in_the_session(
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """The locking read in ``ApiRepository.upsert`` must not cache a placeholder
+    ``current_revision=None`` in the identity map: a later read in the same
+    session has to see the served revision (and the lock must be legal on
+    Postgres alongside the joined-eager outer join)."""
+    async with registry_db.session() as session:
+        api = await ApiRepository.upsert(
+            session, vendor="acme-com", name="widgets", version="1.0.0", created_by="usr_test"
+        )
+        revision = ApiRevision(api_id=api.id, state="published", source_type="url")
+        session.add(revision)
+        await session.flush()
+        api.current_revision_id = revision.id
+        await session.commit()
+
+    async with registry_db.session() as session:
+        locked = await ApiRepository.upsert(
+            session, vendor="acme-com", name="widgets", version="1.0.0", created_by="usr_test"
+        )
+        assert locked.current_revision is not None
+        again = await ApiRepository.get_by_identifier(session, "acme-com", "widgets", "1.0.0")
+        assert again is not None
+        assert again.current_revision is not None
+        assert again.current_revision.id == locked.current_revision_id
