@@ -93,6 +93,7 @@ async def _add_token(
                 name=f"cred-{credential_id}",
                 api_vendor=api_vendor,
                 provider="direct_oauth2",
+                created_by="usr_cred_owner",
             )
         )
         await session.flush()
@@ -136,6 +137,8 @@ async def test_expiring_soon_emits_warning_and_stamps_marker(
     assert events[0].requires_action is False
     assert events[0].data["credential_id"] == "cred_soon"
     assert events[0].data["api_vendor"] == "stripe"
+    # The credential owner is named so owner-scoped event reads surface it.
+    assert events[0].created_by == "usr_cred_owner"
     # Cross-check against the documented severity matrix (issue #907).
     assert (
         EventSeverity(events[0].severity)
