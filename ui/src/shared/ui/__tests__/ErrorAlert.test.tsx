@@ -13,6 +13,11 @@ describe('ErrorAlert', () => {
 		expect(screen.getByRole('alert')).toHaveTextContent('Boom');
 	});
 
+	it('renders an optional title above the message', () => {
+		renderWithProviders(<ErrorAlert title="Couldn't load" message="Boom" />);
+		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't loadBoom");
+	});
+
 	it('prefers the RFC 9457 problem detail over the status text', () => {
 		const err = new ApiError(
 			{ method: 'POST', url: '/credentials' },

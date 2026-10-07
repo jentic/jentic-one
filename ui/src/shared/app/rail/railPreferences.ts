@@ -37,7 +37,7 @@ export function writeBool(key: string, value: boolean) {
 }
 
 /** Sound on failures. Defaults OFF; an explicitly stored choice is respected. */
-export function readAudioOnCritical(): boolean {
+function readAudioOnCritical(): boolean {
 	return readBool(RAIL_AUDIO_STORAGE_KEY, false);
 }
 

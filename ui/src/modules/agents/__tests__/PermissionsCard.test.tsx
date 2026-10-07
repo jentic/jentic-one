@@ -16,7 +16,12 @@ import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
-function renderCard(props: { actorId: string; actorName: string; canEdit?: boolean }) {
+function renderCard(props: {
+	actorId: string;
+	actorName: string;
+	canEdit?: boolean;
+	pending?: boolean;
+}) {
 	return renderWithProviders(
 		<>
 			<PermissionsCard {...props} />
@@ -56,6 +61,35 @@ describe('PermissionsCard', () => {
 		const res = await fetch('/agents/agnt_pending_1/permissions');
 		const body = (await res.json()) as { permissions: string[] };
 		expect(body.permissions).toEqual([...DEFAULT_AGENT_PERMISSIONS]);
+	});
+
+	it('for a pending agent, says what approving grants instead of "No permissions granted"', async () => {
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('permissions-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent(
+				`Approving grants the default agent permissions (${DEFAULT_AGENT_PERMISSIONS.length}).`,
+			),
+		);
+		expect(
+			screen.queryByText('No permissions granted.', { exact: false }),
+		).not.toBeInTheDocument();
+	});
+
+	it('for a pending agent that requested permissions, lists them as requested', async () => {
+		worker.use(
+			http.get('/agents/:id/permissions', () =>
+				HttpResponse.json({ permissions: ['apis:read', 'capabilities:read'] }),
+			),
+		);
+		renderCard({ actorId: 'agnt_pending_1', actorName: 'inbox-triage-bot', pending: true });
+		const note = await screen.findByTestId('permissions-pending-approval');
+		await waitFor(() =>
+			expect(note).toHaveTextContent('Approving grants the 2 permissions it requests.'),
+		);
+		expect(
+			within(note).getByRole('list', { name: 'Requested permissions' }),
+		).toBeInTheDocument();
 	});
 
 	it('hides the edit affordance when canEdit is false', async () => {

@@ -26,15 +26,13 @@ describe('AgentBadge', () => {
 		expect(screen.getByLabelText('Agent support-agent')).toHaveTextContent('SA');
 	});
 
-	it('is deterministic — same id keeps the same accent class', () => {
+	it('is deterministic — same id keeps the same pastel tone', () => {
 		const { container: a } = render(<AgentBadge id="agnt_1" name="a" />);
 		const { container: b } = render(<AgentBadge id="agnt_1" name="b" />);
-		const classA = a.firstElementChild?.className ?? '';
-		const classB = b.firstElementChild?.className ?? '';
-		// The accent token is shared even though the names differ.
-		const accentA = classA.split(' ').find((c) => c.startsWith('bg-'));
-		const accentB = classB.split(' ').find((c) => c.startsWith('bg-'));
-		expect(accentA).toBe(accentB);
+		// The tone is shared even though the names differ.
+		const toneA = a.firstElementChild?.getAttribute('data-tone');
+		expect(toneA).toMatch(/^\d$/);
+		expect(b.firstElementChild?.getAttribute('data-tone')).toBe(toneA);
 	});
 
 	it('renders as a button and fires onClick when interactive', async () => {

@@ -20,6 +20,7 @@ import {
 	CardHeader,
 	CardTitle,
 	CardBody,
+	ApiStateBadge,
 	Badge,
 	Button,
 	SkeletonRows,
@@ -95,7 +96,7 @@ function RevisionRow({
 
 	return (
 		<li
-			className="border-border/60 flex flex-col gap-2 border-b py-3 last:border-b-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+			className="flex flex-col gap-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
 			data-testid="revision-row"
 			data-revision-id={revision.revisionId}
 			// Cross-link jump target: receives focus from the Overlays section's
@@ -107,7 +108,9 @@ function RevisionRow({
 					<Badge variant={stateVariant(revision.state)}>
 						{revisionStateLabel(revision.state)}
 					</Badge>
-					{revision.isCurrent ? <Badge variant="success">Live</Badge> : null}
+					{revision.isCurrent ? (
+						<ApiStateBadge state="live" testId="revision-live" />
+					) : null}
 					<span
 						className="text-muted-foreground truncate font-mono text-xs"
 						title={revision.revisionId}
@@ -165,7 +168,7 @@ function RevisionRow({
 			<div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
 				<Button
 					variant="ghost"
-					size="sm"
+					size="xs"
 					onClick={() => onViewSpec(revision)}
 					aria-label={`${hasDiffBase ? 'Diff' : 'View spec of'} revision ${shortId}`}
 					data-testid="revision-view-spec"
@@ -184,8 +187,8 @@ function RevisionRow({
 				</Button>
 				{revision.promoteHref ? (
 					<Button
-						variant="secondary"
-						size="sm"
+						variant="tonal"
+						size="xs"
 						onClick={() => onPromote(revision.revisionId)}
 						loading={pendingAction === 'promote'}
 						aria-label={`Promote revision ${shortId}`}
@@ -197,7 +200,7 @@ function RevisionRow({
 				{revision.archiveHref ? (
 					<Button
 						variant="ghost"
-						size="sm"
+						size="xs"
 						onClick={() => onArchive(revision.revisionId)}
 						loading={pendingAction === 'archive'}
 						aria-label={`Archive revision ${shortId}`}
@@ -226,13 +229,13 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 	return (
 		<Card data-testid="revisions-section">
 			<CardHeader>
-				<CardTitle>Revisions</CardTitle>
-				<p className="text-muted-foreground mt-0.5 text-xs">
+				<CardTitle as="h2">Revisions</CardTitle>
+				<p className="text-foreground-sub mt-0.5 text-xs">
 					Every version of this API&apos;s spec, newest first. Imports, uploads, and
 					applied overlays each create one; exactly one can be live (serving traffic).
 				</p>
 			</CardHeader>
-			<CardBody>
+			<CardBody className="pt-1">
 				{query.isLoading ? (
 					<SkeletonRows rows={3} />
 				) : query.isError ? (
@@ -248,7 +251,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 						description="Import a spec to create this API's first revision."
 					/>
 				) : (
-					<ul className="divide-border/60">
+					<ul className="divide-hairline-row divide-y">
 						{revisions.map((rev, index) => (
 							<RevisionRow
 								key={rev.revisionId}

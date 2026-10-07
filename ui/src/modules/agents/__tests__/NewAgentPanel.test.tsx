@@ -335,15 +335,10 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		const [id] = await register(queryClient, 'my-first-agent');
 		const firstApi = await approveArrival(user, 'my-first-agent');
 
-		const steps = within(within(panel()).getByTestId('register-stepper')).getAllByRole(
-			'listitem',
+		expect(within(panel()).queryByTestId('register-stepper')).toBeNull();
+		expect(within(panel()).getByTestId('register-progress')).toHaveTextContent(
+			'Step 4 of 4 · Give it an API',
 		);
-		expect(steps.map((li) => li.getAttribute('data-state'))).toEqual([
-			'done',
-			'done',
-			'done',
-			'current',
-		]);
 		expect(status()).toHaveTextContent('my-first-agent is approved');
 		const github = await within(firstApi).findByRole('button', {
 			name: 'Continue with GitHub',

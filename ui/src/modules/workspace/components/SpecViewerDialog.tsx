@@ -2,13 +2,12 @@
  * SpecViewerDialog — view a workspace API revision's OpenAPI document, as a
  * DIFF by default (when the caller supplies a base).
  *
- * The old viewer dumped the whole ~800-line resolved JSON, leaving reviewers
- * to eyeball what changed. Now, when the caller supplies a comparison base
+ * When the caller supplies a comparison base
  * (`diffAgainst` — the previous revision, matching the row summary's "vs
  * previous" delta), the dialog opens in diff mode: a structural before/after
  * list of exactly the changed sections (`$.servers`, …), with a "Full spec"
- * toggle for the raw document. Entry points whose label promises the raw
- * document (the header's "View spec") pass `defaultMode="full"` instead.
+ * toggle for the raw document. The hub's Spec tab (`SpecViewerPanel`) shares
+ * the same viewer but opens on the full document.
  * Both documents are fetched lazily behind the open flag
  * (`useApiSpec(key, open)`), so nothing large loads on the detail page
  * itself.
@@ -24,10 +23,9 @@ import {
 	SegmentedToggle,
 	Badge,
 } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 import { useApiSpec, formatApiKey, diffSpecs } from '@/modules/workspace/api';
 import type { ApiKey, SpecDiffBase, SpecDiffEntry } from '@/modules/workspace/api';
-
-export type { SpecDiffBase } from '@/modules/workspace/api';
 
 export interface SpecViewerDialogProps {
 	apiKey: ApiKey;
@@ -46,12 +44,6 @@ export interface SpecViewerDialogProps {
 	 * API's first revision) only the full spec is shown.
 	 */
 	diffAgainst?: SpecDiffBase | null;
-	/**
-	 * Which view opens first when a diff base exists. `'diff'` (default) for
-	 * Diff-labeled entry points; pass `'full'` when the trigger's label
-	 * promises the raw document (e.g. the header "View spec" button).
-	 */
-	defaultMode?: 'diff' | 'full';
 }
 
 const KIND_VARIANT = { added: 'success', removed: 'danger', changed: 'warning' } as const;
@@ -66,7 +58,7 @@ function pretty(value: unknown): string {
 
 function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 	return (
-		<li className="border-border/60 rounded-lg border p-3" data-testid="spec-diff-entry">
+		<li className="bg-field rounded-lg p-3" data-testid="spec-diff-entry">
 			<div className="mb-2 flex items-center gap-2">
 				<Badge variant={KIND_VARIANT[entry.kind]}>{entry.kind}</Badge>
 				<code className="text-foreground font-mono text-xs break-all">{entry.path}</code>
@@ -80,7 +72,7 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 					<pre
 						tabIndex={0}
 						aria-label={`Before, at ${entry.path}`}
-						className="bg-danger/8 border-danger/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+						className="bg-danger/8 text-foreground overflow-auto rounded-md p-2 font-mono text-xs leading-relaxed whitespace-pre"
 					>
 						<span className="sr-only">Before: </span>
 						{`- ${pretty(entry.before).split('\n').join('\n- ')}`}
@@ -90,7 +82,7 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 					<pre
 						tabIndex={0}
 						aria-label={`After, at ${entry.path}`}
-						className="bg-success/8 border-success/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+						className="bg-success/8 text-foreground overflow-auto rounded-md p-2 font-mono text-xs leading-relaxed whitespace-pre"
 					>
 						<span className="sr-only">After: </span>
 						{`+ ${pretty(entry.after).split('\n').join('\n+ ')}`}
@@ -101,28 +93,49 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 	);
 }
 
-export function SpecViewerDialog({
+interface SpecViewState {
+	mode: 'diff' | 'full';
+	setMode: (mode: 'diff' | 'full') => void;
+	hasDiff: boolean;
+	prettySpec: string;
+	diff: ReturnType<typeof diffSpecs> | null;
+	isLoading: boolean;
+	error: unknown;
+	retry: () => void;
+	download: () => void;
+}
+
+/**
+ * The viewer's state — shared by the dialog and the inline panel (the API
+ * hub's Spec tab), so both fetch, diff and download the same way. `active`
+ * gates the (potentially large) spec fetches; the view mode is a transient
+ * flag, reset to the default whenever the viewer (re)activates, per the dialog
+ * state-lifecycle rule.
+ */
+function useSpecView({
 	apiKey,
-	open,
-	onClose,
+	active,
 	revisionId,
-	revisionLabel,
 	diffAgainst,
 	defaultMode = 'diff',
-}: SpecViewerDialogProps) {
+}: {
+	apiKey: ApiKey;
+	active: boolean;
+	revisionId?: string | null;
+	diffAgainst?: SpecDiffBase | null;
+	defaultMode?: 'diff' | 'full';
+}): SpecViewState {
 	const hasDiff = diffAgainst != null;
 	const initialMode = hasDiff ? defaultMode : 'full';
-	// View mode is a transient flag, not a draft — reset to the default on
-	// every open, per the dialog state-lifecycle rule.
 	const [mode, setMode] = useState<'diff' | 'full'>(initialMode);
 	useEffect(() => {
-		if (open) setMode(initialMode);
-	}, [open, initialMode]);
+		if (active) setMode(initialMode);
+	}, [active, initialMode]);
 
-	const query = useApiSpec(apiKey, open, revisionId);
+	const query = useApiSpec(apiKey, active, revisionId);
 	const baseQuery = useApiSpec(
 		apiKey,
-		open && hasDiff && mode === 'diff',
+		active && hasDiff && mode === 'diff',
 		diffAgainst?.revisionId,
 	);
 
@@ -151,34 +164,77 @@ export function SpecViewerDialog({
 			? baseQuery.error
 			: null;
 
-	const panelId = mode === 'diff' ? 'spec-view-panel-diff' : 'spec-view-panel-full';
-	const tabId = (value: string) => `spec-view-tab-${value}`;
+	return {
+		mode,
+		setMode,
+		hasDiff,
+		prettySpec,
+		diff,
+		isLoading,
+		error,
+		retry: () => {
+			void query.refetch();
+			if (hasDiff) void baseQuery.refetch();
+		},
+		download,
+	};
+}
+
+function SpecActions({ view }: { view: SpecViewState }) {
+	if (!view.prettySpec) return null;
+	// "full spec" in the labels because in diff mode these still act on the
+	// whole target document, not the entries on screen.
+	return (
+		<>
+			<CopyButton value={view.prettySpec} label="Copy full spec" />
+			<Button variant="secondary" size="sm" onClick={view.download}>
+				<Download size={14} aria-hidden="true" />
+				Download full spec
+			</Button>
+		</>
+	);
+}
+
+interface SpecBodyTestIds {
+	content: string;
+	diffContent: string;
+	diffEmpty: string;
+}
+
+const DIALOG_TEST_IDS: SpecBodyTestIds = {
+	content: 'spec-viewer-content',
+	diffContent: 'spec-diff-content',
+	diffEmpty: 'spec-diff-empty',
+};
+
+const PANEL_TEST_IDS: SpecBodyTestIds = {
+	content: 'spec-panel-content',
+	diffContent: 'spec-panel-diff-content',
+	diffEmpty: 'spec-panel-diff-empty',
+};
+
+function SpecViewBody({
+	apiKey,
+	view,
+	diffAgainst,
+	idPrefix,
+	testIds = DIALOG_TEST_IDS,
+	maxHeightClass = 'max-h-[60vh]',
+}: {
+	apiKey: ApiKey;
+	view: SpecViewState;
+	diffAgainst?: SpecDiffBase | null;
+	idPrefix: string;
+	/** Distinct per surface, so the inline panel and the dialog never collide. */
+	testIds?: SpecBodyTestIds;
+	maxHeightClass?: string;
+}) {
+	const { mode, setMode, hasDiff, prettySpec, diff, isLoading, error } = view;
+	const panelId = mode === 'diff' ? `${idPrefix}-panel-diff` : `${idPrefix}-panel-full`;
+	const tabId = (value: string) => `${idPrefix}-tab-${value}`;
 
 	return (
-		<Dialog
-			open={open}
-			onClose={onClose}
-			title={revisionLabel ? `OpenAPI spec · ${revisionLabel}` : 'OpenAPI spec'}
-			size="lg"
-			footer={
-				<>
-					<Button variant="ghost" size="sm" onClick={onClose}>
-						Close
-					</Button>
-					{prettySpec ? (
-						// "full spec" in the labels because in diff mode these still act
-						// on the whole target document, not the entries on screen.
-						<>
-							<CopyButton value={prettySpec} label="Copy full spec" />
-							<Button variant="secondary" size="sm" onClick={download}>
-								<Download size={14} aria-hidden="true" />
-								Download full spec
-							</Button>
-						</>
-					) : null}
-				</>
-			}
-		>
+		<>
 			<div className="mb-3 flex flex-wrap items-center justify-between gap-2">
 				<p className="text-muted-foreground font-mono text-xs">{formatApiKey(apiKey)}</p>
 				{hasDiff ? (
@@ -186,9 +242,9 @@ export function SpecViewerDialog({
 						as="tabs"
 						ariaLabel="Spec view"
 						getTabId={tabId}
-						getControls={(value) => `spec-view-panel-${value}`}
+						getControls={(value) => `${idPrefix}-panel-${value}`}
 						options={[
-							{ value: 'diff', label: `Diff vs ${diffAgainst.label}` },
+							{ value: 'diff', label: `Diff vs ${diffAgainst?.label}` },
 							{ value: 'full', label: 'Full spec' },
 						]}
 						value={mode}
@@ -208,14 +264,7 @@ export function SpecViewerDialog({
 					<ErrorAlert
 						message={error instanceof Error ? error : 'Failed to load the spec.'}
 					/>
-					<Button
-						variant="secondary"
-						size="sm"
-						onClick={() => {
-							void query.refetch();
-							if (hasDiff) void baseQuery.refetch();
-						}}
-					>
+					<Button variant="secondary" size="sm" onClick={view.retry}>
 						Try again
 					</Button>
 				</div>
@@ -226,7 +275,7 @@ export function SpecViewerDialog({
 						role="tabpanel"
 						aria-labelledby={tabId('diff')}
 						className="text-muted-foreground text-sm"
-						data-testid="spec-diff-empty"
+						data-testid={testIds.diffEmpty}
 					>
 						No differences vs {diffAgainst?.label}.
 					</p>
@@ -237,8 +286,8 @@ export function SpecViewerDialog({
 						aria-labelledby={tabId('diff')}
 						tabIndex={0}
 						aria-label="Spec changes"
-						className="max-h-[60vh] overflow-auto"
-						data-testid="spec-diff-content"
+						className={cn(maxHeightClass, 'overflow-auto')}
+						data-testid={testIds.diffContent}
 					>
 						<p className="text-muted-foreground mb-2 text-xs">
 							{diff.entries.length}
@@ -261,12 +310,95 @@ export function SpecViewerDialog({
 					aria-labelledby={hasDiff ? tabId('full') : undefined}
 					tabIndex={0}
 					aria-label="Full spec JSON"
-					className="bg-muted/40 border-border/60 text-foreground max-h-[60vh] overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre"
-					data-testid="spec-viewer-content"
+					className={cn(
+						'bg-field text-foreground overflow-auto rounded-lg p-3 font-mono text-xs leading-relaxed whitespace-pre',
+						maxHeightClass,
+					)}
+					data-testid={testIds.content}
 				>
 					{prettySpec}
 				</pre>
 			)}
+		</>
+	);
+}
+
+export function SpecViewerDialog({
+	apiKey,
+	open,
+	onClose,
+	revisionId,
+	revisionLabel,
+	diffAgainst,
+}: SpecViewerDialogProps) {
+	const view = useSpecView({ apiKey, active: open, revisionId, diffAgainst });
+
+	return (
+		<Dialog
+			open={open}
+			onClose={onClose}
+			title={revisionLabel ? `OpenAPI spec · ${revisionLabel}` : 'OpenAPI spec'}
+			size="lg"
+			footer={
+				<>
+					<Button variant="ghost" size="sm" onClick={onClose}>
+						Close
+					</Button>
+					{open ? <SpecActions view={view} /> : null}
+				</>
+			}
+		>
+			{/* Only mounted while open: a closed native <dialog> still renders its
+			    children, so an always-mounted body would keep a full document (and
+			    its ids/test ids) on the page. */}
+			{open ? (
+				<SpecViewBody
+					apiKey={apiKey}
+					view={view}
+					diffAgainst={diffAgainst}
+					idPrefix="spec-view"
+				/>
+			) : null}
 		</Dialog>
+	);
+}
+
+/**
+ * SpecViewerPanel — the same viewer inline, for the API hub's Spec tab: the
+ * live document (opening in full mode), with a diff vs the previous revision
+ * when `diffAgainst` is given.
+ */
+export function SpecViewerPanel({
+	apiKey,
+	diffAgainst,
+}: {
+	apiKey: ApiKey;
+	diffAgainst?: SpecDiffBase | null;
+}) {
+	const title = 'Live OpenAPI spec';
+	const view = useSpecView({ apiKey, active: true, diffAgainst, defaultMode: 'full' });
+	return (
+		<section
+			className="bg-surface-1 rounded-lg [--field-bg:var(--surface-field)]"
+			aria-label={title}
+			data-testid="spec-viewer-panel"
+		>
+			<div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4 pb-1">
+				<h2 className="font-heading text-foreground-name font-semibold">{title}</h2>
+				<div className="flex items-center gap-2">
+					<SpecActions view={view} />
+				</div>
+			</div>
+			<div className="px-5 pt-2 pb-5">
+				<SpecViewBody
+					apiKey={apiKey}
+					view={view}
+					diffAgainst={diffAgainst}
+					idPrefix="spec-panel"
+					testIds={PANEL_TEST_IDS}
+					maxHeightClass="max-h-[70vh]"
+				/>
+			</div>
+		</section>
 	);
 }

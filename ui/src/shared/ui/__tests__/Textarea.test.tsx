@@ -11,6 +11,11 @@ describe('Textarea', () => {
 		expect(el).toHaveValue('multi\nline');
 	});
 
+	it("shares the inputs' faint resting edge", () => {
+		renderWithProviders(<Textarea aria-label="Notes" />);
+		expect(screen.getByLabelText('Notes')).toHaveClass('border', 'border-control-edge');
+	});
+
 	it('renders an error message', () => {
 		renderWithProviders(<Textarea aria-label="Notes" error="Too short" />);
 		expect(screen.getByRole('alert')).toHaveTextContent('Too short');

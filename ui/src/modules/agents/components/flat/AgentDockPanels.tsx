@@ -5,7 +5,7 @@
  * invitation and Permissions drops the permission editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
-import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
+import { Button, DetailSection, SheetBody, SheetHeader, SheetPrimitive } from '@/shared/ui';
 import { useIsGeneratingAgentApiKey, type AgentEntity } from '@/modules/agents/api';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
@@ -32,24 +32,27 @@ function DockSheetFrame({
 }) {
 	return (
 		<div className="flex h-full flex-col">
-			<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+			<SheetHeader className="justify-between">
 				<div className="min-w-0">
-					<h2 id={headingId} className="text-foreground text-base font-semibold">
+					<h2
+						id={headingId}
+						className="font-heading text-foreground-name text-base font-semibold"
+					>
 						{title}
 					</h2>
 					<p className="text-muted-foreground truncate text-xs">{subtitle}</p>
 				</div>
 				<Button
 					variant="ghost"
-					size="sm"
+					size="icon-xs"
 					aria-label="Close"
 					onClick={onClose}
-					className="text-muted-foreground hover:text-foreground"
+					className="shrink-0"
 				>
 					<X className="h-4 w-4" />
 				</Button>
-			</header>
-			<div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+			</SheetHeader>
+			<SheetBody>{children}</SheetBody>
 		</div>
 	);
 }
@@ -163,6 +166,7 @@ export function AgentPermissionsSheet({
 						actorId={agent.id}
 						actorName={agent.name}
 						canEdit={!isArchived}
+						pending={agent.status === 'pending'}
 					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>

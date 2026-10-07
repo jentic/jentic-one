@@ -211,7 +211,8 @@ export function NewAgentPanel({
 			// 560px there, where the four steps still fit side by side.
 			className="flex flex-col sm:w-[600px] xl:max-w-[max(40vw,560px)]"
 		>
-			<header className="border-border border-b px-5 pt-4">
+			{/* A div, not <header>: in a sheet it would read as a second banner. */}
+			<div className="border-border border-b px-5 pt-4">
 				<div className="flex items-start justify-between gap-3">
 					<h2 id={headingId} className="text-foreground text-lg font-semibold">
 						New agent
@@ -236,7 +237,7 @@ export function NewAgentPanel({
 					fill
 					className="mt-2 border-b-0"
 				/>
-			</header>
+			</div>
 
 			{/* Both panes stay mounted, stacked in this one box: a switch only
 			    moves them (no remount, and so no dropped frames), and the box's

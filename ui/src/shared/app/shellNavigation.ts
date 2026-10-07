@@ -7,6 +7,18 @@ import { useLocation, useNavigationType } from 'react-router';
  */
 const RESTORE_TIMEOUT_MS = 1500;
 
+/** The element a location `#hash` points at, if it is rendered. */
+function anchorTarget(hash: string): HTMLElement | null {
+	if (hash.length < 2) return null;
+	let id = hash.slice(1);
+	try {
+		id = decodeURIComponent(id);
+	} catch {
+		// A malformed escape is looked up verbatim.
+	}
+	return document.getElementById(id);
+}
+
 /** User input that takes over from a pending restore. */
 const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
 
@@ -16,6 +28,9 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as 
  *
  *  - a new page starts at its top, while Back/Forward returns to where that
  *    history entry was left (the browser only restores the document's scroll);
+ *  - a new page reached through a `#hash` link opens at that anchor instead
+ *    (when it is already rendered — a page that mounts it later, like Docs,
+ *    scrolls there itself), so deep links still land;
  *  - `<main>` takes keyboard focus unless the operator is already working in
  *    the page or a dialog, so Space/PageDown/arrow keys scroll it.
  *
@@ -23,13 +38,14 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as 
  * its place.
  */
 export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void {
-	const { key, pathname } = useLocation();
+	const { key, pathname, hash } = useLocation();
 	const navigationType = useNavigationType();
 	// Scroll offset per history entry.
 	const positions = useRef(new Map<string, number>());
 	const keyRef = useRef(key);
 	const navigationTypeRef = useRef(navigationType);
 	const pathnameRef = useRef(pathname);
+	const hashRef = useRef(hash);
 	// Set while a restore is in flight, so its clamped attempts aren't recorded
 	// over the position it is restoring.
 	const restoringRef = useRef(false);
@@ -42,9 +58,10 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 			positions.current.set(key, main.scrollTop);
 		}
 		pathnameRef.current = pathname;
+		hashRef.current = hash;
 		keyRef.current = key;
 		navigationTypeRef.current = navigationType;
-	}, [mainRef, key, navigationType, pathname]);
+	}, [mainRef, key, navigationType, pathname, hash]);
 
 	// Recorded as the page scrolls. By the time a navigation commits, the old
 	// page is gone and `<main>` may already have clamped to the new, shorter one.
@@ -73,7 +90,9 @@ export function useShellNavigation(mainRef: RefObject<HTMLElement | null>): void
 		const saved =
 			navigationTypeRef.current === 'POP' ? positions.current.get(keyRef.current) : undefined;
 		if (!saved) {
-			main.scrollTo({ top: 0, left: 0 });
+			const anchor = anchorTarget(hashRef.current);
+			if (anchor && main.contains(anchor)) anchor.scrollIntoView({ block: 'start' });
+			else main.scrollTo({ top: 0, left: 0 });
 			return;
 		}
 

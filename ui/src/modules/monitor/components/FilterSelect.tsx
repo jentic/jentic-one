@@ -2,8 +2,8 @@
  * FilterSelect — a toolbar-sized picker that sits flush beside SegmentedToggle.
  *
  * A native `<select>` (so keyboard, screen readers and mobile pickers behave
- * natively) dressed to match the toggle: same 30px height, muted fill and
- * radius, a leading glyph naming what it filters, and our own chevron in
+ * natively) dressed to match the toggle: same 30px height, borderless field
+ * fill and radius, a leading glyph naming what it filters, and our own chevron in
  * place of the OS arrow. While a filter is applied it tints with the primary
  * colour so a narrowed view is visible at a glance.
  */
@@ -21,10 +21,10 @@ export function FilterSelect({ icon, className, value, disabled, ...props }: Fil
 	return (
 		<div
 			className={cn(
-				'group relative flex h-[1.875rem] items-center rounded-lg border text-xs font-medium transition-colors',
+				'group rounded-field border-control-edge relative flex h-[1.875rem] items-center border text-xs font-medium transition-colors',
 				active
-					? 'border-primary/60 bg-primary/15 text-foreground'
-					: 'border-border bg-muted/50 text-muted-foreground hover:text-foreground',
+					? 'bg-primary/15 text-foreground'
+					: 'bg-field text-muted-foreground hover:text-foreground',
 				disabled && 'hover:text-muted-foreground cursor-not-allowed opacity-50',
 				'focus-within:ring-ring/60 focus-within:ring-2',
 				className,
@@ -42,7 +42,7 @@ export function FilterSelect({ icon, className, value, disabled, ...props }: Fil
 			<select
 				value={value}
 				disabled={disabled}
-				className="[&>option]:bg-popover [&>option]:text-popover-foreground h-full w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg bg-transparent pr-7 pl-7.5 outline-hidden disabled:cursor-not-allowed"
+				className="[&>option]:bg-popover [&>option]:text-popover-foreground rounded-field h-full w-full min-w-0 cursor-pointer appearance-none truncate bg-transparent pr-7 pl-7.5 outline-hidden disabled:cursor-not-allowed"
 				{...props}
 			/>
 			<ChevronDown

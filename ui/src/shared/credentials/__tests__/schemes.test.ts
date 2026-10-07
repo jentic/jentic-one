@@ -6,8 +6,46 @@ import {
 	oauth2ScopesFromSchemes,
 	parseSchemeOptions,
 	schemeTypeFromRaw,
+	schemeTypeLabel,
 	schemeTypeToCredentialType,
+	specDeclaresNoAuth,
+	specRequiresSecurity,
 } from '@/shared/credentials/lib/schemes';
+
+describe('specDeclaresNoAuth / specRequiresSecurity', () => {
+	const base = {
+		openapi: '3.0.0',
+		paths: { '/h': { get: { responses: {} } } },
+	};
+
+	it('reads an empty or missing securitySchemes with no requirement as no auth', () => {
+		expect(specDeclaresNoAuth({ ...base, components: { securitySchemes: {} } })).toBe(true);
+		expect(specDeclaresNoAuth(base)).toBe(true);
+	});
+
+	it('is not no-auth when a scheme is declared', () => {
+		expect(
+			specDeclaresNoAuth({
+				...base,
+				components: { securitySchemes: { k: { type: 'apiKey', in: 'header', name: 'X' } } },
+			}),
+		).toBe(false);
+	});
+
+	it('is not no-auth when security is required globally or on an operation', () => {
+		expect(specDeclaresNoAuth({ ...base, security: [{ k: [] }] })).toBe(false);
+		expect(
+			specDeclaresNoAuth({
+				openapi: '3.0.0',
+				paths: { '/h': { get: { security: [{ k: [] }], responses: {} } } },
+			}),
+		).toBe(false);
+	});
+
+	it('treats an anonymous-allowed requirement ({}) as requiring nothing', () => {
+		expect(specRequiresSecurity({ ...base, security: [{}] })).toBe(false);
+	});
+});
 
 describe('credentials/lib/schemes', () => {
 	describe('schemeTypeFromRaw', () => {
@@ -26,6 +64,25 @@ describe('credentials/lib/schemes', () => {
 		it('collapses anything else to unknown', () => {
 			expect(schemeTypeFromRaw({ type: 'mutualTLS' })).toBe('unknown');
 			expect(schemeTypeFromRaw({})).toBe('unknown');
+		});
+	});
+
+	describe('schemeTypeLabel', () => {
+		it('maps each known scheme-type string to its friendly label', () => {
+			expect(schemeTypeLabel('bearer')).toBe('Bearer Token');
+			expect(schemeTypeLabel('apiKey')).toBe('API Key');
+			expect(schemeTypeLabel('basic')).toBe('Basic Auth');
+			expect(schemeTypeLabel('oauth2')).toBe('OAuth 2.0');
+		});
+		it('keeps an unrecognised scheme as its raw text', () => {
+			expect(schemeTypeLabel('mutualTLS')).toBe('mutualTLS');
+			// `unknown` is a sentinel, not a real scheme name — keep it verbatim.
+			expect(schemeTypeLabel('unknown')).toBe('unknown');
+		});
+		it('never reads an inherited Object property as a label', () => {
+			expect(schemeTypeLabel('constructor')).toBe('constructor');
+			expect(schemeTypeLabel('toString')).toBe('toString');
+			expect(schemeTypeLabel('__proto__')).toBe('__proto__');
 		});
 	});
 

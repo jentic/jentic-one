@@ -34,7 +34,7 @@ function ChevronPill({
 	return (
 		<div
 			className={cn(
-				'border-border bg-card/40 inline-flex items-stretch overflow-hidden rounded-lg border',
+				'bg-field rounded-field inline-flex items-stretch overflow-hidden',
 				'divide-border/80 divide-x',
 			)}
 		>
@@ -86,7 +86,7 @@ export function Pagination({
 			<nav
 				aria-label="Pagination"
 				className={cn(
-					'border-border/60 flex items-center justify-between gap-3 border-t px-4 py-2.5',
+					'border-hairline flex items-center justify-between gap-3 border-t px-4 py-2.5',
 					className,
 				)}
 			>

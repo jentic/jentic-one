@@ -287,7 +287,7 @@ export function ActivityFeed() {
 	const showEmpty = !forbidden && !initialLoading && !history.isError && events.length === 0;
 
 	const liveBar = (
-		<header className="border-border/60 flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
+		<header className="border-hairline flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
 			{forbidden ? (
 				<LiveIndicator status="forbidden" paused={false} />
 			) : fixedRange ? (
@@ -320,7 +320,7 @@ export function ActivityFeed() {
 
 	const loadOlder =
 		history.hasNextPage && !showEmpty ? (
-			<div className="border-border/60 flex justify-center border-t px-4 py-3">
+			<div className="border-hairline flex justify-center border-t px-4 py-3">
 				<Button
 					variant="secondary"
 					size="sm"
@@ -500,7 +500,7 @@ function LiveIndicator({ status, paused }: { status: LiveStreamStatus; paused: b
 			? 'bg-muted-foreground'
 			: status === 'live'
 				? 'bg-success'
-				: 'bg-warning';
+				: 'bg-caution';
 	return (
 		<span className="text-muted-foreground inline-flex items-center gap-2 text-xs font-medium">
 			<span className="relative flex h-2 w-2" aria-hidden="true">
@@ -533,8 +533,8 @@ function FeedRow({
 	const action =
 		ev.requiresAction && !ev.acknowledged ? (
 			<Button
-				variant="outline"
-				size="sm"
+				variant="tonal"
+				size="xs"
 				onClick={onAcknowledge}
 				loading={acknowledging}
 				disabled={acknowledging}
@@ -547,7 +547,7 @@ function FeedRow({
 				<span className="max-sm:sr-only">Acknowledged</span>
 			</span>
 		) : recordFor(ev) || primaryDestinationFor(ev) ? (
-			<ChevronRight className="text-muted-foreground/60 h-4 w-4" aria-hidden="true" />
+			<ChevronRight className="text-foreground-faint h-4 w-4" aria-hidden="true" />
 		) : null;
 
 	return (

@@ -175,7 +175,7 @@ function QueueRow({
 		.join(' · ');
 
 	return (
-		<article className="border-border rounded-lg border">
+		<article className="bg-surface-1 rounded-lg [--field-bg:var(--surface-field)]">
 			{/* Header: the name leads (it's what humans scan for), explicitly
 			    marked Unverified; status + provenance right-aligned. */}
 			<div className="px-4 pt-4">
@@ -184,7 +184,7 @@ function QueueRow({
 						{/* h2: with the page flattened these cards sit directly
 						    under the PageHeader h1 — section-title rung of the
 						    ladder (font-heading font-semibold, page-scaffold). */}
-						<h2 className="font-heading text-foreground min-w-0 truncate text-base font-semibold">
+						<h2 className="font-heading text-foreground-name min-w-0 truncate text-base font-semibold">
 							{client.name}
 						</h2>
 						{/* The chip sits OUTSIDE the h2 so the tooltip's described
@@ -229,7 +229,7 @@ function QueueRow({
 			{/* Quiet metadata block — mono/muted, not competing with the title. */}
 			<div className="text-muted-foreground space-y-1.5 px-4 pt-3 pb-4 text-xs">
 				<p className="flex flex-wrap items-center gap-1.5">
-					<code className="bg-muted rounded px-1.5 py-0.5 font-mono">
+					<code className="bg-field rounded px-1.5 py-0.5 font-mono">
 						{client.client_id}
 					</code>
 					<CopyButton
@@ -273,7 +273,7 @@ function QueueRow({
 							<span className="text-foreground">OIDC only</span>
 						) : (
 							visibleScopes.map((scope) => (
-								<Badge key={scope} variant="default">
+								<Badge key={scope} variant="default" mono>
 									{scope}
 								</Badge>
 							))
@@ -298,12 +298,12 @@ function QueueRow({
 
 			{/* Footer: the decision, grouped and anchored — never floating in
 			    the header where it competed with the identity signal. */}
-			<footer className="border-border flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3">
+			<footer className="border-hairline flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3">
 				{/* A denied row is already denied — the only verb it re-offers
 				    is Approve (the deliberate denied→active recovery). */}
 				{client.approval_status !== 'denied' && (
 					<Button
-						size="sm"
+						size="xs"
 						variant="ghost"
 						className="text-danger hover:text-danger"
 						onClick={(): void => onDeny(client)}
@@ -312,7 +312,12 @@ function QueueRow({
 						{denyPending ? 'Denying…' : 'Deny'}
 					</Button>
 				)}
-				<Button size="sm" onClick={(): void => onApprove(client)} disabled={approvePending}>
+				<Button
+					size="xs"
+					variant="primary"
+					onClick={(): void => onApprove(client)}
+					disabled={approvePending}
+				>
 					{approvePending ? 'Approving…' : 'Approve'}
 				</Button>
 			</footer>

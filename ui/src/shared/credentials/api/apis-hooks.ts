@@ -9,8 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	useInfiniteQuery,
 	useMutation,
+	useQueries,
 	useQuery,
 	useQueryClient,
+	type QueryClient,
 	type UseQueryResult,
 } from '@tanstack/react-query';
 import { sharedQueryKeys } from '@/shared/api';
@@ -23,7 +25,6 @@ import type {
 } from '@/shared/api';
 import { toast } from '@/shared/ui';
 import { apiRefDisplayName } from '@/shared/lib';
-import { slugifyApiField } from '@/shared/lib/apiSlug';
 import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
 import {
 	fetchPublicSpec,
@@ -41,6 +42,7 @@ import {
 } from './apis';
 import {
 	parseSchemeOptions,
+	specDeclaresNoAuth,
 	type RawSchemes,
 	type SchemeOption,
 } from '@/shared/credentials/lib/schemes';
@@ -83,6 +85,11 @@ export interface SelectedApi {
 	securitySchemeTypes?: string[];
 	/** Human display name (falls back to vendor/name). */
 	label: string;
+	/**
+	 * Local-only: `false` for a draft (no live revision), which has no served
+	 * spec to read schemes from — so none is requested. Unset reads as live.
+	 */
+	hasLiveRevision?: boolean;
 }
 
 /** A public-catalog entry as a pick. */
@@ -131,38 +138,7 @@ export function apiRowToSelected(row: ApiResponse): SelectedApi {
 		apiId: row.catalog_api_id ?? undefined,
 		securitySchemeTypes: row.security_schemes ?? [],
 		label,
-	};
-}
-
-/**
- * The workspace API a filed reference names, as a pick — so a flow that already
- * knows the API opens the credential form for it rather than asking again.
- * Filed references often omit the version; the workspace row supplies it (the
- * named version when the reference carries one, else the first row listed).
- * A reference that names an exact version pins even without a workspace row.
- * Null when neither the workspace nor the reference pins one API.
- */
-export function workspaceApiFor(
-	rows: readonly ApiResponse[],
-	ref: { vendor: string; name?: string | null; version?: string | null },
-	label?: string,
-): SelectedApi | null {
-	if (!ref.name) return null;
-	const vendor = slugifyApiField(ref.vendor);
-	const name = slugifyApiField(ref.name);
-	const matches = rows.filter(
-		(row) =>
-			slugifyApiField(row.api.vendor) === vendor && slugifyApiField(row.api.name) === name,
-	);
-	const row = matches.find((r) => r.api.version === ref.version) ?? matches[0];
-	if (row) return apiRowToSelected(row);
-	if (!ref.version) return null;
-	return {
-		source: 'local',
-		vendor: ref.vendor,
-		name: ref.name,
-		version: ref.version,
-		label: label ?? `${ref.vendor}/${ref.name}`,
+		hasLiveRevision: row.current_revision_id != null,
 	};
 }
 
@@ -175,6 +151,18 @@ function importedRefToSelected(ref: ImportedApiRef): SelectedApi {
 		version: ref.version,
 		label: apiRefDisplayName({ vendor: ref.vendor, name: ref.name }),
 	};
+}
+
+/**
+ * Mark every cached `GET /apis` list stale — the picker lists and the drained
+ * {@link useAllApis} (all under `apisList()`), plus the cross-module
+ * `sharedQueryKeys.workspaceApis` slice. Any mutation that adds, removes or
+ * changes a workspace API's list-level fields (live revision, update flag)
+ * calls this, so no list view keeps a stale row.
+ */
+export function invalidateApiLists(queryClient: QueryClient): void {
+	void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
+	void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
 }
 
 /** List workspace APIs (cursor pagination policy owned here). */
@@ -274,7 +262,8 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 			getApiSpec(selectedApi!.vendor, selectedApi!.name, selectedApi!.version) as Promise<
 				Record<string, unknown>
 			>,
-		enabled: !!selectedApi && isLocal,
+		// A draft has no live spec (`GET …/openapi` would 404): nothing to read.
+		enabled: !!selectedApi && isLocal && selectedApi.hasLiveRevision !== false,
 		staleTime: 5 * 60 * 1000,
 	});
 
@@ -327,6 +316,48 @@ export function useApiSchemes(selectedApi: SelectedApi | null): {
 }
 
 /**
+ * Which picks' specs declare no authentication, keyed by `apiRefKey`-style
+ * `vendor/name`. Reads each pick's spec through the same cached queries as
+ * {@link useApiSchemes}, so the credential form that follows opens on a warm
+ * cache. A pick whose spec isn't read yet (or can't be) is absent — unknown,
+ * never assumed open. A local draft has no served spec, so it is skipped.
+ */
+export function useNoAuthPicks(apis: SelectedApi[]): ReadonlySet<string> {
+	const results = useQueries({
+		queries: apis.map((api) =>
+			api.source === 'catalog'
+				? {
+						queryKey: apiPickerKeys.publicSpec(api.specUrl ?? ''),
+						queryFn: () => fetchPublicSpec(api.specUrl as string),
+						enabled: !!api.specUrl,
+						staleTime: 5 * 60 * 1000,
+						retry: false,
+					}
+				: {
+						queryKey: apiPickerKeys.apiSpec(api.vendor, api.name, api.version),
+						queryFn: () =>
+							getApiSpec(api.vendor, api.name, api.version) as Promise<
+								Record<string, unknown>
+							>,
+						enabled: api.hasLiveRevision !== false,
+						staleTime: 5 * 60 * 1000,
+					},
+		),
+	});
+	const flags = results.map(
+		(r) => r.data != null && specDeclaresNoAuth(r.data as Record<string, unknown>),
+	);
+	const signature = flags.map((f) => (f ? '1' : '0')).join('');
+	const keys = apis.map((a) => `${a.vendor}/${a.name}`).join('\u0000');
+	return useMemo(
+		() => new Set(apis.filter((_, i) => flags[i]).map((a) => `${a.vendor}/${a.name}`)),
+		// Recomputed only when a pick or its answer changes, so the Set keeps identity.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[keys, signature],
+	);
+}
+
+/**
  * Import a catalog API into the workspace. Used by the create flow when the
  * picked API is an un-registered catalog row — the credential create still
  * targets `{vendor,name,version}` directly (the import is async, but the
@@ -337,7 +368,7 @@ export function useImportCatalogEntry() {
 	return useMutation<ApiImportResponse, Error, string>({
 		mutationFn: (apiId) => importCatalogEntry(apiId),
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+			invalidateApiLists(queryClient);
 			void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
 		},
 	});
@@ -466,8 +497,7 @@ export function useImportSpec(): UseImportSpec {
 				});
 				if (!jobSucceeded(status)) return { ...status, imported: [] };
 
-				void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.workspaceApis });
-				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.apisList() });
+				invalidateApiLists(queryClient);
 				void queryClient.invalidateQueries({ queryKey: apiPickerKeys.catalogList() });
 
 				const imported = await resolveImported(status.jobId);

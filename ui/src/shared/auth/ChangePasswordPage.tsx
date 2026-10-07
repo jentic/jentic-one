@@ -6,6 +6,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Button } from '@/shared/ui/Button';
+import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { MIN_PASSWORD_LENGTH } from '@/shared/auth/password';
 
@@ -94,100 +95,87 @@ export function ChangePasswordPage() {
 	};
 
 	return (
-		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
-			<form
-				onSubmit={handleSubmit}
-				className="border-border bg-card w-full max-w-sm rounded-xl border p-6 shadow-sm"
-				aria-labelledby="change-password-heading"
+		<AuthCard onSubmit={handleSubmit} aria-labelledby="change-password-heading">
+			<h1
+				id="change-password-heading"
+				className="font-heading text-foreground-name text-xl font-semibold"
 			>
-				<h1 id="change-password-heading" className="font-display text-xl font-semibold">
-					{mustChangePassword ? 'Set a new password' : 'Change your password'}
-				</h1>
-				<p className="text-muted-foreground mt-1 text-sm">
-					{user?.email ? `Signed in as ${user.email}. ` : ''}
-					{mustChangePassword
-						? 'You must change your password before continuing.'
-						: 'Enter your current password and choose a new one.'}
-				</p>
+				{mustChangePassword ? 'Set a new password' : 'Change your password'}
+			</h1>
+			<p className="text-muted-foreground mt-1 text-sm">
+				{user?.email ? `Signed in as ${user.email}. ` : ''}
+				{mustChangePassword
+					? 'You must change your password before continuing.'
+					: 'Enter your current password and choose a new one.'}
+			</p>
 
-				<div className="mt-6 space-y-4">
-					<div className="space-y-1">
-						<Label htmlFor="cp-current">Current password</Label>
-						<Input
-							id="cp-current"
-							ref={currentPasswordRef}
-							type="password"
-							autoComplete="current-password"
-							showPasswordToggle
-							required
-							value={currentPassword}
-							onChange={(e) => setCurrentPassword(e.target.value)}
-						/>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="cp-new">New password</Label>
-						<Input
-							id="cp-new"
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							minLength={MIN_PASSWORD_LENGTH}
-							value={newPassword}
-							onChange={(e) => setNewPassword(e.target.value)}
-						/>
-						<p className="text-muted-foreground text-xs">
-							At least {MIN_PASSWORD_LENGTH} characters.
-						</p>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="cp-confirm">Confirm new password</Label>
-						<Input
-							id="cp-confirm"
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							value={confirm}
-							onChange={(e) => setConfirm(e.target.value)}
-						/>
-					</div>
+			<div className="mt-6 space-y-4">
+				<div className="space-y-1">
+					<Label htmlFor="cp-current">Current password</Label>
+					<Input
+						id="cp-current"
+						ref={currentPasswordRef}
+						type="password"
+						autoComplete="current-password"
+						showPasswordToggle
+						required
+						value={currentPassword}
+						onChange={(e) => setCurrentPassword(e.target.value)}
+					/>
 				</div>
+				<div className="space-y-1">
+					<Label htmlFor="cp-new">New password</Label>
+					<Input
+						id="cp-new"
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						minLength={MIN_PASSWORD_LENGTH}
+						value={newPassword}
+						onChange={(e) => setNewPassword(e.target.value)}
+					/>
+					<p className="text-muted-foreground text-xs">
+						At least {MIN_PASSWORD_LENGTH} characters.
+					</p>
+				</div>
+				<div className="space-y-1">
+					<Label htmlFor="cp-confirm">Confirm new password</Label>
+					<Input
+						id="cp-confirm"
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						value={confirm}
+						onChange={(e) => setConfirm(e.target.value)}
+					/>
+				</div>
+			</div>
 
-				{error !== null && <ErrorAlert message={error} className="mt-4" />}
+			{error !== null && <ErrorAlert message={error} className="mt-4" />}
 
-				<Button type="submit" loading={submitting} fullWidth className="mt-6">
-					{submitting
-						? 'Saving…'
-						: mustChangePassword
-							? 'Set password'
-							: 'Change password'}
+			<Button type="submit" loading={submitting} fullWidth className="mt-6">
+				{submitting ? 'Saving…' : mustChangePassword ? 'Set password' : 'Change password'}
+			</Button>
+			{mustChangePassword ? (
+				<Button type="button" variant="ghost" fullWidth onClick={logout} className="mt-3">
+					Sign out
 				</Button>
-				{mustChangePassword ? (
-					<Button
-						type="button"
-						variant="ghost"
-						fullWidth
-						onClick={logout}
-						className="mt-3"
-					>
-						Sign out
-					</Button>
-				) : (
-					<Button
-						type="button"
-						variant="ghost"
-						fullWidth
-						onClick={() => {
-							wipe.current();
-							navigate(ROUTES.app, { replace: true });
-						}}
-						className="mt-3"
-					>
-						Cancel
-					</Button>
-				)}
-			</form>
-		</main>
+			) : (
+				<Button
+					type="button"
+					variant="ghost"
+					fullWidth
+					onClick={() => {
+						wipe.current();
+						navigate(ROUTES.app, { replace: true });
+					}}
+					className="mt-3"
+				>
+					Cancel
+				</Button>
+			)}
+		</AuthCard>
 	);
 }

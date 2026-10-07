@@ -36,7 +36,7 @@ import {
 	SecretDialog,
 } from '@/modules/settings/components/ClientLifecycleDialogs';
 
-export const SECTION_TABS = ['clients', 'queue'] as const;
+const SECTION_TABS = ['clients', 'queue'] as const;
 export type SectionTab = (typeof SECTION_TABS)[number];
 
 export function isSectionTab(value: string | null): value is SectionTab {

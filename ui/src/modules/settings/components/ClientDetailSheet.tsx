@@ -30,6 +30,8 @@ import {
 	GrantAgentStatusChip,
 	LoadingState,
 	SegmentedToggle,
+	SheetBody,
+	SheetHeader,
 	SheetPrimitive,
 	Tooltip,
 	toast,
@@ -108,7 +110,7 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 				icon={<Plug2 className="h-4 w-4" />}
 				titleExtra={
 					grants && grants.length > 0 ? (
-						<Badge variant="default">
+						<Badge variant="default" mono>
 							{grants.length}
 							{query.hasNextPage ? '+' : ''}
 						</Badge>
@@ -141,7 +143,7 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 					</EmptyRow>
 				) : (
 					<>
-						<ul className="divide-border divide-y">
+						<ul className="divide-hairline-row divide-y">
 							{grants.map((grant) => (
 								<li
 									key={grant.id}
@@ -169,7 +171,7 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 										<div className="mt-1.5 flex flex-wrap gap-1">
 											{grant.scopes.length > 0 ? (
 												grant.scopes.map((scope) => (
-													<Badge key={scope} variant="default">
+													<Badge key={scope} variant="default" mono>
 														{scope}
 													</Badge>
 												))
@@ -190,8 +192,8 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 									{grant.status === 'active' &&
 										(grant.can_revoke ? (
 											<Button
-												variant="outline"
-												size="sm"
+												variant="tonal"
+												size="xs"
 												onClick={(): void => setRevokeTarget(grant)}
 												disabled={revoke.isPending}
 												aria-label={`Revoke grant ${grant.id}`}
@@ -205,8 +207,8 @@ function GrantsSection({ client }: { client: OAuthClient }) {
 											// admin) — disable rather than offer a 403.
 											<Tooltip content={CANNOT_REVOKE_REASON}>
 												<Button
-													variant="outline"
-													size="sm"
+													variant="tonal"
+													size="xs"
 													disabled
 													aria-label={`Revoke grant ${grant.id} (not permitted)`}
 												>
@@ -390,9 +392,9 @@ export function ClientDetailSheet({
 			ariaLabel={`Details for ${client.name}`}
 			className="flex flex-col sm:w-[560px]"
 		>
-			<header className="border-border flex items-start justify-between gap-3 border-b p-5">
+			<SheetHeader className="justify-between gap-3">
 				<div className="min-w-0">
-					<h2 className="text-foreground flex flex-wrap items-center gap-2 text-lg font-semibold">
+					<h2 className="font-heading text-foreground-name flex flex-wrap items-center gap-2 text-lg font-semibold">
 						<span className="min-w-0 truncate">{client.name}</span>
 						<ClientStatusBadges client={client} showApproved />
 						<ClientTypeChips client={client} />
@@ -412,7 +414,7 @@ export function ClientDetailSheet({
 					</p>
 				</div>
 				<div className="flex shrink-0 items-center gap-1">
-					<Button variant="outline" size="sm" onClick={(): void => onEdit(client)}>
+					<Button variant="tonal" size="sm" onClick={(): void => onEdit(client)}>
 						Edit
 					</Button>
 					<Button
@@ -424,9 +426,9 @@ export function ClientDetailSheet({
 						<X className="h-4 w-4" />
 					</Button>
 				</div>
-			</header>
+			</SheetHeader>
 
-			<div className="flex-1 space-y-4 overflow-y-auto p-5">
+			<SheetBody className="space-y-4">
 				<DetailSection
 					title="Configuration"
 					icon={<Info className="h-4 w-4" />}
@@ -478,7 +480,7 @@ export function ClientDetailSheet({
 							) : (
 								<span className="flex flex-wrap gap-1">
 									{client.allowed_scopes.map((scope) => (
-										<Badge key={scope} variant="default">
+										<Badge key={scope} variant="default" mono>
 											{scope}
 										</Badge>
 									))}
@@ -524,7 +526,7 @@ export function ClientDetailSheet({
 						}}
 					/>
 				)}
-			</div>
+			</SheetBody>
 		</SheetPrimitive>
 	);
 }

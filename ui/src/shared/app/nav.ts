@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Compass, Bot, LayoutGrid, Activity } from 'lucide-react';
+import { Library, Bot, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -40,8 +40,9 @@ export interface NavItem {
  * home surface, which is why Agents sorts first. Monitor sorts last.
  */
 export const navItems: NavItem[] = [
-	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
-	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
+	// One entry for the whole Library (public catalog + your workspace + API
+	// hubs). Prefix matching keeps it active on `/library/workspace/...`.
+	{ id: 'library', label: 'Library', to: '/library', order: 20, icon: Library },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 5, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live

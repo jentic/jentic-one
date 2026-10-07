@@ -2,29 +2,42 @@
  * ApiDetailSheet — slide-over detail for a Discover API entity.
  *
  * Two views inside one sheet:
- *   - summary: API identity (vendor icon, name, status pill, github link), the
- *     markdown `info.description`, and the filterable operations list.
+ *   - summary: API identity (vendor icon, name, workspace pill, api id), the
+ *     markdown `info.description`, how the API authenticates, and the
+ *     filterable operations list; the footer holds the GitHub link and CTA.
  *   - operation: a drill-down for one clicked operation (method/path, summary,
  *     description, parameters + auth tables), reached via the list rows and
  *     dismissed with a Back button.
  *
  * For directory (un-imported) entities the summary view offers a primary
- * "Import to workspace" action. This is a read/peek surface, not a form —
+ * "Add to workspace" action. This is a read/peek surface, not a form —
  * there's no draft to preserve. The operations query is
  * keyed by the open entity's catalog id and disabled when the sheet is closed
  * (apiId = null), so closing and reopening a different API refetches cleanly.
  * The selected operation resets whenever the open entity changes.
  */
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ExternalLink, Plus } from 'lucide-react';
-import { AppLink, Button, CopyButton, SheetPrimitive, VendorIcon } from '@/shared/ui';
-import { ApiSummary } from '@/modules/discover/components/ApiSummary';
-import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
+import { ArrowRight, ChevronLeft, Plus, X } from 'lucide-react';
+import {
+	AppLink,
+	Button,
+	CopyButton,
+	GitHubMark,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
+	SheetPrimitive,
+	VendorIcon,
+} from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
+import { ApiAuthRow, ApiSummary } from '@/modules/discover/components/ApiSummary';
+import { versionLabel } from '@/modules/discover/lib/catalogSpec';
 import { OperationPreviewList, opKey } from '@/modules/discover/components/OperationPreviewList';
 import { OperationDetail } from '@/modules/discover/components/OperationDetail';
-import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
-import { useOperationPreview } from '@/modules/discover/api';
-import type { DiscoveryEntity } from '@/modules/discover/api';
+import { useDebouncedValue } from '@/shared/hooks';
+import { useOperationPreview, type DiscoveryEntity } from '@/modules/discover/api';
+import type { VendorIconFacets } from '@/modules/discover/lib/catalogRelations';
 
 interface ApiDetailSheetProps {
 	entity: DiscoveryEntity | null;
@@ -32,6 +45,20 @@ interface ApiDetailSheetProps {
 	onClose: () => void;
 	onImport: (entity: DiscoveryEntity) => void;
 	importPending: boolean;
+	/**
+	 * Display title + avatar for the open entity — the SAME derivation the
+	 * ledger row uses ({@link entityDisplay}), so a matched workspace API reads
+	 * as its humanised name ("GitHub") and shares the row's avatar colour rather
+	 * than showing the raw catalog domain. Omitted ⇒ the entity's own `summary`.
+	 */
+	title?: string;
+	icon?: VendorIconFacets;
+	/**
+	 * Where "Open in your workspace" goes for an imported entry: the matched
+	 * API's hub when the registry maps its `catalog_api_id` to exactly one API,
+	 * else the workspace view. Omitted ⇒ no link.
+	 */
+	workspaceHref?: string | null;
 }
 
 export function ApiDetailSheet({
@@ -40,6 +67,9 @@ export function ApiDetailSheet({
 	onClose,
 	onImport,
 	importPending,
+	title,
+	icon,
+	workspaceHref,
 }: ApiDetailSheetProps) {
 	const titleId = useId();
 	const [selectedOp, setSelectedOp] = useState<string | null>(null);
@@ -53,10 +83,14 @@ export function ApiDetailSheet({
 	const [search, setSearch] = useState('');
 	const [activeTag, setActiveTag] = useState<string | null>(null);
 	const debouncedSearch = useDebouncedValue(search, 250);
+	// Clearing the field (or the reset on a new entity) applies at once — the
+	// lagging debounced value would otherwise query the next API with the old
+	// filter for a tick.
+	const q = search ? debouncedSearch : '';
 
 	// Preview the catalog entry's operations; disabled while the sheet is closed.
 	const previewId = open ? (entity?.apiId ?? null) : null;
-	const preview = useOperationPreview(previewId, { q: debouncedSearch, tag: activeTag });
+	const preview = useOperationPreview(previewId, { q, tag: activeTag });
 
 	const operations = preview.operations;
 
@@ -73,7 +107,7 @@ export function ApiDetailSheet({
 	// op may no longer be present, so drop the drill-down back to the list.
 	useEffect(() => {
 		setSelectedOp(null);
-	}, [debouncedSearch, activeTag]);
+	}, [q, activeTag]);
 
 	const selectedOperation = useMemo(() => {
 		if (!selectedOp) return null;
@@ -109,56 +143,110 @@ export function ApiDetailSheet({
 		}
 	}, [selectedOperation]);
 
+	// "domain · v1.0.0" under the title: the umbrella domain for a sub-API, else
+	// the api id's host segment.
+	const domain = entity ? (entity.subtitle ?? entity.apiId.split('/')[0]) : '';
+	// Title + avatar come resolved from the ledger (a matched workspace API wins);
+	// fall back to the entity's own summary when the host renders the sheet alone.
+	const displayTitle = title ?? entity?.summary ?? '';
+	const iconProps = icon ?? { name: entity?.summary ?? '', vendor: entity?.vendor };
+	// A bare-domain entry (`adyen.com`) titles, domains and ids as the same
+	// string — so drop the domain from the subtitle when it only repeats the
+	// title (the version, if any, still reads), as the ledger row's Vendor column does.
+	const subtitleDomain = domain && domain !== displayTitle ? domain : '';
+	const inWorkspace = !!entity?.registered;
+	// Mid-import the CTA's "Adding…" is the honest state, so the pill waits.
+	const updateAvailable = inWorkspace && !!entity?.updateAvailable && !importPending;
+
 	return (
 		<SheetPrimitive
 			open={open}
 			onClose={onClose}
 			side="right"
+			size="md"
 			ariaLabelledBy={titleId}
 			className="flex flex-col"
 		>
 			{entity && (
 				<>
-					<header className="border-border flex items-start gap-4 border-b p-5">
-						<VendorIcon name={entity.summary} vendor={entity.vendor} size="lg" />
+					<SheetHeader>
+						<VendorIcon {...iconProps} size="lg" />
 						<div className="min-w-0 flex-1">
 							<h2
 								id={titleId}
-								className="text-foreground truncate text-lg leading-tight font-semibold"
+								className="font-heading truncate text-lg leading-[1.25] font-semibold text-white/92"
 							>
-								{entity.summary}
+								{displayTitle}
 							</h2>
-							{entity.subtitle && (
-								<p className="text-muted-foreground mt-0.5 truncate text-sm">
-									{entity.subtitle}
+							{(subtitleDomain || entity.version) && (
+								<p
+									className="text-muted-foreground mt-0.5 truncate text-[13.5px]"
+									data-testid="sheet-subtitle"
+								>
+									{subtitleDomain}
+									{entity.version && (
+										<>
+											{subtitleDomain && ' · '}
+											<span className="font-mono text-[12.5px]">
+												{versionLabel(entity.version)}
+											</span>
+										</>
+									)}
 								</p>
 							)}
-							<div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-								<CardStatusPill
-									registered={entity.registered}
-									pending={importPending}
-								/>
-								<span className="text-muted-foreground inline-flex items-center gap-1 font-mono text-xs">
-									{entity.apiId}
-									<CopyButton value={entity.apiId} />
+							<div className="mt-2 flex flex-wrap items-center gap-2">
+								{updateAvailable ? (
+									<SoftPill tone="warning" data-testid="sheet-update-available">
+										Update available
+									</SoftPill>
+								) : (
+									inWorkspace && (
+										<SoftPill
+											tone="success"
+											data-testid="sheet-status-imported"
+										>
+											In your workspace
+										</SoftPill>
+									)
+								)}
+								<span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-[11.5px]">
+									<span className="truncate">{entity.apiId}</span>
+									<CopyButton
+										value={entity.apiId}
+										variant="ghost"
+										size="icon"
+										className="hover:bg-tint-2 h-[22px] w-[22px] rounded-[7px] p-0 hover:text-white [&_svg]:h-3 [&_svg]:w-3"
+									/>
 								</span>
 							</div>
 						</div>
-					</header>
+						{/* Last in the header so Tab reaches the content first; 40px
+						    touch target on mobile, the compact 32px from `sm`. */}
+						<Button
+							variant="ghost"
+							size="icon"
+							onClick={onClose}
+							aria-label="Close"
+							className="text-muted-foreground hover:bg-tint-2 -mt-1 -mr-1.5 ml-auto h-10 w-10 shrink-0 rounded-[7px] p-0 hover:text-white sm:h-8 sm:w-8"
+							data-testid="api-detail-sheet-close"
+						>
+							<X className="h-4 w-4" aria-hidden="true" />
+						</Button>
+					</SheetHeader>
 
-					<div className="min-h-0 flex-1 overflow-y-auto p-5">
+					<SheetBody>
 						{selectedOperation ? (
 							<>
-								<button
+								<Button
 									ref={backButtonRef}
-									type="button"
+									variant="ghost"
 									onClick={handleBack}
-									className="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-0.5 text-xs font-medium transition-colors"
+									className="text-muted-foreground mb-4 h-auto gap-0.5 p-0 text-xs font-medium hover:bg-transparent hover:text-white active:scale-100"
 									data-testid="operation-back"
 								>
 									<ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
 									All operations
-								</button>
+								</Button>
 								<OperationDetail
 									operation={selectedOperation}
 									securitySchemes={preview.securitySchemes}
@@ -167,8 +255,14 @@ export function ApiDetailSheet({
 						) : (
 							<>
 								<ApiSummary description={preview.info?.description} />
-								<h3 className="text-foreground mb-2 text-sm font-semibold">
+								<ApiAuthRow schemes={preview.securitySchemes} />
+								<h3 className="mb-2.5 flex items-baseline gap-2 text-sm font-semibold text-white">
 									Operations
+									{preview.total > 0 && (
+										<span className="text-foreground-faint text-[12.5px] font-normal">
+											{preview.total}
+										</span>
+									)}
 								</h3>
 								<OperationPreviewList
 									operations={operations}
@@ -186,17 +280,31 @@ export function ApiDetailSheet({
 								/>
 							</>
 						)}
-					</div>
+					</SheetBody>
 
-					<footer className="border-border flex items-center justify-end gap-2 border-t p-4">
+					<SheetFooter>
 						{entity.githubUrl && (
 							<AppLink
 								href={entity.githubUrl}
-								className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
-								aria-label={`View ${entity.summary} on GitHub`}
+								className="text-muted-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors hover:text-white"
+								aria-label={`View ${displayTitle} on GitHub`}
 							>
-								<ExternalLink size={14} aria-hidden="true" />
+								<GitHubMark size={14} />
 								GitHub
+							</AppLink>
+						)}
+						{entity.registered && workspaceHref && (
+							<AppLink
+								href={workspaceHref}
+								// Several versions ⇒ the link filters the workspace panel
+								// on this same page; close so the panel shows.
+								onClick={onClose}
+								variant="primary"
+								className={CTA_CLASSES}
+								data-testid="sheet-open-workspace"
+							>
+								Open in your workspace
+								<ArrowRight size={14} aria-hidden="true" />
 							</AppLink>
 						)}
 						{!entity.registered && (
@@ -204,15 +312,58 @@ export function ApiDetailSheet({
 								variant="primary"
 								loading={importPending}
 								onClick={() => onImport(entity)}
+								className={cn(
+									CTA_CLASSES,
+									// In flight: a quiet, non-accent button — the spinner says it all.
+									importPending &&
+										'bg-surface-quiet-cta text-foreground-lighter hover:bg-surface-quiet-cta disabled:opacity-100',
+								)}
 								data-testid="sheet-import"
 							>
 								{!importPending && <Plus size={16} aria-hidden="true" />}
-								{importPending ? 'Importing…' : 'Import to workspace'}
+								{importPending ? 'Adding…' : 'Add to workspace'}
 							</Button>
 						)}
-					</footer>
+					</SheetFooter>
 				</>
 			)}
 		</SheetPrimitive>
+	);
+}
+
+/** The sheet's one filled action: 36px, field radius, bold. */
+const CTA_CLASSES =
+	'rounded-field hover:bg-foreground-lighter h-9 gap-[7px] px-4 py-0 text-[13.5px] font-bold shadow-none';
+
+/** Borderless status pill with a leading dot (workspace relation). */
+function SoftPill({
+	tone,
+	children,
+	...rest
+}: {
+	tone: 'success' | 'warning';
+	children: ReactNode;
+	'data-testid'?: string;
+}) {
+	return (
+		<span
+			className={cn(
+				'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-bold whitespace-nowrap',
+				// An update is a fact to note: a neutral tonal chip, only its dot warm.
+				tone === 'success'
+					? 'bg-success/10 text-success'
+					: 'bg-surface-tonal text-foreground-lighter',
+			)}
+			{...rest}
+		>
+			<span
+				className={cn(
+					'h-1.5 w-1.5 shrink-0 rounded-full',
+					tone === 'success' ? 'bg-success' : 'bg-caution',
+				)}
+				aria-hidden="true"
+			/>
+			{children}
+		</span>
 	);
 }

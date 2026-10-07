@@ -51,13 +51,10 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 	// Arrival: the card turns into the approval, and the page stays the landing.
 	const card = page.getByTestId('first-agent-card');
 	await expect(card.getByRole('heading', { name: 'research-bot' })).toBeVisible();
-	await expect(page.getByTestId('agent-facts')).toContainText('Self-registered');
+	await expect(page.getByTestId('agent-provenance')).toContainText('Self-registered');
 	await expect(page.getByTestId('register-status')).toContainText('awaiting your approval');
 	await expect(page.getByTestId('manual-card')).toHaveCount(0);
-	await expect(page.getByTestId('register-stepper').getByRole('listitem').nth(2)).toHaveAttribute(
-		'aria-current',
-		'step',
-	);
+	await expect(page.getByTestId('register-progress')).toHaveText('Step 3 of 4 · Approve it');
 	await expect(page.getByRole('region', { name: 'Awaiting approval' })).toHaveCount(0);
 	await expect(page.getByTestId('agent-dock')).toHaveCount(0);
 
@@ -65,10 +62,7 @@ test('a fresh workspace finishes its first agent inside the landing', async ({ p
 	await card.getByRole('button', { name: 'Approve research-bot' }).click();
 	const panel = page.getByTestId('first-api-panel');
 	await expect(panel.getByRole('heading', { name: 'Add GitHub to research-bot' })).toBeVisible();
-	const steps = page.getByTestId('register-stepper').getByRole('listitem');
-	for (const i of [0, 1, 2]) await expect(steps.nth(i)).toHaveAttribute('data-state', 'done');
-	await expect(steps.nth(3)).toHaveAttribute('aria-current', 'step');
-	await expect(steps.nth(3)).toContainText('Give it an API');
+	await expect(page.getByTestId('register-progress')).toHaveText('Step 4 of 4 · Give it an API');
 	await expect(page.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'active');
 
 	// Continue with GitHub: straight to its credential step, over the fleet.

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
+import {
+	parseSpecOperations,
+	opDetailKey,
+	specAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 
 describe('parseSpecOperations', () => {
 	it('returns empty structures for a non-object / partial spec', () => {
@@ -79,5 +83,96 @@ describe('parseSpecOperations', () => {
 		});
 		expect(parsed.operations.size).toBe(1);
 		expect(parsed.operations.has(opDetailKey('get', '/x'))).toBe(true);
+	});
+});
+
+describe('specAuthRequirement', () => {
+	const bearer = { components: { securitySchemes: { bearerAuth: { type: 'http' } } } };
+
+	it('is null for something that is not an OpenAPI document', () => {
+		expect(specAuthRequirement(null)).toBeNull();
+		expect(specAuthRequirement({ paths: {} })).toBeNull();
+	});
+
+	it('is required when the document default requires a scheme', () => {
+		expect(
+			specAuthRequirement({
+				openapi: '3.1.0',
+				...bearer,
+				security: [{ bearerAuth: [] }],
+				paths: { '/x': { get: {} } },
+			}),
+		).toBe('required');
+	});
+
+	it('is required when any one operation requires a scheme', () => {
+		expect(
+			specAuthRequirement({
+				openapi: '3.1.0',
+				...bearer,
+				paths: {
+					'/public': { get: {} },
+					'/private': { post: { security: [{ bearerAuth: [] }] } },
+				},
+			}),
+		).toBe('required');
+	});
+
+	it('is optional when schemes are declared but nothing requires them', () => {
+		// Declared only — no `security` anywhere.
+		expect(
+			specAuthRequirement({ openapi: '3.1.0', ...bearer, paths: { '/x': { get: {} } } }),
+		).toBe('optional');
+		// Document default opted out.
+		expect(
+			specAuthRequirement({
+				openapi: '3.1.0',
+				...bearer,
+				security: [],
+				paths: { '/x': { get: {} } },
+			}),
+		).toBe('optional');
+		// An empty `{}` alternative makes the scheme optional.
+		expect(
+			specAuthRequirement({
+				openapi: '3.1.0',
+				...bearer,
+				security: [{}, { bearerAuth: [] }],
+				paths: { '/x': { get: {} } },
+			}),
+		).toBe('optional');
+		// An operation-level `security: []` overrides a requiring default.
+		expect(
+			specAuthRequirement({
+				openapi: '3.1.0',
+				...bearer,
+				security: [{ bearerAuth: [] }],
+				paths: { '/x': { get: { security: [] } } },
+			}),
+		).toBe('optional');
+	});
+
+	it('is none when nothing is declared or required', () => {
+		expect(specAuthRequirement({ openapi: '3.1.0', paths: { '/x': { get: {} } } })).toBe(
+			'none',
+		);
+	});
+
+	it('reads Swagger 2 securityDefinitions', () => {
+		expect(
+			specAuthRequirement({
+				swagger: '2.0',
+				securityDefinitions: { key: { type: 'apiKey' } },
+				security: [{ key: [] }],
+				paths: { '/x': { get: {} } },
+			}),
+		).toBe('required');
+		expect(
+			specAuthRequirement({
+				swagger: '2.0',
+				securityDefinitions: { key: { type: 'apiKey' } },
+				paths: { '/x': { get: {} } },
+			}),
+		).toBe('optional');
 	});
 });

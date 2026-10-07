@@ -172,6 +172,23 @@ export interface Overlay {
 	deprecateHref: string | null;
 }
 
-// Spec-import and job-poll shapes live in `@/shared/credentials/api` — the import
-// dialog is shared. Re-exported so this module's call sites keep one import path.
-export type { ImportJob, JobStatus, ImportSource } from '@/shared/credentials/api';
+/**
+ * A note attached to an API (`GET /notes?api=vendor:name:version`) — an
+ * agent- or operator-authored hint (auth quirk, usage hint, correction…).
+ * Mirrors the backend `NoteResponse`; `type`/`confidence`/`source` are the
+ * wire enums serialized as strings (null when unset).
+ */
+export interface ApiNote {
+	id: string;
+	type: string | null;
+	body: string;
+	confidence: string | null;
+	source: string | null;
+	createdBy: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+// The spec-import job shape lives in `@/shared/credentials/api` — the import
+// dialog is shared. Re-exported for the re-import client call.
+export type { ImportJob } from '@/shared/credentials/api';

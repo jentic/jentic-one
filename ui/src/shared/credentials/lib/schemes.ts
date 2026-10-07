@@ -56,6 +56,21 @@ export function schemeTypeFromRaw(s: { type?: string; scheme?: string }): Scheme
 }
 
 /**
+ * Friendly label for a scheme-type string as it arrives on `GET /apis`'
+ * `security_schemes` (`bearer` / `apiKey` / `basic` / `oauth2`). An unknown
+ * value keeps its raw text so a backend addition still reads as something,
+ * rather than a blank or a misleading "Credential".
+ */
+export function schemeTypeLabel(scheme: string): string {
+	// Own keys only: `in` also matches inherited names (`constructor`,
+	// `toString`). `Object.hasOwn` is ES2022, past this project's ES2021 lib.
+	const key = scheme as SchemeType;
+	return Object.prototype.hasOwnProperty.call(SCHEME_TYPE_LABELS, key) && key !== 'unknown'
+		? SCHEME_TYPE_LABELS[key]
+		: scheme;
+}
+
+/**
  * Returns one option per distinct scheme TYPE (deduped), ordered by canonical
  * priority. We dedupe by type — not by name — because a spec that defines
  * `bearerAuth` AND `JWTAuth` both as bearer schemes shouldn't present the user
@@ -284,4 +299,42 @@ export function oauth2ScopesFromSchemes(schemes: RawSchemes): ScopeDef[] {
 		}
 	}
 	return Array.from(seen, ([name, description]) => ({ name, description }));
+}
+
+/**
+ * Whether an OpenAPI document requires security anywhere — a global
+ * `security` list or one on any operation — with at least one non-empty
+ * requirement (`{}` means "anonymous allowed", so it requires nothing).
+ */
+export function specRequiresSecurity(spec: Record<string, unknown>): boolean {
+	const requires = (security: unknown): boolean =>
+		Array.isArray(security) &&
+		security.some(
+			(req) => req != null && typeof req === 'object' && Object.keys(req).length > 0,
+		);
+	if (requires(spec.security)) return true;
+	const paths = spec.paths;
+	if (paths == null || typeof paths !== 'object') return false;
+	return Object.values(paths as Record<string, unknown>).some(
+		(item) =>
+			item != null &&
+			typeof item === 'object' &&
+			Object.values(item as Record<string, unknown>).some(
+				(op) =>
+					op != null &&
+					typeof op === 'object' &&
+					requires((op as { security?: unknown }).security),
+			),
+	);
+}
+
+/**
+ * Whether a read spec declares no authentication at all: no security scheme
+ * and no requirement. Only "the spec says none" — an API can still need a key
+ * its spec leaves out, so callers offer a way to set one up anyway.
+ */
+export function specDeclaresNoAuth(spec: Record<string, unknown>): boolean {
+	const schemes = (spec.components as { securitySchemes?: RawSchemes } | undefined)
+		?.securitySchemes;
+	return parseSchemeOptions(schemes ?? null).length === 0 && !specRequiresSecurity(spec);
 }

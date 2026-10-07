@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders, screen, waitFor } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
-import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
+import { SpecViewerDialog, SpecViewerPanel } from '@/modules/workspace/components/SpecViewerDialog';
 import type { ApiKey } from '@/modules/workspace/api';
 
 const KEY: ApiKey = { vendor: 'stripe.com', name: 'stripe-api', version: '1' };
@@ -69,19 +69,11 @@ describe('SpecViewerDialog', () => {
 		expect(full).toHaveTextContent('https://eu.example');
 	});
 
-	it('honors defaultMode="full" (header "View spec" keeps its label promise)', async () => {
+	it('the inline panel (hub Spec tab) opens on the full spec, Diff still offered', async () => {
 		mockSpecs();
-		renderWithProviders(
-			<SpecViewerDialog
-				apiKey={KEY}
-				open
-				onClose={() => {}}
-				diffAgainst={DIFF_BASE}
-				defaultMode="full"
-			/>,
-		);
+		renderWithProviders(<SpecViewerPanel apiKey={KEY} diffAgainst={DIFF_BASE} />);
 
-		expect(await screen.findByTestId('spec-viewer-content')).toBeVisible();
+		expect(await screen.findByTestId('spec-panel-content')).toBeVisible();
 		// The Diff tab is still available for opting in.
 		expect(screen.getByRole('tab', { name: /Diff vs/ })).toBeInTheDocument();
 	});

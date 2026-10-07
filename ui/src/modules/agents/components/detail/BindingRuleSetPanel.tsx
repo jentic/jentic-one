@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Layers, Unlink } from 'lucide-react';
-import { Badge, Button, ErrorAlert, Skeleton } from '@/shared/ui';
+import { Badge, Button, ErrorAlert, Skeleton, ConfirmDialog } from '@/shared/ui';
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import {
 	useDetachAgentBindingRuleSet,
@@ -8,7 +8,6 @@ import {
 	type BindingRuleSetEntity,
 } from '@/modules/agents/api';
 import { toDisplayRules } from '@/modules/agents/components/detail/shared';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 /**
  * The permission rules of a direct binding that points at a shared rule set.

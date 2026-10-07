@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { page } from 'vitest/browser';
 import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { useShellNavigation } from '@/shared/app/shellNavigation';
+import { SHELL_SCROLL_ID } from '@/shared/lib/shellScroll';
 
 /** A shell-like scroller whose pages are tall enough to scroll. */
 function Shell() {
@@ -16,11 +17,13 @@ function Shell() {
 			<nav>
 				<button onClick={() => void navigate('/b')}>Go to B</button>
 				<button onClick={() => void navigate('/a?filter=x')}>Filter A</button>
+				<button onClick={() => void navigate('/c#section')}>Go to C section</button>
+				<button onClick={() => void navigate('/b#missing')}>Go to B missing anchor</button>
 				<button onClick={() => void navigate(-1)}>Back</button>
 			</nav>
 			<main
 				ref={mainRef}
-				data-testid="main"
+				id={SHELL_SCROLL_ID}
 				tabIndex={-1}
 				style={{ height: 300, overflowY: 'auto' }}
 			>
@@ -28,14 +31,23 @@ function Shell() {
 					{pathname}
 					{search}
 				</h1>
-				<div style={{ height: 3000 }} />
+				<div style={{ height: 3000 }}>
+					{pathname === '/c' && (
+						<h2 id="section" style={{ marginTop: 2000 }}>
+							Section
+						</h2>
+					)}
+				</div>
 			</main>
 		</>
 	);
 }
 
+/** The shell's scroller, `#app-scroll` — what the shell scrolls, not the window. */
 function main(): HTMLElement {
-	return screen.getByTestId('main');
+	const el = document.getElementById(SHELL_SCROLL_ID);
+	if (!el) throw new Error(`#${SHELL_SCROLL_ID} not rendered`);
+	return el;
 }
 
 async function scrollMainTo(top: number): Promise<void> {
@@ -94,5 +106,35 @@ describe('useShellNavigation', () => {
 		await user.click(screen.getByRole('button', { name: 'Go to B' }));
 		await screen.findByRole('heading', { name: '/b' });
 		expect(main()).toHaveFocus();
+	});
+
+	it('opens a new page at its #hash anchor instead of the top', async () => {
+		await page.viewport(1024, 800);
+		renderWithProviders(<Shell />, { route: '/a' });
+		const user = userEvent.setup();
+		await scrollMainTo(300);
+
+		await user.click(screen.getByRole('button', { name: 'Go to C section' }));
+		await screen.findByRole('heading', { name: '/c' });
+		const section = screen.getByRole('heading', { name: 'Section' });
+		await waitFor(() =>
+			expect(
+				Math.round(
+					section.getBoundingClientRect().top - main().getBoundingClientRect().top,
+				),
+			).toBe(0),
+		);
+		expect(main().scrollTop).toBeGreaterThan(1000);
+	});
+
+	it('falls back to the top when the #hash target is not rendered', async () => {
+		await page.viewport(1024, 800);
+		renderWithProviders(<Shell />, { route: '/a' });
+		const user = userEvent.setup();
+		await scrollMainTo(900);
+
+		await user.click(screen.getByRole('button', { name: 'Go to B missing anchor' }));
+		await screen.findByRole('heading', { name: '/b' });
+		expect(main().scrollTop).toBe(0);
 	});
 });
