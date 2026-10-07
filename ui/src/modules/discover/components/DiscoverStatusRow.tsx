@@ -1,5 +1,7 @@
 /**
- * DiscoverStatusRow — whole-manifest counts + freshness for the Discover header.
+ * DiscoverStatusRow — whole-manifest counts + freshness for the Library header,
+ * as one `CountLine`: "6,345 APIs in the catalog from 1,200+ vendors so far · 3
+ * in your workspace · 1 update available · updated 2m ago".
  *
  * Reads `catalog_total` / `registered_count` / `outdated_count` /
  * `manifest_age_seconds` off the catalog response. These describe the WHOLE
@@ -7,10 +9,12 @@
  * paging, so the row doesn't flicker as the user scrolls.
  * `manifest_age_seconds === null` means the catalog has never been fetched / has
  * no snapshot yet. The "N update(s) available" segment renders only when
- * `outdated_count > 0`.
+ * `outdated_count > 0`. The catalog response carries no vendor total, so the
+ * vendor figure counts the vendors LOADED so far — a floor (`N+ … so far`)
+ * until the whole catalog has paged in, and omitted when nothing is loaded.
  */
-import { Database } from 'lucide-react';
-import { Skeleton } from '@/shared/ui';
+import { ArrowUpCircle } from 'lucide-react';
+import { CountLine, Skeleton } from '@/shared/ui';
 
 interface DiscoverStatusRowProps {
 	catalogTotal: number;
@@ -18,6 +22,10 @@ interface DiscoverStatusRowProps {
 	outdatedCount: number;
 	manifestAgeSeconds: number | null;
 	loading: boolean;
+	/** Distinct vendors among the loaded catalog rows (0 = omit the figure). */
+	vendorsLoaded?: number;
+	/** Every catalog page is loaded, so `vendorsLoaded` is the whole count. */
+	vendorsComplete?: boolean;
 }
 
 function formatAge(seconds: number | null): string {
@@ -37,41 +45,49 @@ export function DiscoverStatusRow({
 	outdatedCount,
 	manifestAgeSeconds,
 	loading,
+	vendorsLoaded = 0,
+	vendorsComplete = false,
 }: DiscoverStatusRowProps) {
 	if (loading) {
-		return <Skeleton className="h-4 w-64" data-testid="discover-status-loading" />;
+		return <Skeleton className="h-8 w-96 max-w-full" data-testid="discover-status-loading" />;
 	}
+	const vendorText = vendorsComplete
+		? `${vendorsLoaded.toLocaleString()} vendor${vendorsLoaded === 1 ? '' : 's'}`
+		: `${vendorsLoaded.toLocaleString()}+ vendors`;
 
 	return (
-		<p
-			className="text-muted-foreground flex flex-wrap items-center gap-1.5 text-sm"
+		<CountLine
 			data-testid="discover-status"
-		>
-			<Database size={14} aria-hidden="true" />
-			<span>
-				<strong className="text-foreground font-medium">
-					{catalogTotal.toLocaleString()}
-				</strong>{' '}
-				APIs in the catalog
-			</span>
-			<span aria-hidden="true">·</span>
-			<span>
-				<strong className="text-foreground font-medium">
-					{registeredCount.toLocaleString()}
-				</strong>{' '}
-				imported
-			</span>
-			{outdatedCount > 0 && (
+			value={catalogTotal.toLocaleString()}
+			label={
 				<>
-					<span aria-hidden="true">·</span>
-					<span data-testid="discover-status-outdated" className="text-warning">
-						<strong className="font-medium">{outdatedCount.toLocaleString()}</strong>{' '}
-						update{outdatedCount === 1 ? '' : 's'} available
-					</span>
+					APIs in the catalog
+					{vendorsLoaded > 0 && (
+						<>
+							{' '}
+							from <b data-testid="discover-status-vendors">{vendorText}</b>
+							{!vendorsComplete && ' so far'}
+						</>
+					)}
 				</>
-			)}
-			<span aria-hidden="true">·</span>
-			<span>{formatAge(manifestAgeSeconds)}</span>
-		</p>
+			}
+			details={[
+				<span key="ws" className="text-success" data-testid="discover-status-workspace">
+					{registeredCount.toLocaleString()} in your workspace
+				</span>,
+				outdatedCount > 0 && (
+					<span
+						key="up"
+						className="inline-flex items-center gap-1"
+						data-testid="discover-status-outdated"
+					>
+						<ArrowUpCircle className="text-caution h-3.5 w-3.5" aria-hidden="true" />
+						{outdatedCount.toLocaleString()} update{outdatedCount === 1 ? '' : 's'}{' '}
+						available
+					</span>
+				),
+				<span key="age">{formatAge(manifestAgeSeconds)}</span>,
+			]}
+		/>
 	);
 }

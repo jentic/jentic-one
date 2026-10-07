@@ -28,10 +28,10 @@ export type LogDetail =
 	| { kind: 'audit'; id: string };
 
 /** From this width the detail docks beside the list; below it it's a sheet. */
-export const DOCKED_DETAIL_QUERY = '(min-width: 1280px)';
+const DOCKED_DETAIL_QUERY = '(min-width: 1280px)';
 
 /** Every param that can hold an open record. */
-export const DETAIL_PARAMS = ['trace_id', 'execution_id', 'job_id', 'audit_id'] as const;
+const DETAIL_PARAMS = ['trace_id', 'execution_id', 'job_id', 'audit_id'] as const;
 
 const PARAM_FOR: Record<LogDetail['kind'], (typeof DETAIL_PARAMS)[number]> = {
 	trace: 'trace_id',

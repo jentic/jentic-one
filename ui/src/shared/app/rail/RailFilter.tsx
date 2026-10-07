@@ -135,7 +135,7 @@ export function RailFilter({
 				aria-controls={open ? panelId : undefined}
 				title={summary.what ? `${summary.who} · ${summary.what}` : summary.who}
 				className={cn(
-					'border-border bg-background/60 hover:bg-background flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg border px-2 text-xs transition-colors',
+					'border-hairline-field bg-surface-field hover:bg-surface-tonal flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg border px-2 text-xs transition-colors',
 					open && 'border-primary/50',
 				)}
 			>
@@ -175,7 +175,7 @@ export function RailFilter({
 						exit={reduce ? undefined : { opacity: 0, y: -4, scale: 0.98 }}
 						transition={{ duration: 0.16, ease: [0.32, 0.72, 0, 1] }}
 						style={{ transformOrigin: 'top left' }}
-						className="border-border bg-background absolute top-full left-0 z-50 mt-1.5 w-[calc(100%+6.5rem)] max-w-[264px] rounded-lg border p-1.5 shadow-lg"
+						className="border-hairline-field bg-surface-tonal absolute top-full left-0 z-50 mt-1.5 w-[calc(100%+6.5rem)] max-w-[264px] rounded-lg border p-1.5 shadow-lg"
 					>
 						{suggestion && (
 							<div className="bg-primary/10 mb-1.5 flex items-center gap-2 rounded-md px-2 py-1.5">
@@ -226,7 +226,7 @@ export function RailFilter({
 							)}
 							{sections.map(({ section, items }) => (
 								<div key={section}>
-									<p className="text-muted-foreground/80 px-2 pt-1.5 pb-0.5 text-[10px] font-medium">
+									<p className="text-muted-foreground px-2 pt-1.5 pb-0.5 text-[10px] font-medium">
 										{SECTION_LABEL[section]}
 									</p>
 									{items.map((o) => (
@@ -247,7 +247,7 @@ export function RailFilter({
 							)}
 						</div>
 
-						<div className="border-border mt-1.5 border-t pt-1.5">
+						<div className="border-hairline mt-1.5 border-t pt-1.5">
 							<p className="text-muted-foreground px-1.5 pb-1 text-[10px] font-semibold tracking-wider uppercase">
 								What
 							</p>
@@ -268,7 +268,7 @@ export function RailFilter({
 												'h-6 rounded-full border px-2 text-[11px] font-medium transition-colors',
 												on
 													? 'border-primary/50 bg-primary/15 text-foreground'
-													: 'border-border text-muted-foreground hover:text-foreground',
+													: 'border-hairline-field text-muted-foreground hover:text-foreground',
 											)}
 										>
 											{c.label}
@@ -316,7 +316,7 @@ function ActorButton({
 			aria-pressed={selected}
 			onClick={onClick}
 			className={cn(
-				'hover:bg-muted flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
+				'hover:bg-surface-tonal-hover flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
 				selected ? 'text-foreground font-medium' : 'text-muted-foreground',
 			)}
 		>
@@ -328,7 +328,7 @@ function ActorButton({
 			<span
 				className={cn(
 					'text-[10px] tabular-nums',
-					count === 0 ? 'text-muted-foreground/40' : 'text-muted-foreground/70',
+					count === 0 ? 'text-foreground-faint' : 'text-muted-foreground',
 				)}
 			>
 				{count}

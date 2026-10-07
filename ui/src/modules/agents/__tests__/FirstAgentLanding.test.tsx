@@ -31,7 +31,10 @@ import {
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 import { FIRST_AGENT_POLL_MS } from '@/modules/agents/lib/useFirstAgentLanding';
-import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
+import {
+	DEFAULT_AGENT_PERMISSIONS,
+	groupPermissionsByArea,
+} from '@/modules/agents/lib/requestedPermissions';
 import {
 	catalogPage,
 	liveGithubCatalog,
@@ -68,7 +71,7 @@ describe('Agents page — zero agents', () => {
 		clearAgentsStore();
 	});
 
-	it('shows both routes in and the dashed fleet preview', async () => {
+	it('shows both routes in and the fleet preview', async () => {
 		const { container } = renderPage();
 		await landing();
 
@@ -152,6 +155,16 @@ describe('Agents page — zero agents', () => {
 			`jentic register --url ${INSTANCE_URL} --name my-first-agent`,
 		);
 		expect(copy).toHaveTextContent('Copied!');
+	});
+
+	it('labels the register command as a POSIX shell command, keeping the terminal title', async () => {
+		const { container } = renderPage();
+		await landing();
+		expect(screen.getByText('where your agent runs')).toBeInTheDocument();
+		const hint = screen.getByTestId('register-command-shell');
+		expect(hint).toHaveTextContent('POSIX shell');
+		expect(hint).toHaveAttribute('title', expect.stringContaining('sh, bash, zsh'));
+		await waitFor(() => checkA11y(container), { timeout: 3000 });
 	});
 
 	it('tucks how to get the CLI into a collapsed section at the foot of the card', async () => {
@@ -284,6 +297,18 @@ describe('Agents page — zero agents', () => {
 		within(screen.getByTestId('register-stepper'))
 			.getAllByRole('listitem')
 			.map((li) => li.getAttribute('data-state'));
+	const progress = () => screen.getByTestId('register-progress');
+
+	/** The permission ids the review lists under `label`, opening it if folded. */
+	async function reviewedPermissions(label: string): Promise<(string | null)[]> {
+		const summary = await screen.findByTestId('permissions-summary');
+		const toggle = within(summary).getByRole('button', { name: /permissions$/ });
+		if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
+		const group = screen.getByRole('group', { name: label });
+		return [...group.querySelectorAll('[data-permission]')].map((el) =>
+			el.getAttribute('data-permission'),
+		);
+	}
 
 	it('while listening, the stepper is on its first step', async () => {
 		renderPage();
@@ -294,7 +319,7 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('register-stepper').tagName).toBe('OL');
 	});
 
-	it('an arrival swaps the command for the agent, advances the stepper and sends the manual card off', async () => {
+	it('an arrival swaps the command for the agent, decision first, and sends the manual card off', async () => {
 		const { container, queryClient } = renderPage();
 		await landing();
 		expect(screen.getByTestId('manual-card')).toBeInTheDocument();
@@ -305,38 +330,47 @@ describe('Agents page — zero agents', () => {
 		expect(within(card).getByText('Pending')).toBeInTheDocument();
 		expect(card).toHaveTextContent(/Registered just now/);
 		expect(card).toHaveTextContent(
-			"It has its own key but can't make calls until you approve it.",
+			"It has its own key but can't make any calls until you approve.",
 		);
 		expect(within(card).getByRole('button', { name: 'Approve my-first-agent' })).toBeEnabled();
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
-		// The command view is gone; the steps stay.
+		// The command view and the four-step stepper are gone: one quiet
+		// progress line says where the flow is, and the header says it is
+		// pending, so the status line is announced, not drawn again.
 		await waitFor(() => expect(screen.queryByTestId('register-command')).toBeNull());
-		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
-		expect(
-			within(screen.getByTestId('register-stepper')).getAllByRole('listitem')[2],
-		).toHaveAttribute('aria-current', 'step');
+		expect(screen.queryByTestId('register-stepper')).toBeNull();
+		expect(progress()).toHaveTextContent('Step 3 of 4 · Approve it');
 		expect(status()).toHaveTextContent(
 			'my-first-agent just registered · awaiting your approval',
 		);
+		expect(status().parentElement).toHaveClass('sr-only');
 
-		// A self-registration's facts: how it came in, its keypair, its id — and
-		// none of the rows it has no data for.
+		// A self-registration's facts on one quiet line, then its id — and none
+		// of the pairs it has no data for.
 		const facts = within(screen.getByTestId('agent-facts'));
-		expect(facts.getByText('Self-registered')).toBeInTheDocument();
-		expect(facts.getByText('Its own keypair')).toBeInTheDocument();
+		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
+			'Self-registered · signs in with its own keypair',
+		);
 		expect(facts.getByText(id)).toBeInTheDocument();
 		for (const label of ['Owner', 'Parent agent', 'Key ID', 'Description'])
 			expect(facts.queryByText(label)).toBeNull();
-		// No permissions requested: approval grants the default agent permissions, so
-		// the card lists them rather than reading as "no permissions".
-		const defaults = await screen.findByRole('list', { name: 'Default agent permissions' });
-		expect(
-			within(defaults)
-				.getAllByRole('listitem')
-				.map((li) => li.textContent),
-		).toEqual([...DEFAULT_AGENT_PERMISSIONS]);
+		// No permissions requested: approval grants the default agent permissions. Two of
+		// them act (capabilities:execute runs upstream calls,
+		// credentials:connect stores a credential), so the review opens before
+		// approval and lists them all.
+		const summary = await screen.findByTestId('permissions-summary');
+		expect(summary).toHaveTextContent(
+			`Gets the default agent permissions · ${DEFAULT_AGENT_PERMISSIONS.length}`,
+		);
+		expect(within(summary).getByRole('button', { name: 'Hide permissions' })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		);
 		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
-			'Requests none, so it gets the default agent permissions:',
+			'2 of these can change data, run upstream calls or administer your organisation.',
+		);
+		expect(await reviewedPermissions('Default agent permissions')).toEqual(
+			groupPermissionsByArea(DEFAULT_AGENT_PERMISSIONS).flatMap((g) => g.permissions),
 		);
 		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
 			'Approving grants the default agent permissions.',
@@ -440,21 +474,20 @@ describe('Agents page — zero agents', () => {
 
 		const facts = within(screen.getByTestId('agent-facts'));
 		expect(facts.getByText('Owner')).toBeInTheDocument();
-		expect(facts.getByText('An API key')).toBeInTheDocument();
-		expect(await facts.findByText('Key ID')).toBeInTheDocument();
-		const permissions = within(
-			await screen.findByRole('list', { name: 'Requested permissions' }),
+		expect(screen.getByTestId('agent-provenance')).toHaveTextContent(
+			'signs in with an API key',
 		);
-		expect(permissions.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+		expect(await facts.findByText('Key ID')).toBeInTheDocument();
+		expect(await reviewedPermissions('Requested permissions')).toEqual([
 			'apis:read',
-			'agents:write (can change data)',
+			'agents:write',
 		]);
 		expect(facts.getByText('Triage for the support inbox')).toBeInTheDocument();
-		expect(facts.queryByText('Self-registered')).toBeNull();
+		expect(screen.getByTestId('agent-provenance')).not.toHaveTextContent('Self-registered');
 		expect(facts.queryByText('Parent agent')).toBeNull();
 	});
 
-	it('lists every requested permission in full and flags the ones that write or administer', async () => {
+	it('a request with flagged permissions opens its full review before approval, and never folds them away', async () => {
 		const requested = [
 			'apis:read',
 			'agents:write',
@@ -482,26 +515,43 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		await arrive('risky-bot', queryClient);
 
-		const list = await screen.findByRole('list', { name: 'Requested permissions' });
-		// Nothing hides behind an ellipsis: every permission is its own visible badge,
-		// once the arrival's details have faded in.
-		const items = within(list).getAllByRole('listitem');
-		expect(items).toHaveLength(requested.length);
+		// Flagged permissions in the request: the review is open before approval, so
+		// every permission approval grants is on screen, grouped by area.
+		const group = await screen.findByRole('group', { name: 'Requested permissions' });
+		const items = [...group.querySelectorAll<HTMLElement>('[data-permission]')];
+		expect(items.map((el) => el.dataset.permission).sort()).toEqual([...requested].sort());
 		await waitFor(() => {
 			for (const item of items) expect(item).toBeVisible();
 		});
 		const risk = (permission: string) =>
-			within(list).getByText(permission).closest('[data-risk]')?.getAttribute('data-risk') ??
+			group.querySelector(`[data-permission="${permission}"]`)?.getAttribute('data-risk') ??
 			null;
 		expect(risk('agents:write')).toBe('write');
 		expect(risk('credentials:write')).toBe('write');
 		expect(risk('org:admin')).toBe('admin');
+		expect(risk('capabilities:execute')).toBe('execute');
 		expect(risk('apis:read')).toBeNull();
-		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
-			'3 of these can change data or administer your organisation. Approving grants the recognised permissions listed.',
+		const permissions = screen.getByTestId('requested-permissions');
+		expect(permissions).toHaveTextContent(
+			'4 of these can change data, run upstream calls or administer your organisation.',
+		);
+		expect(permissions).toHaveTextContent(
+			'Approving grants the recognised permissions listed.',
 		);
 		expect(screen.getByRole('button', { name: 'Approve risky-bot' })).toBeEnabled();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+
+		// Hiding the review keeps the flagged ones on the summary.
+		await userEvent.click(screen.getByRole('button', { name: 'Hide permissions' }));
+		const pinned = screen.getByRole('list', {
+			name: 'Permissions that can change data, run calls or administer',
+		});
+		expect(
+			[...pinned.querySelectorAll('[data-permission]')].map((el) =>
+				el.getAttribute('data-permission'),
+			),
+		).toEqual(['agents:write', 'credentials:write', 'org:admin', 'capabilities:execute']);
+		expect(screen.queryByRole('group', { name: 'Requested permissions' })).toBeNull();
 	});
 
 	it('holds Approve while the requested permissions are still being read', async () => {
@@ -556,9 +606,9 @@ describe('Agents page — zero agents', () => {
 
 		healthy = true;
 		await user.click(within(permissions).getByRole('button', { name: /Try again/ }));
-		expect(
-			await within(permissions).findByRole('list', { name: 'Default agent permissions' }),
-		).toBeInTheDocument();
+		expect(await within(permissions).findByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the default agent permissions',
+		);
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Approve flaky-bot' })).toBeEnabled(),
 		);
@@ -576,12 +626,10 @@ describe('Agents page — zero agents', () => {
 		await landing();
 		await arrive('mixed-bot', queryClient);
 
-		const granted = await screen.findByRole('list', { name: 'Requested permissions' });
-		expect(
-			within(granted)
-				.getAllByRole('listitem')
-				.map((li) => li.textContent),
-		).toEqual(['apis:read', 'agents:write (can change data)']);
+		expect(await reviewedPermissions('Requested permissions')).toEqual([
+			'apis:read',
+			'agents:write',
+		]);
 		const unrecognised = screen.getByRole('list', { name: 'Unrecognised permissions' });
 		expect(
 			within(unrecognised)
@@ -592,10 +640,13 @@ describe('Agents page — zero agents', () => {
 			"Not recognised — won't be granted:",
 		);
 		// A non-empty request brings no defaults, and only the recognised count.
-		expect(screen.queryByRole('list', { name: 'Default agent permissions' })).toBeNull();
+		expect(screen.queryByRole('group', { name: 'Default agent permissions' })).toBeNull();
 		expect(screen.queryByTestId('no-permissions-warning')).toBeNull();
+		expect(screen.getByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the 2 permissions it requests',
+		);
 		expect(screen.getByTestId('requested-permissions')).toHaveTextContent(
-			'1 of these can change data or administer your organisation. Approving grants the recognised permissions listed.',
+			'1 of these can change data, run upstream calls or administer your organisation.',
 		);
 	});
 
@@ -669,9 +720,9 @@ describe('Agents page — zero agents', () => {
 
 		healthy = true;
 		await user.click(within(permissions).getByRole('button', { name: /Try again/ }));
-		expect(
-			await within(permissions).findByRole('list', { name: 'Default agent permissions' }),
-		).toBeInTheDocument();
+		expect(await within(permissions).findByTestId('permissions-summary')).toHaveTextContent(
+			'Gets the default agent permissions',
+		);
 		await waitFor(() =>
 			expect(
 				screen.getByRole('button', { name: 'Approve flaky-catalogue-bot' }),
@@ -679,7 +730,7 @@ describe('Agents page — zero agents', () => {
 		);
 	});
 
-	it('approving from the card completes the stepper and suggests GitHub', async () => {
+	it('approving from the card moves it to its last step and suggests GitHub', async () => {
 		const user = userEvent.setup();
 		const { container, queryClient } = renderPage();
 		await landing();
@@ -702,11 +753,8 @@ describe('Agents page — zero agents', () => {
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Approve my-first-agent' })).toBeNull();
 
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
 		// Approved: the step now asked for is its first API.
-		const steps = within(screen.getByTestId('register-stepper')).getAllByRole('listitem');
-		expect(steps[3]).toHaveAttribute('aria-current', 'step');
-		expect(steps[3]).toHaveTextContent('Give it an API');
+		expect(progress()).toHaveTextContent('Step 4 of 4 · Give it an API');
 		expect(
 			within(screen.getByTestId('arrival-card')).getByText('Active', { selector: 'span' }),
 		).toBeInTheDocument();
@@ -714,6 +762,35 @@ describe('Agents page — zero agents', () => {
 		expect(screen.getByTestId('ghost-tab')).toHaveAttribute('data-status', 'active');
 		expect(screen.queryByTestId('agent-dock')).toBeNull();
 		await waitFor(() => checkA11y(container), { timeout: 3000 });
+	});
+
+	it('once approved, the granted permissions are a summary that opens on demand', async () => {
+		const user = userEvent.setup();
+		const { queryClient } = renderPage();
+		await landing();
+		await arrive('my-first-agent', queryClient);
+		await user.click(screen.getByRole('button', { name: 'Approve my-first-agent' }));
+		await screen.findByTestId('first-api-panel');
+
+		const summary = await screen.findByTestId('permissions-summary');
+		expect(summary).toHaveTextContent(
+			`Granted ${DEFAULT_AGENT_PERMISSIONS.length} permissions`,
+		);
+		expect(screen.queryByRole('group', { name: 'Granted permissions' })).toBeNull();
+		const toggle = within(summary).getByRole('button', { name: 'Review permissions' });
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+		await user.click(toggle);
+		const group = screen.getByRole('group', { name: 'Granted permissions' });
+		expect(group.querySelectorAll('[data-permission]')).toHaveLength(
+			DEFAULT_AGENT_PERMISSIONS.length,
+		);
+		// Grouped by area, each with what it allows in words.
+		expect(within(group).getByRole('list', { name: 'Capabilities' })).toBeInTheDocument();
+		expect(group).toHaveTextContent('Execute capabilities via the broker');
+		const hide = within(summary).getByRole('button', { name: 'Hide permissions' });
+		expect(hide).toHaveAttribute('aria-expanded', 'true');
+		expect(hide).toHaveAttribute('aria-controls', group.id);
 	});
 
 	it('an approval made elsewhere reaches the card through the roster', async () => {
@@ -726,7 +803,7 @@ describe('Agents page — zero agents', () => {
 		expect(res.ok).toBe(true);
 		await queryClient.invalidateQueries();
 		expect(await screen.findByTestId('first-api-panel')).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
+		expect(progress()).toHaveTextContent('Step 4 of 4');
 	});
 
 	async function approved(user: ReturnType<typeof userEvent.setup>) {
@@ -1230,10 +1307,7 @@ describe('Agents page — resuming the first run on load', () => {
 	});
 
 	const phase = () => screen.getByTestId('agents-empty-landing').getAttribute('data-phase');
-	const stepStates = () =>
-		within(screen.getByTestId('register-stepper'))
-			.getAllByRole('listitem')
-			.map((li) => li.getAttribute('data-state'));
+	const progressStep = () => screen.getByTestId('register-progress').getAttribute('data-step');
 	const seedActive = (id: string, name: string) =>
 		seedExtraAgents([{ id, name, status: 'active', registered_by: 'self' }]);
 
@@ -1251,7 +1325,7 @@ describe('Agents page — resuming the first run on load', () => {
 		);
 		expect(within(card).getByRole('button', { name: 'Deny my-first-agent' })).toBeEnabled();
 		expect(within(screen.getByTestId('agent-facts')).getByText(id)).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'current', 'upcoming']);
+		expect(progressStep()).toBe('3');
 		// Rendered resolved: the manual card never mounts, so nothing slides off.
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 		expect(screen.queryByTestId('register-command')).toBeNull();
@@ -1304,7 +1378,7 @@ describe('Agents page — resuming the first run on load', () => {
 		).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Add another API' })).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Skip for now' })).toBeInTheDocument();
-		expect(stepStates()).toEqual(['done', 'done', 'done', 'current']);
+		expect(progressStep()).toBe('4');
 		expect(screen.queryByTestId('manual-card')).toBeNull();
 	});
 

@@ -49,7 +49,7 @@ function SectionTitle({ children, count }: { children: React.ReactNode; count?: 
 		<h3 className="text-muted-foreground mb-2 flex items-baseline gap-2 text-xs font-medium tracking-wider uppercase">
 			{children}
 			{count != null && (
-				<span className="text-muted-foreground/60 font-mono text-[10px] normal-case">
+				<span className="text-muted-foreground font-mono text-[10px] normal-case">
 					{count}
 				</span>
 			)}
@@ -127,7 +127,7 @@ export function OperationDetail({
 			{parameters.length > 0 && (
 				<section>
 					<SectionTitle count={parameters.length}>Parameters</SectionTitle>
-					<div className="border-border/40 overflow-x-auto rounded-lg border">
+					<div className="bg-field overflow-x-auto rounded-lg">
 						<table className="w-full min-w-[400px] table-fixed text-left text-xs">
 							<colgroup>
 								<col className="w-[30%]" />
@@ -136,22 +136,22 @@ export function OperationDetail({
 								<col className="w-[45%]" />
 							</colgroup>
 							<thead>
-								<tr className="border-border/40 bg-muted/30 border-b text-[11px]">
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+								<tr className="border-hairline border-b text-[10.5px] tracking-[0.06em] uppercase">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Name
 									</th>
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										In
 									</th>
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Required
 									</th>
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Description
 									</th>
 								</tr>
 							</thead>
-							<tbody className="divide-border/30 divide-y">
+							<tbody className="divide-hairline-row divide-y">
 								{parameters.slice(0, 20).map((p) => (
 									<tr key={`${p.in}-${p.name}`}>
 										<td className="px-3 py-1.5">
@@ -168,7 +168,7 @@ export function OperationDetail({
 													yes
 												</span>
 											) : (
-												<span className="text-muted-foreground/60 text-[10px]">
+												<span className="text-muted-foreground text-[10px]">
 													no
 												</span>
 											)}
@@ -183,7 +183,7 @@ export function OperationDetail({
 							</tbody>
 						</table>
 						{parameters.length > 20 && (
-							<div className="border-border/40 text-muted-foreground border-t px-3 py-1.5 text-[11px]">
+							<div className="border-hairline text-muted-foreground border-t px-3 py-1.5 text-[11px]">
 								+ {parameters.length - 20} more parameters
 							</div>
 						)}
@@ -194,7 +194,7 @@ export function OperationDetail({
 			{auth.length > 0 && (
 				<section>
 					<SectionTitle>Authentication</SectionTitle>
-					<div className="border-border/40 overflow-x-auto rounded-lg border">
+					<div className="bg-field overflow-x-auto rounded-lg">
 						<table className="w-full min-w-[320px] table-fixed text-left text-xs">
 							<colgroup>
 								<col className="w-[30%]" />
@@ -202,19 +202,19 @@ export function OperationDetail({
 								<col className="w-[45%]" />
 							</colgroup>
 							<thead>
-								<tr className="border-border/40 bg-muted/30 border-b text-[11px]">
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+								<tr className="border-hairline border-b text-[10.5px] tracking-[0.06em] uppercase">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Scheme
 									</th>
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Type
 									</th>
-									<th className="text-muted-foreground px-3 py-1.5 font-medium">
+									<th className="text-foreground-faint px-3 py-1.5 font-bold">
 										Description
 									</th>
 								</tr>
 							</thead>
-							<tbody className="divide-border/30 divide-y">
+							<tbody className="divide-hairline-row divide-y">
 								{auth.map((a) => (
 									<tr key={a.label}>
 										<td className="px-3 py-1.5">

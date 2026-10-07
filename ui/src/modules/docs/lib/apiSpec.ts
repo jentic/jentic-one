@@ -16,7 +16,6 @@
  * sparser model rather than throwing.
  */
 import type { OpenApiDocument } from '@/modules/docs/api/types';
-import { lookupKey } from '@/modules/docs/lib/anchor';
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 
@@ -470,15 +469,4 @@ export function derefSchema(
 	const name = refName(node);
 	if (name) return { schema: deref(spec, node), name };
 	return { schema: node };
-}
-
-/** Build a `(method,path)` → parsed operation index (for joining elsewhere). */
-export function indexParsedOperations(parsed: ParsedSpec): Map<string, SpecOperation> {
-	const index = new Map<string, SpecOperation>();
-	for (const g of parsed.groups) {
-		for (const t of g.tags) {
-			for (const op of t.operations) index.set(lookupKey(op.method, op.path), op);
-		}
-	}
-	return index;
 }

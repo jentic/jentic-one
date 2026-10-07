@@ -483,6 +483,66 @@ describe("the access sidebar's verbs follow agents:write and credentials:write",
 	});
 });
 
+describe("a shared credential's binding rules are read-only for a non-owner", () => {
+	it('a member with credentials:write sees the rules but cannot save them', async () => {
+		seedTiles();
+		// The Slack credential belongs to someone else and is shared with the viewer.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_by: 'usr_someone_else',
+			}),
+		]);
+		seedViewer(MEMBER_DEFAULTS);
+		const writes = trackBindingWrites();
+		const user = userEvent.setup();
+		await renderReady('/?agent=agnt_active_1');
+		await user.click(await screen.findByRole('button', { name: 'Manage Slack access' }));
+		const sidebar = within(await screen.findByRole('dialog', { name: 'Slack' }));
+		await sidebar.findByText('Permission rules for Slack bot token');
+		expect(sidebar.queryByRole('button', { name: /Save rules/ })).toBeNull();
+		expect(sidebar.getByTestId('binding-rules-read-only')).toHaveTextContent(
+			"Only the credential's owner or an org admin can change these rules.",
+		);
+		expect(writes).toEqual([]);
+	});
+});
+
+describe('"Finish connecting" follows credentials:write', () => {
+	it.each(Object.entries(BINDING_VIEWERS))('%s', async (_label, permissions) => {
+		seedTiles();
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack OAuth',
+				type: CredentialType.OAUTH2,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_by: 'usr_viewer_1',
+				details: { grant_type: 'authorization_code', connected: false },
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_by: 'usr_viewer_1',
+			}),
+		]);
+		seedViewer(permissions);
+		await renderReady('/?agent=agnt_active_1');
+		await waitFor(() => expect(screen.getAllByTestId('api-tile')).toHaveLength(2));
+		const tileConnect = screen.queryByRole('button', { name: /Finish connecting/ });
+		if (canWriteCredentials(permissions)) {
+			expect(tileConnect).toBeInTheDocument();
+		} else {
+			expect(tileConnect).toBeNull();
+		}
+	});
+});
+
 describe('the Permissions sheet edits permissions only with agents:write', () => {
 	it.each(Object.entries(BINDING_VIEWERS))('%s', async (_label, permissions) => {
 		seedViewer(permissions);

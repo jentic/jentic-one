@@ -21,7 +21,7 @@ import {
 import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
 import { AUDIT_READ, ORG_ADMIN, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
-import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	approveAgent,
 	archiveAgent,
@@ -43,7 +43,6 @@ import {
 	bindCredentialToAgent,
 	unbindCredentialFromAgent,
 	resumeAgentCredentialBinding,
-	listBindableCredentialsForAgent,
 	listAgentBindingPermissions,
 	replaceAgentBindingPermissions,
 	testAgentBindingPermissions,
@@ -54,7 +53,6 @@ import {
 	fetchActorExecutions,
 	fetchInstanceIdentity,
 	fetchLatestMcpActivity,
-	fetchMcpLastSeenByActor,
 	fetchMcpSessions,
 	listActorAudit,
 	listAgentOauthGrants,
@@ -67,7 +65,6 @@ import {
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
-	AgentBindableCredential,
 	AgentEntity,
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
@@ -77,7 +74,6 @@ import type {
 	BindingRuleSetEntity,
 	CredentialBindingEntity,
 	InstanceIdentityEntity,
-	McpLastSeen,
 	McpSessionEntity,
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
@@ -137,11 +133,11 @@ const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
  * `oauth_grant.created` SSE event, which the shared agent-stream provider
  * bridges into an invalidation of that root — so the slice must live under it.
  */
-export const agentOauthGrantsKey = (agentId: string, status: string) =>
+const agentOauthGrantsKey = (agentId: string, status: string) =>
 	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId, status] as const;
 
 /** Prefix key covering every status slice of one agent's grants. */
-export const agentOauthGrantsRootKey = (agentId: string) =>
+const agentOauthGrantsRootKey = (agentId: string) =>
 	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId] as const;
 
 function notifyError(error: unknown, fallback: string): void {
@@ -220,14 +216,6 @@ export function usePendingAgents(): PendingAgentsResult {
 // permissions` surface (list / replace / dry-run).
 // ---------------------------------------------------------------------------
 
-/**
- * Candidate credentials for the agent-side "Bind credential" picker. Kept
- * under its OWN root (not ``agentsKeys.all``) so a broad
- * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
- * doesn't pointlessly refetch ``GET /credentials``.
- */
-const bindableCredentialsKey = ['agents-bindable-credentials'] as const;
-
 /** The agent's direct credential bindings, suspended rows included. */
 export function useAgentCredentialBindings(id: string | null) {
 	return useQuery<CredentialBindingEntity[]>({
@@ -269,31 +257,6 @@ export function useRefreshFleetCredentialBindings(): () => void {
 	}, [qc]);
 }
 
-/** Rule counts for one agent's bindings, keyed by credential id. Failed reads
- * are absent from the map. */
-export function useAgentBindingRuleCounts(
-	agentId: string | null,
-	credentialIds: string[],
-): ReadonlyMap<string, number> {
-	return useQueries({
-		queries: credentialIds.map((credentialId) => ({
-			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
-			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
-			enabled: agentId != null,
-		})),
-		combine: (results) => {
-			const map = new Map<string, number>();
-			results.forEach((result, index) => {
-				const credentialId = credentialIds[index];
-				if (credentialId != null && result.data) {
-					map.set(credentialId, result.data.length);
-				}
-			});
-			return map;
-		},
-	});
-}
-
 /** Effect breakdown of one binding's EFFECTIVE operator rules; `_system` rules
  * excluded. */
 export interface BindingRuleSummary {
@@ -305,7 +268,9 @@ export interface BindingRuleSummary {
 	ruleSet?: { name: string; curated: boolean };
 }
 
-function summarizeRules(rules: BindingPermissionRule[]): Omit<BindingRuleSummary, 'ruleSet'> {
+/** Summarise one binding's saved rules — the tile grid and the access sheet
+ * read the same breakdown, so both derive it here. */
+export function summarizeBindingRules(rules: readonly BindingPermissionRule[]): BindingRuleSummary {
 	const operator = rules.filter((rule) => !rule._system);
 	return {
 		total: operator.length,
@@ -314,37 +279,57 @@ function summarizeRules(rules: BindingPermissionRule[]): Omit<BindingRuleSummary
 	};
 }
 
-/** The shared rule sets behind `ruleSetIds`, keyed by id. Failed or pending
- * reads are absent from the map. */
-function useBindingRuleSets(ruleSetIds: string[]): ReadonlyMap<string, BindingRuleSetEntity> {
+/** One binding's rules as the tiles see them: the breakdown once read, or
+ * where the read stands. A failed read is `'error'` — never silently absent,
+ * so a tile can't read as Ready over rules it couldn't see. */
+export type BindingRulesState = BindingRuleSummary | 'loading' | 'error';
+
+type RuleSetRead = BindingRuleSetEntity | 'loading' | 'error';
+
+/** The shared rule sets behind `ruleSetIds`, keyed by id: the set once read,
+ * or where its read stands. */
+function useBindingRuleSets(ruleSetIds: string[]): ReadonlyMap<string, RuleSetRead> {
+	const combine = useCallback(
+		(results: { data?: BindingRuleSetEntity; isError: boolean }[]) => {
+			const map = new Map<string, RuleSetRead>();
+			results.forEach((result, index) => {
+				const ruleSetId = ruleSetIds[index];
+				if (ruleSetId == null) return;
+				map.set(ruleSetId, result.data ?? (result.isError ? 'error' : 'loading'));
+			});
+			return map;
+		},
+		[ruleSetIds],
+	);
 	return useQueries({
 		queries: ruleSetIds.map((ruleSetId) => ({
 			queryKey: agentsKeys.ruleSet(ruleSetId),
 			queryFn: () => getBindingRuleSet(ruleSetId),
 		})),
-		combine: (results) => {
-			const map = new Map<string, BindingRuleSetEntity>();
-			results.forEach((result, index) => {
-				const ruleSetId = ruleSetIds[index];
-				if (ruleSetId != null && result.data) map.set(ruleSetId, result.data);
-			});
-			return map;
-		},
+		combine,
 	});
 }
 
+function inlineRulesState(results: { data?: BindingPermissionRule[]; isError: boolean }[]) {
+	return results.map((result): BindingRulesState =>
+		result.data ? summarizeBindingRules(result.data) : result.isError ? 'error' : 'loading',
+	);
+}
+
 /**
- * Rule summaries for one agent's bindings, keyed by credential id. Same reads as
- * {@link useAgentBindingRuleCounts}, combined into effects instead of a length.
+ * Rule states for one agent's bindings, keyed by credential id (one
+ * `useAgentBindingPermissions` read per binding). Every read's `combine` is
+ * stable, so the Map keeps its identity until a read actually changes and the
+ * tile grid doesn't re-render on every host render.
  *
  * A binding that points at a shared rule set is summarised from the SET's rules
  * (what the broker evaluates), never its dormant inline list; until the set is
- * read its entry is absent rather than guessed from the inline rules.
+ * read its state is the set read's, rather than guessed from the inline rules.
  */
 export function useAgentBindingRuleSummaries(
 	agentId: string | null,
 	credentialIds: string[],
-): ReadonlyMap<string, BindingRuleSummary> {
+): ReadonlyMap<string, BindingRulesState> {
 	const bindings = useAgentCredentialBindings(agentId).data;
 	const ruleSetIdByCredential = useMemo(() => {
 		const map = new Map<string, string>();
@@ -364,46 +349,53 @@ export function useAgentBindingRuleSummaries(
 			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
 			enabled: agentId != null,
 		})),
-		combine: (results) => results.map((result) => result.data),
+		combine: inlineRulesState,
 	});
 	return useMemo(() => {
-		const map = new Map<string, BindingRuleSummary>();
+		const map = new Map<string, BindingRulesState>();
 		credentialIds.forEach((credentialId, index) => {
 			const ruleSetId = ruleSetIdByCredential.get(credentialId);
 			if (ruleSetId) {
-				const ruleSet = ruleSets.get(ruleSetId);
-				if (ruleSet) {
-					map.set(credentialId, {
-						...summarizeRules(ruleSet.rules),
-						ruleSet: { name: ruleSet.name, curated: ruleSet.curated },
-					});
-				}
+				const ruleSet = ruleSets.get(ruleSetId) ?? 'loading';
+				map.set(
+					credentialId,
+					typeof ruleSet === 'string'
+						? ruleSet
+						: {
+								...summarizeBindingRules(ruleSet.rules),
+								ruleSet: { name: ruleSet.name, curated: ruleSet.curated },
+							},
+				);
 				return;
 			}
-			const rules = inline[index];
-			if (rules) map.set(credentialId, summarizeRules(rules));
+			map.set(credentialId, inline[index] ?? 'loading');
 		});
 		return map;
 	}, [credentialIds, ruleSetIdByCredential, ruleSets, inline]);
 }
 
-/**
- * Candidate credentials for the bind picker — fetched only while the dialog
- * is open (``enabled``) so it costs nothing on the rest of the Agents page.
- */
-export function useBindableCredentialsForAgent({ enabled = true }: { enabled?: boolean } = {}) {
-	return useQuery<AgentBindableCredential[]>({
-		queryKey: bindableCredentialsKey,
-		queryFn: () => listBindableCredentialsForAgent(),
-		enabled,
-		staleTime: 15_000,
-	});
+/** Re-read one binding's rules (the tile's "Status unavailable · Retry") — its
+ * inline list and any shared rule set read that failed. */
+export function useRetryBindingRules(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		(credentialId: string) => {
+			if (!agentId) return;
+			void qc.refetchQueries({
+				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+			void qc.refetchQueries({
+				queryKey: agentsKeys.ruleSetRoot(),
+				predicate: (query) => query.state.status === 'error',
+			});
+		},
+		[agentId, qc],
+	);
 }
 
 /**
- * A direct binding change ripples across three surfaces: the agent's
- * bound-credentials card, the bind picker's candidates, and the credential-side
- * "Bound agents" view. `scope: 'credential'` sweeps the whole
+ * A direct binding change ripples across two surfaces: the agent's tiles
+ * (binding list + rules) and the credential-side "Bound agents" view. `scope: 'credential'` sweeps the whole
  * `credential-bindings` / `binding-permissions` prefixes instead of one agent's
  * slices — a delete removes the binding from every bound agent.
  */
@@ -420,7 +412,6 @@ export function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
 					queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
 				});
 			}
-			qc.invalidateQueries({ queryKey: bindableCredentialsKey });
 			qc.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
 		},
 		[agentId, qc],
@@ -654,7 +645,10 @@ export function useReplaceAgentBindingPermissions(agentId: string, credentialId:
 	const qc = useQueryClient();
 	return useMutation<BindingPermissionRule[], Error, PermissionRuleInput[]>({
 		mutationFn: (rules) => replaceAgentBindingPermissions(agentId, credentialId, rules),
-		onSuccess: () => {
+		onSuccess: (saved) => {
+			// Seed the read with the PUT's echo so an open editor reads clean at
+			// once (no "Unsaved changes" flash while the refetch is in flight).
+			qc.setQueryData(agentsKeys.bindingPermissions(agentId, credentialId), saved);
 			qc.invalidateQueries({
 				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
 			});
@@ -1099,20 +1093,6 @@ export function useMcpSessions(actorId: string | null) {
 		queryFn: () => fetchMcpSessions(actorId as string),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
-		retry: false,
-	});
-}
-
-/**
- * Latest MCP session per agent for the roster's "last seen via MCP" cell.
- * One events-page read for the whole fleet (never per-row). `null` on 403 —
- * the table hides the column entirely, mirroring the usage columns.
- */
-export function useMcpLastSeen() {
-	return useQuery<Map<string, McpLastSeen> | null>({
-		queryKey: ['agents-mcp', 'last-seen'],
-		queryFn: () => fetchMcpLastSeenByActor(),
-		staleTime: 60 * 1000,
 		retry: false,
 	});
 }

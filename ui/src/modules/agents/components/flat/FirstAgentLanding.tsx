@@ -5,8 +5,8 @@
  * Two routes in, side by side: the primary card has the agent register itself
  * (`jentic register`); the secondary card is manual creation, in the New
  * agent panel's "Create here" tab, offered only with `agents:write` (or
- * `org:admin`). Below them, a dashed preview of the fleet view with an empty
- * slot for the first agent.
+ * `org:admin`). Below them, a faint tonal preview of the fleet view with an
+ * empty slot for the first agent.
  *
  * The parent polls (and the event stream invalidates) the agents list while
  * this is on screen and passes the registered agent in as `agent`. The card
@@ -39,7 +39,6 @@ import {
 import { KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
 import { Button, McpIcon } from '@/shared/ui';
 import { useMediaQuery } from '@/shared/hooks';
-import { cn } from '@/shared/lib/utils';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import type { AgentEntity } from '@/modules/agents/api';
 import { EASE_OUT_SOFT, GhostFleet } from '@/modules/agents/components/flat/GhostFleet';
@@ -113,12 +112,9 @@ export function FirstAgentLanding({
 					transition={{ layout: morph }}
 					aria-labelledby={titleId}
 					data-testid="first-agent-card"
-					className={cn(
-						'bg-card shadow-card animate-rise relative min-w-0 flex-1 rounded-xl border px-[22px] pt-5 pb-4 transition-colors duration-500',
-						phase === 'approved'
-							? 'border-success/35 bg-[linear-gradient(180deg,hsl(var(--success)/0.045),transparent_60%)]'
-							: 'border-primary/35 bg-[linear-gradient(180deg,hsl(var(--primary)/0.045),transparent_60%)]',
-					)}
+					// The app's tonal card (as `Card`): raised by its fill, no edge,
+					// glow or tint; fields and chips inside step up one tone.
+					className="bg-surface-1 animate-rise relative min-w-0 flex-1 rounded-lg px-[22px] pt-5 pb-4 [--field-bg:var(--surface-field)]"
 				>
 					<RegisterFlow
 						baseId={baseId}
@@ -270,11 +266,11 @@ function ManualCard({ onCreateAgent }: { onCreateAgent: () => void }) {
 	return (
 		<section
 			aria-labelledby={headingId}
-			className="border-border bg-card shadow-card animate-rise flex w-full flex-col items-start rounded-xl border px-[22px] py-5 [animation-delay:80ms]"
+			className="bg-surface-1 animate-rise flex w-full flex-col items-start rounded-lg px-[22px] py-5 [--field-bg:var(--surface-field)] [animation-delay:80ms]"
 		>
 			<span
 				aria-hidden="true"
-				className="text-foreground/90 bg-muted/60 ring-border grid h-[30px] w-[30px] place-items-center rounded-lg ring-1 ring-inset"
+				className="text-foreground-sub bg-surface-tonal grid h-[30px] w-[30px] place-items-center rounded-lg"
 			>
 				<Pencil className="h-3.5 w-3.5" />
 			</span>
@@ -287,24 +283,26 @@ function ManualCard({ onCreateAgent }: { onCreateAgent: () => void }) {
 			<p className="text-muted-foreground mt-1 text-sm leading-normal">
 				Create an agent here, add its APIs and keys, then connect it with an API key or MCP.
 			</p>
+			{/* Raised tonal tiles so the three read as steps in order — lifted off
+			    the card by fill alone, no outlines. */}
 			<ol className="my-4 grid w-full gap-2">
 				{MANUAL_STEPS.map(({ icon: Icon, title, detail }) => (
 					<li
 						key={title}
-						className="border-border/60 bg-background/35 text-foreground/90 grid grid-cols-[28px_1fr] items-center gap-x-3 rounded-lg border px-3 py-[9px] text-[13px]"
+						className="bg-surface-tonal rounded-field grid grid-cols-[28px_1fr] items-center gap-x-3 px-3.5 py-2.5 text-[13px]"
 					>
 						<span
 							aria-hidden="true"
-							className="text-muted-foreground ring-border row-span-2 grid h-7 w-7 place-items-center rounded-full ring-1 ring-inset"
+							className="bg-surface-field text-foreground-sub row-span-2 grid h-7 w-7 place-items-center rounded-full"
 						>
 							<Icon className="h-3.5 w-3.5" />
 						</span>
-						<span className="font-semibold">{title}</span>
+						<span className="text-foreground font-semibold">{title}</span>
 						<span className="text-muted-foreground text-xs">{detail}</span>
 					</li>
 				))}
 			</ol>
-			<Button variant="secondary" onClick={onCreateAgent} className="mt-auto gap-2">
+			<Button variant="secondary" size="sm" onClick={onCreateAgent} className="mt-auto">
 				<Plus className="h-4 w-4" />
 				Create an agent manually
 			</Button>

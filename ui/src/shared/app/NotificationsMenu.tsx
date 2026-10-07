@@ -56,8 +56,8 @@ export function NotificationsMenu() {
 				aria-haspopup="dialog"
 				aria-expanded={open}
 				className={cn(
-					'text-muted-foreground hover:bg-muted hover:text-foreground relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-150',
-					open && 'bg-muted text-foreground',
+					'text-muted-foreground hover:bg-tint-2 hover:text-foreground relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-150',
+					open && 'bg-tint-2 text-foreground',
 				)}
 			>
 				<Bell className="h-4 w-4" aria-hidden="true" />
@@ -79,11 +79,11 @@ export function NotificationsMenu() {
 					ref={panelRef}
 					role="dialog"
 					aria-labelledby={titleId}
-					className="border-border bg-background absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
+					className="border-border/60 bg-background absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
 				>
 					{view === 'list' ? (
 						<>
-							<div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2.5">
+							<div className="border-hairline flex items-center justify-between gap-2 border-b px-3 py-2.5">
 								<h2
 									id={titleId}
 									className="text-foreground flex items-center gap-2 text-sm font-semibold"
@@ -104,8 +104,7 @@ export function NotificationsMenu() {
 								</h2>
 								<Button
 									variant="ghost"
-									size="sm"
-									className="h-7 w-7 p-0"
+									size="icon-xs"
 									aria-label="Notification settings"
 									title="Notification settings"
 									onClick={() => setView('settings')}
@@ -159,10 +158,10 @@ export function NotificationsMenu() {
 								{failedSources.length > 0 && (
 									<p
 										role="status"
-										className="text-warning border-border flex items-center gap-2 border-t px-3 py-2 text-xs"
+										className="text-foreground-sub border-hairline flex items-center gap-2 border-t px-3 py-2 text-xs"
 									>
 										<Inbox
-											className="h-3.5 w-3.5 shrink-0"
+											className="text-warning h-3.5 w-3.5 shrink-0"
 											aria-hidden="true"
 										/>
 										Couldn't load {failedSources.join(', ')} — this list may be
@@ -171,7 +170,7 @@ export function NotificationsMenu() {
 								)}
 							</div>
 
-							<div className="border-border bg-muted/30 flex items-center justify-end border-t px-3 py-2 text-xs font-medium">
+							<div className="border-hairline flex items-center justify-end border-t px-3 py-2 text-xs font-medium">
 								<AppLink
 									href={ROUTES.monitor}
 									onClick={close}
@@ -197,11 +196,10 @@ function NotificationSettings({ titleId, onBack }: { titleId: string; onBack: ()
 
 	return (
 		<>
-			<div className="border-border flex items-center gap-1.5 border-b px-2 py-2.5">
+			<div className="border-hairline flex items-center gap-1.5 border-b px-2 py-2.5">
 				<Button
 					variant="ghost"
-					size="sm"
-					className="h-7 w-7 p-0"
+					size="icon-xs"
 					aria-label="Back to notifications"
 					onClick={onBack}
 				>
@@ -222,10 +220,10 @@ function NotificationSettings({ titleId, onBack }: { titleId: string; onBack: ()
 							<label
 								key={opt.value}
 								className={cn(
-									'flex cursor-pointer items-start gap-2.5 rounded-lg border px-2.5 py-2 transition-colors',
+									'flex cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-2 transition-colors',
 									effectiveScope === opt.value
-										? 'border-primary/50 bg-primary/5'
-										: 'border-border hover:bg-muted/50',
+										? 'bg-surface-selected'
+										: 'hover:bg-tint-2',
 								)}
 							>
 								<input
@@ -248,7 +246,7 @@ function NotificationSettings({ titleId, onBack }: { titleId: string; onBack: ()
 						))}
 					</div>
 				</fieldset>
-				<label className="border-border flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-2.5 py-2">
+				<label className="bg-surface-field flex cursor-pointer items-center justify-between gap-3 rounded-md px-2.5 py-2">
 					<span>
 						<span className="text-foreground block text-[13px] font-medium">
 							Sound on failures

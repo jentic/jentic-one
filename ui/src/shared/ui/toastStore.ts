@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type ToastVariant = 'default' | 'success' | 'error';
+export type ToastVariant = 'default' | 'info' | 'success' | 'warning' | 'error';
 
 export interface ToastInput {
 	id?: string;

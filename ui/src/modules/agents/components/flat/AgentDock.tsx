@@ -8,7 +8,7 @@
  * (Approve, the serving toggle, Archive) need `agents:write` or `org:admin`;
  * anyone else reads the state as a note and keeps the read affordances.
  */
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useReducedMotion, motion } from 'framer-motion';
 import {
 	Activity as ActivityIcon,
@@ -23,6 +23,7 @@ import { Button, FooterActionBar, McpIcon, Tooltip, toast } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ServingRefreshError, useSetAgentServing, type AgentEntity } from '@/modules/agents/api';
+import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
 
 /** The dock surfaces a verb can open (hosted by the flat surface's sheets).
  * All agent-scoped — the org-wide inventory is a page-level surface. */
@@ -42,7 +43,7 @@ export interface AgentDockProps {
 
 /** Divider between the dock's verb groups. */
 function DockDivider() {
-	return <span aria-hidden="true" className="bg-border mx-0.5 h-5 w-px shrink-0" />;
+	return <span aria-hidden="true" className="bg-hairline-field mx-0.5 h-5 w-px shrink-0" />;
 }
 
 export function AgentDock({
@@ -75,30 +76,30 @@ export function AgentDock({
 
 				<DockIconButton
 					label="API key"
-					icon={<KeyRound className="h-5 w-5" />}
+					icon={<KeyRound className="h-4 w-4" />}
 					onClick={() => onOpenSurface('api-key')}
 				/>
 				{/* A checked shield: this sheet is about permissions GRANTED. */}
 				<DockIconButton
 					label="Permissions"
-					icon={<ShieldCheck className="h-5 w-5" />}
+					icon={<ShieldCheck className="h-4 w-4" />}
 					onClick={() => onOpenSurface('permissions')}
 				/>
 				<DockIconButton
 					label="Activity"
-					icon={<ActivityIcon className="h-5 w-5" />}
+					icon={<ActivityIcon className="h-4 w-4" />}
 					onClick={() => onOpenSurface('activity')}
 				/>
 				{/* MCP before Settings, with the protocol's own mark rather than a
 				    generic integration glyph. */}
 				<DockIconButton
 					label="MCP"
-					icon={<McpIcon className="h-5 w-5" />}
+					icon={<McpIcon className="h-4 w-4" />}
 					onClick={() => onOpenSurface('mcp')}
 				/>
 				<DockIconButton
 					label="Settings"
-					icon={<Settings className="h-5 w-5" />}
+					icon={<Settings className="h-4 w-4" />}
 					onClick={() => onOpenSurface('settings')}
 				/>
 
@@ -107,13 +108,13 @@ export function AgentDock({
 						<DockDivider />
 						<Tooltip content="Archive this agent (irreversible)" interactiveChild>
 							<Button
-								variant="ghost"
-								size="sm"
+								variant="danger"
+								size="icon-xs"
 								onClick={onArchive}
 								aria-label={`Archive ${agent.name}`}
-								className="text-danger hover:bg-danger/10 hover:text-danger shrink-0 px-2 py-1.5"
+								className="shrink-0"
 							>
-								<Archive className="h-5 w-5" aria-hidden="true" />
+								<Archive className="h-4 w-4" aria-hidden="true" />
 								<span className="sr-only">Archive</span>
 							</Button>
 						</Tooltip>
@@ -124,8 +125,8 @@ export function AgentDock({
 	);
 }
 
-/** One icon verb: icon-only at every breakpoint — the tooltip and aria-label
- * carry the name. */
+/** One icon verb: a quiet 28px tonal square at every breakpoint — the tooltip
+ * and aria-label carry the name. */
 function DockIconButton({
 	label,
 	icon,
@@ -138,11 +139,11 @@ function DockIconButton({
 	return (
 		<Tooltip content={label} interactiveChild>
 			<Button
-				variant="ghost"
-				size="sm"
+				variant="tonal"
+				size="icon-xs"
 				onClick={onClick}
 				aria-label={label}
-				className="shrink-0 px-2 py-1.5"
+				className="shrink-0"
 			>
 				<span aria-hidden="true" className="flex items-center">
 					{icon}
@@ -150,6 +151,51 @@ function DockIconButton({
 				<span className="sr-only">{label}</span>
 			</Button>
 		</Tooltip>
+	);
+}
+
+/** The dock's Approve, described (and tooltipped) by what approval grants. */
+function DockApprove({
+	agent,
+	onApprove,
+	approvePending,
+}: {
+	agent: AgentEntity;
+	onApprove: () => void;
+	approvePending: boolean;
+}) {
+	const grantId = useId();
+	const grant = useApprovalGrantCopy(agent.id);
+	const button = (
+		<Button
+			size="sm"
+			loading={approvePending}
+			onClick={onApprove}
+			// Named per-agent so it can't collide with the approval
+			// band's own Approve buttons in the accessibility tree.
+			aria-label={`Approve ${agent.name}`}
+			aria-describedby={grant ? grantId : undefined}
+			data-testid="dock-approve"
+			className="px-3 py-1.5 text-xs"
+		>
+			Approve
+		</Button>
+	);
+	return (
+		<>
+			{grant ? (
+				<Tooltip content={grant} interactiveChild>
+					{button}
+				</Tooltip>
+			) : (
+				button
+			)}
+			{grant && (
+				<span id={grantId} className="sr-only">
+					{grant}
+				</span>
+			)}
+		</>
 	);
 }
 
@@ -197,18 +243,7 @@ function ServingVerb({
 			// A pending agent's lifecycle verb IS approval. Shares the mutation with the
 			// panel banner, so the two buttons load together.
 			return (
-				<Button
-					size="sm"
-					loading={approvePending}
-					onClick={onApprove}
-					// Named per-agent so it can't collide with the approval
-					// band's own Approve buttons in the accessibility tree.
-					aria-label={`Approve ${agent.name}`}
-					data-testid="dock-approve"
-					className="px-3 py-1.5 text-xs"
-				>
-					Approve
-				</Button>
+				<DockApprove agent={agent} onApprove={onApprove} approvePending={approvePending} />
 			);
 		case 'rejected':
 			// No serving verb: a rejected agent can never serve traffic.
@@ -329,10 +364,10 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				}
 				data-testid="dock-serving-toggle"
 				className={cn(
-					'shrink-0 gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium',
+					'shrink-0 gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium',
 					serving
-						? 'bg-success/10 text-success border-success/30 hover:bg-success/20 hover:text-success'
-						: 'bg-danger/10 text-danger border-danger/30 hover:bg-danger/20 hover:text-danger',
+						? 'bg-success/10 text-success hover:bg-success/20 hover:text-success'
+						: 'bg-danger/10 text-danger hover:bg-danger/20 hover:text-danger',
 				)}
 			>
 				{!togglePending &&

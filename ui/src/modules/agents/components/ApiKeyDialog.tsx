@@ -41,7 +41,7 @@ export function ApiKeyDialog({ open, apiKey, onClose }: ApiKeyDialogProps) {
 			}
 		>
 			<div className="space-y-3">
-				<div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+				<div className="bg-surface-inset text-foreground-lighter rounded-md px-3 py-2 text-xs">
 					<strong>Note:</strong> Manual API key generation is not the recommended pattern
 					for agent authentication. Prefer{' '}
 					<span className="font-medium">agent OAuth self-registration</span> for
@@ -52,7 +52,7 @@ export function ApiKeyDialog({ open, apiKey, onClose }: ApiKeyDialogProps) {
 					one (the old key will be rotated).
 				</p>
 				{apiKey && (
-					<div className="bg-muted/50 border-border flex items-center gap-2 rounded-lg border px-3 py-2">
+					<div className="bg-field flex items-center gap-2 rounded-md px-3 py-2">
 						<code className="text-foreground min-w-0 flex-1 truncate font-mono text-xs break-all">
 							{revealed ? apiKey : maskKey(apiKey)}
 						</code>

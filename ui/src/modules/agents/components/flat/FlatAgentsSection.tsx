@@ -14,7 +14,7 @@
  * "Agent not found" rather than another agent, or the first-agent landing when
  * the roster is empty.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
@@ -41,6 +41,7 @@ import {
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
 	useAgentBindingRuleSummaries,
+	useRetryBindingRules,
 	useActorUsageDetail,
 	useActorExecutions,
 	usePendingAgents,
@@ -69,10 +70,11 @@ import {
 	tileApiKey,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
-import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	AGENTS_READ,
 	AGENTS_WRITE,
+	CREDENTIALS_WRITE,
 	useCanAccess,
 	useOptionalCurrentUser,
 	usePermissionsKnown,
@@ -82,6 +84,7 @@ import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip'
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
+import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
@@ -395,9 +398,9 @@ export function FlatAgentsSection({
 			<span className="sr-only">Loading agents…</span>
 			{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
 			<Skeleton className="h-11 w-full max-w-md rounded-lg" />
-			<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 				{[0, 1, 2].map((i) => (
-					<Skeleton key={i} className="h-44 rounded-xl" />
+					<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
 				))}
 			</div>
 		</div>
@@ -600,21 +603,22 @@ type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
 /** Per-state banner tint — about attention, not editability. */
 const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }> = {
 	pending: {
-		shell: 'border-warning/40 bg-warning/[0.04]',
+		shell: 'bg-warning/10',
 		chip: 'bg-warning/15 text-warning',
 	},
 	rejected: {
-		shell: 'border-danger/40 bg-danger/[0.04]',
+		shell: 'bg-danger/10',
 		chip: 'bg-danger/15 text-danger',
 	},
 	archived: {
-		shell: 'border-border/70 bg-muted/20',
-		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
+		shell: 'bg-surface-1',
+		chip: 'bg-surface-field text-muted-foreground',
 	},
 };
 
 /** The notice above the grid — and, for pending, the decision itself. */
 function StateBanner({
+	agentId,
 	status,
 	denialReason,
 	deniedBy,
@@ -622,6 +626,7 @@ function StateBanner({
 	approvePending,
 	onDeny,
 }: {
+	agentId: string;
 	status: BanneredStatus;
 	denialReason: string | null;
 	deniedBy: string | null;
@@ -631,6 +636,7 @@ function StateBanner({
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
+	const grantId = useId();
 	// Approving or denying needs `agents:write` (or `org:admin`); anyone else
 	// reads the state without the verbs.
 	const canDecide = useCanAccess(AGENTS_WRITE);
@@ -643,7 +649,7 @@ function StateBanner({
 			role="status"
 			data-testid={`agent-state-banner-${status}`}
 			className={cn(
-				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
+				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-lg p-3 sm:flex-nowrap',
 				shell,
 			)}
 		>
@@ -666,12 +672,29 @@ function StateBanner({
 							Denied by <ActorLabel actorId={deniedBy} />.
 						</>
 					)}
+					{status === 'pending' && (
+						<>
+							{' '}
+							<ApprovalGrantNote agentId={agentId} id={grantId} />
+						</>
+					)}
 				</p>
 			</div>
 			{status === 'pending' && canDecide && (
 				// The banner pins the longest-waiting agent only; any OTHER pending
-				// agent is decided here, so both verbs sit on its own panel.
+				// agent is decided here, so both verbs sit on its own panel — in the
+				// order and weights every approval surface uses: Approve, then Deny.
 				<span className="flex shrink-0 items-center gap-2">
+					<Button
+						size="sm"
+						variant={ACTION_VARIANT.approve}
+						loading={approvePending}
+						onClick={onApprove}
+						aria-describedby={grantId}
+						data-testid="state-banner-approve"
+					>
+						{ACTION_LABEL.approve}
+					</Button>
 					<Button
 						size="sm"
 						variant={ACTION_VARIANT.deny}
@@ -680,14 +703,6 @@ function StateBanner({
 						data-testid="state-banner-deny"
 					>
 						{ACTION_LABEL.deny}
-					</Button>
-					<Button
-						size="sm"
-						loading={approvePending}
-						onClick={onApprove}
-						data-testid="state-banner-approve"
-					>
-						Approve
 					</Button>
 				</span>
 			)}
@@ -803,6 +818,10 @@ function SelectedAgentPanel({
 		[liveBindings],
 	);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
+	const retryRules = useRetryBindingRules(agent.id);
+	// A Blocked status opens the sheet ON its rules editor: the tile key whose
+	// next open should land on "Add rule" (spent by the sheet once focused).
+	const [rulesFocusKey, setRulesFocusKey] = useState<string | null>(null);
 	const purgeableOrphanIds = useMemo(
 		() => orphanBindings.map((b) => b.credentialId),
 		[orphanBindings],
@@ -813,7 +832,10 @@ function SelectedAgentPanel({
 		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
-	const stats = useMemo(() => tileStats(tiles), [tiles]);
+	const stats = useMemo(
+		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
+		[tiles, ruleSummaries],
+	);
 	// APIs reached through several credentials: each such tile names its credential
 	// and carries a chip saying how a call picks between them.
 	const multiAccount = useMemo(() => multiAccountApis(tiles), [tiles]);
@@ -884,6 +906,8 @@ function SelectedAgentPanel({
 	// Only pending (cannot authenticate yet), rejected and archived block binding,
 	// and binding needs `agents:write` (or `org:admin`).
 	const canManage = useCanAccess(AGENTS_WRITE);
+	// Finishing a sign-in is a credential write, as in the access sidebar.
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const statusAllowsBind = agent.status === 'active' || agent.status === 'disabled';
 	const canBind = statusAllowsBind && canManage;
 	const bindBlockedReason =
@@ -988,6 +1012,7 @@ function SelectedAgentPanel({
 
 			{bannerStatus && (
 				<StateBanner
+					agentId={agent.id}
 					status={bannerStatus}
 					denialReason={agent.denialReason}
 					deniedBy={agent.attribution.deniedBy}
@@ -1023,11 +1048,11 @@ function SelectedAgentPanel({
 					role="status"
 					aria-live="polite"
 					aria-busy="true"
-					className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+					className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
 				>
 					<span className="sr-only">Loading APIs…</span>
 					{[0, 1, 2].map((i) => (
-						<Skeleton key={i} className="h-44 rounded-xl" />
+						<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
 					))}
 				</div>
 			) : bindingsQuery.error ? (
@@ -1041,8 +1066,10 @@ function SelectedAgentPanel({
 					}}
 				/>
 			) : tiles.length === 0 ? (
-				<Card className="border-dashed p-6">
-					<h3 className="text-sm font-semibold">{agent.name} can reach nothing yet</h3>
+				<Card outlined className="border-dashed p-6">
+					<h3 className="font-heading text-foreground-name text-sm font-semibold">
+						{agent.name} can reach nothing yet
+					</h3>
 					<p className="text-muted-foreground mt-2 max-w-prose text-sm">
 						{NO_APIS_COPY[agent.status]}
 					</p>
@@ -1055,13 +1082,22 @@ function SelectedAgentPanel({
 						!serving && 'saturate-[.35]',
 					)}
 				>
-					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 						{tiles.map((tile) => (
 							<ApiTile
 								key={tile.key}
 								tile={tile}
 								rules={ruleSummaries.get(tile.credentialId)}
-								onOpen={() => onOpenTile(tile.key)}
+								onRetryRules={() => retryRules(tile.credentialId)}
+								onOpen={() => {
+									// A plain open never inherits a rules focus that didn't land.
+									setRulesFocusKey(null);
+									onOpenTile(tile.key);
+								}}
+								onOpenRules={() => {
+									setRulesFocusKey(tile.key);
+									onOpenTile(tile.key);
+								}}
 								// Pause and resume are binding writes (`agents:write`).
 								onSuspend={
 									canManage
@@ -1082,6 +1118,7 @@ function SelectedAgentPanel({
 								sidebarId={API_ACCESS_SIDEBAR_ID}
 								accountLabel={tileAccountLabels.get(tile.key)}
 								accountCount={multiAccount.get(tileApiKey(tile))?.count ?? 1}
+								canConnect={canWriteCredentials}
 							/>
 						))}
 					</div>
@@ -1145,8 +1182,14 @@ function SelectedAgentPanel({
 				siblingApiTitles={siblingApiTitles}
 				accountCount={openTile ? (multiAccount.get(tileApiKey(openTile))?.count ?? 1) : 1}
 				open={openTileKey != null}
-				onClose={onCloseTile}
+				onClose={() => {
+					setRulesFocusKey(null);
+					onCloseTile();
+				}}
 				sidebarId={API_ACCESS_SIDEBAR_ID}
+				agentServing={serving}
+				focusRules={openTileKey != null && rulesFocusKey === openTileKey}
+				onRulesFocused={() => setRulesFocusKey(null)}
 			/>
 		</motion.section>
 	);

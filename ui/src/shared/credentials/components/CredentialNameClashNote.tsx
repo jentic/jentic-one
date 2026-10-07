@@ -28,11 +28,11 @@ export function CredentialNameClashNote({
 			id={id}
 			role="status"
 			data-testid="credential-name-clash"
-			className="border-warning/40 bg-warning/5 rounded-lg border p-3 text-xs"
+			className="bg-surface-inset rounded-lg p-3 text-xs"
 		>
 			<div className="flex items-start gap-2">
 				<AlertTriangle
-					className="text-warning mt-px h-3.5 w-3.5 shrink-0"
+					className="text-caution mt-px h-3.5 w-3.5 shrink-0"
 					aria-hidden="true"
 				/>
 				<p className="text-foreground leading-snug">

@@ -7,6 +7,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Button } from '@/shared/ui/Button';
+import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { MIN_PASSWORD_LENGTH } from '@/shared/auth/password';
 
@@ -68,67 +69,64 @@ export function SetupPage() {
 	};
 
 	return (
-		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
-			<form
-				onSubmit={handleSubmit}
-				className="border-border bg-card w-full max-w-sm rounded-xl border p-6 shadow-sm"
-				aria-labelledby="setup-heading"
+		<AuthCard onSubmit={handleSubmit} aria-labelledby="setup-heading">
+			<h1
+				id="setup-heading"
+				className="font-heading text-foreground-name text-xl font-semibold"
 			>
-				<h1 id="setup-heading" className="font-display text-xl font-semibold">
-					Welcome to Jentic One
-				</h1>
-				<p className="text-muted-foreground mt-1 text-sm">
-					Create the first administrator account to finish setup.
-				</p>
+				Welcome to Jentic One
+			</h1>
+			<p className="text-muted-foreground mt-1 text-sm">
+				Create the first administrator account to finish setup.
+			</p>
 
-				<div className="mt-6 space-y-4">
-					<div className="space-y-1">
-						<Label htmlFor="setup-email">Email</Label>
-						<Input
-							id="setup-email"
-							type="email"
-							autoComplete="username"
-							required
-							value={email}
-							onChange={(e) => setEmail(e.target.value)}
-						/>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="setup-password">Password</Label>
-						<Input
-							id="setup-password"
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							minLength={MIN_PASSWORD_LENGTH}
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-						/>
-						<p className="text-muted-foreground text-xs">
-							At least {MIN_PASSWORD_LENGTH} characters.
-						</p>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="setup-confirm">Confirm password</Label>
-						<Input
-							id="setup-confirm"
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							value={confirm}
-							onChange={(e) => setConfirm(e.target.value)}
-						/>
-					</div>
+			<div className="mt-6 space-y-4">
+				<div className="space-y-1">
+					<Label htmlFor="setup-email">Email</Label>
+					<Input
+						id="setup-email"
+						type="email"
+						autoComplete="username"
+						required
+						value={email}
+						onChange={(e) => setEmail(e.target.value)}
+					/>
 				</div>
+				<div className="space-y-1">
+					<Label htmlFor="setup-password">Password</Label>
+					<Input
+						id="setup-password"
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						minLength={MIN_PASSWORD_LENGTH}
+						value={password}
+						onChange={(e) => setPassword(e.target.value)}
+					/>
+					<p className="text-muted-foreground text-xs">
+						At least {MIN_PASSWORD_LENGTH} characters.
+					</p>
+				</div>
+				<div className="space-y-1">
+					<Label htmlFor="setup-confirm">Confirm password</Label>
+					<Input
+						id="setup-confirm"
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						value={confirm}
+						onChange={(e) => setConfirm(e.target.value)}
+					/>
+				</div>
+			</div>
 
-				{error !== null && <ErrorAlert message={error} className="mt-4" />}
+			{error !== null && <ErrorAlert message={error} className="mt-4" />}
 
-				<Button type="submit" loading={submitting} fullWidth className="mt-6">
-					{submitting ? 'Creating account…' : 'Create admin account'}
-				</Button>
-			</form>
-		</main>
+			<Button type="submit" loading={submitting} fullWidth className="mt-6">
+				{submitting ? 'Creating account…' : 'Create admin account'}
+			</Button>
+		</AuthCard>
 	);
 }

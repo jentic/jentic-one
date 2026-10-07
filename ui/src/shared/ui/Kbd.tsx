@@ -25,7 +25,7 @@ export function Kbd({ children, size = 'sm', variant = 'outline', className }: K
 					: 'min-w-[1.5rem] px-1.5 py-0.5 text-[11px]',
 				variant === 'outline'
 					? 'text-muted-foreground border border-current/30'
-					: 'border-border/60 bg-muted text-foreground border',
+					: 'bg-surface-chip text-foreground',
 				className,
 			)}
 		>

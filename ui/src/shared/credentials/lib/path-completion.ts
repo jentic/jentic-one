@@ -37,3 +37,27 @@ export function nextPathCompletion(current: string, paths: readonly string[]): s
 	const nextSlash = lcp.indexOf('/', current.length + 1);
 	return nextSlash > current.length ? lcp.slice(0, nextSlash + 1) : lcp;
 }
+
+/** Generic example shown when the API's operations are unknown. */
+export const GENERIC_EXAMPLE_PATH = '/resource';
+
+/**
+ * An example path for a placeholder, drawn from the API being edited so the
+ * hint never names another vendor's routes. Prefers the shortest real path
+ * (the most general one); falls back to {@link GENERIC_EXAMPLE_PATH}.
+ */
+export function examplePath(paths: readonly string[] | undefined): string {
+	const real = (paths ?? []).filter((p) => p.startsWith('/') && p.length > 1);
+	if (real.length === 0) return GENERIC_EXAMPLE_PATH;
+	return real.reduce((best, p) => (p.length < best.length ? p : best));
+}
+
+/**
+ * The first segment of {@link examplePath} (`/repos/{owner}` → `/repos`) — the
+ * natural example for a prefix rule.
+ */
+export function examplePathPrefix(paths: readonly string[] | undefined): string {
+	const path = examplePath(paths);
+	const next = path.indexOf('/', 1);
+	return next > 0 ? path.slice(0, next) : path;
+}

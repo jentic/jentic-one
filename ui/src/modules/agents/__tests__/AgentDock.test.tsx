@@ -107,6 +107,12 @@ describe('AgentDock — fixed bottom action dock', () => {
 		const dock = await findDock();
 
 		expect(dock.queryByTestId('dock-serving-toggle')).not.toBeInTheDocument();
+		// Approve says what it grants, as every approval surface does.
+		await waitFor(() =>
+			expect(dock.getByTestId('dock-approve')).toHaveAccessibleDescription(
+				/^Approving grants /,
+			),
+		);
 		await user.click(dock.getByTestId('dock-approve'));
 
 		// Approval lands: the dock re-renders with the live serving toggle.

@@ -17,7 +17,7 @@ import type { OAuthClient } from '@/modules/settings/api/hooks';
 
 export type ApprovalStatus = 'pending' | 'approved' | 'denied';
 
-export const APPROVAL_STATUSES: readonly ApprovalStatus[] = ['pending', 'approved', 'denied'];
+const APPROVAL_STATUSES: readonly ApprovalStatus[] = ['pending', 'approved', 'denied'];
 
 export const APPROVAL_STATUS_LABEL: Record<ApprovalStatus, string> = {
 	pending: 'Pending',

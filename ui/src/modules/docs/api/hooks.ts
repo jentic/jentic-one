@@ -24,7 +24,7 @@ import {
 	withDeploymentServer,
 } from '@/modules/docs/lib/apiSpec';
 
-export const docsKeys = {
+const docsKeys = {
 	all: ['docs'] as const,
 	bundle: ['docs', 'bundle'] as const,
 	cli: ['docs', 'cli'] as const,

@@ -23,6 +23,7 @@ import {
 	ErrorAlert,
 	LoadingState,
 	ScopePicker,
+	ConfirmDialog,
 } from '@/shared/ui';
 import type { EnhancedScope } from '@/shared/lib';
 import { extractResourceFromScope } from '@/shared/lib';
@@ -33,7 +34,7 @@ import {
 	useReplaceAgentPermissions,
 	type PermissionCatalogEntry,
 } from '@/modules/agents/api';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import { useApprovalGrantCopy } from '@/modules/agents/components/ApprovalGrantNote';
 
 export interface PermissionsCardProps {
 	actorId: string;
@@ -45,6 +46,12 @@ export interface PermissionsCardProps {
 	 * handled defensively even when `canEdit` is true.
 	 */
 	canEdit?: boolean;
+	/**
+	 * The actor awaits approval: an empty list then isn't "no permissions" — it's
+	 * what approval fills in (the default agent permissions), so the card says what
+	 * Approve grants instead.
+	 */
+	pending?: boolean;
 }
 
 /**
@@ -70,7 +77,34 @@ export function catalogueToPickerItems(catalogue: PermissionCatalogEntry[]): Enh
 	}));
 }
 
-export function PermissionsCard({ actorId, actorName, canEdit = true }: PermissionsCardProps) {
+function PermissionChips({
+	permissions,
+	label,
+}: {
+	permissions: readonly string[];
+	label: string;
+}) {
+	return (
+		<ul className="flex flex-wrap gap-2" aria-label={label}>
+			{[...permissions]
+				.sort((a, b) => a.localeCompare(b))
+				.map((permission) => (
+					<li key={permission}>
+						<Badge variant="default" mono>
+							{permission}
+						</Badge>
+					</li>
+				))}
+		</ul>
+	);
+}
+
+export function PermissionsCard({
+	actorId,
+	actorName,
+	canEdit = true,
+	pending = false,
+}: PermissionsCardProps) {
 	const permissionsQuery = useAgentPermissions(actorId);
 	const replace = useReplaceAgentPermissions();
 
@@ -78,6 +112,7 @@ export function PermissionsCard({ actorId, actorName, canEdit = true }: Permissi
 	const catalogue = usePermissionCatalogue();
 
 	const granted = permissionsQuery.data ?? [];
+	const approvalCopy = useApprovalGrantCopy(pending ? actorId : null);
 
 	return (
 		<>
@@ -101,6 +136,15 @@ export function PermissionsCard({ actorId, actorName, canEdit = true }: Permissi
 					<LoadingState size="sm" />
 				) : permissionsQuery.error ? (
 					<ErrorAlert message={permissionsQuery.error as Error} />
+				) : pending ? (
+					<div className="space-y-2" data-testid="permissions-pending-approval">
+						<p className="text-muted-foreground text-sm">
+							{approvalCopy ?? 'Approving grants this agent its permissions.'}
+						</p>
+						{granted.length > 0 && (
+							<PermissionChips permissions={granted} label="Requested permissions" />
+						)}
+					</div>
 				) : granted.length === 0 ? (
 					<EmptyRow icon={<ShieldCheck />}>
 						No permissions granted.
@@ -108,17 +152,7 @@ export function PermissionsCard({ actorId, actorName, canEdit = true }: Permissi
 							' This actor can’t perform privileged operations until you grant some.'}
 					</EmptyRow>
 				) : (
-					<ul className="flex flex-wrap gap-2" aria-label="Granted permissions">
-						{[...granted]
-							.sort((a, b) => a.localeCompare(b))
-							.map((permission) => (
-								<li key={permission}>
-									<Badge variant="default" className="font-mono text-[11px]">
-										{permission}
-									</Badge>
-								</li>
-							))}
-					</ul>
+					<PermissionChips permissions={granted} label="Granted permissions" />
 				)}
 			</DetailSection>
 

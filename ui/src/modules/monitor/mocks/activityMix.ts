@@ -80,6 +80,29 @@ const MIX: Seed[] = [
 		created_at: ago(2 * HOUR + 5 * MIN),
 		data: { api_id: 'github', vendor: 'github.com', name: 'rest', version: '1.2.0' },
 	},
+	{
+		// Shape of the catalog update sweep's conflict event (`catalog/service.py`):
+		// the identity triple + overlay id + the three digests behind the "why".
+		event_id: 'evt_mix_catalog_conflict',
+		type: 'catalog.update_conflicts_overlay',
+		severity: 'info',
+		summary: 'Update conflicts with an overlay: Stripe 2024-01-01',
+		created_at: ago(2 * HOUR + 20 * MIN),
+		requires_action: true,
+		data: {
+			api_id: 'stripe.com',
+			vendor: 'stripe',
+			name: 'stripe-api',
+			version: '2024-01-01',
+			overlay_id: 'ovl_stripe_1',
+			event_class: 'catalog.update_conflicts_overlay',
+			conflict: {
+				base_digest: 'sha256:base0000000000000000',
+				served_digest: 'sha256:served00000000000000',
+				upstream_digest: 'sha256:upstream000000000000',
+			},
+		},
+	},
 	call(9, 2 * HOUR + 30 * MIN, 'hubspot.contacts.search', 'agnt_active_1'),
 	call(10, 2 * HOUR + 31 * MIN, 'hubspot.contacts.update', 'agnt_active_1'),
 	call(11, 2 * HOUR + 33 * MIN, 'hubspot.deals.list', 'agnt_active_1'),

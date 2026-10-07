@@ -10,19 +10,3 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
 	return target.isContentEditable;
 }
-
-/**
- * Platform-aware: true on macOS / iOS, where `⌘` is the modifier key
- * (`Ctrl` elsewhere). Computed once at module load.
- */
-export const isMac = (() => {
-	if (typeof navigator === 'undefined') return false;
-	const nav = navigator as Navigator & { userAgentData?: { platform: string } };
-	if (nav.userAgentData?.platform) {
-		return nav.userAgentData.platform === 'macOS';
-	}
-	return /Mac|iPhone|iPad|iPod/.test(navigator.userAgent ?? '');
-})();
-
-/** Platform-aware modifier key label: `⌘` on Mac, `Ctrl` elsewhere. */
-export const MOD_KEY = isMac ? '⌘' : 'Ctrl';

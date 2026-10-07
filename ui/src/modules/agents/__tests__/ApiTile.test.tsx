@@ -41,7 +41,7 @@ function renderTile(
 		<div style={{ width: width ?? 360 }}>
 			<ApiTile
 				tile={tile}
-				rules={{ total: 0, allow: 0, deny: 0 }}
+				rules={{ total: 2, allow: 2, deny: 0 }}
 				onOpen={() => {}}
 				onSuspend={() => {}}
 				onResume={() => {}}
@@ -66,15 +66,13 @@ describe('ApiTile credential footer', () => {
 
 		const slot = screen.getByTestId('tile-detail-slot');
 		expect(screen.getByTestId('tile-credential-label')).toHaveTextContent(/^Slack bot token$/);
-		expect(screen.getByTestId('tile-rules-summary')).toHaveTextContent(
-			/^No rules — all calls blocked$/,
-		);
+		expect(screen.getByTestId('tile-rules-summary')).toHaveTextContent(/^2 access rules$/);
 		expect(slot).toContainElement(screen.getByTestId('tile-credential'));
 		expect(slot).toContainElement(screen.getByTestId('tile-rules-summary'));
 		// "Credential" is visible; its colon is for screen readers only.
 		const credential = screen.getByTestId('tile-credential');
 		expect(credential.querySelector('.sr-only')).toHaveTextContent(':');
-		expect(within(credential).getByText('Credential')).toHaveClass('text-muted-foreground');
+		expect(within(credential).getByText('Credential')).toHaveClass('text-foreground-sub');
 		// The header is untouched: no credential and no chip for one credential.
 		expect(screen.getByRole('heading', { name: 'Slack' }).parentElement).not.toContainElement(
 			credential,

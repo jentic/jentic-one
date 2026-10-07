@@ -19,7 +19,7 @@ import {
 	getProviders,
 	listCredentialAgents,
 	listCredentials,
-	type ListCredentialsParams,
+	updateCredential,
 } from './client';
 import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
@@ -35,35 +35,15 @@ import type {
 	CredentialUpdateRequest,
 	DeviceAuthorizationChallengeResponse,
 } from './types';
-import { updateCredential } from './client';
 import {
 	isHttpsVendorUrl,
 	openVendorUrl,
 	assignVendorUrl,
 } from '@/shared/credentials/lib/safe-navigation';
 
-/** Namespaced query keys for the credentials cache slice. */
-export const credentialKeys = {
-	all: ['credentials'] as const,
-	list: (params: ListCredentialsParams = {}) => ['credentials', 'list', params] as const,
-	/** Every page of {@link useAllCredentials} — its own key (an infinite query
-	 * can't share one with {@link useCredentials}) but under the same
-	 * `['credentials', 'list', …]` prefix so existing invalidations sweep it. */
-	listAll: () => ['credentials', 'list', 'all-pages'] as const,
-	detail: (id: string) => ['credentials', 'detail', id] as const,
-	/**
-	 * Agents directly bound to one credential (`GET /credentials/{id}/agents`,
-	 * theme 5 phase 1's reverse lookup). The agents module's bind / unbind /
-	 * resume mutations invalidate this slice (importing this factory — the
-	 * sanctioned shared channel) so the credential-side "Bound agents" view
-	 * never shows a binding the agent side just changed.
-	 */
-	agents: (id: string) => ['credentials', 'agents', id] as const,
-	/** Every page of {@link useAllCredentialAgents} — own key for the same reason
-	 * as {@link credentialKeys.listAll}, under the same prefix so the agents
-	 * module's bind/unbind invalidations sweep it. */
-	agentsAll: (id: string) => ['credentials', 'agents', id, 'all-pages'] as const,
-};
+import { credentialKeys } from './keys';
+
+export { credentialKeys };
 
 /**
  * Wire contract for the advisory popup→opener connect signal (#598).
@@ -81,16 +61,6 @@ export const OAUTH_CONNECT_MESSAGE_TYPE = 'jentic:oauth-connect' as const;
 export interface OAuthConnectMessage {
 	type: typeof OAUTH_CONNECT_MESSAGE_TYPE;
 	status: 'ok' | 'error';
-}
-
-/** List credentials (first page; cursor pagination policy owned here). */
-export function useCredentials(
-	params: ListCredentialsParams = {},
-): UseQueryResult<CredentialListResponse> {
-	return useQuery({
-		queryKey: credentialKeys.list(params),
-		queryFn: () => listCredentials(params),
-	});
 }
 
 /**
@@ -543,10 +513,11 @@ export {
 	apiPickerKeys,
 	apiRowToSelected,
 	catalogToSelected,
-	workspaceApiFor,
+	invalidateApiLists,
 	useApis,
 	useAllApis,
 	useApiSchemes,
+	useNoAuthPicks,
 	useCatalog,
 	useImportCatalogEntry,
 	useImportSpec,
@@ -561,12 +532,9 @@ export {
 	useConfirmConnectSession,
 	useConnectSession,
 	usePollConnectSessionStatus,
-	useStartAndConfirmVendorConnect,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendors,
-	type StartAndConfirmResult,
-	type StartAndConfirmVars,
 } from './vendors-hooks';
 
 export type {
