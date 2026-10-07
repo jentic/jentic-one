@@ -37,11 +37,18 @@ class AgentVisibility(NamedTuple):
 
 
 class AgentCredentialBindingRow(NamedTuple):
-    """Direct agent↔credential binding existence-check row (theme 5 phase 1)."""
+    """Direct agent↔credential binding existence-check row (theme 5 phase 1).
+
+    ``agent_name`` is the bound agent's display name (``None`` when its row is
+    gone). ``credential_name`` lives in the control DB, so this repository
+    never sets it; the credential service fills it from the row it loaded.
+    """
 
     binding_id: str
     suspended: bool
     rule_set_id: str | None
+    agent_name: str | None = None
+    credential_name: str | None = None
 
 
 class RuleSetBindingRow(NamedTuple):
@@ -169,7 +176,7 @@ class PrerequisiteRepository:
         credential_id: str,
         visible_to: AgentVisibility | None = None,
     ) -> AgentCredentialBindingRow | None:
-        """Return the direct binding's (id, suspended, rule_set_id), or ``None``.
+        """Return the direct binding's (id, suspended, rule_set_id, agent name), or ``None``.
 
         Existence check for the per-binding permission endpoints (theme 5
         phase 1): the binding row lives in the admin DB while the rules live
@@ -185,13 +192,14 @@ class PrerequisiteRepository:
         where = "b.agent_id = :agent_id AND b.credential_id = :credential_id"
         if visible_to is None:
             stmt = text(
-                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                "SELECT b.id, b.suspended, b.rule_set_id, a.name FROM agent_credential_bindings b "
+                "LEFT JOIN agents a ON a.id = b.agent_id "
                 f"WHERE {where}"
             )
         else:
             params.update(self_id=visible_to.self_id, owner_ids=list(visible_to.owner_ids))
             stmt = text(
-                "SELECT b.id, b.suspended, b.rule_set_id FROM agent_credential_bindings b "
+                "SELECT b.id, b.suspended, b.rule_set_id, a.name FROM agent_credential_bindings b "
                 "JOIN agents a ON a.id = b.agent_id "
                 f"WHERE {where} AND (a.id = :self_id OR a.owner_id IN :owner_ids)"
             ).bindparams(bindparam("owner_ids", expanding=True))
@@ -203,6 +211,7 @@ class PrerequisiteRepository:
             binding_id=str(row[0]),
             suspended=bool(row[1]),
             rule_set_id=str(row[2]) if row[2] is not None else None,
+            agent_name=str(row[3]) if row[3] is not None else None,
         )
 
     @staticmethod

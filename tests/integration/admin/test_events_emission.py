@@ -201,6 +201,55 @@ async def test_emit_credential_access_names_the_credential_owner(
         assert event.created_by == "usr_cred_owner"
 
 
+async def test_emit_credential_access_summary_names_the_credential(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """The summary names the credential; the id stays in ``data``."""
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            credential_name="Stripe live key",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.summary == (
+            "Credential 'Stripe live key' accessed by agent_42 for stripe/charges/v1"
+        )
+        assert event.data["credential_id"] == "cred_abc"
+
+
+async def test_emit_credential_access_summary_falls_back_to_the_id(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.summary == "Credential cred_abc accessed by agent_42 for stripe/charges/v1"
+
+
 async def test_emit_credential_access_never_records_secret(
     admin_db: DatabaseSession, clean_events: None
 ) -> None:

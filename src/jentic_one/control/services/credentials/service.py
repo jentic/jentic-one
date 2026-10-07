@@ -75,7 +75,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -369,7 +369,8 @@ class CredentialService:
                     session,
                     type=EventType.CREDENTIAL_STORED,
                     severity=EventSeverity.INFO,
-                    summary=f"Credential {view.credential_id} stored",
+                    summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
+                    data={"credential_id": view.credential_id},
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
@@ -549,12 +550,22 @@ class CredentialService:
             )
         if binding is None:
             raise AgentBindingNotFoundError(credential_id, agent_id)
-        return binding
+        return binding._replace(credential_name=credential.name)
 
     async def _record_rules_change(
-        self, credential_id: str, agent_id: str, *, identity: Identity, reason: str
+        self,
+        credential_id: str,
+        agent_id: str,
+        binding: AgentCredentialBindingRow,
+        *,
+        identity: Identity,
+        reason: str,
     ) -> None:
-        """Audit + telemetry for a rules mutation (mirrors the toolkit path)."""
+        """Audit + telemetry for a rules mutation (mirrors the toolkit path).
+
+        ``binding`` is the row :meth:`_require_visible_binding` returned; its
+        agent and credential names label the event summary.
+        """
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.UPDATE,
@@ -573,8 +584,11 @@ class CredentialService:
                     type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
                     severity=EventSeverity.INFO,
                     summary=(
-                        f"Permission rules set on agent {agent_id} for credential {credential_id}"
+                        "Permission rules set on agent "
+                        f"{summary_label(binding.agent_name, agent_id)} for credential "
+                        f"{summary_label(binding.credential_name, credential_id)}"
                     ),
+                    data={"agent_id": agent_id, "credential_id": credential_id},
                     # Subject is the agent, so its owner sees the rules change.
                     created_by=agent_id,
                     actor_id=identity.sub,
@@ -604,7 +618,7 @@ class CredentialService:
         identity: Identity,
     ) -> list[AgentPermissionRule]:
         """Replace the full user-rule list for a binding (idempotent PUT)."""
-        await self._require_visible_binding(
+        binding = await self._require_visible_binding(
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
@@ -612,7 +626,7 @@ class CredentialService:
                 session, agent_id, credential_id, rules, created_by=identity.sub
             )
         await self._record_rules_change(
-            credential_id, agent_id, identity=identity, reason="replace permission rules"
+            credential_id, agent_id, binding, identity=identity, reason="replace permission rules"
         )
         return result
 
@@ -626,7 +640,7 @@ class CredentialService:
         remove: list[int] | None = None,
     ) -> list[AgentPermissionRule]:
         """Additively add and/or remove user rules on a binding."""
-        await self._require_visible_binding(
+        binding = await self._require_visible_binding(
             credential_id, agent_id, identity=identity, for_write=True
         )
         async with self._ctx.control_db.transaction() as session:
@@ -634,7 +648,7 @@ class CredentialService:
                 session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
             )
         await self._record_rules_change(
-            credential_id, agent_id, identity=identity, reason="patch permission rules"
+            credential_id, agent_id, binding, identity=identity, reason="patch permission rules"
         )
         return result
 
@@ -748,6 +762,7 @@ class CredentialService:
         await self._record_rules_change(
             credential_id,
             agent_id,
+            binding,
             identity=identity,
             reason=f"attach rule set {rule_set_id}",
         )
@@ -772,6 +787,7 @@ class CredentialService:
         await self._record_rules_change(
             credential_id,
             agent_id,
+            binding,
             identity=identity,
             reason=f"detach rule set {binding.rule_set_id}",
         )
