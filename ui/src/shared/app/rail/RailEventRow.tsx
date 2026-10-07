@@ -12,15 +12,11 @@
  *   • warning:          subtle amber stripe, full layout
  *   • info:             no stripe, one compact line
  *
- * Exception: an unacknowledged event that `requiresAction` always uses the full
- * layout regardless of severity, so its inline action slot is never hidden
- * (see issue #652). Acknowledged events collapse to the compact line and dim —
- * the dimming is the "handled" signal, no extra label.
+ * Exception: an event that `requiresAction` always uses the full layout
+ * regardless of severity, so its inline links are never hidden (see issue #652).
  *
- * Inline-action slot (actionable rows only):
- *   • "Acknowledge" — real `PATCH /events/{id}` via the parent
- *   • "View …" / "Review" — pure-navigation deep-links into the
- *     execution/job/trace/agent the event references
+ * Inline-action slot — pure-navigation "View …" deep-links into the record the
+ * event references (execution/job/trace/agent/API/queue).
  */
 import { useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -71,17 +67,15 @@ function TimeTooltipContent({ tsMs }: { tsMs: number }) {
 }
 
 function isCompact(ev: StreamEvent): boolean {
-	if (ev.acknowledged) return true;
-	// An unacknowledged event that still needs a human decision must keep its
-	// full layout so the inline action slot (Review/Acknowledge) renders —
-	// actionable events can be emitted at INFO severity. See issue #652.
+	// An event that asked for a human keeps its full layout so its inline
+	// links render — actionable events can be emitted at INFO severity. See
+	// issue #652.
 	if (ev.requiresAction) return false;
 	return ev.severity === 'info';
 }
 
 /** Left-edge stripe: red for failures, a faint amber for warnings, none otherwise. */
 function stripeClass(ev: StreamEvent): string {
-	if (ev.acknowledged) return 'border-l-transparent';
 	if (ev.severity === 'critical') return 'border-l-4 border-l-danger';
 	if (ev.severity === 'error') return 'border-l-danger';
 	if (ev.severity === 'warning') return 'border-l-warning/40';
@@ -155,7 +149,7 @@ function RailEventRowContent({
 	onNavigate,
 }: RailEventRowProps & { arrived: boolean }) {
 	const compact = isCompact(ev);
-	const failing = isFailureSeverity(ev.severity) && !ev.acknowledged;
+	const failing = isFailureSeverity(ev.severity);
 	const actions = inlineActionsFor(ev);
 	const who = hideActor ? undefined : actorName;
 	const text = groupTitle ?? railTitle(ev);
@@ -235,12 +229,9 @@ function RailEventRowContent({
 					arrived && 'animate-arrive',
 					(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 				)}
-				data-acknowledged={ev.acknowledged || undefined}
 			>
 				{overlay}
-				{/* A handled row recedes through its glyph only: dimming the whole row
-				    would take its text (and the "1h" stamp) below AA contrast. */}
-				<StreamEventIcon ev={ev} className={cn(ev.acknowledged && 'opacity-55')} />
+				<StreamEventIcon ev={ev} />
 				<span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
 					{sentence}
 				</span>
@@ -284,7 +275,7 @@ function RailEventRowContent({
 						{actions.map((action) => (
 							<Button
 								key={action.kind}
-								variant={action.kind === 'acknowledge' ? 'primary' : 'ghost'}
+								variant={action.primary ? 'primary' : 'ghost'}
 								size="sm"
 								onClick={() => onAction?.(ev.id, action)}
 								className="h-6 px-2 text-[11px]"

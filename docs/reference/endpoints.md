@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **175**._
+_Total endpoints: **174**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -111,7 +111,7 @@ _Total endpoints: **175**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (41)
+## Operator-facing (typically a human operator / admin) (40)
 
 
 ### `actors`
@@ -176,12 +176,6 @@ _Total endpoints: **175**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/catalog:refresh` | `org:admin` | operator | Refresh Catalog |
-
-### `events`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| PATCH | `/events/{event_id}` | `events:write` | operator | Acknowledge Event |
 
 ### `monitoring`
 

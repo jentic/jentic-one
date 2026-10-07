@@ -214,7 +214,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `evt_` | Event | ULID-shaped. |
   | `op_` | Registered operation | |
   | `rev_` | API revision | ULID-shaped. |
-  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
+  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
@@ -493,8 +493,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "subject it is about (for example the owner of the credential or the agent "
             "concerned), to the human owner of either when that is an agent, and to "
             "`org:admin`; system events with no subject are visible only to `org:admin`. To "
-            "any other caller an event is indistinguishable from a missing one (`404`), "
-            "including on acknowledgement."
+            "any other caller an event is indistinguishable from a missing one (`404`)."
         ),
     },
     {

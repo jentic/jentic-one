@@ -6,7 +6,7 @@
  *   2. Fold a run of consecutive routine events — same type, same actor, same
  *      day — into ONE row ("Support Triage · 6 calls succeeded") that expands.
  *   3. Keep anything that went wrong or needs a human individual: failures,
- *      actionable and acknowledged events never fold.
+ *      and actionable events never fold.
  *   4. Defer to RailEventRow for actual rendering, so density is decided per-row.
  */
 import { useMemo, useRef, useState } from 'react';
@@ -22,7 +22,7 @@ import {
 import type { ActivityCategory, InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 export type RailFeedFilters = {
-	/** Only error/critical events (acknowledged ones included, dimmed). */
+	/** Only error/critical events. */
 	failuresOnly: boolean;
 	/** Only these kinds of activity; empty or absent = every kind. */
 	categories?: ReadonlySet<ActivityCategory>;
@@ -112,7 +112,7 @@ function formatLastEventAgo(tsMs: number): string {
 
 /** Routine events fold; anything that went wrong or wants a human stays its own row. */
 function isFoldable(ev: StreamEvent): boolean {
-	return !isFailureSeverity(ev.severity) && !ev.requiresAction && !ev.acknowledged;
+	return !isFailureSeverity(ev.severity) && !ev.requiresAction;
 }
 
 function foldsWith(a: StreamEvent, b: StreamEvent): boolean {

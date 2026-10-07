@@ -22,16 +22,11 @@ from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.services.catalog.flow3_metrics import (
     record_overlay_auto_deprecated,
-    record_update_settled,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
-from jentic_one.shared.events import (
-    emit_event_best_effort,
-    settle_actionable_events,
-    settle_unmatched_api_events,
-)
+from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import (
     ORIGIN_OVERLAY,
@@ -54,15 +49,6 @@ _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
 #     can't catch this (it's keyed on api_id alone, independent of spec_digest).
 _DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
 _ONE_ACTIVE_CONSTRAINT = "ix_api_revisions_one_active"
-# uq_apis_vendor_name_version: two concurrent imports both saw no Api row for the
-# same identity and both inserted; the loser lands here. Retrying re-runs the
-# catalog-identity collision guard against the winner's committed row, which then
-# either accepts (same/no catalog entry) or refuses with the readable conflict.
-_API_IDENTITY_CONSTRAINT = "uq_apis_vendor_name_version"
-_IDENTITY_RACE_MESSAGE = (
-    "A concurrent import created this API identity first; retry the import — "
-    "a colliding catalog entry will then be refused as a catalog identity conflict"
-)
 
 # The job-error wrapper an all-sources-failed import rides (``IngestJobError``):
 # ``ALL_SOURCES_FAILED_PREFIX_TEMPLATE`` heads the whole message and
@@ -85,11 +71,10 @@ def _readable_source_error(exc: Exception) -> str:
     race for the one-active slot) to a clear message and keep other failures as
     their (domain) exception text.
     """
-    if isinstance(exc, DatabaseIntegrityError):
-        if _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail:
-            return DuplicateRevisionError().message
-        if _API_IDENTITY_CONSTRAINT in exc.detail:
-            return _IDENTITY_RACE_MESSAGE
+    if isinstance(exc, DatabaseIntegrityError) and (
+        _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail
+    ):
+        return DuplicateRevisionError().message
     return str(exc)
 
 
@@ -186,27 +171,6 @@ class ImportHandler:
                 failed=len(failures),
             )
 
-            # Flow-3 resolve path: a successful (re-)import adopts the upstream spec, so
-            # any outstanding ``catalog.update_available`` prompt for that API is now
-            # resolved — settle it best-effort so the action-inbox item clears. Keyed on
-            # the event payload's ``api_id``; a manual import that was never catalog-
-            # tracked simply has no matching event. Never fails the import.
-            # A revision held for review did not adopt the upstream spec, so its prompt
-            # stays open until an operator promotes the draft.
-            adopted = [rev for rev in revisions if not rev.get("held_for_review")]
-            for rev in adopted:
-                await self._settle_update_available(job_id, created_by, rev["api"], session)
-
-            # Every imported identity now exists in ``apis``, so a create-time
-            # ``credential.unmatched_api`` warning whose scope covers it (typically a
-            # credential created while this very import was still queued) is false —
-            # settle it so it doesn't linger on the events page. Held revisions count:
-            # the Api row exists either way, which is what the warning keyed on.
-            for rev in revisions:
-                await self._settle_unmatched_credential_warnings(
-                    job_id, created_by, rev["api"], session
-                )
-
             # A4b worker step: an authorized catalog re-import that supersedes a live
             # confirmed overlay. The re-ingest archived the overlay's revision (the
             # supersede_active stage archived *all* active revisions), so the served spec
@@ -247,14 +211,6 @@ class ImportHandler:
                         actor_type=actor_type,
                     )
                     recovered_supersede = recovered_api_id is not None
-                    if recovered_api_id is not None:
-                        # The served spec is already the fresh upstream; settle the Flow-3
-                        # prompts the (now-durable) adoption resolved, mirroring the clean
-                        # path. Keyed on the resolved api_id — the URL source carries no
-                        # version triple to re-resolve from.
-                        await self._settle_events_for_api_id(
-                            job_id, created_by, recovered_api_id, session
-                        )
 
             # Overlay materialization: link the confirmed overlay to the revision the
             # re-ingest just produced, so the served spec and the overlay agree on which
@@ -597,9 +553,9 @@ class ImportHandler:
         committed the fresh upstream revision and made it current, then crashed before the
         separate-transaction deprecate ran; the retry re-ingests identical content and
         fails with ``DuplicateRevisionError`` (no new revision). Returns the resolved
-        ``api_id`` — so the caller completes the job (instead of dead-lettering) and settles
-        events — when the served revision is now a *non-overlay* (upstream) revision,
-        meaning the supersede's durable effect already landed. In that case it also
+        ``api_id`` — so the caller completes the job (instead of dead-lettering) — when
+        the served revision is now a *non-overlay* (upstream) revision, meaning the
+        supersede's durable effect already landed. In that case it also
         (idempotently, CAS on CONFIRMED) deprecates the overlay to finish the interrupted
         step. Returns ``None`` for a genuine failure (served revision is still the overlay,
         or identity can't be resolved).
@@ -658,118 +614,6 @@ class ImportHandler:
             job_id, overlay_id, actor_id=actor_id, actor_type=actor_type
         )
         return api_id
-
-    async def _settle_update_available(
-        self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
-    ) -> None:
-        """Clear outstanding Flow-3 update prompts for the (re-)imported API.
-
-        A successful import adopts the upstream spec, so both the routine
-        ``catalog.update_available`` prompt **and** any ``catalog.update_conflicts_overlay``
-        prompt (A4c — the operator adopted upstream over an overlay) are resolved for that
-        API. Best-effort: resolve the local ``api_id`` from the spec triple, then
-        acknowledge matching actionable events of either class (matched on the event
-        payload's ``api_id``). Never fails the import — the served spec is already correct;
-        a missed settle only leaves a stale inbox item that the next re-import clears.
-
-        ``session`` is the handler's own jobs/admin write session (events live in the admin
-        DB). We deliberately reuse it rather than opening a second admin transaction: the
-        worker already runs the handler inside an admin ``BEGIN IMMEDIATE`` (see
-        ``JobWorker._execute_handler``), and on SQLite's single writer a nested admin
-        transaction would deadlock against that outer one — no retry can win because the
-        blocker is our own call stack. Reusing the session also makes the ack atomic with
-        the import. Each settle runs in a SAVEPOINT so a failure rolls back only itself,
-        leaving the surrounding import (and its completion event) intact.
-        """
-        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
-        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
-            return
-        try:
-            async with self._ctx.registry_db.session() as read_session:
-                resolved = await ApiRepository.get_by_identifier(
-                    read_session, vendor, name, version
-                )
-            if resolved is None:
-                return
-        except Exception:
-            logger.exception("catalog_update_available_settle_failed", job_id=job_id)
-            return
-        await self._settle_events_for_api_id(job_id, actor_id, resolved.id, session)
-
-    async def _settle_events_for_api_id(
-        self, job_id: str, actor_id: str, api_id: uuid.UUID, session: Any
-    ) -> None:
-        """Ack both Flow-3 update event classes for a resolved ``api_id``.
-
-        Split from ``_settle_update_available`` so callers that already hold the resolved
-        ``api_id`` (e.g. the supersede-recovery path, whose URL source carries no version
-        triple to re-resolve) can settle directly. Per-type isolation: settle each event
-        class in its own SAVEPOINT + try, so a failure settling one class (e.g. the plain
-        update) does not skip the other — for the A4c adopt-over-overlay case the conflict
-        event is the one that most matters, and it must be acked even if the plain-update
-        settle errors first.
-        """
-        for event_type in (
-            EventType.CATALOG_UPDATE_AVAILABLE,
-            EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
-        ):
-            try:
-                async with session.begin_nested():
-                    settled = await settle_actionable_events(
-                        session,
-                        event_type=event_type,
-                        acknowledged_by=actor_id,
-                        acknowledgement_note="Resolved by re-import of the upstream spec",
-                        data_match={"api_id": str(api_id)},
-                    )
-                if settled:
-                    logger.info(
-                        "catalog_update_event_settled",
-                        job_id=job_id,
-                        api_id=str(api_id),
-                        event_type=event_type,
-                        settled=settled,
-                    )
-                    record_update_settled(settled)
-            except Exception:
-                logger.exception(
-                    "catalog_update_event_settle_failed",
-                    job_id=job_id,
-                    event_type=event_type,
-                )
-
-    async def _settle_unmatched_credential_warnings(
-        self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
-    ) -> None:
-        """Ack ``credential.unmatched_api`` warnings the imported identity resolves.
-
-        Same session + SAVEPOINT discipline as ``_settle_update_available`` (events
-        live in the admin DB the handler already holds open): a failed settle rolls
-        back only itself and never fails the import.
-        """
-        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
-        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
-            return
-        try:
-            async with session.begin_nested():
-                settled = await settle_unmatched_api_events(
-                    session,
-                    vendor=vendor,
-                    name=name,
-                    version=version,
-                    acknowledged_by=actor_id,
-                )
-            if settled:
-                logger.info(
-                    "credential_unmatched_api_settled",
-                    job_id=job_id,
-                    api_vendor=vendor,
-                    api_name=name,
-                    api_version=version,
-                    settled=settled,
-                )
-        except Exception:
-            logger.exception("credential_unmatched_api_settle_failed", job_id=job_id)
 
     async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
         """Link an overlay to its already-materialized revision after a duplicate re-ingest.

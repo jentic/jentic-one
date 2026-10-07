@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
@@ -29,9 +30,10 @@ from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import settle_unmatched_api_events
+from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import EventType
+from jentic_one.shared.models.jobs import JobKind
 
 _ADMIN_IDENTITY = Identity(sub="admin_user", email="admin@test.com", permissions=["org:admin"])
 
@@ -50,6 +52,7 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
             await session.commit()
         async with integration_context.admin_db.session() as session:
             await session.execute(delete(Event))
+            await session.execute(delete(Job))
             await session.commit()
 
     await _wipe()
@@ -200,7 +203,7 @@ async def test_name_wildcard_version_pinned_mismatch_renders_wildcard_axis(
 async def test_unmatched_event_carries_the_canonical_scope(
     integration_context: Context, svc: CredentialService, clean_tables: None
 ) -> None:
-    """The scope rides in ``data`` so a later import can settle the warning."""
+    """The warning carries the credential's canonical scope in ``data``."""
     result = await svc.create(
         _payload(APIReference(vendor="posthog.com", name="PostHog API", version="")),
         identity=_ADMIN_IDENTITY,
@@ -214,32 +217,46 @@ async def test_unmatched_event_carries_the_canonical_scope(
     }
 
 
-async def test_import_of_a_covered_identity_settles_the_warning(
+async def test_pending_import_of_a_covered_identity_suppresses_the_warning(
     integration_context: Context, svc: CredentialService, clean_tables: None
 ) -> None:
-    """Pins the create-while-import-is-queued race: once a covered identity is
-    imported the create-time warning is false, so it must be acknowledged —
-    while a warning whose scope the import does not cover stays open."""
-    await svc.create(
+    """Pins the create-while-import-is-queued race: the UI enqueues the catalog
+    import and creates the credential back to back, and events are append-only,
+    so warning then would leave a permanently false event behind. A queued job
+    for another name under the vendor does not suppress a real mismatch."""
+    async with integration_context.admin_db.transaction() as session:
+        await enqueue_job(
+            session,
+            JobKind.IMPORT,
+            created_by="usr_test",
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/posthog/openapi.json",
+                        "origin": "catalog",
+                        "vendor": "posthog.com",
+                        "api_name": "posthog-api",
+                        "catalog_api_id": "posthog.com/posthog-api",
+                    }
+                ]
+            },
+        )
+
+    covered = await svc.create(
         _payload(APIReference(vendor="posthog-com", name="posthog-api", version="")),
         identity=_ADMIN_IDENTITY,
     )
-    await svc.create(
+    assert covered.warnings is None
+    vendor_wide = await svc.create(
+        _payload(APIReference(vendor="posthog-com", name="", version="")),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert vendor_wide.warnings is None
+    mismatched = await svc.create(
         _payload(APIReference(vendor="posthog-com", name="other-api", version="")),
         identity=_ADMIN_IDENTITY,
     )
-    async with integration_context.admin_db.transaction() as session:
-        settled = await settle_unmatched_api_events(
-            session,
-            vendor="posthog-com",
-            name="posthog-api",
-            version="1.0",
-            acknowledged_by="usr_importer",
-        )
-    assert settled == 1
-    by_name = {
-        (e.data or {}).get("api_name"): e for e in await _unmatched_events(integration_context)
-    }
-    assert by_name["posthog-api"].acknowledged is True
-    assert by_name["posthog-api"].acknowledged_by == "usr_importer"
-    assert by_name["other-api"].acknowledged is False
+    assert mismatched.warnings is not None
+    [event] = await _unmatched_events(integration_context)
+    assert (event.data or {}).get("api_name") == "other-api"

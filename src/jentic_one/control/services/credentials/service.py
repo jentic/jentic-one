@@ -28,6 +28,7 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.pending_import_lookup_repo import PendingImportLookupRepository
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
     AgentVisibility,
@@ -82,6 +83,7 @@ from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
     credential_covers,
+    slugify_api_field,
 )
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -436,9 +438,8 @@ class CredentialService:
                                 f"'{unmatched.reference[:200]}' matches no imported API"
                             ),
                             detail=unmatched.message,
-                            # The canonical scope rides along so an import that
-                            # lands a covered identity can settle this warning
-                            # (``settle_unmatched_api_events``).
+                            # The canonical scope rides along for consumers that
+                            # correlate the warning with a later import.
                             data={
                                 "credential_id": view.credential_id,
                                 "api_vendor": api_scope.vendor,
@@ -1494,8 +1495,12 @@ class CredentialService:
         here with the broker's ``credential_covers`` semantics, and when nothing is
         covered the same rows name the vendor's imported identities so a near-miss
         (e.g. a #1020 vendor-doubled workspace name) is visible at create time
-        rather than as an execute-time 403. A warning raised while the matching
-        import is still queued is settled by that import when it lands.
+        rather than as an execute-time 403.
+
+        Events are append-only, so a warning about an API whose import is
+        already queued (the UI and ``ensure_imported`` enqueue the import and
+        create the credential back to back) would stay false forever; the
+        check is skipped when a pending import job may land a covered identity.
         """
         if not self._ctx.has_db("registry"):
             return None
@@ -1514,6 +1519,8 @@ class CredentialService:
             credential_covers(scope, vendor=scope.vendor, name=name, version=version)
             for name, version in identities
         ):
+            return None
+        if await self._pending_import_may_cover(scope):
             return None
         reference = _scope_reference(scope)
         # The scope is immutable after create, so "import the API" is only half
@@ -1536,3 +1543,32 @@ class CredentialService:
             api_version=scope.version,
         )
         return _UnmatchedScopeWarning(reference=reference, message=message)
+
+    async def _pending_import_may_cover(self, scope: CredentialScope) -> bool:
+        """Whether a queued/running import job may land an identity ``scope`` covers.
+
+        Matches the job source's ``vendor`` / ``api_name`` seeds against the
+        scope's vendor and name axes (the version is only known once the spec
+        is fetched, so it is not compared). Best-effort and time-bounded like
+        the registry read: on failure it answers ``False`` so the advisory
+        still fires.
+        """
+        try:
+            async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
+                async with self._ctx.admin_db.session() as session:
+                    sources = await PendingImportLookupRepository.pending_import_sources(session)
+        except Exception:
+            logger.warning(
+                "credential_pending_import_check_failed", api_vendor=scope.vendor, exc_info=True
+            )
+            return False
+        for source in sources:
+            vendor = source.get("vendor")
+            if not isinstance(vendor, str) or slugify_api_field(vendor) != scope.vendor:
+                continue
+            if scope.name is None:
+                return True
+            name = source.get("api_name")
+            if isinstance(name, str) and slugify_api_field(name) == scope.name:
+                return True
+        return False

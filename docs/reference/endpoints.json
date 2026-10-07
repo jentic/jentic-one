@@ -2338,30 +2338,6 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_permissions": {
-        "events:write": [
-          "events:read"
-        ]
-      },
-      "method": "PATCH",
-      "operation_id": "acknowledgeEvent",
-      "path": "/events/{event_id}",
-      "public": false,
-      "required_permissions": [
-        "events:write"
-      ],
-      "summary": "Acknowledge Event",
-      "surface": "events",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent"
-      ],
-      "auth_note": null,
-      "authenticated": true,
       "group": "Agent-facing (typically an agent)",
       "implied_permissions": {
         "executions:read": []
@@ -4127,7 +4103,7 @@
           },
           {
             "action": "write",
-            "description": "Acknowledge and manage platform events",
+            "description": "Manage platform events",
             "family": "events",
             "implies": [
               "events:read"
@@ -4432,7 +4408,7 @@
       },
       {
         "action": "write",
-        "description": "Acknowledge and manage platform events",
+        "description": "Manage platform events",
         "family": "events",
         "implies": [
           "events:read"
@@ -4626,5 +4602,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 175
+  "total": 174
 }

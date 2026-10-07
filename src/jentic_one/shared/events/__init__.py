@@ -11,7 +11,6 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos.event_repo import EventRepository
-from jentic_one.shared.models.api_identity import CredentialScope, credential_covers
 from jentic_one.shared.models.events import EVENT_TAGS, EventSeverity, EventTag, EventType
 from jentic_one.shared.telemetry.events import resolve_wire_name
 from jentic_one.shared.telemetry.sink import get_active_sink
@@ -206,116 +205,6 @@ async def emit_event_best_effort(
         )
     except Exception:
         logger.warning("emit_event_best_effort_failed", type=type)
-
-
-async def settle_actionable_events(
-    session: AsyncSession,
-    *,
-    event_type: str,
-    acknowledged_by: str,
-    acknowledgement_note: str,
-    actor_id: str | None = None,
-    actor_type: str | None = None,
-    data_match: dict[str, str] | None = None,
-) -> int:
-    """Acknowledge outstanding actionable events once their action is taken.
-
-    Actionable events (``requires_action=True``) prompt operators to review
-    something; when the review happens elsewhere (e.g. approving an agent),
-    the prompt must be settled or it stays live on the
-    rail/dashboard forever with a working-but-pointless action button.
-
-    Matches on type + optional actor scoping via SQL, then on exact-equality
-    ``data_match`` pairs in Python (event ``data`` is unindexed JSON). Returns
-    the number of events acknowledged. Raises on DB errors — callers decide
-    whether settlement may fail the surrounding operation (it usually must
-    not; wrap in try/except + savepoint).
-    """
-    pending = await EventRepository.list_all(
-        session,
-        event_type=[event_type],
-        requires_action=True,
-        acknowledged=False,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        # Alerts are per-entity (one per registration/request), so a page of
-        # 1000 is effectively "all" — generous rather than silently partial.
-        limit=1000,
-    )
-    if len(pending) >= 1000:
-        # The page IS partial after all — an older matching alert may sit
-        # beyond it and stay live. Loud so operators can spot the backlog;
-        # the fleet reaching 1000 outstanding actionable alerts is itself
-        # the anomaly worth investigating.
-        logger.warning(
-            "settle_actionable_events_page_full",
-            event_type=event_type,
-            actor_id=actor_id,
-        )
-    settled = 0
-    for event in pending:
-        data = event.data or {}
-        if data_match and any(data.get(k) != v for k, v in data_match.items()):
-            continue
-        await EventRepository.acknowledge(
-            session,
-            event.id,
-            acknowledged_by=acknowledged_by,
-            acknowledgement_note=acknowledgement_note,
-        )
-        settled += 1
-    return settled
-
-
-async def settle_unmatched_api_events(
-    session: AsyncSession,
-    *,
-    vendor: str,
-    name: str,
-    version: str,
-    acknowledged_by: str,
-) -> int:
-    """Acknowledge ``credential.unmatched_api`` warnings an import has just resolved.
-
-    The warning is a create-time snapshot ("this scope matches no imported API");
-    once an API the scope covers lands, the warning is false. Each outstanding
-    warning carries the credential's canonical scope in ``data``
-    (``api_vendor``/``api_name``/``api_version``, ``None`` = wildcard axis), so it
-    is settled iff that scope covers the imported identity — the same
-    ``credential_covers`` semantics the broker resolves with. The warning is not
-    an actionable inbox item, so this matches on acknowledgement alone (not
-    ``requires_action``). Raises on DB errors — callers wrap it in a savepoint +
-    try so a failed settle never fails the import.
-    """
-    pending = await EventRepository.list_all(
-        session,
-        event_type=[EventType.CREDENTIAL_UNMATCHED_API],
-        acknowledged=False,
-        limit=1000,
-    )
-    settled = 0
-    for event in pending:
-        data = event.data or {}
-        stored_vendor = data.get("api_vendor")
-        if not isinstance(stored_vendor, str):
-            continue
-        stored_name = data.get("api_name")
-        stored_version = data.get("api_version")
-        scope = CredentialScope(
-            vendor=stored_vendor,
-            name=stored_name if isinstance(stored_name, str) else None,
-            version=stored_version if isinstance(stored_version, str) else None,
-        )
-        if not credential_covers(scope, vendor=vendor, name=name, version=version):
-            continue
-        await EventRepository.acknowledge(
-            session,
-            event.id,
-            acknowledged_by=acknowledged_by,
-            acknowledgement_note=f"Resolved by import of {vendor}/{name} ({version})",
-        )
-        settled += 1
-    return settled
 
 
 async def emit_credential_access(

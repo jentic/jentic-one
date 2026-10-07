@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.services.errors import EventNotFoundError
 
 
 class EventRepository:
@@ -104,7 +103,6 @@ class EventRepository:
         event_type: list[str] | None = None,
         severity: list[str] | None = None,
         requires_action: bool | None = None,
-        acknowledged: bool | None = None,
         from_dt: datetime | None = None,
         to_dt: datetime | None = None,
         trace_id: str | None = None,
@@ -127,8 +125,6 @@ class EventRepository:
             stmt = stmt.where(Event.severity.in_(severity))
         if requires_action is not None:
             stmt = stmt.where(Event.requires_action == requires_action)
-        if acknowledged is not None:
-            stmt = stmt.where(Event.acknowledged == acknowledged)
         if from_dt is not None:
             stmt = stmt.where(Event.created_at >= from_dt)
         if to_dt is not None:
@@ -143,24 +139,6 @@ class EventRepository:
             stmt = stmt.where(*filters)
         result = await session.execute(stmt)
         return list(result.scalars().all())
-
-    @staticmethod
-    async def acknowledge(
-        session: AsyncSession,
-        event_id: str,
-        *,
-        acknowledged_by: str,
-        acknowledgement_note: str | None = None,
-    ) -> Event:
-        event = await session.get(Event, event_id)
-        if event is None:
-            raise EventNotFoundError(event_id)
-        event.acknowledged = True
-        event.acknowledged_at = datetime.now(UTC)
-        event.acknowledged_by = acknowledged_by
-        event.acknowledgement_note = acknowledgement_note
-        await session.flush()
-        return event
 
     @staticmethod
     async def list_after_cursor(

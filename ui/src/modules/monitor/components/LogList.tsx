@@ -12,9 +12,8 @@
  * It's one DOM either way (the meta wrapper is `display: contents` when
  * wide), so nothing is rendered twice for assistive tech or tests.
  *
- * Rows are `role="link"` divs rather than buttons because a row can carry its
- * own control (Everything's Acknowledge); a click that starts on a nested
- * control is left to it. `data-log-row` marks steppable rows for j/k.
+ * Rows are `role="link"` divs rather than buttons so a row can carry its own
+ * control; a click that starts on a nested control is left to it. `data-log-row` marks steppable rows for j/k.
  */
 import {
 	Fragment,
@@ -92,7 +91,7 @@ export interface LogRowProps {
 	actor?: ReactNode;
 	subject?: ReactNode;
 	detail?: ReactNode;
-	/** Inline control (Acknowledge) or affordance (chevron). */
+	/** Inline control or affordance (chevron). */
 	action?: ReactNode;
 	/** Accessible name of the row. */
 	label: string;
@@ -101,8 +100,6 @@ export interface LogRowProps {
 	active?: boolean;
 	/** A row revealed inside an expanded run (indented, not steppable). */
 	nested?: boolean;
-	/** Dealt with already — a failure keeps only a faint accent. */
-	muted?: boolean;
 	/** Exclude from j/k stepping (e.g. a fold/unfold row). */
 	steppable?: boolean;
 }
@@ -127,7 +124,6 @@ export function LogRow({
 	onOpen,
 	active,
 	nested,
-	muted,
 	steppable = true,
 }: LogRowProps) {
 	const failure = tone === 'fail';
@@ -142,21 +138,15 @@ export function LogRow({
 			className={cn(
 				'border-hairline-row relative border-b last:border-b-0',
 				nested && 'bg-tint',
-				failure && !muted && 'bg-danger/[0.035]',
+				failure && 'bg-danger/[0.035]',
 			)}
 		>
-			{/* Left accent: the open row wins, then an unhandled failure. */}
+			{/* Left accent: the open row wins, then a failure. */}
 			<span
 				aria-hidden="true"
 				className={cn(
 					'absolute inset-y-0 left-0 w-0.5',
-					active
-						? 'bg-primary'
-						: failure
-							? muted
-								? 'bg-danger/35'
-								: 'bg-danger'
-							: 'bg-transparent',
+					active ? 'bg-primary' : failure ? 'bg-danger' : 'bg-transparent',
 				)}
 			/>
 			<div
@@ -196,7 +186,7 @@ export function LogRow({
 							className={cn(
 								'text-foreground truncate',
 								mono ? 'font-mono text-[13px]' : 'text-sm',
-								failure && !muted ? 'font-semibold' : 'font-medium',
+								failure ? 'font-semibold' : 'font-medium',
 							)}
 						>
 							{title}
@@ -280,7 +270,7 @@ export function LogList({
 }: {
 	ariaLabel: string;
 	columns: LogColumns;
-	/** Width of the trailing action column (Everything needs room for Acknowledge). */
+	/** Width of the trailing action column. */
 	actionWidth?: string;
 	/** Above the column header (Everything's live bar). */
 	header?: ReactNode;

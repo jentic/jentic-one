@@ -45,8 +45,8 @@ class EventType:
     # A registered catalog/imported API's upstream spec changed (detected by the
     # update-notify sweep). Emitted with requires_action=True — the operator resolves
     # it by re-importing the upstream spec (one-click in the UI / `jentic catalog
-    # outdated` in the CLI), which the ImportHandler settles via
-    # settle_actionable_events. Deduped on the observed spec digest so it fires once
+    # outdated` in the CLI), which drops the API out of the outdated set. Deduped on
+    # the observed spec digest so it fires once
     # per real change, not every sweep.
     CATALOG_UPDATE_AVAILABLE = "catalog.update_available"
     # A registered API's upstream spec changed AND that change collides with a
@@ -121,6 +121,10 @@ class EventType:
     # Emitted by the admin `:approve` verb (D7) — including re-approval of a
     # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
     OAUTH_CLIENT_APPROVED = "oauth_client.approved"
+    # Emitted by the admin `:deny` verb (D7) when a client is rejected — the
+    # history record of the decision, mirroring OAUTH_CLIENT_APPROVED and
+    # AGENT_REGISTRATION_DENIED. Internal-only, like OAUTH_CLIENT_REGISTERED.
+    OAUTH_CLIENT_DENIED = "oauth_client.denied"
     # Emitted at consent-approve for a `consent_model='agent'` client: a
     # fresh `oauth_client_grants` row binds the client to one of the
     # consenting user's agents. Grant creation is deliberately LOUD (the
@@ -171,6 +175,7 @@ class EventType:
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,
             OAUTH_CLIENT_APPROVED,
+            OAUTH_CLIENT_DENIED,
             OAUTH_GRANT_CREATED,
             OAUTH_GRANT_REVOKED,
         }
@@ -404,6 +409,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.MCP_CONFIG_REGISTERED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_CLIENT_REGISTERED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_CLIENT_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_CLIENT_DENIED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------

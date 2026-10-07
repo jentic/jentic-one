@@ -12,6 +12,12 @@ export { getToken, setToken, clearToken, subscribeToken } from '@/shared/api/tok
 // Health (deploy-mode aware).
 export { getHealth } from '@/shared/api/health';
 
+// The configured client and its raw request, for endpoints the generated
+// services do not cover. Downstream UI overlays built on this app import them
+// from the facade, so they stay exported even when no module here uses them.
+export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
+export { request as apiRequest } from '@/shared/api/generated/core/request';
+
 // Generated typed services (regenerate with `npm run codegen`), one per API tag.
 export { UsersService } from '@/shared/api/generated/services/UsersService';
 export { EventsService } from '@/shared/api/generated/services/EventsService';
@@ -48,7 +54,7 @@ export type { AgentListResponse } from '@/shared/api/generated/models/AgentListR
 // behind the facade like every other module.
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
 export type { EventListResponse } from '@/shared/api/generated/models/EventListResponse';
-export type { EventAcknowledgeRequest } from '@/shared/api/generated/models/EventAcknowledgeRequest';
+export type { EventLinks } from '@/shared/api/generated/models/EventLinks';
 export { EventSeverity } from '@/shared/api/generated/models/EventSeverity';
 
 // Discover (catalog) slice — services + models.
