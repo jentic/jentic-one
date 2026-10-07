@@ -50,6 +50,13 @@ export interface ActorDirectory {
 	byId: Map<string, ActorDirectoryEntry>;
 	/** Friendly name for an id, or `undefined` when unknown / not yet loaded. */
 	resolve: (id: string | null | undefined) => string | undefined;
+	/**
+	 * Whether the by-id lookup answered for `id` and matched no actor the caller
+	 * may see (another user's agent, for a caller without the full directory).
+	 * `false` while loading, on a failed lookup, and whenever the full directory
+	 * is the source.
+	 */
+	isHidden: (id: string | null | undefined) => boolean;
 	isLoading: boolean;
 	isError: boolean;
 }
@@ -117,6 +124,10 @@ export function useActorDirectory(
 		})),
 		combine: (results) => ({
 			actors: results.map((r) => r.data).filter((a): a is ActorDirectoryEntry => a != null),
+			// A lookup that succeeded with no match (`loadActor` resolves `null`).
+			hidden: results.flatMap((r, i) =>
+				r.isSuccess && r.data == null ? [lookupIds[i]] : [],
+			),
 			isLoading: results.some((r) => r.isLoading),
 			isError: results.some((r) => r.isError),
 		}),
@@ -126,9 +137,11 @@ export function useActorDirectory(
 		const byId = new Map<string, ActorDirectoryEntry>();
 		for (const actor of full.data ?? []) byId.set(actor.id, actor);
 		for (const actor of lookup.actors) byId.set(actor.id, actor);
+		const hidden = new Set(lookup.hidden);
 		return {
 			byId,
 			resolve: (id) => (id != null ? byId.get(id)?.name : undefined),
+			isHidden: (id) => id != null && hidden.has(id) && !byId.has(id),
 			// Gated-off (unauthenticated) is not "loading" — there is nothing to wait for.
 			isLoading:
 				hasToken &&

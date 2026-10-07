@@ -57,6 +57,13 @@ export interface AgentBindingPermissionsEditorProps {
 	 * without suggestions.
 	 */
 	apiReference?: OpsApiReference | null;
+	/**
+	 * The viewer may not change these rules (saving needs `credentials:write` or
+	 * `org:admin`): the saved rules are listed, with no editor and no save.
+	 */
+	readOnly?: boolean;
+	/** Why the rules are read-only; shown under the list. */
+	readOnlyReason?: string;
 }
 
 /** Reverse of `toEditorRule` — for saving edits back through the agent-module API. */
@@ -125,6 +132,8 @@ export function AgentBindingPermissionsEditor({
 	initialRules,
 	onDirtyChange,
 	apiReference,
+	readOnly = false,
+	readOnlyReason = 'Changing these rules needs permission to manage credentials.',
 }: AgentBindingPermissionsEditorProps) {
 	// The saved OPERATOR rules — the draft's starting point, its reset target and
 	// the diff's baseline.
@@ -202,6 +211,35 @@ export function AgentBindingPermissionsEditor({
 	const discard = () => {
 		setRules(savedRules);
 	};
+
+	if (readOnly) {
+		return (
+			<div
+				className="bg-surface-inset space-y-3 rounded-lg p-4 sm:p-5"
+				data-testid="binding-rules-read-only"
+			>
+				<div>
+					<p className="text-foreground text-sm font-semibold">
+						Permission rules for {credentialLabel}
+					</p>
+					<p className="text-foreground-sub mt-0.5 text-xs">
+						Rules are evaluated in order — first match wins, anything unmatched is
+						denied.
+					</p>
+				</div>
+				{savedDisplay.length === 0 ? (
+					<p className="text-foreground-sub text-sm">No rules — all calls blocked.</p>
+				) : (
+					<ol className="text-foreground list-decimal space-y-1 pl-5 text-xs">
+						{savedDisplay.map((rule, i) => (
+							<li key={i}>{oneLiner(rule)}</li>
+						))}
+					</ol>
+				)}
+				<p className="text-foreground-sub text-xs">{readOnlyReason}</p>
+			</div>
+		);
+	}
 
 	return (
 		// A borderless card above the sheet; only its form controls carry an edge (`.edged-controls`, ≥3:1 against these close surfaces).
