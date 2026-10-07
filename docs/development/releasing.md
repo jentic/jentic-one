@@ -222,6 +222,14 @@ section below.
 
 ## Upgrading to 0.41.0
 
+**Use 0.41.1 instead of 0.41.0 on PostgreSQL.** In 0.41.0 the admin scope
+sweeps (`d1e2f3a4b5c6`, `e2f3a4b5c6d7`) fail with `column "allowed_scopes" is
+of type character varying[] but expression is of type jsonb` when an OAuth
+client's `allowed_scopes` still lists a retired `toolkits:*` or
+`service-accounts:*` scope. The failing revision rolls back and nothing is
+half-applied. 0.41.1 fixes the sweep, so re-running the migration on the
+0.41.1 image continues from where it stopped. The rules below apply to both.
+
 0.41.0 is the theme-5 Phase 6b release: it drops the toolkit tables (details
 in the next section). Two rules:
 
