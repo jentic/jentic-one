@@ -17,7 +17,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { animate, motion, useReducedMotion } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
-import { AppLink, Skeleton } from '@/shared/ui';
+import { AppLink, Skeleton, VendorIcon } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import {
 	HEALTH_LABEL,
@@ -30,7 +30,7 @@ import {
 } from '@/shared/lib/usageThresholds';
 import type { UsageResponse } from '@/modules/monitor/api';
 import { formatLatency } from '@/modules/monitor/lib/format';
-import { API_PALETTE, getInitials, textColor } from '@/modules/monitor/lib/palette';
+import { entitySeed } from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow, UsageOverview } from '@/modules/monitor/lib/usage';
 
 const SPEED_LABEL: Record<LatencyTier, string> = { fast: 'Fast', normal: 'Normal', slow: 'Slow' };
@@ -106,7 +106,7 @@ export function StatStrip({
 	return (
 		<motion.section
 			aria-label="Usage at a glance"
-			className="border-border bg-card grid grid-cols-2 overflow-hidden rounded-xl border sm:grid-cols-3 lg:grid-cols-5"
+			className="bg-surface-1 grid grid-cols-2 overflow-hidden rounded-lg sm:grid-cols-3 lg:grid-cols-5"
 			initial="hidden"
 			animate="show"
 			variants={{ hidden: {}, show: { transition: { staggerChildren: 0.05 } } }}
@@ -213,13 +213,13 @@ export function StatStripSkeleton() {
 	return (
 		<section
 			aria-hidden="true"
-			className="border-border bg-card grid grid-cols-2 overflow-hidden rounded-xl border sm:grid-cols-3 lg:grid-cols-5"
+			className="bg-surface-1 grid grid-cols-2 overflow-hidden rounded-lg sm:grid-cols-3 lg:grid-cols-5"
 		>
 			{CELL_SPANS.map((span, i) => (
 				<div
 					key={i}
 					className={cn(
-						'border-border -mt-px -ml-px min-w-0 border-t border-l px-3.5 py-3 sm:px-4',
+						'border-hairline -mt-px -ml-px min-w-0 border-t border-l px-3.5 py-3 sm:px-4',
 						span,
 					)}
 				>
@@ -269,7 +269,7 @@ function Cell({
 	// Divided cells: every cell draws its own top/left hairline, so the grid
 	// reads as one card at any column count without doubled borders.
 	const cellClass = cn(
-		'border-border -mt-px -ml-px min-w-0 border-t border-l px-3.5 py-3 sm:px-4',
+		'border-hairline -mt-px -ml-px min-w-0 border-t border-l px-3.5 py-3 sm:px-4',
 		className,
 	);
 	return (
@@ -277,7 +277,7 @@ function Cell({
 			{href ? (
 				<AppLink
 					href={href}
-					className="group hover:bg-muted/40 focus-visible:ring-ring -mx-3.5 -my-3 block px-3.5 py-3 transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset sm:-mx-4 sm:px-4"
+					className="group hover:bg-tint-2 focus-visible:ring-ring -mx-3.5 -my-3 block px-3.5 py-3 transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset sm:-mx-4 sm:px-4"
 				>
 					{body}
 				</AppLink>
@@ -375,29 +375,30 @@ function ApiTiles({ apis, extra }: { apis: EntityUsageRow[]; extra: number }) {
 	if (apis.length === 0) return null;
 	return (
 		<span className="mb-1 flex -space-x-1.5" aria-hidden="true">
-			{apis.map((api, i) => {
-				const color = API_PALETTE[i % API_PALETTE.length]!;
-				return (
-					<motion.span
-						key={api.id}
-						title={api.label}
-						initial={{ scale: 0.6, opacity: 0 }}
-						animate={{ scale: 1, opacity: 1 }}
-						transition={{
-							delay: 0.15 + i * 0.05,
-							type: 'spring',
-							stiffness: 420,
-							damping: 22,
-						}}
-						className="ring-card flex h-6 w-6 items-center justify-center rounded-md text-[9px] font-bold ring-2"
-						style={{ backgroundColor: color, color: textColor(color) }}
-					>
-						{getInitials(api.label)}
-					</motion.span>
-				);
-			})}
+			{apis.map((api, i) => (
+				<motion.span
+					key={api.id}
+					title={api.label}
+					initial={{ scale: 0.6, opacity: 0 }}
+					animate={{ scale: 1, opacity: 1 }}
+					transition={{
+						delay: 0.15 + i * 0.05,
+						type: 'spring',
+						stiffness: 420,
+						damping: 22,
+					}}
+					className="ring-surface-1 flex rounded-[7px] ring-2"
+				>
+					{/* The same pastel mark the API wears everywhere else. */}
+					<VendorIcon
+						name={api.label}
+						vendor={entitySeed('apis', api.id) ?? api.label}
+						size="xs"
+					/>
+				</motion.span>
+			))}
 			{extra > 0 && (
-				<span className="bg-muted text-muted-foreground ring-card flex h-6 min-w-6 items-center justify-center rounded-md px-1 text-[9px] font-bold ring-2">
+				<span className="bg-muted text-muted-foreground ring-surface-1 flex h-6 min-w-6 items-center justify-center rounded-md px-1 text-[9px] font-bold ring-2">
 					+{extra}
 				</span>
 			)}

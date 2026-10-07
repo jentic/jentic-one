@@ -55,7 +55,7 @@ test('an existing fleet registers another agent from the New agent panel', async
 	});
 
 	await expect(panel.getByRole('heading', { name: 'research-bot' })).toBeVisible();
-	await expect(panel.getByTestId('agent-facts')).toContainText('Self-registered');
+	await expect(panel.getByTestId('agent-provenance')).toContainText('Self-registered');
 	await expect(panel.getByTestId('register-status')).toContainText('awaiting your approval');
 	await expect(panel.getByTestId('arrival-warnings')).toHaveCount(0);
 
@@ -64,9 +64,7 @@ test('an existing fleet registers another agent from the New agent panel', async
 	await expect(
 		firstApi.getByRole('heading', { name: 'Add GitHub to research-bot' }),
 	).toBeVisible();
-	await expect(
-		panel.getByTestId('register-stepper').getByRole('listitem').nth(3),
-	).toHaveAttribute('aria-current', 'step');
+	await expect(panel.getByTestId('register-progress')).toHaveText('Step 4 of 4 · Give it an API');
 
 	await firstApi.getByRole('button', { name: 'Continue with GitHub' }).click();
 	const queue = page.getByRole('dialog', { name: 'Set up 1 API' });

@@ -2,7 +2,7 @@
  * ImportSpecDialog — register a new API by importing an OpenAPI spec.
  *
  * Shared because uploading a spec belongs wherever a selected API is shown
- * — the Workspace page's own Import action, the agents Add-APIs tray, and the
+ * — the Library's own-spec import action (Catalog and Workspace views), the agents Add-APIs tray, and the
  * add-credential flow, where "the API I need isn't listed" is a dead end
  * without it. The mid-flow surfaces take `onImported` to select what landed.
  *
@@ -308,7 +308,7 @@ export function ImportSpecDialog({ open, onClose, onImported }: ImportSpecDialog
 				{error ? (
 					<div
 						role="alert"
-						className="border-danger/30 bg-danger/5 text-danger flex items-start gap-2 rounded-md border-l-2 px-3 py-2 text-xs"
+						className="bg-danger/10 text-danger flex items-start gap-2 rounded-md px-3 py-2 text-xs"
 						data-testid="import-spec-error"
 					>
 						<AlertTriangle size={12} aria-hidden="true" className="mt-0.5 shrink-0" />
@@ -369,7 +369,7 @@ function UploadDropzone({
 					? 'border-primary/60 bg-primary/5'
 					: hasFile
 						? 'border-primary/40 bg-primary/5'
-						: 'border-border/60 bg-muted/20 hover:border-border hover:bg-muted/30',
+						: 'border-border/60 bg-field hover:bg-tint-2',
 			)}
 		>
 			{hasFile ? (
@@ -411,7 +411,7 @@ function UploadDropzone({
 				</div>
 			) : (
 				<>
-					<span className="bg-muted text-muted-foreground inline-flex h-9 w-9 items-center justify-center rounded-md">
+					<span className="bg-surface-chip text-muted-foreground inline-flex h-9 w-9 items-center justify-center rounded-md">
 						<Upload size={16} aria-hidden="true" />
 					</span>
 					<span className="text-foreground text-sm font-medium">

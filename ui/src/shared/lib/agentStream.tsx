@@ -305,7 +305,7 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
  * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
  * links with the same rules instead of re-deriving them.
  */
-export function idFromLink(link: string | null | undefined): string | undefined {
+function idFromLink(link: string | null | undefined): string | undefined {
 	if (!link) return undefined;
 	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
 	return id.length > 0 ? id : undefined;
@@ -1064,27 +1064,6 @@ export function formatFailurePillCount(count: number): string {
 	return n > 99 ? '99+' : String(n);
 }
 
-/**
- * Left-edge stripe class for a rail row, keyed by severity.
- *
- * CRITICAL and ERROR share the danger colour (both are failures — see
- * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
- * doubled-width stripe. Before this, the two tiers were pixel-identical on
- * the rail (`border-l-danger` for both, `border-l-2` from the row's base
- * class) — an operator had no way to tell "one failure" from "this failure
- * pattern crossed the critical threshold" without opening the row (issue
- * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
- * row's base `border-l-2` (later class in the merge wins on the same
- * property group) — do not reorder the row's `cn(...)` call without
- * preserving that.
- */
-export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-4 border-l-danger';
-	if (s === 'error') return 'border-l-danger';
-	if (s === 'warning') return 'border-l-warning';
-	return 'border-l-primary';
-}
-
 export function formatStreamTime(tsMs: number): string {
 	const d = new Date(tsMs);
 	const hh = d.getHours().toString().padStart(2, '0');
@@ -1217,6 +1196,16 @@ export type InlineActionSpec = {
 const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
 	traceId != null && traceId !== '' && traceId !== 'unknown';
 
+/**
+ * Overlay-lifecycle events — the backend's `overlay.*` types (today
+ * `overlay.deprecated`) and `catalog.update_conflicts_overlay` (an upstream
+ * update colliding with a confirmed overlay). Their natural home is the hub's
+ * Versions tab (revisions + overlays), not the Overview.
+ */
+function isOverlayEvent(ev: StreamEvent): boolean {
+	return ev.type.startsWith('overlay.') || ev.type === 'catalog.update_conflicts_overlay';
+}
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
@@ -1237,15 +1226,21 @@ const NAV = {
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
-	// Catalog/overlay events deep-link to the affected API's Workspace detail
-	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
-	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
-	// shared-layer code, so the path shape is inlined rather than imported from a
-	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	// Catalog/overlay events deep-link to the affected API's hub in the
+	// Library: `/library/workspace/:vendor/:name/:version`, each segment
+	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
+	// here since shared/lib can't import the route registry). Router-relative — the
+	// rail prepends the `/app` basename. (The retired `/workspace/...` form still
+	// redirects, so events rendered by older builds keep working.)
 	workspaceApi: (ev: StreamEvent) => {
 		const { vendor, name, version } = ev.tokens;
 		if (!vendor || !name || !version) return null;
-		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		const hub = `/library/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		// Overlay-lifecycle events (`overlay.deprecated`, and an upstream update
+		// that conflicts with a confirmed overlay) land on the hub's Versions tab,
+		// where the overlays live. A plain `catalog.update_available` keeps the
+		// Overview (default tab), where Re-import lives.
+		return isOverlayEvent(ev) ? `${hub}?tab=versions` : hub;
 	},
 	// The Settings OAuth approval queue (D7) — where the
 	// approve/deny verbs for a pending DCR registration live. Static target:

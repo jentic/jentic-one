@@ -2,15 +2,36 @@
  * How much a requested permission can do, for the moment an operator approves an
  * agent. A self-registering agent names its own permissions, and approval makes
  * them live (bounded only by the approver's own ceiling), so the ones that can
- * change data or administer the organisation are flagged before the click.
+ * change data, run upstream calls or administer the organisation are flagged
+ * before the click.
  */
-export type PermissionRisk = 'admin' | 'write';
+export type PermissionRisk = 'admin' | 'write' | 'execute';
 
-/** `admin` for any permission with an `admin` segment (`org:admin`), `write` for
- * a `…:write` permission, otherwise `null`. */
+/**
+ * Permissions known to act, by name: they change data or run calls without
+ * saying `write` (`overlays:confirm` mutates a spec, `capabilities:execute` runs
+ * upstream calls, `credentials:connect` stores a credential).
+ */
+const RISKY_PERMISSIONS: Readonly<Record<string, PermissionRisk>> = {
+	'overlays:confirm': 'write',
+	'capabilities:execute': 'execute',
+	'credentials:connect': 'write',
+};
+
+/**
+ * `admin` for any permission mentioning `admin` (`org:admin`,
+ * `administrators:read` — erring towards a flag), then the explicit
+ * {@link RISKY_PERMISSIONS}, then `write` for a `…:write` permission; otherwise
+ * `null`.
+ */
 export function permissionRisk(permission: string): PermissionRisk | null {
-	const segments = permission.trim().toLowerCase().split(':');
-	if (segments.includes('admin')) return 'admin';
+	const normalised = permission.trim().toLowerCase();
+	if (normalised.includes('admin')) return 'admin';
+	const known = Object.prototype.hasOwnProperty.call(RISKY_PERMISSIONS, normalised)
+		? RISKY_PERMISSIONS[normalised]
+		: undefined;
+	if (known) return known;
+	const segments = normalised.split(':');
 	if (segments[segments.length - 1] === 'write') return 'write';
 	return null;
 }
@@ -68,4 +89,49 @@ export function approvalGrant(
 		granted: requested.filter((permission) => known.has(permission)),
 		unrecognised: requested.filter((permission) => !known.has(permission)),
 	};
+}
+
+/** The areas a permission list is grouped into for review, in reading order. */
+export const PERMISSION_AREAS = [
+	'Capabilities',
+	'APIs & catalog',
+	'Executions, jobs & events',
+	'Credentials',
+	"Its owner's resources",
+	'Organisation',
+	'Other',
+] as const;
+
+export type PermissionArea = (typeof PERMISSION_AREAS)[number];
+
+const AREA_BY_RESOURCE: Record<string, PermissionArea> = {
+	capabilities: 'Capabilities',
+	apis: 'APIs & catalog',
+	catalog: 'APIs & catalog',
+	executions: 'Executions, jobs & events',
+	jobs: 'Executions, jobs & events',
+	events: 'Executions, jobs & events',
+	audit: 'Executions, jobs & events',
+	credentials: 'Credentials',
+	owner: "Its owner's resources",
+	agents: 'Organisation',
+	users: 'Organisation',
+	org: 'Organisation',
+};
+
+/** The area a permission belongs to, by its first segment (`owner:agents:read` → owner). */
+export function permissionArea(permission: string): PermissionArea {
+	const resource = permission.trim().toLowerCase().split(':')[0] ?? '';
+	return AREA_BY_RESOURCE[resource] ?? 'Other';
+}
+
+/** `permissions` grouped by area, areas in {@link PERMISSION_AREAS} order,
+ * permissions in their given order; empty areas are left out. */
+export function groupPermissionsByArea(
+	permissions: readonly string[],
+): Array<{ area: PermissionArea; permissions: string[] }> {
+	return PERMISSION_AREAS.map((area) => ({
+		area,
+		permissions: permissions.filter((permission) => permissionArea(permission) === area),
+	})).filter((group) => group.permissions.length > 0);
 }

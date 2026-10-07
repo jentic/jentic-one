@@ -136,7 +136,7 @@ const components: Components = {
 		}
 		return (
 			<code
-				className="bg-muted/60 text-foreground rounded px-1 font-mono text-[0.85em] [overflow-wrap:anywhere]"
+				className="bg-field text-foreground rounded-sm px-1 font-mono text-[0.85em] [overflow-wrap:anywhere]"
 				{...props}
 			>
 				{children}
@@ -144,16 +144,13 @@ const components: Components = {
 		);
 	},
 	pre: ({ children, ...props }) => (
-		<pre
-			className="bg-muted/40 border-border/40 my-2 overflow-x-auto rounded-md border p-2 font-mono text-xs"
-			{...props}
-		>
+		<pre className="bg-field my-2 overflow-x-auto rounded-md p-2 font-mono text-xs" {...props}>
 			{children}
 		</pre>
 	),
 	blockquote: ({ children, ...props }) => (
 		<blockquote
-			className="border-border/60 text-muted-foreground my-2 border-l-2 pl-3 italic"
+			className="border-surface-chip-active text-muted-foreground my-2 border-l-2 pl-3 italic"
 			{...props}
 		>
 			{children}
@@ -165,26 +162,26 @@ const components: Components = {
 		</strong>
 	),
 	em: ({ children, ...props }) => <em {...props}>{children}</em>,
-	hr: (props) => <hr className="border-border/40 my-3" {...props} />,
+	hr: (props) => <hr className="border-hairline my-3" {...props} />,
 	table: ({ children, ...props }) => (
 		<div className="my-2 overflow-x-auto">
-			<table className="border-border/50 w-full border-collapse border text-xs" {...props}>
+			<table className="w-full border-collapse text-xs" {...props}>
 				{children}
 			</table>
 		</div>
 	),
 	thead: ({ children, ...props }) => (
-		<thead className="bg-muted/40" {...props}>
+		<thead className="bg-field" {...props}>
 			{children}
 		</thead>
 	),
 	th: ({ children, ...props }) => (
-		<th className="border-border/50 border px-2 py-1 text-left font-semibold" {...props}>
+		<th className="px-2 py-1 text-left font-semibold" {...props}>
 			{children}
 		</th>
 	),
 	td: ({ children, ...props }) => (
-		<td className="border-border/50 border px-2 py-1 align-top" {...props}>
+		<td className="border-hairline-row border-b px-2 py-1 align-top" {...props}>
 			{children}
 		</td>
 	),

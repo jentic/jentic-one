@@ -7,7 +7,15 @@
  * `@/shared/api`. Swap to generated services when `make openapi` runs.
  */
 
-import { AgentsService, getToken, problemDetailText, type AgentListResponse } from '@/shared/api';
+import {
+	AgentsService,
+	CredentialsService,
+	getToken,
+	problemDetailText,
+	type AgentListResponse,
+	type PermissionRuleReadSchema,
+	type PermissionRuleSchema,
+} from '@/shared/api';
 import type {
 	ConfirmRequest,
 	ConfirmResponse,
@@ -204,7 +212,7 @@ export interface VendorOperationsPage {
  * exhaustion; this single-page variant stays exported for tests + narrow
  * consumers that only need the first page.
  */
-export async function listVendorOperations(
+async function listVendorOperations(
 	vendor: string,
 	name: string,
 	version: string,
@@ -270,6 +278,54 @@ export async function listAllVendorOperations(
 
 export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
 	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities`);
+}
+
+/** Wrap a generated-client failure as an {@link IntegrationsApiError}. */
+function toIntegrationsError(err: unknown, fallback: string): IntegrationsApiError {
+	const status =
+		typeof (err as { status?: number })?.status === 'number'
+			? (err as { status: number }).status
+			: null;
+	return new IntegrationsApiError((err as Error)?.message ?? fallback, status, err);
+}
+
+/**
+ * Replace the full rule set on one direct agent ↔ credential binding
+ * (`PUT /credentials/{cid}/agents/{aid}/permissions`) — the same endpoint the
+ * agent's rules editor saves through, so a bind can grant access in one step
+ * instead of leaving the binding blocked.
+ */
+export async function replaceBindingPermissions(
+	agentId: string,
+	credentialId: string,
+	rules: PermissionRuleSchema[],
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.replaceAgentCredentialPermissions({
+			credentialId,
+			agentId,
+			requestBody: rules,
+		});
+		return res.data;
+	} catch (err) {
+		throw toIntegrationsError(err, 'Failed to save the access rules.');
+	}
+}
+
+/** One binding's saved rules (`GET /credentials/{cid}/agents/{aid}/permissions`). */
+export async function listBindingPermissions(
+	agentId: string,
+	credentialId: string,
+): Promise<PermissionRuleReadSchema[]> {
+	try {
+		const res = await CredentialsService.listAgentCredentialPermissions({
+			credentialId,
+			agentId,
+		});
+		return res.data;
+	} catch (err) {
+		throw toIntegrationsError(err, 'Failed to load the access rules.');
+	}
 }
 
 /**

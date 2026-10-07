@@ -22,12 +22,11 @@ import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
 import type { CatalogFilter, DiscoveryEntity } from '@/modules/discover/api/types';
 
 /**
- * Sentinel error for Discover repository calls. Hooks/components branch on
- * `error instanceof DiscoverApiError` without importing the generated
- * `ApiError` (which lives behind the facade). `status` is null for
- * network/parse failures that never reached the server.
+ * Sentinel error for Discover repository calls: the server's `detail` (or a
+ * fallback) as the message, so views can show `error.message` as-is. `status`
+ * is null for network/parse failures that never reached the server.
  */
-export class DiscoverApiError extends Error {
+class DiscoverApiError extends Error {
 	readonly status: number | null;
 	readonly cause?: unknown;
 
@@ -72,23 +71,51 @@ export interface CatalogPage {
 }
 
 /**
+ * A browse-order cursor positioned just after `apiId`: the next page starts
+ * at the first entry sorting strictly after it (plain codepoint `api_id`
+ * order), e.g. `y` → the first `y…` vendor.
+ *
+ * Built byte-for-byte like the backend's keyset token
+ * (`encode_catalog_cursor` in `src/jentic_one/shared/pagination.py`: base64 of
+ * Python's `json.dumps({"id": api_id})` — `": "` separator, non-ASCII escaped as
+ * `\uXXXX`), pinned by a contract test. The escaping also keeps the payload
+ * ASCII, so `btoa` (Latin-1 only) can't throw on an international id. Returns
+ * null if it can't be built; callers then page forward instead, as they do
+ * when the server rejects the token (400 invalid cursor).
+ */
+export function catalogCursorAfter(apiId: string): string | null {
+	const id = JSON.stringify(apiId).replace(
+		/[\u0080-\uffff]/g,
+		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+	);
+	try {
+		return btoa(`{"id": ${id}}`);
+	} catch {
+		return null;
+	}
+}
+
+/**
  * One keyset page of the public catalog (`GET /catalog`).
  *
- * The cursor is OPAQUE — we never parse or build it, just echo back the last
- * `next_cursor`. `q` and the registration filter must stay constant across a
- * cursored scroll (changing them invalidates the cursor), so callers reset to a
- * null cursor whenever the query/filter changes.
+ * Paging echoes back the last `next_cursor`. The one exception is
+ * `catalogCursorAfter`, which builds a browse cursor to START at a position
+ * (an A–Z rail jump). `q` and the registration filter must stay constant
+ * across a cursored scroll (changing them invalidates the cursor), so callers
+ * reset to a null cursor whenever the query/filter changes.
  */
 export async function listCatalog(params: {
 	q?: string;
 	filter?: CatalogFilter;
 	cursor?: string | null;
 	limit?: number;
+	/** Only entries already imported into your workspace. */
+	registeredOnly?: boolean;
 }): Promise<CatalogPage> {
 	try {
 		const res = await CatalogService.listCatalog({
 			q: params.q || null,
-			registeredOnly: params.filter === 'registered',
+			registeredOnly: params.registeredOnly ?? false,
 			unregisteredOnly: params.filter === 'unregistered',
 			outdatedOnly: params.filter === 'outdated',
 			cursor: params.cursor ?? null,

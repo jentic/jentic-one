@@ -25,6 +25,9 @@ import {
 	LoadingState,
 	ScopePicker,
 	Select,
+	SheetCloseButton,
+	SheetFooter,
+	SheetHeader,
 	SheetPrimitive,
 	toast,
 } from '@/shared/ui';
@@ -350,21 +353,24 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 			initialFocus={nameRef}
 			className="flex flex-col"
 		>
-			<header className="border-border border-b p-5">
-				<h2 className="text-foreground text-lg font-semibold">
-					{isEdit ? 'Edit OAuth client' : 'Create OAuth client'}
-				</h2>
-				<p className="text-muted-foreground mt-1 text-sm">
-					{isEdit
-						? 'Update the client configuration. The client type and consent model are fixed at creation.'
-						: 'Register a third-party application that authenticates users via Jentic One.'}
-				</p>
-			</header>
+			<SheetHeader className="gap-3">
+				<div className="min-w-0 flex-1">
+					<h2 className="font-heading text-foreground-name text-lg font-semibold">
+						{isEdit ? 'Edit OAuth client' : 'Create OAuth client'}
+					</h2>
+					<p className="text-muted-foreground mt-1 text-sm">
+						{isEdit
+							? 'Update the client configuration. The client type and consent model are fixed at creation.'
+							: 'Register a third-party application that authenticates users via Jentic One.'}
+					</p>
+				</div>
+				<SheetCloseButton onClick={onClose} disabled={isPending} />
+			</SheetHeader>
 
 			<form
 				id="oauth-client-form"
 				onSubmit={(e): void => void handleSubmit(e)}
-				className="flex-1 space-y-4 overflow-y-auto p-5"
+				className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-1 pb-5"
 			>
 				{validationError && <ErrorAlert message={validationError} />}
 				<div className="space-y-1.5">
@@ -468,14 +474,14 @@ export function ClientFormSheet({ open, onClose, client, onSecretRevealed }: Cli
 				</div>
 			</form>
 
-			<footer className="border-border flex items-center justify-end gap-2 border-t p-5">
+			<SheetFooter>
 				<Button variant="secondary" onClick={onClose} disabled={isPending}>
 					Cancel
 				</Button>
 				<Button type="submit" form="oauth-client-form" loading={isPending}>
 					{isEdit ? 'Update' : 'Create'}
 				</Button>
-			</footer>
+			</SheetFooter>
 		</SheetPrimitive>
 	);
 }

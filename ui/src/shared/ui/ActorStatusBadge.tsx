@@ -48,10 +48,10 @@ export const STATUS_BADGE_VARIANT: Record<ActorStatus, BadgeVariant> = {
 
 /** Status indicator dot colour (Tailwind bg-*) per status. */
 export const STATUS_DOT: Record<ActorStatus, string> = {
-	pending: 'bg-accent-orange',
+	pending: 'bg-warning',
 	active: 'bg-success',
 	rejected: 'bg-danger',
-	disabled: 'bg-warning',
+	disabled: 'bg-caution',
 	archived: 'bg-muted-foreground/40',
 };
 
@@ -61,11 +61,11 @@ export const STATUS_DOT: Record<ActorStatus, string> = {
  * `pending` and `disabled` are adjacent warm hues, easily collapsed into one.
  */
 export const STATUS_TINT: Record<ActorStatus, string> = {
-	pending: 'text-accent-orange',
+	pending: 'text-warning',
 	active: 'text-success',
 	rejected: 'text-danger',
-	disabled: 'text-warning',
-	archived: 'text-muted-foreground/40',
+	disabled: 'text-caution',
+	archived: 'text-foreground-faint',
 };
 
 /**
@@ -90,18 +90,36 @@ export function toActorStatus(status: string): ActorStatus {
 	return (ACTOR_STATUSES as string[]).includes(status) ? (status as ActorStatus) : 'archived';
 }
 
+/**
+ * Badge dot per status, where the variant's own dot isn't enough: `disabled`
+ * shares a warm hue with `pending`, so it draws a hollow ring (switched off,
+ * idle) against pending's filled dot (waiting on a person).
+ */
+const STATUS_BADGE_DOT: Partial<Record<ActorStatus, string>> = {
+	disabled: 'bg-transparent border border-caution',
+};
+
 /** Status pill for an actor (agent) using its lifecycle status. */
 export function ActorStatusBadge({
 	status,
+	dot,
 	className,
 	...props
 }: {
 	status: ActorStatus | string;
+	/** Lead with a status dot — for a card header, where the pill stands alone. */
+	dot?: boolean;
 	className?: string;
 } & HTMLAttributes<HTMLSpanElement>) {
 	const s = toActorStatus(status);
 	return (
-		<Badge variant={STATUS_BADGE_VARIANT[s]} className={className} {...props}>
+		<Badge
+			variant={STATUS_BADGE_VARIANT[s]}
+			dot={dot}
+			dotClassName={STATUS_BADGE_DOT[s]}
+			className={className}
+			{...props}
+		>
 			{STATUS_LABELS[s]}
 		</Badge>
 	);

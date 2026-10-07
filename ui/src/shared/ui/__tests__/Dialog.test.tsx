@@ -45,6 +45,13 @@ describe('Dialog', () => {
 		expect(screen.queryByText(/Step 1 of 2/)).not.toBeInTheDocument();
 	});
 
+	it('draws a faint hairline edge on the panel', () => {
+		renderWithProviders(<DialogHarness />);
+		const panel = screen.getByRole('dialog', { name: 'My Dialog' });
+		expect(panel).toHaveClass('border', 'border-hairline-field', 'bg-surface-sheet');
+		expect(panel).not.toHaveClass('border-0');
+	});
+
 	it('closes when the X button is clicked', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<DialogHarness />);

@@ -310,6 +310,8 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText('1 access rule')).toBeInTheDocument();
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
+		// Suspended outranks Blocked in the status, so the rule-less binding keeps
+		// its rules fact on the meta line (the status doesn't say it).
 		expect(await screen.findByText('No rules — all calls blocked')).toBeInTheDocument();
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});
@@ -531,7 +533,8 @@ describe('AgentsPage — flat agents surface', () => {
 		// Access clauses — the same tileStats math the grid draws from: 2 usable tiles,
 		// 181 ops (the suspended binding's 912 excluded), 2 bound credentials.
 		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2 configured'));
-		expect(stripFigure('operations')).toHaveTextContent('181 operations');
+		// Held on a skeleton until every tile's rules are read.
+		await waitFor(() => expect(stripFigure('operations')).toHaveTextContent('181 operations'));
 		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 
 		// Monitor clauses — the per-actor sources (7-day usage rollup
@@ -917,6 +920,35 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByText('Ready')).not.toBeInTheDocument();
 		const chips = tiles.map((tile) => within(tile).getByTestId('tile-status-chip').textContent);
 		expect(chips.sort()).toEqual(['Not serving', 'Suspended · not serving']);
+	});
+
+	it("reads Status unavailable (never Ready) when a binding's rules read fails, and Retry recovers", async () => {
+		let failing = true;
+		worker.use(
+			http.get('*/credentials/:cid/agents/:aid/permissions', ({ params }) => {
+				if (failing && params.cid === 'cred_slack_1') {
+					return HttpResponse.json({ detail: 'boom' }, { status: 500 });
+				}
+				return undefined;
+			}),
+		);
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const retry = await screen.findByTestId('tile-status-retry', {}, { timeout: 5000 });
+		const tile = retry.closest<HTMLElement>('[data-testid="api-tile"]');
+		expect(tile).not.toBeNull();
+		expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+			'Status unavailable',
+		);
+		expect(within(tile as HTMLElement).queryByText('Ready')).not.toBeInTheDocument();
+
+		failing = false;
+		await userEvent.click(retry);
+		await waitFor(() =>
+			expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+				'Ready',
+			),
+		);
 	});
 
 	it('blocks Add APIs with a reason on a pending agent and approves from the banner', async () => {
@@ -1536,6 +1568,17 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByTestId('agent-state-banner-rejected')).toHaveTextContent(
 			'Reason: Unknown publisher',
 		);
+	});
+
+	it('the Waiting for approval banner orders Approve before a tonal Deny and says what Approve grants', async () => {
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+		const buttons = within(banner).getAllByRole('button');
+		expect(buttons.map((b) => b.textContent)).toEqual(['Approve', 'Deny']);
+		expect(buttons[1].className).not.toContain('bg-danger');
+		const copy = await within(banner).findByTestId('approval-grant-note');
+		expect(copy).toHaveTextContent(/^Approving grants /);
+		expect(buttons[0]).toHaveAccessibleDescription(copy.textContent!);
 	});
 
 	it('keeps the deny dialog open and toasts when the panel deny fails', async () => {

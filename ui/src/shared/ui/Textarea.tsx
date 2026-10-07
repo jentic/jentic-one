@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { cn } from '@/shared/lib/utils';
+import { inputSurfaceClasses } from '@/shared/ui/Input';
 
 type Resize = 'none' | 'vertical' | 'horizontal' | 'both';
 
@@ -31,8 +32,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(fun
 				aria-describedby={errorId}
 				aria-invalid={error ? true : undefined}
 				className={cn(
-					'bg-card border-border text-foreground placeholder:text-input-placeholder w-full rounded-lg border px-4 py-2 text-sm transition-colors',
-					'focus:border-primary focus:outline-hidden',
+					'bg-field w-full px-3.5 py-2 text-sm',
+					inputSurfaceClasses,
 					resizeClasses[resizable],
 					error && 'border-danger focus:border-danger',
 					className,

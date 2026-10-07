@@ -71,7 +71,7 @@ function formatTick(ms: number, spanMs: number): string {
 	return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export function formatRange(range: TimeRange): string {
+function formatRange(range: TimeRange): string {
 	const span = range.toMs - range.fromMs;
 	const sameDay = new Date(range.fromMs).toDateString() === new Date(range.toMs).toDateString();
 	const day = (ms: number) =>
@@ -174,7 +174,7 @@ export function LogTimeline() {
 		<section
 			role="group"
 			aria-label="Activity timeline"
-			className="border-border bg-card rounded-xl border px-3 pt-2.5 pb-2 sm:px-4"
+			className="bg-surface-1 rounded-lg px-3 pt-2.5 pb-2 [--field-bg:var(--surface-field)] sm:px-4"
 		>
 			<header className="flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1">
 				<p className="text-muted-foreground text-xs">
@@ -196,8 +196,7 @@ export function LogTimeline() {
 					{range ? (
 						<Button
 							variant="outline"
-							size="sm"
-							className="h-7"
+							size="xs"
 							onClick={() => setRange(null)}
 							aria-label={`Clear time range ${formatRange(range)}`}
 						>
@@ -266,7 +265,7 @@ export function LogTimeline() {
 
 				{hovered && hover != null && (
 					<div
-						className="bg-popover text-popover-foreground border-border pointer-events-none absolute bottom-full z-10 mb-1.5 -translate-x-1/2 rounded-md border px-2 py-1 text-[11px] whitespace-nowrap shadow-md"
+						className="bg-surface-field text-popover-foreground pointer-events-none absolute bottom-full z-10 mb-1.5 -translate-x-1/2 rounded-md px-2 py-1 text-[11px] whitespace-nowrap shadow-md"
 						style={{
 							left: `clamp(4rem, ${((hover + 0.5) / bars.length) * 100}%, calc(100% - 4rem))`,
 						}}

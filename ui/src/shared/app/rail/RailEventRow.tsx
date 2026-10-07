@@ -99,7 +99,7 @@ function TimeStamp({ tsMs, className }: { tsMs: number; className?: string }) {
 		>
 			<time
 				dateTime={Number.isNaN(tsMs) ? undefined : new Date(tsMs).toISOString()}
-				className="text-muted-foreground/80 text-[10px] tabular-nums"
+				className="text-muted-foreground text-[10px] tabular-nums"
 			>
 				{formatStreamAgo(tsMs, now)}
 			</time>
@@ -233,12 +233,14 @@ function RailEventRowContent({
 					'relative flex items-center gap-2 rounded-r border-l-2 px-2 py-1',
 					stripeClass(ev),
 					arrived && 'animate-arrive',
-					ev.acknowledged && 'opacity-55',
-					(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
+					(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 				)}
+				data-acknowledged={ev.acknowledged || undefined}
 			>
 				{overlay}
-				<StreamEventIcon ev={ev} />
+				{/* A handled row recedes through its glyph only: dimming the whole row
+				    would take its text (and the "1h" stamp) below AA contrast. */}
+				<StreamEventIcon ev={ev} className={cn(ev.acknowledged && 'opacity-55')} />
 				<span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
 					{sentence}
 				</span>
@@ -256,7 +258,7 @@ function RailEventRowContent({
 				stripeClass(ev),
 				arrived && 'animate-arrive',
 				failing && 'bg-danger/5',
-				(dest || grouped) && 'hover:bg-background/50 cursor-pointer',
+				(dest || grouped) && 'hover:bg-surface-1-hover cursor-pointer',
 			)}
 		>
 			{overlay}

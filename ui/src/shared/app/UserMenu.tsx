@@ -55,12 +55,12 @@ export function UserMenu() {
 							{displayName(user?.first_name, user?.last_name, user?.email)}
 						</div>
 						{user?.email && (
-							<div className="text-muted-foreground/70 mt-0.5 truncate text-xs">
+							<div className="text-muted-foreground mt-0.5 truncate text-xs">
 								{user.email}
 							</div>
 						)}
 						{current && (
-							<div className="text-muted-foreground/60 mt-1 truncate text-[11px]">
+							<div className="text-muted-foreground mt-1 truncate text-[11px]">
 								jentic-one v{current}
 							</div>
 						)}

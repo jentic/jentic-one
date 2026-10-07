@@ -7,6 +7,7 @@
  * branch's committed client) becomes the module's typed shapes.
  */
 import type {
+	ApiNote,
 	ApiOperation,
 	ApiRef,
 	ApiRevision,
@@ -14,6 +15,8 @@ import type {
 	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
+
+import { workspaceApiTitle } from '@/shared/lib';
 
 type Raw = Record<string, unknown>;
 
@@ -49,6 +52,15 @@ function toApiRef(value: unknown): ApiRef {
 		version: str(r.version),
 		host: strOrNull(r.host),
 	};
+}
+
+/** A workspace API's title — the shared {@link workspaceApiTitle} rule, never empty. */
+export function workspaceApiDisplayTitle(api: WorkspaceApi): string {
+	return workspaceApiTitle({
+		displayName: api.displayName,
+		catalogApiId: api.catalogApiId,
+		...api.api,
+	});
 }
 
 /** `GET /apis` / `GET /apis/{…}` row → `WorkspaceApi`. */
@@ -155,5 +167,20 @@ export function toOverlay(value: unknown): Overlay {
 		confirmHref: strOrNull(links.confirm),
 		rollbackHref: strOrNull(links.rollback),
 		deprecateHref: strOrNull(links.deprecate),
+	};
+}
+
+/** `GET /notes` row → `ApiNote` (the list response is typed `any`). */
+export function toApiNote(value: unknown): ApiNote {
+	const r = asRecord(value);
+	return {
+		id: str(r.note_id),
+		type: strOrNull(r.type),
+		body: str(r.body),
+		confidence: strOrNull(r.confidence),
+		source: strOrNull(r.source),
+		createdBy: str(r.created_by),
+		createdAt: str(r.created_at),
+		updatedAt: str(r.updated_at),
 	};
 }

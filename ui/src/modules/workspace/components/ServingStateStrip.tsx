@@ -33,7 +33,7 @@ export function ServingStateStrip({ apiKey }: { apiKey: ApiKey }) {
 
 	return (
 		<p
-			className="text-muted-foreground flex items-center gap-2 text-sm"
+			className="text-foreground-sub flex items-center gap-2 text-sm"
 			data-testid="serving-state-strip"
 		>
 			<Activity size={14} aria-hidden="true" className="shrink-0" />

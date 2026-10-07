@@ -23,7 +23,7 @@
  */
 import type { MouseEvent } from 'react';
 import { Bot, PauseCircle } from 'lucide-react';
-import { AppLink, Badge, ErrorAlert, LoadingState } from '@/shared/ui';
+import { AppLink, ErrorAlert, LoadingState, StatusChip } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { timeAgo } from '@/shared/lib/utils';
 import { useOptionalCurrentUser } from '@/shared/auth';
@@ -64,12 +64,12 @@ export function BoundAgentsSection({
 	};
 
 	return (
-		<div className="border-border space-y-2 rounded-lg border border-dashed p-3">
-			<p className="text-foreground text-sm font-medium">
+		<div className="bg-surface-inset space-y-2 rounded-lg p-3">
+			<p className="text-foreground-name text-sm font-semibold">
 				{yoursOnly ? 'Your bound agents' : 'Bound agents'}
 				{agents.isSuccess ? ` (${rows.length})` : ''}
 			</p>
-			<p className="text-muted-foreground text-xs">
+			<p className="text-foreground-sub text-xs">
 				{yoursOnly
 					? "Your agents allowed to call APIs with this credential. Other users' agents aren't listed."
 					: 'Agents allowed to call APIs with this credential.'}{' '}
@@ -95,7 +95,7 @@ export function BoundAgentsSection({
 						<li
 							key={row.agent_id}
 							data-testid="bound-agent-row"
-							className="bg-muted/40 flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
+							className="bg-surface-tonal flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
 						>
 							<span className="flex min-w-0 items-center gap-1.5">
 								<Bot className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
@@ -107,9 +107,13 @@ export function BoundAgentsSection({
 									{row.agent_name}
 								</AppLink>
 								{row.suspended && (
-									<Badge variant="warning" data-testid="bound-agent-suspended">
-										<PauseCircle className="h-3 w-3" /> Suspended
-									</Badge>
+									<StatusChip
+										tone="caution"
+										icon={PauseCircle}
+										data-testid="bound-agent-suspended"
+									>
+										Suspended
+									</StatusChip>
 								)}
 							</span>
 							<span className="text-muted-foreground shrink-0 text-[11px]">

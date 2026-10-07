@@ -105,7 +105,7 @@ const bigApi = {
  * verb (description / replace-array / update-object / set-scalar / remove /
  * empty-update / unrecognized), and per-revision specs that actually differ
  * so the Diff view has real content. Browse it at
- * /app/workspace/apis/showcase/kitchen-sink/1.0.0 with VITE_ENABLE_MSW=1.
+ * /app/library/workspace/showcase/kitchen-sink/1.0.0 with VITE_ENABLE_MSW=1.
  */
 const showcaseApi = {
 	api: apiRef('showcase', 'kitchen-sink', '1.0.0', 'api.kitchen-sink.test'),
@@ -735,6 +735,107 @@ const OVERLAYS: Record<string, unknown[]> = {
 	[KS_KEY]: KS_OVERLAYS,
 };
 
+/**
+ * Notes on API resources, keyed `vendor/name/version`. Shapes mirror the real
+ * `NoteResponse` (registry/web/schemas/notes.py).
+ */
+function note(
+	id: string,
+	apiKey: string,
+	type: string,
+	body: string,
+	confidence: string,
+	createdAt: string,
+) {
+	const [vendor, name, version] = apiKey.split('/');
+	return {
+		note_id: id,
+		resource: { api: { vendor, name, version } },
+		type,
+		body,
+		confidence,
+		confidence_source: 'self_reported',
+		source: 'agent',
+		created_by: 'agnt_active_1',
+		related_execution_id: null,
+		revision: 1,
+		created_at: createdAt,
+		updated_at: createdAt,
+		_links: { self: `/notes/${id}`, resource: `/apis/${apiKey}` },
+	};
+}
+
+const NOTES: Record<string, unknown[]> = {
+	'stripe/stripe-api/2024-01-01': [
+		note(
+			'note_stripe_idem',
+			'stripe/stripe-api/2024-01-01',
+			'usage_hint',
+			'Always send an Idempotency-Key on POST /v1/charges — retries without one can double-charge.',
+			'high',
+			'2026-09-20T10:12:00Z',
+		),
+	],
+	[KS_KEY]: [
+		note(
+			'note_ks_auth',
+			KS_KEY,
+			'auth_quirk',
+			'The bearer token must be sent without the "Bearer " prefix on /legacy/* paths.',
+			'medium',
+			'2026-09-12T08:00:00Z',
+		),
+	],
+};
+
+/**
+ * Test/mock seam: register a workspace row for a catalog import, the way the
+ * real import job lands one (`catalog_api_id` recorded, catalog origin, a live
+ * revision). Used by the opt-in review scenario so a catalog import visibly
+ * lands in the Library's workspace panel. Returns the new row's identity.
+ */
+export function registerMockCatalogImport(apiId: string, vendor: string) {
+	const name = (apiId.split('/')[1] ?? 'main').replace(/_/g, '-');
+	const ref = apiRef(vendor, name, '1.0.0', null);
+	const key = `${ref.vendor}/${ref.name}/${ref.version}`;
+	if (APIS.some((a) => `${a.api.vendor}/${a.api.name}/${a.api.version}` === key)) return ref;
+	const self = `/apis/${key}`;
+	APIS.push({
+		api: ref,
+		catalog_api_id: apiId,
+		display_name: null,
+		description: `Imported from the public catalog (${apiId}).`,
+		icon_url: null,
+		current_revision_id: 'rev_catalog_live',
+		revision_count: 1,
+		operation_count: 6,
+		security_schemes: ['bearer'],
+		origin: 'catalog',
+		update_available: false,
+		source: 'local',
+		registered: true,
+		created_at: new Date().toISOString(),
+		updated_at: null,
+		_links: {
+			self,
+			revisions: `${self}/revisions`,
+			current_revision: `${self}/revisions/rev_catalog_live`,
+			import: null,
+		},
+	} as unknown as (typeof APIS)[number]);
+	return ref;
+}
+
+/**
+ * Test/mock seam: patch real `ApiResponse` fields (`catalog_api_id`,
+ * `update_available`, `origin`) onto a seeded row, so a scenario can line the
+ * registry up with the catalog fixtures the way the backend would.
+ */
+export function patchMockApi(key: string, fields: Record<string, unknown>): void {
+	const row = APIS.find((a) => `${a.api.vendor}/${a.api.name}/${a.api.version}` === key);
+	if (row) Object.assign(row, fields);
+}
+
 function cursorPage<T>(items: T[]) {
 	return { data: items, has_more: false, next_cursor: null };
 }
@@ -989,8 +1090,22 @@ export const workspaceHandlers = [
 		return HttpResponse.json(cursorPage(REVISIONS[keyOf(params)] ?? []));
 	}),
 
-	http.get(`/apis/:vendor/:name/:version/overlays`, ({ params }) => {
-		return HttpResponse.json(cursorPage(OVERLAYS[keyOf(params)] ?? []));
+	http.get(`/apis/:vendor/:name/:version/overlays`, ({ params, request }) => {
+		// Honour the real endpoint's optional `status` filter (overlays router).
+		const status = new URL(request.url).searchParams.get('status');
+		const rows = (OVERLAYS[keyOf(params)] ?? []) as Array<{ status?: string }>;
+		return HttpResponse.json(
+			cursorPage(status ? rows.filter((o) => o.status === status) : rows),
+		);
+	}),
+
+	// `GET /notes?api=vendor:name:version` (registry notes router): notes on an
+	// API resource. Mirrors `NoteListResponse`; `api` is colon-separated and an
+	// unknown API resolves to an empty page, like the real service.
+	http.get('/notes', ({ request }) => {
+		const api = new URL(request.url).searchParams.get('api');
+		const rows = api ? (NOTES[api.split(':').join('/')] ?? []) : Object.values(NOTES).flat();
+		return HttpResponse.json(cursorPage(rows));
 	}),
 
 	http.post(`/apis/:vendor/:name/:version/revisions/:revisionId`, ({ request }) => {

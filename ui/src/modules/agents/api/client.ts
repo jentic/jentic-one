@@ -37,7 +37,6 @@ import {
 } from '@/shared/api';
 import {
 	agentToEntity,
-	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
 	type BindingRuleSetEntity,
@@ -45,7 +44,6 @@ import {
 	type ApiKeyResult,
 	type CredentialBindingEntity,
 	type InstanceIdentityEntity,
-	type McpLastSeen,
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
@@ -290,30 +288,6 @@ export async function resumeAgentCredentialBinding(
 		);
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to resume the binding.');
-	}
-}
-
-/**
- * Candidate credentials for the agent-side "Bind credential" picker. Reads the
- * org-wide `GET /credentials` surface through the shared API (the agents
- * module must not import the credentials page module) and projects to the
- * minimal picker shape.
- */
-export async function listBindableCredentialsForAgent(): Promise<AgentBindableCredential[]> {
-	try {
-		const res = await CredentialsService.listCredentials({ limit: 100 });
-		return res.data.map((c) => ({
-			credential_id: c.credential_id,
-			name: c.name,
-			type: c.type,
-			vendor: c.api?.vendor ?? null,
-			apiName: c.api?.name ?? null,
-			catalogApiId: c.catalog_api_id ?? null,
-			provider: c.provider ?? null,
-			createdBy: c.created_by ?? null,
-		}));
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load credentials.');
 	}
 }
 
@@ -763,10 +737,10 @@ export async function listActorAudit(actorId: string, limit = 25): Promise<Audit
 // ---------------------------------------------------------------------------
 
 /** Wire value of the MCP session event type (`EventType.MCP_SESSION_STARTED`). */
-export const MCP_SESSION_STARTED_EVENT = 'mcp.session_started';
+const MCP_SESSION_STARTED_EVENT = 'mcp.session_started';
 
 /** The `origin` wire value stamped on MCP executions (`Origin.MCP`). */
-export const MCP_ORIGIN = 'mcp';
+const MCP_ORIGIN = 'mcp';
 
 function eventToMcpSession(e: EventResponse): McpSessionEntity {
 	// The emitter writes clientInfo + transport + session id into the internal
@@ -803,39 +777,6 @@ export async function fetchMcpSessions(actorId: string): Promise<McpSessionEntit
 			return null;
 		}
 		throw toAgentsError(error, 'Failed to load MCP sessions.');
-	}
-}
-
-/**
- * Latest MCP session per agent for the roster's "last seen via MCP" cell,
- * from ONE page of `mcp.session_started` events. The feed is newest-first, so
- * the first row per `actor_id` is that agent's latest session. Like the
- * usage top-50 leaderboard, this is bounded enrichment: an agent absent from
- * the newest 100 session events means "no recent MCP session known", not
- * "never" — callers render an em-dash. `null` when permission-gated.
- */
-export async function fetchMcpLastSeenByActor(): Promise<Map<string, McpLastSeen> | null> {
-	try {
-		const res = await EventsService.listEvents({
-			eventType: [MCP_SESSION_STARTED_EVENT],
-			limit: 100,
-		});
-		const out = new Map<string, McpLastSeen>();
-		for (const e of res.data) {
-			if (!e.actor_id || out.has(e.actor_id)) continue;
-			const s = eventToMcpSession(e);
-			out.set(e.actor_id, {
-				clientName: s.clientName,
-				clientVersion: s.clientVersion,
-				startedAt: s.startedAt,
-			});
-		}
-		return out;
-	} catch (error) {
-		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
-			return null;
-		}
-		throw toAgentsError(error, 'Failed to load MCP session events.');
 	}
 }
 

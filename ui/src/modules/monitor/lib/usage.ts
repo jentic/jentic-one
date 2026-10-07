@@ -8,6 +8,10 @@
 import type { UsageResponse } from '@/modules/monitor/api';
 import { RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE, retiredServiceAccountLabel } from '@/shared/lib';
 
+/** Row id / label of the bucket for rows with no attributable key. */
+export const UNATTRIBUTED_ID = '__unattributed__';
+export const UNATTRIBUTED_LABEL = 'Unattributed';
+
 /** Overall window stats, UI vocabulary (rates in 0–100 percent). */
 export interface UsageOverview {
 	totalExecutions: number;
@@ -60,24 +64,24 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
  * Null/unknown keys are surfaced as an explicit "Unattributed" bucket.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
-	if (!key) return 'Unattributed';
+	if (!key) return UNATTRIBUTED_LABEL;
 	if (groupBy === 'api') {
 		const [vendor, ...rest] = key.split('/');
 		const name = rest.join('/');
-		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return 'Unattributed';
+		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return UNATTRIBUTED_LABEL;
 		return name && name !== 'unknown' ? name : key;
 	}
 	if (groupBy === 'agent') {
 		const slash = key.indexOf('/');
 		if (slash < 0) return key;
 		const actorId = key.slice(slash + 1);
-		if (!actorId) return 'Unattributed';
+		if (!actorId) return UNATTRIBUTED_LABEL;
 		return key.slice(0, slash) === RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE
 			? retiredServiceAccountLabel(actorId)
 			: actorId;
 	}
 	if (groupBy === 'credential') {
-		return key === 'unknown' ? 'Unattributed' : key;
+		return key === 'unknown' ? UNATTRIBUTED_LABEL : key;
 	}
 	return key;
 }
@@ -96,7 +100,7 @@ export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsage
 			const success = row.success ?? 0;
 			const key = (row.key ?? null) as string | null;
 			return {
-				id: key || '__unattributed__',
+				id: key || UNATTRIBUTED_ID,
 				label: formatEntityLabel(usage.group_by, key),
 				totalExecutions: total,
 				successRate: total > 0 ? (success / total) * 100 : 100,

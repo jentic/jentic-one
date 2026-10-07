@@ -9,7 +9,7 @@ import type { Credential, SelectedApi } from '@/shared/credentials/api';
 import { apiRefKey, apiScopeCovers } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialChoice } from '@/shared/credentials/lib/credentialIdentity';
 import type { CredentialBindingEntity, ServedApiEntity } from '@/modules/agents/api/types';
-import { credentialsBindableBy, type BindViewer } from '@/modules/agents/lib/bindAuthority';
+import { credentialsBindableBy, type BindViewer } from '@/shared/credentials/lib/bindAuthority';
 
 /**
  * What a pick will cost, worst-to-best as work for the operator. The tray only
@@ -20,13 +20,16 @@ import { credentialsBindableBy, type BindViewer } from '@/modules/agents/lib/bin
  *   reuse matches API identity, not account, so a wrong-tenant match must be
  *   the operator's call.
  * - `oauth` — none covers it, and a new one is one sign-in click.
+ * - `no-auth` — none covers it, and its spec declares no authentication, so the
+ *   new credential carries no secret (the queue still says so and lets the
+ *   operator set one up for a spec that leaves its auth out).
  * - `form` — none covers it, so a new credential is typed in.
  *
  * An API the agent already reaches is not a dead end: an agent may hold several
  * credentials for one API (one per account), so the pick adds another account
  * and {@link PreflightItem.existing} says which ones it has.
  */
-export type PreflightOutcome = 'oauth' | 'choose' | 'form';
+export type PreflightOutcome = 'oauth' | 'choose' | 'no-auth' | 'form';
 
 /** A binding through which the agent already reaches a pick. */
 export interface ExistingAccount {
@@ -67,6 +70,9 @@ export interface PreflightInputs {
 	/** A managed OAuth provider is configured, so a new oauth2 credential is a
 	 * sign-in click rather than a client-credentials form. */
 	managedOAuthAvailable: boolean;
+	/** `vendor/name` keys of picks whose read spec declares no authentication.
+	 * Absent = not known (yet), which never reads as open. */
+	noAuthKeys?: ReadonlySet<string>;
 }
 
 /** Does a binding serve this pick? Delegates to {@link apiScopeCovers}, so a
@@ -76,7 +82,7 @@ function bindingServesApi(binding: CredentialBindingEntity, api: SelectedApi): b
 }
 
 /** The bindings through which the agent already reaches this API, in list order. */
-export function accountsServingApi(
+function accountsServingApi(
 	bindings: CredentialBindingEntity[],
 	api: SelectedApi,
 ): ExistingAccount[] {
@@ -151,7 +157,9 @@ export function preflightApi(api: SelectedApi, inputs: PreflightInputs): Preflig
 			? 'choose'
 			: newCredentialIsOneClick(api, inputs.managedOAuthAvailable)
 				? 'oauth'
-				: 'form';
+				: inputs.noAuthKeys?.has(`${api.vendor}/${api.name}`)
+					? 'no-auth'
+					: 'form';
 	return { key, api, outcome, covering, existing, importsApi };
 }
 
@@ -174,6 +182,7 @@ export function preflightApis(apis: SelectedApi[], inputs: PreflightInputs): Pre
 export interface PreflightTally {
 	oauth: number;
 	choose: number;
+	'no-auth': number;
 	form: number;
 	/** Picks the agent already reaches — each adds another credential. */
 	another: number;
@@ -187,6 +196,7 @@ export function preflightTally(items: PreflightItem[]): PreflightTally {
 	const tally: PreflightTally = {
 		oauth: 0,
 		choose: 0,
+		'no-auth': 0,
 		form: 0,
 		another: 0,
 		imports: 0,
@@ -205,6 +215,7 @@ export function preflightTally(items: PreflightItem[]): PreflightTally {
 export const PREFLIGHT_LABELS: Record<PreflightOutcome, string> = {
 	oauth: 'One sign-in click',
 	choose: 'Choose a credential in the next step',
+	'no-auth': 'No credential needed',
 	form: 'Needs a new credential',
 };
 
@@ -224,7 +235,12 @@ export function addedViaLabel(existing: ExistingAccount[]): string {
 
 /** The tally lines, in the order the rows' outcomes are worked. Only non-zero
  * lines are rendered. */
-export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = ['choose', 'oauth', 'form'];
+export const PREFLIGHT_TALLY_ORDER: readonly PreflightOutcome[] = [
+	'choose',
+	'oauth',
+	'form',
+	'no-auth',
+];
 
 /** Plural-aware tally copy — what the next step will ask for, before committing. */
 export function preflightTallyLabel(outcome: PreflightOutcome, count: number): string {
@@ -237,6 +253,8 @@ export function preflightTallyLabel(outcome: PreflightOutcome, count: number): s
 			return `${subject} ${one ? 'needs' : 'need'} one sign-in click`;
 		case 'form':
 			return `${subject} ${one ? 'needs' : 'need'} a new credential`;
+		case 'no-auth':
+			return `${subject} ${one ? 'declares' : 'declare'} no authentication — no secret to enter`;
 	}
 }
 

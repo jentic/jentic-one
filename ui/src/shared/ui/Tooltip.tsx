@@ -13,14 +13,14 @@ import {
 import { createPortal } from 'react-dom';
 import { cn } from '@/shared/lib/utils';
 
-type TooltipPlacement = 'top' | 'bottom';
+type TooltipPlacement = 'top' | 'bottom' | 'right';
 
 interface TooltipProps {
 	/** Tooltip content shown on hover/focus. Rendered into a body portal. */
 	content: ReactNode;
 	/** The trigger content the tooltip describes. */
 	children: ReactNode;
-	/** Where the tooltip sits relative to the trigger. Default `top`. */
+	/** Where the tooltip sits relative to the trigger (`right` = beside it). Default `top`. */
 	placement?: TooltipPlacement;
 	/**
 	 * Hover open delay in ms (default 400). Keyboard focus always opens
@@ -82,8 +82,14 @@ export function Tooltip({
 		const el = triggerRef.current;
 		if (!el) return;
 		const rect = el.getBoundingClientRect();
-		const top = placement === 'top' ? rect.top - 8 : rect.bottom + 8;
-		const left = rect.left + rect.width / 2;
+		// `right`: beside the trigger, vertically centred (narrow vertical rails).
+		const top =
+			placement === 'top'
+				? rect.top - 8
+				: placement === 'right'
+					? rect.top + rect.height / 2
+					: rect.bottom + 8;
+		const left = placement === 'right' ? rect.right + 8 : rect.left + rect.width / 2;
 		// Skip the state write (and its re-render) when the measured position
 		// hasn't moved — a nested scroll that doesn't shift the trigger shouldn't
 		// churn React.
@@ -212,8 +218,10 @@ export function Tooltip({
 							// `whitespace-normal` (not nowrap): long content must wrap
 							// inside the max-width, not overflow the bubble. Consumers
 							// with short one-liners are unaffected.
-							'border-border/40 bg-card/70 text-card-foreground pointer-events-none fixed z-[9999] max-w-[320px] -translate-x-1/2 rounded-lg border px-3 py-2 text-xs whitespace-normal shadow-xl backdrop-blur-md',
+							'border-border/40 bg-card/70 text-card-foreground pointer-events-none fixed z-[9999] max-w-[320px] rounded-lg border px-3 py-2 text-xs whitespace-normal shadow-xl backdrop-blur-md',
+							placement !== 'right' && '-translate-x-1/2',
 							placement === 'top' && '-translate-y-full',
+							placement === 'right' && '-translate-y-1/2',
 							bubbleClassName,
 						)}
 						style={{ top: pos.top, left: pos.left }}

@@ -4,7 +4,7 @@
 //
 // Wire shape (verified against the running backend):
 //   - Create is a discriminated union by `type`
-//     (bearer_token | api_key | basic | oauth2).
+//     (bearer_token | api_key | basic | oauth2 | sigv4 | no_auth).
 //   - Create returns the redacted credential PLUS a one-time `secret` object.
 //   - Read/list/patch return `CredentialRedactedResponse` (secrets never returned);
 //     type-specific projection (location/field_name/hint) lives inside `details`.
@@ -26,6 +26,7 @@ import {
 	type CredentialCreateResponse,
 	type CredentialListResponse,
 	type CredentialRedactedResponse,
+	type NoAuthCreateRequest,
 	type OAuth2CreateRequest,
 	type OAuth2UpdateRequest,
 	type RuntimeConfig,
@@ -49,6 +50,7 @@ export type {
 	CredentialCreateResponse,
 	CredentialListResponse,
 	CredentialRedactedResponse,
+	NoAuthCreateRequest,
 	OAuth2CreateRequest,
 	OAuth2UpdateRequest,
 	RuntimeConfig,
@@ -85,7 +87,8 @@ export type CredentialCreateRequest =
 	| ApiKeyCreateRequest
 	| BasicAuthCreateRequest
 	| OAuth2CreateRequest
-	| Sigv4CreateRequest;
+	| Sigv4CreateRequest
+	| NoAuthCreateRequest;
 
 /** The discriminated update/rotate body. `type` is the discriminator. */
 export type CredentialUpdateRequest =

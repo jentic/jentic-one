@@ -1,6 +1,11 @@
 /**
- * Docs module route. Path is RELATIVE to the `/app` shell, so this mounts at
- * `/app/docs`. Registered additively in `@/shared/app/routes.ts`.
+ * Docs module route — the public API reference at `/app/docs`.
+ *
+ * API reference is public-by-norm (Stripe/GitHub/etc.), so the route is
+ * registered in `App.tsx` OUTSIDE `AuthGuard`/`Layout` (which both assume a
+ * live session via the agent-stream + user menu) and wins for `/app/docs`
+ * whether or not a session exists. Standalone for now; a fuller public
+ * shell/chrome is a follow-up decision.
  *
  * The page is lazy-loaded: the docs portal pulls in the OpenAPI/CLI rendering
  * stack (Markdown + schema trees over the full spec), which is large and only
@@ -19,30 +24,15 @@ const DocsPage = lazy(() => import('@/modules/docs/pages/DocsPage'));
  * payload that slips past the per-field normalization degrades to a friendly
  * fallback instead of a blank route. `Suspense` handles the lazy chunk load.
  */
-const docsElement = (
-	<ErrorBoundary>
-		<Suspense fallback={<LoadingState message="Loading the API reference…" />}>
-			<DocsPage />
-		</Suspense>
-	</ErrorBoundary>
-);
-
-export const docsRoutes: RouteObject[] = [
-	{
-		path: 'docs',
-		element: docsElement,
-	},
-];
-
-/**
- * Public, unauthenticated docs route — API reference is public-by-norm (Stripe/
- * GitHub/etc.). Registered in `App.tsx` OUTSIDE `AuthGuard`/`Layout` (which both
- * assume a live session via the agent-stream + user menu). Standalone for now;
- * a fuller public shell/chrome is a follow-up decision.
- */
 export const publicDocsRoutes: RouteObject[] = [
 	{
 		path: '/docs',
-		element: docsElement,
+		element: (
+			<ErrorBoundary>
+				<Suspense fallback={<LoadingState message="Loading the API reference…" />}>
+					<DocsPage />
+				</Suspense>
+			</ErrorBoundary>
+		),
 	},
 ];
