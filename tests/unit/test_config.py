@@ -39,6 +39,7 @@ from jentic_one.shared.config import (
     _deep_merge,
     _env_overrides,
     bind_origin,
+    broker_links_root_on_broker,
     check_public_url_consistency,
     effective_auth_base_url,
     has_spa_platform_client,
@@ -1337,6 +1338,15 @@ def test_effective_auth_base_url_precedence(tmp_path: Path):
     # both unset ≡ empty (today's behaviour)
     config = _load(tmp_path, {})
     assert effective_auth_base_url(config) == ""
+
+
+def test_broker_links_root_on_broker_only_for_an_unpinned_standalone_broker(tmp_path: Path):
+    standalone = {"apps": ["broker"]}
+    assert broker_links_root_on_broker(_load(tmp_path, standalone)) is True
+    pinned = {**standalone, "broker": {"jobs_api_base_url": "https://jentic.example.com"}}
+    assert broker_links_root_on_broker(_load(tmp_path, pinned)) is False
+    assert broker_links_root_on_broker(_load(tmp_path, {"apps": ["broker", "admin"]})) is False
+    assert broker_links_root_on_broker(_load(tmp_path, {})) is False
 
 
 def test_check_public_url_consistency(tmp_path: Path):

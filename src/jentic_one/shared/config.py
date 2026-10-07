@@ -2016,6 +2016,22 @@ def has_spa_platform_client(config: AppConfig) -> bool:
     return any(pc.client_id == _SPA_CLIENT_ID for pc in config.auth.platform_clients)
 
 
+def broker_links_root_on_broker(config: AppConfig) -> bool:
+    """Whether a standalone broker would root its admin-side links on itself.
+
+    ``True`` when this process serves the broker without the admin app and
+    ``broker.jobs_api_base_url`` is unset: a held call's ``review_url`` and the
+    ``_links`` of held and async executions then fall back to the broker's own
+    request origin, where the review page, ``/jobs`` and
+    ``/executions/approvals`` are not served.
+    """
+    return (
+        "broker" in config.apps
+        and "admin" not in config.apps
+        and not config.broker.jobs_api_base_url
+    )
+
+
 def bind_origin(config: AppConfig) -> str:
     """The origin this process serves on, as a client on the same host reaches it.
 
