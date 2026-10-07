@@ -123,7 +123,7 @@ async def test_unmatched_scope_warns_with_nearest_identity_hint(
     )
     assert result.warnings is not None
     [warning] = result.warnings
-    assert "posthog-com/posthog-api" in warning
+    assert "'posthog-com/posthog-api/*'" in warning
     assert "matches no imported API" in warning
     # Both remedies: import the API, or re-create the (immutable-scope) credential.
     assert "re-create" in warning
@@ -162,7 +162,7 @@ async def test_unmatched_vendor_warns_without_hint(
     )
     assert result.warnings is not None
     [warning] = result.warnings
-    assert "nowhere-example" in warning
+    assert "'nowhere-example/*/*'" in warning
     assert "imported APIs for this vendor" not in warning
     # The create itself must have succeeded regardless of the warning.
     assert result.credential_id
@@ -178,4 +178,19 @@ async def test_version_scoped_mismatch_warns(
     )
     assert result.warnings is not None
     [warning] = result.warnings
-    assert "posthog-com/posthog-api/2.0" in warning
+    assert "'posthog-com/posthog-api/2.0'" in warning
+
+
+async def test_name_wildcard_version_pinned_mismatch_renders_wildcard_axis(
+    integration_context: Context, svc: CredentialService, clean_tables: None
+) -> None:
+    """A name-wildcard, version-pinned scope shows the wildcard explicitly, so
+    the version isn't misread as the name (`posthog-com/2.0`)."""
+    await _seed_api(integration_context, vendor="posthog-com", name="posthog-api", version="1.0")
+    result = await svc.create(
+        _payload(APIReference(vendor="posthog-com", name="", version="2.0")),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert result.warnings is not None
+    [warning] = result.warnings
+    assert "'posthog-com/*/2.0'" in warning

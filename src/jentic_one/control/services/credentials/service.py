@@ -101,6 +101,16 @@ class _UnmatchedScopeWarning(NamedTuple):
     message: str
 
 
+def _scope_reference(scope: CredentialScope) -> str:
+    """Render a credential scope as ``vendor/name/version`` with ``*`` for wildcards.
+
+    Every axis is always shown so the position is unambiguous: a name-wildcard,
+    version-pinned scope reads ``stripe-com/*/2024-04-10`` rather than collapsing
+    to ``stripe-com/2024-04-10``, which reads as a name.
+    """
+    return f"{scope.vendor}/{scope.name or '*'}/{scope.version or '*'}"
+
+
 class CredentialService:
     """Style A standalone service for credential CRUD operations."""
 
@@ -1476,7 +1486,7 @@ class CredentialService:
                 "credential_api_match_check_failed", api_vendor=scope.vendor, exc_info=True
             )
             return []
-        reference = "/".join(axis for axis in (scope.vendor, scope.name, scope.version) if axis)
+        reference = _scope_reference(scope)
         # The scope is immutable after create, so "import the API" is only half
         # the remedy — a mis-scoped credential must be re-created.
         message = (
