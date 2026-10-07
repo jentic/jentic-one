@@ -1,9 +1,8 @@
 """Shared fixtures for unit registry tests that need a real SQLite ``apis`` table.
 
-Promoted from ``repos/test_api_repo_upsert.py`` / ``ingest/test_extract_api_catalog_conflict.py``
-(fixture-reuse rule: fixtures useful to more than one file live in the closest
-shared conftest). Real in-memory SQLite, no DB mocking
-(``tests/arch/test_no_db_mocking.py``).
+Provides ``apis_sqlite_session``: an in-memory SQLite registry session with the
+``apis`` and ``api_revisions`` tables created (no DB mocking —
+``tests/arch/test_no_db_mocking.py``).
 """
 
 from __future__ import annotations
