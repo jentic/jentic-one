@@ -7,14 +7,9 @@
  * Shared because two modules offer a bind — the agents surfaces and the API
  * hub's "Bind to an agent" — and must agree on who may do it.
  */
-import { ORG_ADMIN, useOptionalCurrentUser } from '@/shared/auth';
+import { AGENTS_WRITE, CREDENTIALS_WRITE, ORG_ADMIN, useOptionalCurrentUser } from '@/shared/auth';
 import type { Credential } from '@/shared/credentials/api';
 import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
-
-/** The bind endpoint's permission (`POST /agents/{id}/credentials`). */
-const AGENTS_WRITE = 'agents:write';
-/** The create endpoint's permission (`POST /credentials`). */
-const CREDENTIALS_WRITE = 'credentials:write';
 
 /** The slice of the signed-in user these rules read. `null` = not known yet
  * (still loading, or rendered outside an `AuthProvider`). */

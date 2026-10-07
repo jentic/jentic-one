@@ -9,8 +9,10 @@
  * view takes over. The landing's state (resume on load, the roster poll, the
  * exits) is `useFirstAgentLanding`; its rules are `lib/firstRun.ts`.
  *
- * A refused roster read (403) shows "No access to agents"; a `?agent=` the
- * whole roster does not hold shows "Agent not found" rather than another agent.
+ * A caller known to lack `agents:read`, or a refused roster read (403), sees
+ * "No access to agents". A `?agent=` the whole roster does not hold shows
+ * "Agent not found" rather than another agent, or the first-agent landing when
+ * the roster is empty.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -69,7 +71,14 @@ import {
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
 import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
-import { AGENTS_WRITE, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
+import {
+	AGENTS_READ,
+	AGENTS_WRITE,
+	CREDENTIALS_WRITE,
+	useCanAccess,
+	useOptionalCurrentUser,
+	usePermissionsKnown,
+} from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
@@ -145,6 +154,23 @@ export function FlatAgentsSection({
 			),
 		[setSearchParams],
 	);
+	const clearAgentParam = useCallback(
+		() =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.delete('agent');
+					return next;
+				},
+				{ replace: true },
+			),
+		[setSearchParams],
+	);
+	// Known to lack `agents:read`: the roster is not requested (see
+	// `useFirstAgentLanding`), and the page reads as a refused one would.
+	const canReadAgents = useCanAccess(AGENTS_READ);
+	const permissionsKnown = usePermissionsKnown();
+	const rosterWithheld = permissionsKnown && !canReadAgents;
 
 	// The signal names the agent, not a boolean: a boolean would open the tray
 	// over whichever agent was on screen before. `queue` holds APIs the operator
@@ -301,7 +327,10 @@ export function FlatAgentsSection({
 
 	const firstPageFailed = Boolean(query.error && !query.data);
 	const loading = query.isPending || !landing.ready;
-	const landingShown = !firstPageFailed && !loading && landing.visible;
+	const landingWanted = !rosterWithheld && !firstPageFailed && !loading && landing.visible;
+	// A `?agent=` the roster does not hold is judged before the landing shows, so an
+	// empty roster reads "Agent not found" for it too, not the first-agent landing.
+	const landingShown = landingWanted && !paramUnknown;
 	// Before paint, so the header's label never disagrees with the body.
 	useLayoutEffect(() => onLandingChange(landingShown), [landingShown, onLandingChange]);
 
@@ -338,6 +367,15 @@ export function FlatAgentsSection({
 		</>
 	);
 
+	if (rosterWithheld) {
+		return (
+			<>
+				<AgentsNoAccess />
+				{overlays}
+			</>
+		);
+	}
+
 	// A failed FIRST page is a dead surface; a failed LATER page keeps the loaded
 	// fleet on screen, with the inline notice below offering the retry.
 	if (firstPageFailed) {
@@ -355,20 +393,36 @@ export function FlatAgentsSection({
 		);
 	}
 
+	const loadingState = (
+		<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
+			<span className="sr-only">Loading agents…</span>
+			{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
+			<Skeleton className="h-11 w-full max-w-md rounded-lg" />
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+				{[0, 1, 2].map((i) => (
+					<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
+				))}
+			</div>
+		</div>
+	);
+
 	// Until the resume decision is known, neither the fleet nor the landing.
 	if (loading) {
 		return (
 			<>
-				<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
-					<span className="sr-only">Loading agents…</span>
-					{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
-					<Skeleton className="h-11 w-full max-w-md rounded-lg" />
-					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-						{[0, 1, 2].map((i) => (
-							<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
-						))}
-					</div>
-				</div>
+				{loadingState}
+				{overlays}
+			</>
+		);
+	}
+
+	// The landing's roster does not hold the linked agent: "Agent not found" once
+	// the roster has been read again, loading until then. "Show my agents" drops
+	// the link, which brings the landing back.
+	if (landingWanted && paramUnknown) {
+		return (
+			<>
+				{agentNotFound ? <AgentNotFound onShowAgents={clearAgentParam} /> : loadingState}
 				{overlays}
 			</>
 		);
@@ -852,6 +906,8 @@ function SelectedAgentPanel({
 	// Only pending (cannot authenticate yet), rejected and archived block binding,
 	// and binding needs `agents:write` (or `org:admin`).
 	const canManage = useCanAccess(AGENTS_WRITE);
+	// Finishing a sign-in is a credential write, as in the access sidebar.
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const statusAllowsBind = agent.status === 'active' || agent.status === 'disabled';
 	const canBind = statusAllowsBind && canManage;
 	const bindBlockedReason =
@@ -1042,16 +1098,27 @@ function SelectedAgentPanel({
 									setRulesFocusKey(tile.key);
 									onOpenTile(tile.key);
 								}}
-								onSuspend={() =>
-									suspendBinding.mutate({ credentialId: tile.credentialId })
+								// Pause and resume are binding writes (`agents:write`).
+								onSuspend={
+									canManage
+										? () =>
+												suspendBinding.mutate({
+													credentialId: tile.credentialId,
+												})
+										: undefined
 								}
-								onResume={() => resumeBinding.mutate(tile.credentialId)}
+								onResume={
+									canManage
+										? () => resumeBinding.mutate(tile.credentialId)
+										: undefined
+								}
 								bindingPending={pendingBindingCredentialId === tile.credentialId}
 								agentServing={serving}
 								expanded={openTileKey === tile.key}
 								sidebarId={API_ACCESS_SIDEBAR_ID}
 								accountLabel={tileAccountLabels.get(tile.key)}
 								accountCount={multiAccount.get(tileApiKey(tile))?.count ?? 1}
+								canConnect={canWriteCredentials}
 							/>
 						))}
 					</div>

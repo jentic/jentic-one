@@ -461,6 +461,22 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 	});
 
+	it('primaryDestinationFor routes credential events to a page that exists', () => {
+		const bound = makeEvent({
+			type: 'credential.bound_to_agent',
+			kind: 'credential',
+			tokens: { credential_id: 'cred_1', agent_id: 'agt_42' },
+		});
+		expect(primaryDestinationFor(bound)).toBe('/agents?agent=agt_42');
+		const stored = makeEvent({
+			type: 'credential.stored',
+			kind: 'credential',
+			tokens: { credential_id: 'cred_1' },
+		});
+		expect(primaryDestinationFor(stored)).toBe('/agents?credentials=1');
+		expect(primaryDestinationFor(stored)).not.toContain('/credentials/');
+	});
+
 	it('primaryDestinationFor routes execution events to the monitor executions tab', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
@@ -503,14 +519,14 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(primaryDestinationFor(ev)).toBe('/monitor?show=jobs&job_id=job_7');
 	});
 
-	it('primaryDestinationFor routes credential events to the credential detail', () => {
+	it('primaryDestinationFor routes credential-only events to the credential inventory', () => {
 		const ev = makeEvent({
 			type: 'credential.expired',
 			kind: 'credential',
 			severity: 'critical',
 			tokens: { credential_id: 'cred_x' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/credentials/cred_x');
+		expect(primaryDestinationFor(ev)).toBe('/agents?credentials=1');
 	});
 
 	it('buildGroupKey prefers the most specific token', () => {

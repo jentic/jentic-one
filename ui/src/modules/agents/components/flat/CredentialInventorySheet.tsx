@@ -275,8 +275,12 @@ export function CredentialInventorySheet({
 							>
 								Credentials
 							</h2>
+							{/* Only an `org:admin` lists the whole workspace; anyone else lists
+							    the credentials they created and the ones shared with them. */}
 							<p className="text-muted-foreground text-xs">
-								Every credential in this workspace — any agent can be bound to them.
+								{usedByYoursOnly
+									? 'Your credentials and the ones shared with you — your agents can be bound to them.'
+									: 'Every credential in this workspace — any agent can be bound to them.'}
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">

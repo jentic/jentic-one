@@ -34,7 +34,7 @@ from jentic_one.shared.audit import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor, encode_cursor
 
@@ -108,6 +108,8 @@ class _ControlCleanup:
     """What the control-DB step of an API delete retired."""
 
     credential_ids: list[str] = field(default_factory=list)
+    #: ``{credential_id: name}`` for the event summaries of suspended bindings.
+    credential_names: dict[str, str] = field(default_factory=dict)
     deactivated: int = 0
 
 
@@ -251,7 +253,10 @@ class ApiService:
 
         control = await self._retire_control_credentials(vendor, name, version)
         suspended = await self._suspend_agent_bindings(
-            control.credential_ids, api_id=str(api.id), identity=identity
+            control.credential_ids,
+            api_id=str(api.id),
+            identity=identity,
+            credential_names=control.credential_names,
         )
 
         await record_audit_best_effort(
@@ -302,7 +307,7 @@ class ApiService:
             return _ControlCleanup()
         try:
             async with self._ctx.control_db.transaction() as session:
-                credential_ids = await ControlCredentialBoundaryRepository.credential_ids_for_api(
+                credential_names = await ControlCredentialBoundaryRepository.credentials_for_api(
                     session, api_vendor=vendor, api_name=name, api_version=version
                 )
                 deactivated = (
@@ -310,7 +315,11 @@ class ApiService:
                         session, api_vendor=vendor, api_name=name, api_version=version
                     )
                 )
-                return _ControlCleanup(credential_ids=credential_ids, deactivated=deactivated)
+                return _ControlCleanup(
+                    credential_ids=list(credential_names),
+                    credential_names=credential_names,
+                    deactivated=deactivated,
+                )
         except Exception:
             logger.warning(
                 "control_credential_deactivation_failed",
@@ -322,7 +331,12 @@ class ApiService:
             return _ControlCleanup()
 
     async def _suspend_agent_bindings(
-        self, credential_ids: list[str], *, api_id: str, identity: Identity
+        self,
+        credential_ids: list[str],
+        *,
+        api_id: str,
+        identity: Identity,
+        credential_names: dict[str, str] | None = None,
     ) -> int:
         """Suspend agent bindings to the deleted API's credentials; return the count.
 
@@ -350,6 +364,7 @@ class ApiService:
                         session, credential_ids=credential_ids, reason=SUSPENDED_REASON_API_DELETED
                     )
                 )
+                names = credential_names or {}
                 for binding in suspended:
                     await record_audit(
                         session,
@@ -363,14 +378,23 @@ class ApiService:
                         after={"suspended": True, "api_id": api_id},
                         origin=identity.origin.value,
                     )
+                    credential = summary_label(
+                        names.get(binding.credential_id), binding.credential_id
+                    )
+                    agent = summary_label(binding.agent_name, binding.agent_id)
                     await emit_event_best_effort(
                         session,
                         type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
                         severity=EventSeverity.INFO,
                         summary=(
-                            f"Credential {binding.credential_id} suspended for agent "
-                            f"{binding.agent_id} because its API was deleted"
+                            f"Credential {credential} suspended for agent {agent} "
+                            "because its API was deleted"
                         ),
+                        data={
+                            "agent_id": binding.agent_id,
+                            "credential_id": binding.credential_id,
+                            "api_id": api_id,
+                        },
                         # Subject is the agent, so its owner sees the suspension.
                         created_by=binding.agent_id,
                         actor_id=identity.sub,

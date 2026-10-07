@@ -528,6 +528,17 @@ async def test_credential_use_events_reach_the_credential_owner(
         assert event.actor_id == cross_owner.agent_id
         assert event.created_by == cross_owner.credential_owner_id
         event_ids.add(event.id)
+    # Summaries name the stored credential; its id stays in ``data``.
+    [accessed] = grouped[EventType.CREDENTIAL_ACCESSED]
+    assert accessed.summary == (
+        f"Credential 'cred-{_CRED_OK}' accessed by {cross_owner.agent_id} for {_CRED_VENDOR}"
+    )
+    assert accessed.data["credential_id"] == _CRED_OK
+    [undecryptable] = grouped[EventType.CREDENTIAL_UNDECRYPTABLE]
+    assert undecryptable.summary == (
+        f"Credential 'cred-{_CRED_BAD}' cannot be decrypted for '{_CRED_VENDOR}'"
+    )
+    assert undecryptable.data == {"credential_id": _CRED_BAD, "api_vendor": _CRED_VENDOR}
 
     credential_owner = _user(cross_owner.credential_owner_id, "events:read")
     agent_owner = _user(cross_owner.agent_owner_id, "events:read")
@@ -581,6 +592,20 @@ async def test_binding_events_reach_the_agent_owner(
         assert event.created_by == cross_owner.agent_id
     assert rules.actor_id == cross_owner.credential_owner_id
     assert rules.created_by == cross_owner.agent_id
+
+    # Summaries name the credential and the agent; both ids stay in ``data``.
+    ids = {"agent_id": cross_owner.agent_id, "credential_id": _CRED_OK}
+    credential, agent_name = f"'cred-{_CRED_OK}'", "'evtscope-cross-agent'"
+    assert sorted(e.summary for e in bound) == [
+        f"Credential {credential} binding resumed for agent {agent_name}",
+        f"Credential {credential} bound to agent {agent_name}",
+    ]
+    assert unbound[0].summary == f"Credential {credential} suspended for agent {agent_name}"
+    assert rules.summary == (
+        f"Permission rules set on agent {agent_name} for credential {credential}"
+    )
+    for event in (*bound, *unbound, rules):
+        assert event.data == ids
 
     every_id = {e.id for e in (*bound, *unbound, rules)}
     assert await _listed_ids(ctx, _user(cross_owner.agent_owner_id, "events:read")) == every_id

@@ -52,7 +52,10 @@ from jentic_one.shared.auth.permission_catalog import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import (
+    emit_event_best_effort,
+    summary_label,
+)
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
@@ -148,7 +151,8 @@ class AgentService:
                 session,
                 type=EventType.AGENT_CREATED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent.id} created",
+                summary=f"Agent {summary_label(agent.name, agent.id)} created",
+                data={"agent_id": agent.id},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
@@ -455,6 +459,7 @@ class AgentService:
                 event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
                 summary_cause="was archived",
                 log_event="oauth_grants_revoked_on_agent_archive",
+                agent_name=agent.name,
             )
             await record_audit(
                 session,
@@ -539,7 +544,7 @@ class AgentService:
         Verifies the caller can see the target credential before writing the
         binding (control-DB lookup).
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         ref = None
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -568,7 +573,11 @@ class AgentService:
                 session,
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} bound to agent {agent_id}",
+                summary=(
+                    f"Credential {summary_label(ref.name, credential_id)} bound to agent "
+                    f"{summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
                 # The binding's subject is the agent, so its owner sees the
                 # event; ``actor_id`` records who changed the binding.
                 created_by=agent_id,
@@ -598,7 +607,7 @@ class AgentService:
         admin-side delete then fails, the surviving binding has no inline
         rules and denies (fail-closed) rather than the other way round.
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
@@ -614,6 +623,7 @@ class AgentService:
                 await BindingRuleRepository.delete_for_binding(
                     session, agent_id=agent_id, credential_id=credential_id
                 )
+        credential_name = await self._credential_name(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             if purge:
                 removed = await AgentCredentialBindingRepository.purge(
@@ -637,17 +647,39 @@ class AgentService:
                 origin=identity.origin.value,
             )
             verb = "unbound (purged) from" if purge else "suspended for"
+            credential = summary_label(credential_name, credential_id)
             await emit_event_best_effort(
                 session,
                 type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} {verb} agent {agent_id}",
+                summary=(
+                    f"Credential {credential} {verb} agent {summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
                 # The binding's subject is the agent, so its owner sees the
                 # event; ``actor_id`` records who changed the binding.
                 created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+
+    async def _credential_name(self, credential_id: str) -> str | None:
+        """Best-effort display name for a credential, for an event summary.
+
+        ``None`` when this process has no control-DB access, the credential is
+        gone, or the lookup fails; the summary then falls back to the id.
+        """
+        if not self._ctx.is_db_allowed("control"):
+            return None
+        try:
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        except Exception:
+            logger.warning(
+                "credential_name_lookup_failed", credential_id=credential_id, exc_info=True
+            )
+            return None
+        return ref.name if ref is not None else None
 
     async def resume_credential(
         self, agent_id: str, *, credential_id: str, identity: Identity
@@ -661,7 +693,7 @@ class AgentService:
         could not bind that credential themselves. The agent itself never
         lifts a suspension on its own binding (``org:admin`` aside).
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         if self._is_own_binding(agent_id, identity):
             raise CredentialNotVisibleError(credential_id)
         ref = None
@@ -694,7 +726,11 @@ class AgentService:
                 session,
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} binding resumed for agent {agent_id}",
+                summary=(
+                    f"Credential {summary_label(ref.name, credential_id)} binding resumed for "
+                    f"agent {summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
                 # The binding's subject is the agent, so its owner sees the
                 # event; ``actor_id`` records who changed the binding.
                 created_by=agent_id,
@@ -795,7 +831,9 @@ class AgentService:
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
                 if owner_transferred:
-                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
+                    await revoke_active_grants_for_agent(
+                        session, agent_id, identity=identity, agent_name=agent.name
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,

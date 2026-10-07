@@ -32,10 +32,14 @@ interface ApiTileProps {
 	onOpen: () => void;
 	/** Open the access sidebar focused on its rules editor (the Blocked fix). */
 	onOpenRules?: () => void;
-	/** Pause this binding (reversible — rules survive). */
-	onSuspend: () => void;
-	/** Lift a suspension on this binding. */
-	onResume: () => void;
+	/** Pause this binding (reversible — rules survive). Omitted when the viewer
+	 * may not manage the agent's bindings: the tile then offers no pause. */
+	onSuspend?: () => void;
+	/** Lift a suspension on this binding. Omitted like `onSuspend`. */
+	onResume?: () => void;
+	/** Whether to offer "Finish connecting" for a binding awaiting sign-in. Off
+	 * for a viewer who may not write credentials, matching the sidebar. */
+	canConnect?: boolean;
 	/** A suspend/resume on THIS tile's credential is in flight. */
 	bindingPending: boolean;
 	/** Whether the AGENT this tile belongs to is serving traffic. False for
@@ -129,6 +133,7 @@ export function ApiTile({
 	sidebarId,
 	accountLabel,
 	accountCount = 1,
+	canConnect = true,
 }: ApiTileProps) {
 	// The tile's ONE status, in precedence order — see `deriveTileStatus`.
 	const status = deriveTileStatus({
@@ -324,42 +329,44 @@ export function ApiTile({
 				{/* Above the overlay, so these verbs are reachable — and so the tile
 				    advertises that it can be acted on at all. */}
 				<div className="relative z-10 flex shrink-0 items-center gap-1.5">
-					{tile.awaitingConsent && (
+					{tile.awaitingConsent && canConnect && (
 						<Button variant="tonal" size="xs" onClick={onOpen}>
 							Finish connecting →
 						</Button>
 					)}
-					{tile.suspended ? (
-						<Tooltip
-							content="Resume this binding — rules survived; access is restored."
-							interactiveChild
-						>
-							<Button
-								variant="tonal"
-								size="icon-xs"
-								loading={bindingPending}
-								onClick={onResume}
-								aria-label={`Resume ${tile.title} access`}
-							>
-								<PlayCircle className="h-3.5 w-3.5" />
-							</Button>
-						</Tooltip>
-					) : (
-						<Tooltip
-							content="Pause this binding — reversible; rules survive and resume restores access."
-							interactiveChild
-						>
-							<Button
-								variant="tonal"
-								size="icon-xs"
-								loading={bindingPending}
-								onClick={onSuspend}
-								aria-label={`Pause ${tile.title} access`}
-							>
-								<PauseCircle className="h-3.5 w-3.5" />
-							</Button>
-						</Tooltip>
-					)}
+					{tile.suspended
+						? onResume && (
+								<Tooltip
+									content="Resume this binding — rules survived; access is restored."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="icon-xs"
+										loading={bindingPending}
+										onClick={onResume}
+										aria-label={`Resume ${tile.title} access`}
+									>
+										<PlayCircle className="h-3.5 w-3.5" />
+									</Button>
+								</Tooltip>
+							)
+						: onSuspend && (
+								<Tooltip
+									content="Pause this binding — reversible; rules survive and resume restores access."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="icon-xs"
+										loading={bindingPending}
+										onClick={onSuspend}
+										aria-label={`Pause ${tile.title} access`}
+									>
+										<PauseCircle className="h-3.5 w-3.5" />
+									</Button>
+								</Tooltip>
+							)}
 					<Tooltip
 						content="Manage access — credential, rules and tester."
 						interactiveChild

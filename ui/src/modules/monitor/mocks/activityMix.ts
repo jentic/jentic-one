@@ -51,7 +51,7 @@ const MIX: Seed[] = [
 		event_id: 'evt_mix_cred_expiring',
 		type: 'credential.expiring_soon',
 		severity: 'warning',
-		summary: 'Credential expiring soon: Stripe (live)',
+		summary: "Credential 'Stripe (live)' is expiring soon",
 		detail: 'expires in 6 days',
 		created_at: ago(22 * MIN),
 		data: { credential_id: 'cred_stripe_live' },

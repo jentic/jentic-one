@@ -25,6 +25,8 @@ export const JOBS_READ = 'jobs:read';
 export const AUDIT_READ = 'audit:read';
 /** Read every credential (`GET /credentials`). */
 export const CREDENTIALS_READ = 'credentials:read';
+/** Create, edit, delete and connect credentials, and edit a binding's rules. */
+export const CREDENTIALS_WRITE = 'credentials:write';
 /** Read the credentials the caller owns (`GET /credentials`, owner-scoped). */
 export const OWNER_CREDENTIALS_READ = 'owner:credentials:read';
 

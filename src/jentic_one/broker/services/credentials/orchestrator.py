@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Collection, Mapping
+from typing import Any
 
 import structlog
 
@@ -47,6 +48,7 @@ from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import (
     emit_credential_access,
     emit_event_best_effort,
+    summary_label,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
@@ -154,12 +156,13 @@ class CredentialService:
                 await self._emit_credential_failure(
                     type=EventType.CREDENTIAL_UNDECRYPTABLE,
                     summary=(
-                        f"Credential '{resolved.credential_id}' cannot be decrypted "
-                        f"for '{api.vendor}'"
+                        f"Credential {summary_label(resolved.name, resolved.credential_id)} "
+                        f"cannot be decrypted for '{api.vendor}'"
                     ),
                     identity=identity,
                     credential_owner=resolved.created_by,
                     requires_action=True,
+                    data={"credential_id": resolved.credential_id, "api_vendor": api.vendor},
                 )
                 raise CredentialUndecryptableError(
                     detail=(
@@ -199,6 +202,7 @@ class CredentialService:
                     api_name=api.name,
                     api_version=api.version,
                     credential_owner=resolved.created_by,
+                    credential_name=resolved.name,
                     # Sanitised: emit_event raises on a malformed trace_id, and
                     # a 500 here would fail the whole execute request (#903).
                     trace_id=valid_trace_id_or_none(trace_id),
@@ -234,7 +238,10 @@ class CredentialService:
             # auth but never makes the upstream call.
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_REFRESH_FAILED,
-                summary=f"Credential refresh failed for '{api.vendor}'",
+                summary=(
+                    f"Credential {summary_label(resolved.name, resolved.credential_id)} "
+                    f"refresh failed for '{api.vendor}'"
+                ),
                 identity=identity,
                 credential_owner=resolved.created_by,
                 tags={ErrorSource.AUTH_JENTIC},
@@ -372,6 +379,7 @@ class CredentialService:
         credential_owner: str | None = None,
         tags: set[EventTag] | None = None,
         requires_action: bool = False,
+        data: dict[str, Any] | None = None,
     ) -> None:
         """Emit a credential-health event on the admin DB (best-effort).
 
@@ -392,6 +400,7 @@ class CredentialService:
                     actor_type=identity.actor_type.value,
                     tags=tags,
                     requires_action=requires_action,
+                    data=data,
                 )
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)

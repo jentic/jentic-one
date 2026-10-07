@@ -192,6 +192,65 @@ describe('MonitorPage', () => {
 		).toHaveLength(1);
 	});
 
+	it("labels an agent outside an audit:read member's roster without its raw id", async () => {
+		const user = userEvent.setup();
+		const at = new Date(Date.now() - 60_000).toISOString();
+		const row = (id: string, actorId: string, actorType: string) => ({
+			action: 'agent.update',
+			actor_id: actorId,
+			actor_session_id: null,
+			actor_type: actorType,
+			after: null,
+			before: null,
+			diff: null,
+			id,
+			ip_address: null,
+			job_id: null,
+			occurred_at: at,
+			reason: null,
+			request_id: null,
+			target_id: 'agnt_target_1',
+			target_parent_id: null,
+			target_type: 'agent',
+			trace_id: null,
+			user_agent: null,
+		});
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({ ...MEMBER, permissions: ['events:read', 'audit:read'] }),
+			),
+			http.get('/actors', () => new HttpResponse(null, { status: 403 })),
+			// The lookup resolves only actors the caller may see: their own agent.
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				return HttpResponse.json({
+					data: ids
+						.filter((id) => id === 'agnt_mine_1')
+						.map((id) => ({ id, actor_type: 'agent', name: 'my-agent', active: true })),
+				});
+			}),
+			http.get('/audit', () =>
+				HttpResponse.json({
+					data: [
+						row('audit_foreign', 'agnt_foreign_1', 'agent'),
+						row('audit_mine', 'agnt_mine_1', 'agent'),
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?show=calls');
+		await user.click(await findToggle('Activity source', 'Audit log'));
+
+		expect(await screen.findByText('my-agent')).toBeInTheDocument();
+		const hidden = await screen.findByTestId('actor-label-hidden');
+		expect(hidden).toHaveTextContent('Agent (not visible to you)');
+		// The id stays reachable on hover, as on every actor label.
+		expect(hidden).toHaveAttribute('title', 'agnt_foreign_1');
+		expect(screen.queryByText('agnt_foreign_1')).not.toBeInTheDocument();
+	});
+
 	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
 		worker.use(http.get('/users/me', () => HttpResponse.json(MEMBER)));
 		renderMonitor('/app/monitor?show=audit');
