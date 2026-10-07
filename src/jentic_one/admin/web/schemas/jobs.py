@@ -14,6 +14,7 @@ class JobLinksResponse(BaseModel):
     self_link: str = Field(serialization_alias="self")
     result: str | None = None
     execution: str | None = None
+    approval: str | None = None
 
 
 class JobResponse(BaseModel):
@@ -23,6 +24,10 @@ class JobResponse(BaseModel):
     kind: str
     status: str
     execution_id: str | None = None
+    approval_id: str | None = Field(
+        default=None,
+        description="The execution approval a require-approval hold filed for this job.",
+    )
     error: str | None = None
     created_at: datetime
     updated_at: datetime | None = None

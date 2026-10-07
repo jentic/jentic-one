@@ -124,6 +124,18 @@ class ExecutionApprovalRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def ids_by_job(session: AsyncSession, job_ids: Sequence[str]) -> dict[str, str]:
+        """The approval id of each of ``job_ids`` that has one, keyed by job id."""
+        if not job_ids:
+            return {}
+        result = await session.execute(
+            select(ExecutionApproval.job_id, ExecutionApproval.id).where(
+                ExecutionApproval.job_id.in_(job_ids)
+            )
+        )
+        return {str(job_id): str(approval_id) for job_id, approval_id in result.tuples()}
+
+    @staticmethod
     async def get_state(session: AsyncSession, approval_id: str) -> str | None:
         """The approval's current ``state`` read from the database, or None when missing."""
         result = await session.execute(

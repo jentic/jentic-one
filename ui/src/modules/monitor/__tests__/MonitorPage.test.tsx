@@ -542,6 +542,50 @@ describe('MonitorPage', () => {
 		).toBeInTheDocument();
 	});
 
+	it('offers Review, not Cancel, for a held execution and opens its approval', async () => {
+		const held = {
+			_links: {
+				self: '/jobs/job_exec_held',
+				result: null,
+				execution: '/executions/exec_held',
+				approval: '/executions/approvals/exap_held',
+			},
+			approval_id: 'exap_held',
+			created_at: new Date().toISOString(),
+			error: null,
+			execution_id: 'exec_held',
+			job_id: 'job_exec_held',
+			kind: 'execution',
+			status: 'held',
+			updated_at: null,
+		};
+		worker.use(
+			http.get('/jobs', () =>
+				HttpResponse.json({ data: [held], has_more: false, next_cursor: null }),
+			),
+			http.get('/jobs/job_exec_held', () => HttpResponse.json(held)),
+		);
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor?show=jobs');
+
+		await user.click(await screen.findByText('job_exec_held'));
+		const dialog = await screen.findByRole('dialog');
+		const review = await within(dialog).findByRole('button', { name: 'Review' });
+		expect(
+			within(dialog).queryByRole('button', { name: 'Cancel job' }),
+		).not.toBeInTheDocument();
+		// The held call has no execution record yet, so no execution link either.
+		expect(within(dialog).queryByLabelText('Open execution exec_held')).not.toBeInTheDocument();
+		expect(within(dialog).getByLabelText('Open approval exap_held')).toBeInTheDocument();
+
+		await user.click(review);
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent(
+				'/agents/approvals/exap_held',
+			),
+		);
+	});
+
 	it('switches to the Audit log source and shows actors', async () => {
 		const user = userEvent.setup();
 		renderMonitor();

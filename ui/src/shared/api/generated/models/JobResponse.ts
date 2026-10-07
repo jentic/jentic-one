@@ -8,6 +8,10 @@ import type { JobLinksResponse } from './JobLinksResponse';
  */
 export type JobResponse = {
     _links: JobLinksResponse;
+    /**
+     * The execution approval a require-approval hold filed for this job.
+     */
+    approval_id?: (string | null);
     created_at: string;
     error?: (string | null);
     execution_id?: (string | null);

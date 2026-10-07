@@ -7,7 +7,9 @@
  * only while the job is still queued or running.
  */
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState } from '@/shared/ui';
 import {
 	isCancellableJob,
@@ -42,6 +44,12 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 	const canCancel =
 		isAdmin && job != null && status != null && isCancellableJob(status, job.kind);
 	const span = job ? formatSpan(job.created_at, job.updated_at) : null;
+	const navigate = useNavigate();
+	// A held execution settles through its approval: offer the review page.
+	const reviewApprovalId = status === 'held' ? (job?.approval_id ?? null) : null;
+	// An approval-gated call writes its execution record only once it runs, so
+	// the link is offered for a completed run alone.
+	const hasExecutionRecord = job?.approval_id ? status === 'completed' : true;
 
 	const confirmCancel = () => {
 		if (!job) return;
@@ -56,7 +64,16 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 			id={jobId}
 			idLabel="job id"
 			actions={
-				canCancel && job ? (
+				reviewApprovalId ? (
+					<Button
+						variant="primary"
+						size={frame.mode === 'pane' ? 'sm' : undefined}
+						onClick={() => navigate(ROUTE_PATHS.approval(reviewApprovalId))}
+						className={frame.mode === 'sheet' ? 'flex-1' : undefined}
+					>
+						Review
+					</Button>
+				) : canCancel && job ? (
 					<Button
 						variant="danger"
 						size={frame.mode === 'pane' ? 'sm' : undefined}
@@ -137,7 +154,21 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 					<DetailSection title="Ids">
 						<IdRow label="Job id" value={job.job_id} />
 						<DetailRow label="Raw kind" value={job.kind} mono />
-						{job.execution_id && (
+						{job.approval_id && (
+							<DetailRow
+								label="Approval"
+								value={
+									<AppLink
+										href={ROUTE_PATHS.approval(job.approval_id)}
+										className="text-primary font-mono text-xs hover:underline"
+										aria-label={`Open approval ${job.approval_id}`}
+									>
+										{job.approval_id}
+									</AppLink>
+								}
+							/>
+						)}
+						{job.execution_id && hasExecutionRecord && (
 							<DetailRow
 								label="Execution"
 								value={

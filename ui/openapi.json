@@ -4508,6 +4508,17 @@
       "JobLinksResponse": {
         "description": "Hypermedia links for a job.",
         "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval"
+          },
           "execution": {
             "anyOf": [
               {
@@ -4579,6 +4590,18 @@
         "properties": {
           "_links": {
             "$ref": "#/components/schemas/JobLinksResponse"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The execution approval a require-approval hold filed for this job.",
+            "title": "Approval Id"
           },
           "created_at": {
             "format": "date-time",

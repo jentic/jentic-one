@@ -763,3 +763,35 @@ async def test_decide_route_refuses_agents_and_hides_from_outsiders(
     assert malformed.status_code == 422
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
+
+
+async def test_job_routes_link_a_held_execution_to_its_approval(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with ctx.admin_db.transaction() as session:
+        other = Job(
+            kind="import",
+            status=JobStatus.QUEUED,
+            payload={},
+            created_by=actors.agent.sub,
+            actor_type=actors.agent.actor_type.value,
+        )
+        session.add(other)
+        await session.flush()
+        other_id = other.id
+    owner = actors.owner.model_copy(update={"permissions": ["jobs:read"]})
+    async with _client(ctx, owner) as client:
+        detail = await client.get(f"/jobs/{hold.job_id}")
+        listed = await client.get("/jobs")
+        plain = await client.get(f"/jobs/{other_id}")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["approval_id"] == hold.approval_id
+    assert body["_links"]["approval"].endswith(f"/executions/approvals/{hold.approval_id}")
+    rows = {row["job_id"]: row for row in listed.json()["data"]}
+    assert rows[hold.job_id]["approval_id"] == hold.approval_id
+    assert rows[other_id]["approval_id"] is None
+    assert plain.json()["approval_id"] is None
+    assert plain.json()["_links"].get("approval") is None

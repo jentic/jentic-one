@@ -18,6 +18,8 @@ class JobView(BaseModel):
     status: str
     parent_job_id: str | None = None
     execution_id: str | None = None
+    #: The execution approval a require-approval hold filed for this job.
+    approval_id: str | None = None
     error: str | None = None
     created_at: datetime
     updated_at: datetime | None = None

@@ -2067,6 +2067,7 @@ type InviteState string
 
 // JobLinksResponse Hypermedia links for a job.
 type JobLinksResponse struct {
+	Approval  *string `json:"approval,omitempty"`
 	Execution *string `json:"execution,omitempty"`
 	Result    *string `json:"result,omitempty"`
 	Self      string  `json:"self"`
@@ -2083,13 +2084,16 @@ type JobListResponse struct {
 type JobResponse struct {
 	// UnderscoreLinks Hypermedia links for a job.
 	UnderscoreLinks JobLinksResponse `json:"_links"`
-	CreatedAt       time.Time        `json:"created_at"`
-	Error           *string          `json:"error,omitempty"`
-	ExecutionId     *string          `json:"execution_id,omitempty"`
-	JobId           string           `json:"job_id"`
-	Kind            string           `json:"kind"`
-	Status          string           `json:"status"`
-	UpdatedAt       *time.Time       `json:"updated_at,omitempty"`
+
+	// ApprovalId The execution approval a require-approval hold filed for this job.
+	ApprovalId  *string    `json:"approval_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Error       *string    `json:"error,omitempty"`
+	ExecutionId *string    `json:"execution_id,omitempty"`
+	JobId       string     `json:"job_id"`
+	Kind        string     `json:"kind"`
+	Status      string     `json:"status"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
 // JwksUpdateRequest Request body for updating an agent's JWKS (public keys).

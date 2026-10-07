@@ -37,16 +37,23 @@ def _job_response(view: JobView, request: Request) -> JobResponse:
     execution_link = (
         build_link(request, f"/executions/{view.execution_id}") if view.execution_id else None
     )
+    approval_link = (
+        build_link(request, f"/executions/approvals/{view.approval_id}")
+        if view.approval_id
+        else None
+    )
     links = JobLinksResponse(
         self_link=build_link(request, f"/jobs/{view.id}"),
         result=result_link,
         execution=execution_link,
+        approval=approval_link,
     )
     return JobResponse(
         job_id=view.id,
         kind=view.kind,
         status=view.status,
         execution_id=view.execution_id,
+        approval_id=view.approval_id,
         error=view.error,
         created_at=view.created_at,
         updated_at=view.updated_at,
