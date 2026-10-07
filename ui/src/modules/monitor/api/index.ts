@@ -12,7 +12,6 @@ export {
 	useJobs,
 	useJob,
 	useCancelJob,
-	useAcknowledgeEvent,
 	useEventStream,
 	useEventFeed,
 	useAudit,

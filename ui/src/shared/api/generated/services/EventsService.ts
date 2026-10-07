@@ -2,7 +2,6 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { EventAcknowledgeRequest } from '../models/EventAcknowledgeRequest';
 import type { EventListResponse } from '../models/EventListResponse';
 import type { EventResponse } from '../models/EventResponse';
 import type { EventSeverity } from '../models/EventSeverity';
@@ -20,7 +19,6 @@ export class EventsService {
         eventType,
         severity,
         requiresAction,
-        acknowledged,
         from,
         to,
         traceId,
@@ -32,7 +30,6 @@ export class EventsService {
         eventType?: (Array<string> | null),
         severity?: (Array<EventSeverity> | null),
         requiresAction?: (boolean | null),
-        acknowledged?: (boolean | null),
         from?: (string | null),
         to?: (string | null),
         traceId?: (string | null),
@@ -48,7 +45,6 @@ export class EventsService {
                 'event_type': eventType,
                 'severity': severity,
                 'requires_action': requiresAction,
-                'acknowledged': acknowledged,
                 'from': from,
                 'to': to,
                 'trace_id': traceId,
@@ -134,37 +130,6 @@ export class EventsService {
             path: {
                 'event_id': eventId,
             },
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Acknowledge Event
-     * Acknowledge an event.
-     * @returns EventResponse Successful Response
-     * @throws ApiError
-     */
-    public static acknowledgeEvent({
-        eventId,
-        requestBody,
-    }: {
-        eventId: string,
-        requestBody: EventAcknowledgeRequest,
-    }): CancelablePromise<EventResponse> {
-        return __request(OpenAPI, {
-            method: 'PATCH',
-            url: '/events/{event_id}',
-            path: {
-                'event_id': eventId,
-            },
-            body: requestBody,
-            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

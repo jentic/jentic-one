@@ -377,17 +377,11 @@ describe('MonitorPage', () => {
 		);
 	});
 
-	it('acknowledges an action event from its feed row', async () => {
-		const user = userEvent.setup();
+	it('shows no acknowledge control on an action event — events are history', async () => {
 		renderMonitor('/app/monitor?view=activity');
 		const row = await screen.findByRole('link', { name: 'Execution failed: github-api' });
-
-		await user.click(within(row).getByRole('button', { name: 'Acknowledge' }));
-
-		expect(await screen.findByText('Event acknowledged')).toBeInTheDocument();
-		// The ack button must not also open the row's detail sheet.
-		expect(currentParams().get('trace_id')).toBeNull();
-		expect(await within(row).findByText('Acknowledged')).toBeInTheDocument();
+		expect(within(row).queryByRole('button', { name: 'Acknowledge' })).toBeNull();
+		expect(within(row).queryByText('Acknowledged')).toBeNull();
 	});
 
 	it('folds a run of successful calls into one expandable row', async () => {
@@ -395,9 +389,6 @@ describe('MonitorPage', () => {
 		const now = Date.now();
 		const completed = (i: number) => ({
 			_links: { self: `/events/evt_run_${i}`, execution: `/executions/exec_run_${i}` },
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			created_at: new Date(now - i * 60_000).toISOString(),
 			data: { execution_id: `exec_run_${i}` },
 			detail: null,
@@ -941,9 +932,6 @@ describe('Monitor inter-linking', () => {
 					data: [
 						{
 							_links: { self: '/events/evt_agent_reg_1' },
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
 							created_at: new Date().toISOString(),
 							data: { agent_id: 'agnt_curl_1' },
 							detail: null,
@@ -1000,9 +988,6 @@ describe('Monitor inter-linking', () => {
 								job: null,
 								action: null,
 							},
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
 							created_at: new Date().toISOString(),
 							data: {},
 							detail: 'Upstream 401 from api.example.com',
@@ -1039,8 +1024,7 @@ describe('Monitor inter-linking', () => {
 
 /**
  * Everything-feed status chips. Failed maps to the backend's repeatable
- * `severity=` (error + critical); Needs you to unacknowledged
- * `requires_action`.
+ * `severity=` (error + critical); Flagged to `requires_action`.
  */
 describe('Monitor feed status filter', () => {
 	beforeEach(() => {
@@ -1073,12 +1057,12 @@ describe('Monitor feed status filter', () => {
 		worker.events.removeAllListeners();
 	});
 
-	it('Needs you shows only unacknowledged action events', async () => {
+	it('Flagged shows only action-required events', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
 		await screen.findByRole('link', { name: 'Import completed' });
 
-		await user.click(toggle('Status', 'Needs you'));
+		await user.click(toggle('Status', 'Flagged'));
 
 		await waitFor(() => expect(currentParams().get('status')).toBe('action'));
 		await waitFor(() => {
@@ -1101,7 +1085,7 @@ describe('Monitor feed status filter', () => {
 		renderMonitor('/app/monitor?view=activity&status=action');
 
 		expect(await screen.findByText('Nothing matches')).toBeInTheDocument();
-		expect(toggle('Status', 'Needs you')).toHaveAttribute('aria-pressed', 'true');
+		expect(toggle('Status', 'Flagged')).toHaveAttribute('aria-pressed', 'true');
 
 		await user.click(screen.getByRole('button', { name: 'Show everything' }));
 		await waitFor(() => expect(currentParams().get('status')).toBeNull());

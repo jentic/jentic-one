@@ -1,8 +1,8 @@
 """Flow-3 (catalog-update / overlay reconciliation) telemetry counters — L6 (#924).
 
 Minimal, always-on OpenTelemetry counters so operators can tell whether the update
-loop actually *works*: how often the badge is raised (emit), resolved by re-import
-(settle), quieted (snooze), and — for the conflict half — how often an authorized
+loop actually *works*: how often the badge is raised (emit), re-imported to adopt
+upstream (reimport), quieted (snooze), and — for the conflict half — how often an authorized
 re-import auto-deprecates an overlay. Metrics go through the sanctioned facade in
 ``shared/metrics.py`` (``get_meter``); never import the OTel/Prometheus exporters
 directly (arch-test enforced).
@@ -27,7 +27,6 @@ _METER_NAME = "jentic_one.flow3"
 # Counter instances, created once on first increment. Module-level cache (not a
 # per-call get_meter) keeps the instrument identity stable across increments.
 _emit_counter: Counter | None = None
-_settle_counter: Counter | None = None
 _snooze_counter: Counter | None = None
 _reimport_counter: Counter | None = None
 _deprecate_counter: Counter | None = None
@@ -43,19 +42,6 @@ def record_update_notified(event_class: str) -> None:
             description="Catalog upstream-change notifications emitted by the update sweep.",
         )
     _emit_counter.add(1, {"event_class": event_class})
-
-
-def record_update_settled(count: int = 1) -> None:
-    """``count`` outstanding Flow-3 notifications were settled (resolved by re-import)."""
-    global _settle_counter
-    if count <= 0:
-        return
-    if _settle_counter is None:
-        _settle_counter = get_meter(_METER_NAME).create_counter(
-            "jentic_one.flow3.update_settled",
-            description="Flow-3 update notifications settled by an adopting re-import.",
-        )
-    _settle_counter.add(count)
 
 
 def record_update_snoozed() -> None:

@@ -76,7 +76,6 @@ export type { DailyExecutionBucket } from './models/DailyExecutionBucket';
 export type { DenyRequest } from './models/DenyRequest';
 export type { EffectivePermission } from './models/EffectivePermission';
 export type { ErrorItem } from './models/ErrorItem';
-export type { EventAcknowledgeRequest } from './models/EventAcknowledgeRequest';
 export type { EventLinks } from './models/EventLinks';
 export type { EventListResponse } from './models/EventListResponse';
 export type { EventResponse } from './models/EventResponse';

@@ -165,7 +165,7 @@ export default function MonitorPage() {
 								: []),
 							{
 								heading: 'Live activity',
-								body: 'Platform events — calls, jobs, approvals, alerts — newest first, as they happen. Acknowledge alerts right from the row. On the Overview it sits docked on the right; Expand opens the full log.',
+								body: 'Platform events — calls, jobs, approvals, alerts — newest first, as they happen. An alert links to where it is resolved. On the Overview it sits docked on the right; Expand opens the full log.',
 							},
 							{
 								heading: 'The full log',

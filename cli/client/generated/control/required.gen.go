@@ -104,14 +104,13 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
-func (DenyRequest) RequiredFields() []string             { return []string{"reason"} }
-func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
-func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
-func (EventAcknowledgeRequest) RequiredFields() []string { return []string{"acknowledged"} }
-func (EventLinks) RequiredFields() []string              { return []string{"self"} }
-func (EventListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
+func (DenyRequest) RequiredFields() []string         { return []string{"reason"} }
+func (EffectivePermission) RequiredFields() []string { return []string{"name"} }
+func (ErrorItem) RequiredFields() []string           { return []string{"detail"} }
+func (EventLinks) RequiredFields() []string          { return []string{"self"} }
+func (EventListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
-	return []string{"_links", "acknowledged", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
+	return []string{"_links", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
 }
 func (ExecutionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ExecutionRecordLinks) RequiredFields() []string  { return []string{"self"} }

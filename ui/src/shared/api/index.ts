@@ -54,7 +54,7 @@ export type { AgentListResponse } from '@/shared/api/generated/models/AgentListR
 // behind the facade like every other module.
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
 export type { EventListResponse } from '@/shared/api/generated/models/EventListResponse';
-export type { EventAcknowledgeRequest } from '@/shared/api/generated/models/EventAcknowledgeRequest';
+export type { EventLinks } from '@/shared/api/generated/models/EventLinks';
 export { EventSeverity } from '@/shared/api/generated/models/EventSeverity';
 
 // Discover (catalog) slice — services + models.

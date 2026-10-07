@@ -34,14 +34,14 @@ function renderMenu() {
 }
 
 const failure: EventResponse = {
-	_links: { self: '/events/evt_fail_1' },
+	_links: { self: '/events/evt_fail_1', execution: '/executions/exec_fail_1' },
 	event_id: 'evt_fail_1',
 	type: 'execution.failed',
 	severity: 'critical' as EventResponse['severity'],
 	summary: 'Execution failed: slack.postMessage',
 	created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
 	requires_action: true,
-	acknowledged: false,
+	data: { execution_id: 'exec_fail_1' },
 };
 
 const pendingAgent = {
@@ -54,24 +54,18 @@ const pendingAgent = {
 
 const page = <T,>(data: T[]) => ({ data, has_more: false, next_cursor: null });
 
-let acked: string[];
 let approved: string[];
 
 beforeEach(() => {
 	window.localStorage.clear();
 	setToken('test-token');
-	acked = [];
 	approved = [];
 	worker.use(
 		http.get('/events', ({ request }) => {
 			const url = new URL(request.url);
 			if (url.searchParams.get('requires_action') !== 'true')
 				return HttpResponse.json(page([]));
-			return HttpResponse.json(page(acked.includes(failure.event_id) ? [] : [failure]));
-		}),
-		http.patch('/events/:eventId', ({ params }) => {
-			acked.push(String(params.eventId));
-			return HttpResponse.json({ ...failure, acknowledged: true });
+			return HttpResponse.json(page([failure]));
 		}),
 		http.get('/agents', () =>
 			HttpResponse.json(page(approved.includes(pendingAgent.id) ? [] : [pendingAgent])),
@@ -112,22 +106,28 @@ describe('NotificationsMenu', () => {
 		await checkA11y(container);
 	});
 
-	it('acknowledges an alert and approves an agent inline, dropping both rows', async () => {
+	it('approves an agent inline, dropping its row; the alert stays as a View link', async () => {
 		const user = userEvent.setup();
 		renderMenu();
 		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 
-		await user.click(within(dialog).getByRole('button', { name: 'Acknowledge' }));
-		await waitFor(() => expect(acked).toEqual(['evt_fail_1']));
-		await waitFor(() =>
-			expect(within(dialog).queryByText('Execution failed: slack.postMessage')).toBeNull(),
-		);
+		// An alert is append-only history — it offers a View link, not an inline
+		// dismiss, and persists until it ages out of the recent window.
+		const alerts = within(dialog).getByRole('region', { name: 'Alerts' });
+		expect(within(alerts).getByRole('link', { name: 'View' })).toBeInTheDocument();
+		expect(within(alerts).queryByRole('button', { name: 'Acknowledge' })).toBeNull();
 
 		await user.click(within(dialog).getByRole('button', { name: 'Approve' }));
 		await waitFor(() => expect(approved).toEqual(['agnt_waiting']));
-		expect(await within(dialog).findByText("You're all caught up")).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+		// The approval row drops; the alert remains.
+		await waitFor(() =>
+			expect(within(dialog).queryByText(/inbox-triage-bot is waiting/)).toBeNull(),
+		);
+		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(
+			screen.getByRole('button', { name: 'Notifications (1 needs you)' }),
+		).toBeInTheDocument();
 	});
 
 	it('closes when a row link is followed', async () => {

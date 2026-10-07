@@ -37,9 +37,7 @@ const EASE = [0.32, 0.72, 0, 1] as const;
 function CollapsedStrip({ onExpand }: { onExpand: () => void }) {
 	const { failureCount, status, paused } = useScopedActivity();
 	const parts = [
-		failureCount > 0
-			? `${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`
-			: null,
+		failureCount > 0 ? `${failureCount} recent failure${failureCount === 1 ? '' : 's'}` : null,
 		status === 'error' ? 'reconnecting' : null,
 		status === 'forbidden' ? 'no access' : null,
 		paused ? 'paused' : null,

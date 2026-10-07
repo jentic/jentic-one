@@ -7,7 +7,6 @@ from jentic_one.admin.services.schemas.auth import (
     TokenBundle,
 )
 from jentic_one.admin.services.schemas.events import (
-    EventAcknowledgePayload,
     EventFilter,
     EventView,
     Heartbeat,
@@ -38,7 +37,6 @@ from jentic_one.admin.services.schemas.users import (
 __all__ = [
     "AssignedPermissionsPayload",
     "ChangePasswordPayload",
-    "EventAcknowledgePayload",
     "EventFilter",
     "EventView",
     "ExecutionFilter",

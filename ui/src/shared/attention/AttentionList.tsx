@@ -5,12 +5,12 @@
  *
  * Items are grouped by what they ask of you:
  *
- *   Alerts     — failures and warnings that need a look (acknowledge / view)
+ *   Alerts     — recent failures and warnings that need a look (view)
  *   Approvals  — agents and OAuth clients waiting to be let in (approve / review)
  *   Setup      — credential sign-ins nobody finished
  *
- * The cheap, reversible verbs (approve an agent, acknowledge an alert) run
- * inline; anything that needs context links to where it is resolved. Approve
+ * The cheap, reversible verb (approve an agent) runs inline; anything that
+ * needs context links to where it is resolved. Approve
  * shows only to a caller who may approve (`agents:write` or `org:admin`); the
  * row still links to the agent for anyone else.
  */
@@ -20,7 +20,7 @@ import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
-import { useAcknowledgeAttention, useApproveAgent } from '@/shared/attention/actions';
+import { useApproveAgent } from '@/shared/attention/actions';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
 import type { AttentionItem, AttentionKind } from '@/shared/attention/useAttentionItems';
 import { cn, timeAgo } from '@/shared/lib/utils';
@@ -186,13 +186,7 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 				/>
 			) : null;
 		case 'event':
-			return item.event ? (
-				<EventActions
-					eventId={item.event.event_id}
-					href={item.href}
-					onNavigate={onNavigate}
-				/>
-			) : null;
+			return <ReviewLink href={item.href} label="View" onNavigate={onNavigate} />;
 		case 'oauth_client':
 			return <ReviewLink href={item.href} label="Review" onNavigate={onNavigate} />;
 		case 'credential':
@@ -263,40 +257,6 @@ function AgentActions({
 				label="Review"
 				onNavigate={onNavigate}
 			/>
-		</>
-	);
-}
-
-function EventActions({
-	eventId,
-	href,
-	onNavigate,
-}: {
-	eventId: string;
-	href: string | null;
-	onNavigate?: () => void;
-}) {
-	const acknowledge = useAcknowledgeAttention();
-	return (
-		<>
-			<Button
-				variant="tonal"
-				size="xs"
-				loading={acknowledge.isPending}
-				onClick={() =>
-					acknowledge.mutate(eventId, {
-						onError: (error) =>
-							toast({
-								title: "Couldn't acknowledge the alert",
-								description: error.message,
-								variant: 'error',
-							}),
-					})
-				}
-			>
-				Acknowledge
-			</Button>
-			<ReviewLink href={href} label="View" onNavigate={onNavigate} />
 		</>
 	);
 }

@@ -53,8 +53,10 @@ def test_oauth_client_event_types_registered() -> None:
     """The OAuth-client lifecycle events are in ALL."""
     assert EventType.OAUTH_CLIENT_REGISTERED == "oauth_client.registered"
     assert EventType.OAUTH_CLIENT_APPROVED == "oauth_client.approved"
+    assert EventType.OAUTH_CLIENT_DENIED == "oauth_client.denied"
     assert EventType.OAUTH_CLIENT_REGISTERED in EventType.ALL
     assert EventType.OAUTH_CLIENT_APPROVED in EventType.ALL
+    assert EventType.OAUTH_CLIENT_DENIED in EventType.ALL
 
 
 def test_oauth_client_events_are_internal_only() -> None:
@@ -62,8 +64,10 @@ def test_oauth_client_events_are_internal_only() -> None:
     and they carry no closed-enum tags."""
     assert EventType.OAUTH_CLIENT_REGISTERED not in TELEMETRY_EVENTS
     assert EventType.OAUTH_CLIENT_APPROVED not in TELEMETRY_EVENTS
+    assert EventType.OAUTH_CLIENT_DENIED not in TELEMETRY_EVENTS
     assert EventType.OAUTH_CLIENT_REGISTERED not in EVENT_TAGS
     assert EventType.OAUTH_CLIENT_APPROVED not in EVENT_TAGS
+    assert EventType.OAUTH_CLIENT_DENIED not in EVENT_TAGS
 
 
 def test_all_contains_every_class_constant() -> None:

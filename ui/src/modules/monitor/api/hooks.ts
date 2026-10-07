@@ -16,7 +16,6 @@ import {
 } from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
 import {
-	acknowledgeEvent,
 	cancelJob,
 	getExecution,
 	getJob,
@@ -38,7 +37,6 @@ import {
 	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
 import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
-import { useAgentStreamOptional } from '@/shared/lib';
 import { useCanListActors } from '@/shared/hooks';
 import { toJobStatus } from '@/modules/monitor/api/types';
 import type {
@@ -60,11 +58,10 @@ export const monitorKeys = {
 	execution: (id: string) => [...monitorKeys.all, 'execution', id] as const,
 	jobs: (params: ListJobsParams) => [...monitorKeys.all, 'jobs', params] as const,
 	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
-	// Derives from the shared cross-module root: the agent-stream provider's
-	// `acknowledge` (rail/toast) invalidates that root, so the two prefixes
-	// must be the same list or they'd silently drift apart.
+	// Derives from the shared cross-module root, so a cross-module
+	// invalidation of that root reaches every events list here too.
 	events: (params: ListEventsParams) => [...sharedQueryKeys.monitorEventsRoot, params] as const,
-	// Same root, so an acknowledge anywhere also refreshes the Activity feed.
+	// Same root, so that invalidation also refreshes the Activity feed.
 	eventFeed: (params: Omit<ListEventsParams, 'cursor'>) =>
 		[...sharedQueryKeys.monitorEventsRoot, 'feed', params] as const,
 	audit: (params: ListAuditParams) => [...monitorKeys.all, 'audit', params] as const,
@@ -231,36 +228,6 @@ export function useEventFeed(
 		initialPageParam: null as string | null,
 		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
 		placeholderData: keepPreviousData,
-	});
-}
-
-/** Acknowledge an event (`PATCH /events/{id}`); invalidates the events feeds. */
-export function useAcknowledgeEvent() {
-	const queryClient = useQueryClient();
-	// Provider-optional: when the app shell's stream is mounted, flip its
-	// in-memory copy too — the SSE watermark poll never re-delivers an old
-	// event on an ack flip, so without this the rail's failure pill keeps
-	// counting an event the operator just acknowledged from the Events tab.
-	const stream = useAgentStreamOptional();
-	return useMutation({
-		mutationFn: (eventId: string) => acknowledgeEvent(eventId),
-		onSuccess: (event) => {
-			toast({
-				title: 'Event acknowledged',
-				description: event.summary,
-				variant: 'success',
-			});
-			queryClient.invalidateQueries({ queryKey: [...monitorKeys.all, 'events'] });
-			stream?.resolveEvent(event.event_id);
-		},
-		onError: (error: unknown) => {
-			toast({
-				title: 'Acknowledge failed',
-				description:
-					error instanceof Error ? error.message : 'Could not acknowledge the event.',
-				variant: 'error',
-			});
-		},
 	});
 }
 
