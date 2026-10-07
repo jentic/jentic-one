@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 
@@ -27,12 +28,14 @@ from jentic_one.control.repos import (
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
 )
+from jentic_one.control.repos.pending_import_lookup_repo import PendingImportLookupRepository
 from jentic_one.control.repos.prerequisite_repo import (
     AgentCredentialBindingRow,
     AgentVisibility,
     CredentialBoundAgentRow,
     PrerequisiteRepository,
 )
+from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
     AgentBindingNotFoundError,
@@ -76,7 +79,12 @@ from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_RE
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
-from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
+from jentic_one.shared.models.api_identity import (
+    CredentialScope,
+    canonical_credential_scope,
+    credential_covers,
+    slugify_api_field,
+)
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -84,6 +92,31 @@ from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
+
+# Upper bound on the advisory registry probe at credential create (#1020). The
+# probe is purely best-effort, so a hung registry DB (network blackhole, dying
+# node) must not drag POST /credentials to the driver's connect timeout (~60s);
+# on expiry the TimeoutError lands in the probe's own except-and-skip fallback.
+_REGISTRY_PROBE_TIMEOUT_S = 2.0
+# How many of the vendor's imported identities the unmatched-scope hint names.
+_SIBLING_HINT_LIMIT = 5
+
+
+class _UnmatchedScopeWarning(NamedTuple):
+    """One advisory warning: the human message plus the scope it names."""
+
+    reference: str
+    message: str
+
+
+def _scope_reference(scope: CredentialScope) -> str:
+    """Render a credential scope as ``vendor/name/version`` with ``*`` for wildcards.
+
+    Every axis is always shown so the position is unambiguous: a name-wildcard,
+    version-pinned scope reads ``stripe-com/*/2024-04-10`` rather than collapsing
+    to ``stripe-com/2024-04-10``, which reads as a name.
+    """
+    return f"{scope.vendor}/{scope.name or '*'}/{scope.version or '*'}"
 
 
 class CredentialService:
@@ -348,6 +381,14 @@ class CredentialService:
                 secret=secret,
             )
 
+        # Advisory check (#1020), run only once the create has committed: a scope
+        # that covers no imported API is legal (the API may be imported later) but
+        # every execute through it would 403 — surface the mismatch now instead of
+        # at execute time.
+        unmatched = await self._unmatched_scope_warning(api_scope)
+        if unmatched is not None:
+            view = view.model_copy(update={"warnings": [unmatched.message]})
+
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.CREATE,
@@ -365,19 +406,58 @@ class CredentialService:
         )
         try:
             async with self._ctx.admin_db.transaction() as session:
-                await emit_event_best_effort(
-                    session,
-                    type=EventType.CREDENTIAL_STORED,
-                    severity=EventSeverity.INFO,
-                    summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
-                    data={"credential_id": view.credential_id},
-                    created_by=identity.sub,
-                    actor_id=identity.sub,
-                    actor_type=identity.actor_type.value,
-                )
+                # Each best-effort emit runs in its own SAVEPOINT: a failed INSERT
+                # aborts the enclosing Postgres transaction, so without it one
+                # emit's swallowed failure would make the commit raise and drop
+                # every other event in this transaction with it.
+                async with session.begin_nested():
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.CREDENTIAL_STORED,
+                        severity=EventSeverity.INFO,
+                        summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
+                        data={"credential_id": view.credential_id},
+                        created_by=identity.sub,
+                        actor_id=identity.sub,
+                        actor_type=identity.actor_type.value,
+                    )
+                if unmatched is not None:
+                    async with session.begin_nested():
+                        await emit_event_best_effort(
+                            session,
+                            type=EventType.CREDENTIAL_UNMATCHED_API,
+                            severity=EventSeverity.WARNING,
+                            # Keep the summary short and bounded (the events column
+                            # caps at 512 chars and every UI surface truncates to
+                            # one line); the actionable remedy + sibling-identity
+                            # hint travel in `detail`, which the events page renders
+                            # in full. The reference is caller-shaped (version is
+                            # free-text), so clamp it defensively.
+                            summary=(
+                                f"Credential {view.credential_id}: API scope "
+                                f"'{unmatched.reference[:200]}' matches no imported API"
+                            ),
+                            detail=unmatched.message,
+                            # The canonical scope rides along for consumers that
+                            # correlate the warning with a later import.
+                            data={
+                                "credential_id": view.credential_id,
+                                "api_vendor": api_scope.vendor,
+                                "api_name": api_scope.name,
+                                "api_version": api_scope.version,
+                            },
+                            created_by=identity.sub,
+                            actor_id=identity.sub,
+                            actor_type=identity.actor_type.value,
+                        )
         except Exception:
+            # Per-emit failures are swallowed inside emit_event_best_effort; what
+            # lands here is the shared admin transaction itself failing, which
+            # can't be attributed to a single event type.
             logger.warning(
-                "telemetry_emit_failed", event_type=EventType.CREDENTIAL_STORED, exc_info=True
+                "credential_event_emit_failed",
+                credential_id=view.credential_id,
+                exc_info=True,
             )
         return view
 
@@ -1401,3 +1481,94 @@ class CredentialService:
                     f"api.{axis} '{value}' is not an identity — it looks like a spec path"
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
+
+    async def _unmatched_scope_warning(
+        self, scope: CredentialScope
+    ) -> _UnmatchedScopeWarning | None:
+        """Advisory check: does the canonical scope cover any imported API? (#1020)
+
+        Creating a credential before importing its API is a legitimate order of
+        operations (and a standalone control process is not granted the registry
+        DB), so this never blocks or fails the create — best-effort only, with a
+        hard time bound so a hung registry DB can't stall the create either.
+        One registry read fetches the vendor's identities; coverage is evaluated
+        here with the broker's ``credential_covers`` semantics, and when nothing is
+        covered the same rows name the vendor's imported identities so a near-miss
+        (e.g. a #1020 vendor-doubled workspace name) is visible at create time
+        rather than as an execute-time 403.
+
+        Events are append-only, so a warning about an API whose import is
+        already queued (the UI and ``ensure_imported`` enqueue the import and
+        create the credential back to back) would stay false forever; the
+        check is skipped when a pending import job may land a covered identity.
+        """
+        if not self._ctx.has_db("registry"):
+            return None
+        try:
+            async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
+                async with self._ctx.registry_db.session() as session:
+                    identities = await RegistryApiLookupRepository.identities_for_vendor(
+                        session, scope.vendor
+                    )
+        except Exception:
+            logger.warning(
+                "credential_api_match_check_failed", api_vendor=scope.vendor, exc_info=True
+            )
+            return None
+        if any(
+            credential_covers(scope, vendor=scope.vendor, name=name, version=version)
+            for name, version in identities
+        ):
+            return None
+        if await self._pending_import_may_cover(scope):
+            return None
+        reference = _scope_reference(scope)
+        # The scope is immutable after create, so "import the API" is only half
+        # the remedy — a mis-scoped credential must be re-created.
+        message = (
+            f"API scope '{reference}' matches no imported API — executions using this "
+            "credential will fail. Import a matching API, or delete this credential "
+            "and re-create it scoped to an imported identity"
+        )
+        if identities:
+            listed = ", ".join(
+                f"{scope.vendor}/{name} ({version})"
+                for name, version in identities[:_SIBLING_HINT_LIMIT]
+            )
+            message += f"; imported APIs for this vendor: {listed}"
+        logger.warning(
+            "credential_unmatched_api",
+            api_vendor=scope.vendor,
+            api_name=scope.name,
+            api_version=scope.version,
+        )
+        return _UnmatchedScopeWarning(reference=reference, message=message)
+
+    async def _pending_import_may_cover(self, scope: CredentialScope) -> bool:
+        """Whether a queued/running import job may land an identity ``scope`` covers.
+
+        Matches the job source's ``vendor`` / ``api_name`` seeds against the
+        scope's vendor and name axes (the version is only known once the spec
+        is fetched, so it is not compared). Best-effort and time-bounded like
+        the registry read: on failure it answers ``False`` so the advisory
+        still fires.
+        """
+        try:
+            async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
+                async with self._ctx.admin_db.session() as session:
+                    sources = await PendingImportLookupRepository.pending_import_sources(session)
+        except Exception:
+            logger.warning(
+                "credential_pending_import_check_failed", api_vendor=scope.vendor, exc_info=True
+            )
+            return False
+        for source in sources:
+            vendor = source.get("vendor")
+            if not isinstance(vendor, str) or slugify_api_field(vendor) != scope.vendor:
+                continue
+            if scope.name is None:
+                return True
+            name = source.get("api_name")
+            if isinstance(name, str) and slugify_api_field(name) == scope.name:
+                return True
+        return False

@@ -10,12 +10,16 @@ from jentic_one.registry.core.server_hosts import (
     hosts_from_spec,
     needs_review,
 )
-from jentic_one.registry.ingest.exc import DuplicateRevisionError
+from jentic_one.registry.ingest.exc import (
+    CatalogIdentityConflictError,
+    DuplicateRevisionError,
+)
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import (
     ApiRepository,
     ApiRevisionRepository,
+    CatalogApiIdConflictError,
     OverlayRepository,
     ServerRepository,
 )
@@ -30,14 +34,30 @@ class ResolveApiStage(BasePipelineStage):
     _produces: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
-        api = await ApiRepository.upsert(
-            ctx.session,
-            vendor=ctx.specification.api_identifier.vendor,
-            name=ctx.specification.api_identifier.name,
-            version=ctx.specification.api_identifier.version,
-            created_by=ctx.created_by,
-            catalog_api_id=ctx.specification.catalog_api_id,
-        )
+        identifier = ctx.specification.api_identifier
+        incoming_catalog_api_id = ctx.specification.catalog_api_id
+        try:
+            # The upsert refuses a catalog import whose identity already belongs
+            # to a different catalog entry (distinct entries can collapse onto one
+            # identity because vendor extraction reduces hosts to eTLD+1), under a
+            # row lock so concurrent colliding imports can't both pass.
+            api = await ApiRepository.upsert(
+                ctx.session,
+                vendor=identifier.vendor,
+                name=identifier.name,
+                version=identifier.version,
+                created_by=ctx.created_by,
+                catalog_api_id=incoming_catalog_api_id,
+            )
+        except CatalogApiIdConflictError as exc:
+            assert incoming_catalog_api_id is not None
+            raise CatalogIdentityConflictError(
+                vendor=identifier.vendor,
+                name=identifier.name,
+                version=identifier.version,
+                stored_id=exc.stored_id,
+                incoming_id=incoming_catalog_api_id,
+            ) from exc
         ctx.produce("api_id", api.id, uuid.UUID)
 
 

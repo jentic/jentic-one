@@ -10,6 +10,7 @@ from jentic_one.control.repos.customer_api_key_repo import CustomerAPIKeyReposit
 from jentic_one.control.repos.oauth_client_credential_repo import OAuthClientCredentialRepository
 from jentic_one.control.repos.oauth_token_repo import OAuthTokenRepository
 from jentic_one.control.repos.permission_rule_set_repo import PermissionRuleSetRepository
+from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
 from jentic_one.control.repos.sigv4_credential_repo import Sigv4CredentialRepository
 from jentic_one.control.repos.token_value_credential_repo import TokenValueCredentialRepository
 
@@ -22,6 +23,7 @@ __all__ = [
     "OAuthClientCredentialRepository",
     "OAuthTokenRepository",
     "PermissionRuleSetRepository",
+    "RegistryApiLookupRepository",
     "Sigv4CredentialRepository",
     "TokenValueCredentialRepository",
 ]

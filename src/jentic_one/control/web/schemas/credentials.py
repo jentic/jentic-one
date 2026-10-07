@@ -436,8 +436,56 @@ class CredentialRedactedResponse(BaseModel):
 class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "credential": {
+                        "credential_id": "cred_01HZX9...",
+                        "type": "api_key",
+                        "name": "Stripe live key",
+                        "api": {"vendor": "stripe-com", "name": "stripe", "version": "2024-04-10"},
+                        "provider": "static",
+                        "active": True,
+                        "created_at": "2026-01-15T09:30:00Z",
+                    },
+                    "secret": {"key": "sk_live_…"},
+                    "warnings": None,
+                },
+                {
+                    "credential": {
+                        "credential_id": "cred_01HZXA...",
+                        "type": "bearer_token",
+                        "name": "PostHog personal key",
+                        "api": {"vendor": "posthog-com", "name": "posthog-api", "version": None},
+                        "provider": "static",
+                        "active": True,
+                        "created_at": "2026-01-15T09:31:00Z",
+                    },
+                    "secret": {"token": "phx_…"},
+                    "warnings": [
+                        "API scope 'posthog-com/posthog-api/*' matches no imported API — "
+                        "executions using this credential will fail. Import a matching API, "
+                        "or delete this credential and re-create it scoped to an imported "
+                        "identity; imported APIs for this vendor: "
+                        "posthog-com/posthog-com-posthog-api (1.0)"
+                    ],
+                },
+            ]
+        }
+    )
+
     credential: CredentialRedactedResponse
     secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
+    warnings: list[str] | None = Field(
+        default=None,
+        description=(
+            "Advisory warnings from create — e.g. the credential's API scope "
+            "matches no imported API identity, so execution through it would "
+            "fail until a matching API is imported. The credential is created "
+            "regardless; null when there is nothing to flag."
+        ),
+    )
 
 
 class CredentialListResponse(BaseModel):

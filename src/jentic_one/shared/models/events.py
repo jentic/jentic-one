@@ -26,6 +26,14 @@ class EventType:
     CREDENTIAL_EXPIRING_SOON = "credential.expiring_soon"
     CREDENTIAL_EXPIRED = "credential.expired"
     CREDENTIAL_ACCESSED = "credential.accessed"
+    # A credential was created whose API scope covers no imported registry API
+    # identity — the create succeeds (importing the API later is a legitimate
+    # order of operations), but every execute through it would 403 with
+    # ``no_toolkit_binding`` until the identity matches (#1020). Advisory,
+    # warning severity; ``detail`` carries a nearest-identity hint when the
+    # vendor has other imported APIs, and ``data`` the canonical scope, which an
+    # import landing a covered identity uses to acknowledge (settle) the event.
+    CREDENTIAL_UNMATCHED_API = "credential.unmatched_api"
     # The four ``access_request.*`` kinds were retired in theme 7 (the
     # access-request flow is gone). Stored event rows still carry those kind
     # strings — the events table is append-only history — so read paths
@@ -139,6 +147,7 @@ class EventType:
             CREDENTIAL_EXPIRING_SOON,
             CREDENTIAL_EXPIRED,
             CREDENTIAL_ACCESSED,
+            CREDENTIAL_UNMATCHED_API,
             UPSTREAM_CIRCUIT_OPEN,
             JOB_FAILED_PERMANENTLY,
             UNAUTHORIZED_ACCESS_ATTEMPT,
@@ -412,6 +421,9 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.CREDENTIAL_NOT_PROVISIONED: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_REFRESH_FAILED: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_EXPIRING_SOON: frozenset({EventSeverity.WARNING}),
+    # A credential was created whose API scope matched no imported API (#1020) —
+    # advisory, not a failure; see the EventType docstring.
+    EventType.CREDENTIAL_UNMATCHED_API: frozenset({EventSeverity.WARNING}),
     # --- ERROR: one thing failed -------------------------------------------
     EventType.EXECUTION_FAILED: frozenset({EventSeverity.ERROR}),
     EventType.IMPORT_FAILED: frozenset({EventSeverity.ERROR}),

@@ -574,10 +574,11 @@ export function CreateCredentialFlow({
 		const body = buildCreateBody(type, state);
 
 		// Catalog APIs the user just picked may not be in the local registry
-		// yet — fire the async import first. The import resolves the same
-		// {vendor,name,version} triple at create time, so we don't have to wait
-		// for it to complete; we wait only long enough to surface a failure.
-		if (selectedApi?.source === 'catalog' && !selectedApi.registered && selectedApi.apiId) {
+		// yet — fire the async import first. We wait only long enough to
+		// surface a failure, not for the job to land.
+		const importQueued =
+			selectedApi?.source === 'catalog' && !selectedApi.registered && !!selectedApi.apiId;
+		if (importQueued && selectedApi?.apiId) {
 			try {
 				await importMutation.mutateAsync(selectedApi.apiId);
 			} catch {
@@ -588,11 +589,26 @@ export function CreateCredentialFlow({
 		createMutation.mutate(body, {
 			onSuccess: (data) => {
 				const credName = state.name.trim();
-				toast({
-					title: 'Credential created',
-					description: credName ? `${credName} is ready to use.` : undefined,
-					variant: 'success',
-				});
+				// The server warns when the credential's API scope matches no
+				// imported API (executions through it would fail). Right after
+				// queuing that API's import the warning is expected and is
+				// settled server-side once the import lands, so only surface it
+				// when no import is in flight.
+				const warning = importQueued ? undefined : data.warnings?.[0];
+				if (warning) {
+					toast({
+						title: 'Credential created — check its API scope',
+						description: warning,
+						variant: 'warning',
+						durationMs: 12000,
+					});
+				} else {
+					toast({
+						title: 'Credential created',
+						description: credName ? `${credName} is ready to use.` : undefined,
+						variant: 'success',
+					});
+				}
 				onCreated({
 					credentialId: data.credential.credential_id,
 					// The server's stored label, not the draft field: an empty Name is
