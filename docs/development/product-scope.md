@@ -111,8 +111,10 @@ Ordered by how strongly the public docs emphasize each.
    required (`SECURITY.md`, [`control/web/schemas/permission_rules.py`](../../src/jentic_one/control/web/schemas/permission_rules.py)).
 3. **Self-hostable & operable by a small team.** One-command install; tiered
    self-serve hardening path (`README.md`, [`docs/security/README.md`](../security/README.md)).
-4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**
-   No telemetry unless explicitly enabled; the event schema structurally can't carry
+4. **Telemetry off by default in code / closed-schema; observability self-hosted.**
+   No telemetry unless `telemetry.enabled: true` is set — the code default is off; the
+   shipped install examples set it on, with a documented opt-out. The event schema
+   structurally can't carry
    PII (`SECURITY.md`, [`tests/arch/test_telemetry_no_pii.py`](../../tests/arch/test_telemetry_no_pii.py)).
 5. **Public-Beta honesty.** Pre-1.0; breaking changes acceptable; not recommended for
    production yet — correctness/security outrank polish that assumes stability

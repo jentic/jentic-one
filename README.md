@@ -89,8 +89,9 @@ curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
 
 `quickstart.env` turns on anonymous product telemetry
-(`JENTIC__TELEMETRY__ENABLED=true`). Set it to `false` to opt out
-([what is sent](docs/reference/config.md#telemetry)).
+(`JENTIC__TELEMETRY__ENABLED=true`). To opt out, set it to `false` in the
+file, or leave the file alone and add `-e JENTIC__TELEMETRY__ENABLED=false`
+to the `docker run` commands ([what is sent](docs/reference/config.md#telemetry)).
 
 Something failed? [Troubleshooting](docs/operations/troubleshooting.md)
 indexes recoveries by symptom.
