@@ -44,14 +44,14 @@ class Job(AuditableMixin, AdminBase):
     execution_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Visibility deadline for a claimed (RUNNING) job: the claim query treats a
     # RUNNING job whose visible_at has passed as claimable again, so a job
-    # orphaned by a dead worker/pod is recovered rather than stuck forever
-    # (§09 E4.2). NULL while QUEUED; set on claim, cleared on terminal status.
+    # orphaned by a dead worker/pod is recovered rather than stuck forever.
+    # NULL while QUEUED; set on claim, cleared on terminal status.
     visible_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
     # How many times this job has been claimed for processing. Incremented on
     # each claim; once it exceeds the retry budget a failing job is dead-lettered
-    # instead of requeued (§09 E4.2).
+    # instead of requeued.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     payload: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
         json_variant(), nullable=True, server_default=text("NULL")

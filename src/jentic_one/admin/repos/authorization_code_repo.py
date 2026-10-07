@@ -26,6 +26,7 @@ class AuthorizationCodeRepository:
         nonce: str | None,
         expires_at: datetime,
         created_by: str,
+        grant_id: str | None = None,
     ) -> AuthorizationCode:
         code = AuthorizationCode(
             code_hash=code_hash,
@@ -35,6 +36,7 @@ class AuthorizationCodeRepository:
             code_challenge=code_challenge,
             scopes=scopes,
             nonce=nonce,
+            grant_id=grant_id,
             expires_at=expires_at,
             created_by=created_by,
         )

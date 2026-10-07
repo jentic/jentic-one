@@ -4,7 +4,7 @@
  *
  * The preferred input is the **catalog identity slug** (`catalog_api_id`,
  * e.g. `nytimes.com/article_search`) — persisted at import time and exposed on
- * API, credential, and toolkit-binding DTOs (#910) — because it is the only
+ * API, credential, and binding DTOs (#910) — because it is the only
  * identity form where the vendor and sub-API stay separable. Surfaces that
  * predate the column (or manually-imported APIs) fall back to humanising the
  * slugified `vendor`/`name` tuple.
@@ -48,8 +48,7 @@ const TLD_SUFFIXES = new Set([
  * label is title-cased on its own (internal hyphen/underscore/space runs
  * humanise to spaces) and the labels re-join with dots. This keeps a
  * multi-part public suffix readable (`bbc.co.uk` → `Bbc.Co.Uk`,
- * `foo.bar.com` → `Foo.Bar.Com`) instead of collapsing the leading dots into
- * spaces and only re-joining the last one (which produced `Foo Bar.Com`).
+ * `foo.bar.com` → `Foo.Bar.Com`) rather than space-joining the leading labels.
  *
  * TLD dot-join rule (the hyphenated path). Because the real vendor data in this
  * app is *hyphenated* (`posthog-com`, `github-com`), not dotted, a strict
@@ -58,16 +57,15 @@ const TLD_SUFFIXES = new Set([
  * AND there are exactly 2 tokens — the shape of a real `<vendor>-<tld>` domain
  * slug (`posthog-com` → `Posthog.Com`). The "exactly 2 tokens" allowance means
  * 3+-token hyphenated product names like `stable-diffusion-ai` always stay
- * space-joined (`Stable Diffusion Ai`, killing the false positive).
+ * space-joined (`Stable Diffusion Ai`).
  */
 function humanize(segment: string, domainSlug: boolean): string {
 	// A segment that already carried a real dot is a genuinely dotted domain.
 	// When its trailing label is a recognised TLD (`TLD_SUFFIXES`), preserve the
 	// dotted STRUCTURE so a multi-part public suffix (`bbc.co.uk`,
 	// `foo.bar.com`) stays dot-joined across ALL labels rather than only the
-	// trailing TLD — the old rule produced `Foo Bar.Com` by collapsing the
-	// leading dots into spaces. Each dot label is title-cased independently (its
-	// own hyphen/underscore/space runs humanise to spaces).
+	// trailing TLD. Each dot label is title-cased independently (its own
+	// hyphen/underscore/space runs humanise to spaces).
 	if (segment.includes('.')) {
 		const labels = segment.split('.').filter(Boolean);
 		const lastLabel = labels[labels.length - 1] ?? '';
@@ -75,7 +73,7 @@ function humanize(segment: string, domainSlug: boolean): string {
 			return labels.map((label) => titleCaseWords(label)).join('.');
 		}
 		// A dotted input whose trailing label ISN'T a known TLD (`acme.biz`)
-		// isn't treated as a domain — space-join every token as before.
+		// isn't treated as a domain — space-join every token.
 		return titleCaseTokens(segment).join(' ');
 	}
 	const parts = titleCaseTokens(segment);
@@ -142,13 +140,25 @@ export function humanizeName(segment: string): string {
  *   `stripe.com`                 → `stripe.com`       (no sub-API; bare-domain
  *                                                     fallback — the input is
  *                                                     returned unchanged)
+ *   `github.com/api.github.com`  → `github.com`       (the sub-API is just a
+ *                                                     host of the same domain,
+ *                                                     so it adds nothing — read
+ *                                                     as the bare domain rather
+ *                                                     than title-casing a
+ *                                                     hostname)
  */
 export function titleFromApiId(apiId: string): string {
 	const slash = apiId.indexOf('/');
 	if (slash === -1) {
 		return apiId;
 	}
+	const domain = apiId.slice(0, slash);
 	const sub = apiId.slice(slash + 1);
+	const subLower = sub.toLowerCase();
+	const domainLower = domain.toLowerCase();
+	if (domain && (subLower === domainLower || subLower.endsWith(`.${domainLower}`))) {
+		return domain;
+	}
 	// A sub-API segment is an endpoint/product name, not a domain slug, so it
 	// uses the conservative name humaniser: `bar-io` → `Bar Io`, not `Bar.Io`.
 	// Only a genuinely-dotted sub-segment keeps its dot.
@@ -207,8 +217,8 @@ function tupleDisplayName(vendor: string, rawName: string): string {
 }
 
 /**
- * API display name for the credential picker rows, the workspace `ApiCard` /
- * detail heading, and the credential card's friendly fallback.
+ * API display name for the API picker rows, the agents' API tiles, and the
+ * credential cards' friendly fallback.
  *
  *   1. Explicit `displayName` wins verbatim (user-set label) — but only when
  *      it carries non-whitespace content; a whitespace-only string is treated
@@ -237,18 +247,16 @@ export function apiRefDisplayName(input: {
 }
 
 /**
- * Toolkit-binding-row display name — same rule as {@link apiRefDisplayName}
- * keyed to the binding DTO's snake_case identity fields
- * (`ToolkitCredentialBindingResponse`).
+ * A version string as it reads on a card or tile. Registry versions arrive bare
+ * (`1.1.4`, `2024-01-01`) and need the `v`, or already prefixed (`v4`), which must
+ * not collect a second one. `null` for a blank version, so callers can drop the
+ * clause.
  */
-export function toolkitCredDisplayName(input: {
-	catalog_api_id?: string | null;
-	api_vendor?: string | null;
-	api_name?: string | null;
-}): string {
-	const apiId = input.catalog_api_id?.trim();
-	if (apiId) return titleFromApiId(apiId);
-	return tupleDisplayName(input.api_vendor ?? '', input.api_name ?? '');
+export function formatApiVersion(version: string | null | undefined): string | null {
+	const v = version?.trim();
+	if (!v) return null;
+	// Already a version label: `v` (or `V`) immediately followed by a digit.
+	return /^v\d/i.test(v) ? v : `v${v}`;
 }
 
 /**
@@ -274,4 +282,72 @@ export function apiIdentityTuple(input: {
 	}
 	if (vendor && name) return `${vendor}/${name}`;
 	return vendor || name;
+}
+
+/**
+ * The title of one workspace API — the SAME rule on every surface that names
+ * it (Library panel rows, workspace tiles, the hub heading, its dialogs):
+ * {@link apiRefDisplayName} (display name → catalog slug → humanised
+ * vendor/name), then the raw vendor, name, and `vendor/name/version`, and
+ * finally `Untitled API`. Never empty, so a heading, aria-label or dialog
+ * sentence ("…access to X.") can always interpolate it.
+ */
+export function workspaceApiTitle(input: {
+	displayName?: string | null;
+	catalogApiId?: string | null;
+	vendor: string;
+	name: string;
+	version: string;
+}): string {
+	return (
+		apiRefDisplayName(input) ||
+		input.vendor ||
+		input.name ||
+		[input.vendor, input.name, input.version].filter(Boolean).join('/') ||
+		'Untitled API'
+	);
+}
+
+/**
+ * `VendorIcon` props for one workspace API — the SAME inputs on every surface
+ * that draws its avatar (Library panel rows and matched catalog tiles,
+ * workspace tiles, the hub header, agent API tiles). `VendorIcon` seeds its
+ * gradient on `vendor`, so that key must be identical everywhere or one API
+ * renders in two colours: the API's host, else its registry vendor. `name`
+ * (the initials) is the caller's already-resolved title.
+ */
+export function vendorIconPropsFor(input: {
+	title: string;
+	host?: string | null;
+	vendor: string;
+	iconUrl?: string | null;
+}): { name: string; vendor: string; iconUrl: string | null } {
+	return {
+		name: input.title,
+		vendor: input.host || input.vendor,
+		iconUrl: input.iconUrl ?? null,
+	};
+}
+
+/**
+ * Human-readable operation label for an execution record.
+ *
+ * Renders the record's `operation_method` + `operation_path` (the spec's HTTP
+ * method + path template, e.g. "GET /repos/{owner}/{repo}"). Returns null when
+ * the record carries no path (legacy rows) — deliberately NEVER the opaque
+ * `operation_id` (`op_…` hash): it is a machine key, meaningless to humans,
+ * and must not render anywhere in the UI. Callers show their own empty
+ * placeholder ("—") instead. The input is shaped after the wire
+ * `ExecutionResponse` fields so every surface that lists executions (Monitor,
+ * dashboard, agent activity) can pass its row straight through — or map
+ * camelCase fields into this shape.
+ */
+export function formatOperation(row: {
+	operation_path?: string | null;
+	operation_method?: string | null;
+}): string | null {
+	if (!row.operation_path) return null;
+	return row.operation_method
+		? `${row.operation_method} ${row.operation_path}`
+		: row.operation_path;
 }

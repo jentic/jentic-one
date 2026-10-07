@@ -51,6 +51,7 @@ def test_operation_result_response_serializes_snake_case() -> None:
         operation_id="op_abc123",
         method="POST",
         url="https://api.stripe.com/v1/payment_intents",
+        target="POST:https://api.stripe.com/v1/payment_intents",
         name="Create a PaymentIntent",
         description="Creates a new payment intent",
         relevance_score=0.91,
@@ -81,6 +82,7 @@ def test_operation_result_response_no_camel_case_fields() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -105,6 +107,7 @@ def test_operation_result_response_has_required_spec_fields() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -117,6 +120,7 @@ def test_operation_result_response_has_required_spec_fields() -> None:
         "operation_id",
         "method",
         "url",
+        "target",
         "relevance_score",
         "_links",
     }
@@ -130,6 +134,7 @@ def test_operation_result_response_no_leaked_revision_id_or_api_id() -> None:
         operation_id="op_1",
         method="GET",
         url="/test",
+        target="op_1",
         name=None,
         description=None,
         relevance_score=0.5,
@@ -154,7 +159,7 @@ def test_search_response_envelope_snake_case() -> None:
 
 
 def test_inspect_link_uses_id_query_param() -> None:
-    link = _build_inspect_link("POST", "https://api.stripe.com/v1/payment_intents")
+    link = _build_inspect_link("POST", "https://api.stripe.com/v1/payment_intents", "op_1")
     assert link.startswith("/inspect?id=")
     assert "POST" in link
     assert "operation_id" not in link
@@ -162,8 +167,14 @@ def test_inspect_link_uses_id_query_param() -> None:
 
 
 def test_inspect_link_encodes_method_and_url() -> None:
-    link = _build_inspect_link("GET", "https://api.example.com/users/{id}")
+    link = _build_inspect_link("GET", "https://api.example.com/users/{id}", "op_1")
     assert "GET%20https" in link
+
+
+def test_inspect_link_for_host_relative_url_uses_operation_id() -> None:
+    # A host-relative url can't resolve through the METHOD-URL lookup, so the
+    # link agrees with the hit's ``target`` and addresses the registry id.
+    assert _build_inspect_link("GET", "/pets", "op_pets") == "/inspect?operation_id=op_pets"
 
 
 def test_operation_result_dataclass_has_type_field() -> None:
@@ -177,6 +188,7 @@ def test_operation_result_dataclass_has_type_field() -> None:
         relevance_score=0.8,
         api=ApiRef(vendor="example", name="users", version="1.0", host="example.com"),
         inspect_link="/inspect?id=GET%20https%3A//example.com/users",
+        target="GET:https://example.com/users",
     )
     assert result.type == "operation"
     assert result.url == "https://example.com/users"

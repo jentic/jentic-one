@@ -182,7 +182,12 @@ export class UsersService {
     }
     /**
      * Delete User
-     * Soft-delete a user.
+     * Delete a user account (terminal-but-kept).
+     *
+     * The row is retained — the account is anonymized (tombstone email) and
+     * deactivated so history and audit references stay resolvable — but the
+     * action is terminal: there is no re-enable arm. For the reversible kill
+     * switch use ``:disable`` / ``:enable`` instead.
      * @returns void
      * @throws ApiError
      */
@@ -201,6 +206,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user is the last active org:admin`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -290,6 +297,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `Would remove org:admin from the last active org:admin`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -317,6 +326,8 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `The user is the last active org:admin`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

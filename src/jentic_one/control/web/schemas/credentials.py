@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from jentic_one.control.web.schemas.permission_rules import (
+    PermissionRuleReadSchema,
+    PermissionRuleSchema,
+)
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 __all__ = ["APIReferenceRequest", "APIReferenceResponse"]
 
@@ -40,6 +46,23 @@ def _validate_server_variables(v: dict[str, str] | None) -> dict[str, str] | Non
     return v
 
 
+# C0 controls (incl. CR/LF/TAB/NUL) and DEL. These values are injected verbatim
+# into upstream request headers / query parameters, where a control character is
+# either illegal (the HTTP client rejects the request) or a header-splitting
+# vector, so reject them at the edge.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_chars(v: str | None, info: ValidationInfo) -> str | None:
+    """Reject control characters in a value injected into an upstream request.
+
+    The message names the field only — never the value, which may be a secret.
+    """
+    if v is not None and _CONTROL_CHARS.search(v):
+        raise ValueError(f"{info.field_name} must not contain control characters")
+    return v
+
+
 # --- Create request models (per type) ---
 
 
@@ -52,9 +75,10 @@ class BearerTokenCreateRequest(BaseModel):
     provider: str = "static"
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -87,12 +111,14 @@ class ApiKeyCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     key: str = Field(
-        description="The API key secret. Stored encrypted; never returned after create."
+        description="The API key secret. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     location: CredentialLocation = Field(description="Where to inject the key on upstream calls.")
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthCreateRequest(BaseModel):
@@ -105,7 +131,7 @@ class BasicAuthCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str
-    password: str
+    password: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -127,7 +153,7 @@ class OAuth2CreateRequest(BaseModel):
     token_url: str | None = None
     authorize_url: str | None = None
     client_id: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -137,7 +163,7 @@ class NoAuthCreateRequest(BaseModel):
     """Create request for no_auth credentials.
 
     A no-auth credential carries no secret — it represents "this API is called
-    without authentication". It still exists as a credential row so a toolkit
+    without authentication". It still exists as a credential row so an agent
     binding (and its permission rules) can hang off it, and the broker resolves
     it as a no-op auth (see broker credential resolver / injection).
     """
@@ -167,18 +193,25 @@ class Sigv4CreateRequest(BaseModel):
     server_variables: dict[str, str] | None = None
     access_key_id: str = Field(description="AWS access key id (public identifier).")
     secret_access_key: str = Field(
-        description="AWS secret access key. Stored encrypted; never returned after create."
+        description="AWS secret access key. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     session_token: str | None = Field(
         default=None,
         description=(
             "Optional temporary-credential session token (STS). Expires; re-save when it does."
         ),
+        json_schema_extra=SENSITIVE,
     )
     aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
     aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialCreateRequest = Annotated[
@@ -203,9 +236,10 @@ class BearerTokenUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str | None = None
+    token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("token")(_reject_control_chars)
 
 
 class ApiKeyUpdateRequest(BaseModel):
@@ -216,7 +250,7 @@ class ApiKeyUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    key: str | None = None
+    key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     location: CredentialLocation | None = Field(
         default=None,
         description=(
@@ -235,6 +269,7 @@ class ApiKeyUpdateRequest(BaseModel):
     )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    _check_control_chars = field_validator("key", "field_name")(_reject_control_chars)
 
 
 class BasicAuthUpdateRequest(BaseModel):
@@ -246,7 +281,7 @@ class BasicAuthUpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -259,7 +294,7 @@ class OAuth2UpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_url: str | None = None
     scopes: list[str] | None = None
 
@@ -275,13 +310,18 @@ class Sigv4UpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     access_key_id: str | None = None
-    secret_access_key: str | None = None
-    session_token: str | None = None
+    secret_access_key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    session_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     clear_session_token: bool = False
     aws_region: str | None = None
     aws_service: str | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+    # Region/service ride the ``Authorization`` credential scope, so they are
+    # header material too.
+    _check_control_chars = field_validator(
+        "access_key_id", "session_token", "aws_region", "aws_service"
+    )(_reject_control_chars)
 
 
 CredentialUpdateRequest = Annotated[
@@ -397,7 +437,7 @@ class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
     credential: CredentialRedactedResponse
-    secret: dict[str, Any]
+    secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
     warnings: list[str] | None = Field(
         default=None,
         description=(
@@ -427,11 +467,37 @@ class ConnectRequestBody(BaseModel):
     extra: dict[str, str] = Field(default_factory=dict)
 
 
-class ConnectChallengeResponse(BaseModel):
-    """Response from a connect initiation."""
+class AuthCodeConnectChallengeResponse(BaseModel):
+    """Authorization-code redirect challenge.
 
+    Client opens ``authorize_url`` in a popup; completion lands
+    server-side via ``/credentials/oauth/callback``.
+    """
+
+    kind: Literal["authorization_code"] = "authorization_code"
     authorize_url: str
     state: str
+
+
+class DeviceAuthorizationConnectChallengeResponse(BaseModel):
+    """RFC 8628 device-code challenge.
+
+    Client shows ``user_code`` at ``verification_uri`` and polls
+    ``GET /credentials/{id}`` until state moves off ``pending``
+    (scanner-driven server-side).
+    """
+
+    kind: Literal["device_authorization"] = "device_authorization"
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str | None = None
+    poll_interval_seconds: int | None = None
+
+
+ConnectChallengeResponse = Annotated[
+    AuthCodeConnectChallengeResponse | DeviceAuthorizationConnectChallengeResponse,
+    Field(discriminator="kind"),
+]
 
 
 class ProviderDiscoveryEntryResponse(BaseModel):
@@ -449,7 +515,14 @@ class ProviderDiscoveryEntryResponse(BaseModel):
         description="Whether the provider is fully configured and operational."
     )
     callback_url: str | None = Field(
-        default=None, description="OAuth2 redirect URI for providers that require it."
+        default=None,
+        description=(
+            "OAuth2 redirect URI for providers that require it. When no explicit "
+            "redirect_uri is configured, this is derived from the deployment's "
+            "public origin (server.public_base_url or the request origin), so it "
+            "reflects the exact callback the connect flow will register with the "
+            "IdP. Add this URL to your OAuth app's allowed redirect URIs."
+        ),
     )
 
 
@@ -457,3 +530,106 @@ class ProviderDiscoveryResponse(BaseModel):
     """Discovery response listing all available credential providers."""
 
     providers: list[ProviderDiscoveryEntryResponse]
+
+
+class CredentialAgentResponse(BaseModel):
+    """Agent directly bound to a credential (theme 5 phase 1)."""
+
+    agent_id: str
+    agent_name: str
+    status: str
+    bound_at: datetime
+    suspended: bool = Field(
+        description=(
+            "True when the binding is soft-suspended (reversible cut-off): the "
+            "binding and its rules survive, but the agent cannot execute "
+            "through this credential until resumed."
+        )
+    )
+    rule_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Shared permission rule set this binding points at, if any. While "
+            "attached, the set's ordered list is the binding's effective "
+            "policy; null means the binding's inline rules apply."
+        ),
+    )
+
+
+class CredentialAgentListResponse(BaseModel):
+    """Paginated list of agents directly bound to a credential."""
+
+    data: list[CredentialAgentResponse]
+    has_more: bool
+    next_cursor: str | None = None
+
+
+class RuleSetAttachRequest(BaseModel):
+    """Point a direct agent↔credential binding at a shared rule set."""
+
+    rule_set_id: str = Field(description="Id (`prs_…`) of the rule set to attach.")
+
+
+class RuleSetCreateRequest(BaseModel):
+    """Create a shared permission rule set (theme 5 phase 1, Q-04)."""
+
+    name: str = Field(max_length=255, description="Unique human-readable name.")
+    description: str | None = Field(default=None, max_length=1000)
+    rules: Annotated[list[PermissionRuleSchema], Field(max_length=100)] = Field(
+        default_factory=list,
+        description="Initial ordered rule list (first-match-wins, default-deny).",
+    )
+
+
+class RuleSetUpdateRequest(BaseModel):
+    """Rename or re-describe a rule set."""
+
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class RuleSetSummaryResponse(BaseModel):
+    """Rule set list entry."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rule_count: int
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
+    )
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetResponse(BaseModel):
+    """Rule set detail — the ordered rules plus its referencing-binding count."""
+
+    rule_set_id: str
+    name: str
+    description: str | None = None
+    rules: list[PermissionRuleReadSchema]
+    binding_count: int = Field(
+        description="How many agent-credential bindings currently point at this set."
+    )
+    curated: bool = Field(
+        description=(
+            "True when an org admin created the set. A curated set can be attached by any "
+            "caller allowed to write a binding's rules and edited only by an org admin; "
+            "any other set is attachable and editable by its creator or an org admin."
+        )
+    )
+    created_by: str | None = None
+    created_at: datetime
+
+
+class RuleSetListResponse(BaseModel):
+    """Paginated list of rule sets."""
+
+    data: list[RuleSetSummaryResponse]
+    has_more: bool
+    next_cursor: str | None = None

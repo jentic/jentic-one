@@ -12,9 +12,9 @@ export {
 	useJobs,
 	useJob,
 	useCancelJob,
-	useEvents,
 	useAcknowledgeEvent,
 	useEventStream,
+	useEventFeed,
 	useAudit,
 	useActorForTrace,
 	useActorForJob,
@@ -23,46 +23,24 @@ export {
 } from '@/modules/monitor/api/hooks';
 export type { LiveStreamStatus } from '@/modules/monitor/api/hooks';
 
-export { MonitorApiError } from '@/modules/monitor/api/client';
-export type {
-	ListExecutionsParams,
-	ListJobsParams,
-	ListEventsParams,
-	ListAuditParams,
-	ListActorsParams,
-	UsageStatsParams,
-} from '@/modules/monitor/api/client';
+export { MonitorApiError, isMonitorAccessDenied } from '@/modules/monitor/api/client';
+export type { ListAuditParams } from '@/modules/monitor/api/client';
 
 export {
-	MONITOR_TABS,
+	ACTIVITY_SOURCES,
 	toExecutionStatus,
 	toJobStatus,
 	isTerminalJobStatus,
 } from '@/modules/monitor/api/types';
 export type {
-	MonitorTab,
+	MonitorView,
+	ActivitySource,
 	ExecutionStatusUi,
 	JobStatusUi,
-	AuditActor,
 } from '@/modules/monitor/api/types';
 
 // Re-export the generated models the views render, so view components consume
 // them through the module's api barrel rather than reaching into the
 // @/shared/api facade directly (which the layering ESLint rule forbids).
-export type {
-	ExecutionResponse,
-	ExecutionListResponse,
-	UsageResponse,
-	UsageStatsBlock,
-	UsageBucket,
-	UsageTopRow,
-	JobResponse,
-	JobListResponse,
-	EventResponse,
-	EventListResponse,
-	AuditResponse,
-	AuditListResponse,
-	ActorSummaryResponse,
-	ActorListResponse,
-} from '@/shared/api';
+export type { ExecutionResponse, UsageResponse, EventResponse, AuditResponse } from '@/shared/api';
 export { EventSeverity, AuditTargetType, GroupBy } from '@/shared/api';

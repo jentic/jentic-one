@@ -1,17 +1,26 @@
 /**
- * AgentKeysPanel — the detail page's Keys tab: current API-key metadata,
- * generate/regenerate/revoke actions, and the rotation history. Relocated
- * from the identity header + flat card stack so the credential story lives
- * in one place. Plaintext is still shown exactly once, via ApiKeyDialog.
+ * AgentKeysPanel — the body of the dock's API key sheet: current API-key
+ * metadata, generate/regenerate/revoke actions, and the rotation history, so
+ * the key's story lives in one place. Plaintext is shown exactly once, via
+ * ApiKeyDialog.
  *
  * Generation is only offered for `active` agents (the backend rejects keys
  * for other statuses); metadata for an already-issued key stays visible in
  * every status so a disabled agent's key trail remains auditable.
+ *
+ * Successor agents minted by the theme-8 service-account migration carry the
+ * retired account's key digest. Only a converted `jntc_live_…` toolkit key
+ * still authenticates through it (`sak_…` keys were retired in 0.41 and are
+ * refused). Rotating or revoking replaces that single credential row,
+ * so the confirms warn that the migrated key ends for good while it is still
+ * the current one (the migration-created credential row was never rotated).
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
-import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
+import { ActorLabel, Badge, Button, DetailSection, LoadingState, ConfirmDialog } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { MIGRATED_SERVICE_ACCOUNT_KEY_WARNING, holdsMigratedServiceAccountKey } from '@/shared/lib';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
@@ -20,7 +29,6 @@ import {
 	type AgentEntity,
 } from '@/modules/agents/api';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 
 export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
@@ -31,6 +39,8 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 	const [apiKey, setApiKey] = useState<string | null>(null);
 	const [confirmRevoke, setConfirmRevoke] = useState(false);
+	// Issuing and revoking keys need `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
 	const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
 	if (apiKeyInfo.isPending) {
@@ -40,6 +50,17 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const info = apiKeyInfo.data;
 	const history = apiKeyHistory.data ?? [];
 	const mutating = generateApiKey.isPending || revokeApiKey.isPending;
+	const holdsMigratedKey = holdsMigratedServiceAccountKey({
+		registeredBy: agent.attribution.registeredBy,
+		keyStatus: info?.status,
+		keyRotatedAt: info?.rotatedAt,
+		keyCreatedBy: info?.createdBy,
+	});
+	const migratedKeyWarning = holdsMigratedKey ? (
+		<p className="text-foreground mt-2 font-medium" data-testid="migrated-key-warning">
+			{MIGRATED_SERVICE_ACCOUNT_KEY_WARNING}
+		</p>
+	) : null;
 
 	async function generate() {
 		try {
@@ -89,7 +110,11 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					</p>
 				)}
 
-				{agent.status === 'active' ? (
+				{!canManage ? (
+					<p className="text-muted-foreground text-xs" data-testid="keys-need-permission">
+						Issuing or revoking keys needs permission to manage agents.
+					</p>
+				) : agent.status === 'active' ? (
 					<div className="flex flex-wrap justify-end gap-2">
 						{agent.hasApiKey && (
 							<Button
@@ -135,7 +160,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					{history.map((entry) => (
 						<div
 							key={entry.id}
-							className="border-border/60 flex items-center justify-between rounded-lg border px-3 py-2"
+							className="bg-surface-field flex items-center justify-between rounded-md px-3 py-2"
 						>
 							<div className="flex items-center gap-2">
 								<Badge
@@ -152,7 +177,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 								)}
 							</div>
 							<span
-								className="text-muted-foreground/70 shrink-0 text-[11px]"
+								className="text-muted-foreground shrink-0 text-[11px]"
 								title={formatTimestamp(entry.occurredAt)}
 							>
 								{timeAgo(entry.occurredAt)}
@@ -165,7 +190,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 			<ConfirmDialog
 				open={confirmRegenerate}
 				title={`Regenerate API key for ${agent.name}`}
-				body="This rotates the credential: the current API key stops working immediately and anything still using it will fail to authenticate until it's updated with the new key."
+				body={
+					<>
+						<p>
+							This rotates the credential: the current API key stops working
+							immediately and anything still using it will fail to authenticate until
+							it&apos;s updated with the new key.
+						</p>
+						{migratedKeyWarning}
+					</>
+				}
 				confirmLabel="Regenerate"
 				pending={generateApiKey.isPending}
 				onConfirm={generate}
@@ -175,7 +209,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 			<ConfirmDialog
 				open={confirmRevoke}
 				title={`Revoke API key for ${agent.name}`}
-				body="This will immediately invalidate the agent's current API key. The agent will no longer be able to authenticate until a new key is generated."
+				body={
+					<>
+						<p>
+							This will immediately invalidate the agent&apos;s current API key. The
+							agent will no longer be able to authenticate until a new key is
+							generated.
+						</p>
+						{migratedKeyWarning}
+					</>
+				}
 				confirmLabel="Revoke"
 				pending={revokeApiKey.isPending}
 				onConfirm={async () => {

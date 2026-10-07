@@ -194,37 +194,22 @@ export async function getAdminUserId(request: APIRequestContext): Promise<string
 	return id;
 }
 
+/**
+ * Mark the first-run suggestion as left for `agentId`, before the page boots —
+ * the same `localStorage` key the Agents page writes when the operator leaves
+ * it (`firstRunDismissedKey` in `src/modules/agents/lib/firstRun.ts`). On a
+ * fresh DB a lone active agent with no APIs otherwise resumes the first-run
+ * landing at its last step instead of the fleet view a spec is asserting.
+ */
+export async function dismissFirstRunFor(page: Page, agentId: string): Promise<void> {
+	await page.addInitScript((id) => {
+		window.localStorage.setItem(`j1.agents.firstRun.dismissed.${id}`, new Date().toISOString());
+	}, agentId);
+}
+
 /** A short unique suffix so repeated runs against a persistent DB don't collide. */
 export function uniqueSuffix(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
-/** POST /service-accounts → 201. Returns the created service-account id. */
-export async function createServiceAccount(
-	request: APIRequestContext,
-	name: string,
-	description = 'created by e2e',
-): Promise<string> {
-	const res = await request.post('/service-accounts', {
-		headers: authHeaders(),
-		data: { name, description },
-	});
-	expect(res.status(), `createServiceAccount failed: ${await res.text()}`).toBe(201);
-	return (await res.json()).id;
-}
-
-/** POST /toolkits → 201 (the body nests under `toolkit`). Returns the toolkit id. */
-export async function createToolkit(
-	request: APIRequestContext,
-	name: string,
-	description = 'created by e2e',
-): Promise<string> {
-	const res = await request.post('/toolkits', {
-		headers: authHeaders(),
-		data: { name, description },
-	});
-	expect(res.status(), `createToolkit failed: ${await res.text()}`).toBe(201);
-	return (await res.json()).toolkit.toolkit_id;
 }
 
 /**
@@ -315,35 +300,35 @@ export async function postCredentialRaw(
 }
 
 /**
- * PUT /agents/{id}/scopes → 200. Replaces ALL scopes for an agent (bulk
- * replace, see replaceAgentScopes). This is the public-API path that landed
- * with #517 — it is what lets a DCR agent acquire `capabilities:execute`
- * without a direct DB write. Returns the resulting scope list.
+ * PUT /agents/{id}/permissions → 200. Replaces ALL permissions for an agent
+ * (bulk replace — there is no partial grant/revoke endpoint). This is the
+ * public-API path that landed with #517 — it is what lets a DCR agent acquire
+ * `capabilities:execute` without a direct DB write. Returns the resulting list.
  */
-export async function replaceAgentScopes(
+export async function replaceAgentPermissions(
 	request: APIRequestContext,
 	agentId: string,
-	scopes: string[],
+	permissions: string[],
 ): Promise<string[]> {
-	const res = await request.put(`/agents/${agentId}/scopes`, {
+	const res = await request.put(`/agents/${agentId}/permissions`, {
 		headers: authHeaders(),
-		data: { scopes },
+		data: { permissions },
 	});
-	expect(res.status(), `replaceAgentScopes failed: ${await res.text()}`).toBe(200);
-	return (await res.json()).scopes;
+	expect(res.status(), `replaceAgentPermissions failed: ${await res.text()}`).toBe(200);
+	return (await res.json()).permissions;
 }
 
-/** POST /agents/{id}/toolkits → 201. Binds a toolkit to an agent. Returns the binding id. */
-export async function bindToolkitToAgent(
+/** POST /agents/{id}/credentials → 201. Binds a credential directly to an agent. Returns the binding id. */
+export async function bindCredentialToAgent(
 	request: APIRequestContext,
 	agentId: string,
-	toolkitId: string,
+	credentialId: string,
 ): Promise<string> {
-	const res = await request.post(`/agents/${agentId}/toolkits`, {
+	const res = await request.post(`/agents/${agentId}/credentials`, {
 		headers: authHeaders(),
-		data: { toolkit_id: toolkitId },
+		data: { credential_id: credentialId },
 	});
-	expect(res.status(), `bindToolkitToAgent failed: ${await res.text()}`).toBe(201);
+	expect(res.status(), `bindCredentialToAgent failed: ${await res.text()}`).toBe(201);
 	return (await res.json()).id;
 }
 
@@ -409,34 +394,4 @@ export async function importInlineApi(
 			},
 		)
 		.toMatch(/succeeded|completed|done/);
-}
-
-/**
- * POST /access-requests → 202 (status: pending). Returns the request id.
- *
- * The backend dedups pending requests on (actor, resource_type, action,
- * resource_id), so concurrent specs that file the same resource_type+action
- * collide with 409 access_request_duplicate_pending. We default resource_id to
- * a unique value per call so each spec owns an independent pending request
- * (hermetic, no cross-spec coupling); callers can pin it for assertions.
- */
-export async function fileAccessRequest(
-	request: APIRequestContext,
-	opts: { reason?: string; resourceType?: string; action?: string; resourceId?: string } = {},
-): Promise<string> {
-	const res = await request.post('/access-requests', {
-		headers: authHeaders(),
-		data: {
-			reason: opts.reason ?? 'e2e access request',
-			items: [
-				{
-					resource_type: opts.resourceType ?? 'toolkit',
-					action: opts.action ?? 'bind',
-					resource_id: opts.resourceId ?? `e2e-res-${uniqueSuffix()}`,
-				},
-			],
-		},
-	});
-	expect(res.status(), `fileAccessRequest failed: ${await res.text()}`).toBe(202);
-	return (await res.json()).id;
 }

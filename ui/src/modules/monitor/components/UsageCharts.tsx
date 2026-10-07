@@ -1,34 +1,43 @@
 /**
- * "Execution Volume" card — jentic-mini's ApiDailyBarChart, rebuilt on the
+ * "Execution Volume" card — built on the
  * enriched usage endpoint (jentic-one-internal#561): an SVG stacked bar chart
- * colored per entity, with the APIs / Toolkits / Agents grouping toggle, an
+ * colored per entity, with the APIs / Agents grouping toggle, an
  * interactive legend (hovering a chip or segment dims the rest), y-axis
  * gridlines, and a per-segment hover tooltip.
  *
- * Mini bucketed raw TimelinePoints client-side into a handful of display
- * buckets (six 4h slices for 24h, one bar per calendar day for 7d, six range
- * slices for 30d). Here the per-entity series comes from the endpoint's
+ * The per-entity series comes from the endpoint's
  * `top[].trend` — equal segments spanning exactly [since, until), one per
- * aggregate bucket tier — so buildBars re-buckets those segments into the
- * same mini-style display buckets. Rendering the raw segments directly (the
- * old approach) drew 12 bars whose 7d labels straddled 8 calendar dates and
+ * aggregate bucket tier — and buildBars re-buckets those segments into a
+ * handful of display buckets (six 4h slices for 24h, one bar per calendar day
+ * for 7d, six range slices for 30d). Rendering the raw segments directly
+ * would draw 12 bars whose 7d labels straddled 8 calendar dates and
  * crammed the x-axis on mobile. Executions outside the top rows (or
  * unattributed) appear as a muted "Other" remainder derived from the
  * aggregate `buckets`, so bar heights always add up to the real totals.
  *
- * Colors reuse the shared lens palettes indexed by busiest-first row order,
- * matching the bubble chart and Breakdown, so an entity keeps one color
- * across all three charts.
+ * Colours come from the shared pastel avatar palette via
+ * {@link assignChartTones}: each entity's series is its avatar hue (the same
+ * seed `VendorIcon` / `AgentBadge` hash), drawn in the deeper chart tone, and
+ * the legend / tooltip keys are the avatar tile in that tone. The bubble
+ * chart and Breakdown run the same assignment over the same rows, so an
+ * entity keeps one colour across all three charts.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
 import { SegmentedToggle } from '@/shared/ui';
 import type { UsageResponse } from '@/modules/monitor/api';
-import { getInitials, lensPalette, textColor, type UsageLens } from '@/modules/monitor/lib/palette';
+import {
+	OTHER_KEY,
+	OTHER_TONE,
+	assignChartTones,
+	toneFor,
+	type EntityTone,
+	type UsageLens,
+} from '@/modules/monitor/lib/palette';
+import { EntityMark } from '@/modules/monitor/components/EntityMark';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
-const OTHER_COLOR = '#94a3b8';
 const DAY_SECONDS = 86_400;
 // A day-aligned 7d window can exceed 7·86400s across a DST change; anything up
 // to this bound still renders (and is captioned) as a per-day week view.
@@ -41,8 +50,7 @@ interface BarSegment {
 	key: string;
 	label: string;
 	count: number;
-	color: string;
-	textColor: string;
+	tone: EntityTone;
 }
 
 interface Bar {
@@ -55,7 +63,6 @@ interface Bar {
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	toolkits: 'toolkit',
 	agents: 'agent',
 };
 
@@ -157,7 +164,11 @@ function defIndexFor(sec: number, defs: BucketDef[]): number {
  * of each source segment — the same conserving arithmetic the backend used
  * to build them, so the two series line up.
  */
-function buildBars(usage: UsageResponse, rows: EntityUsageRow[], palette: string[]): Bar[] {
+function buildBars(
+	usage: UsageResponse,
+	rows: EntityUsageRow[],
+	tones: Map<string, EntityTone>,
+): Bar[] {
 	const windowSeconds = usage.until - usage.since;
 	if (windowSeconds <= 0) return [];
 	const defs = buildBucketDefs(usage.since, usage.until);
@@ -184,27 +195,24 @@ function buildBars(usage: UsageResponse, rows: EntityUsageRow[], palette: string
 	return defs.map((def, i) => {
 		const segments: BarSegment[] = [];
 		let entityTotal = 0;
-		rows.forEach((row, rowIdx) => {
+		rows.forEach((row) => {
 			const count = perDef[i].get(row.id) ?? 0;
 			if (count <= 0) return;
 			entityTotal += count;
-			const color = palette[rowIdx % palette.length];
 			segments.push({
 				key: row.id,
 				label: row.label,
 				count,
-				color,
-				textColor: textColor(color),
+				tone: toneFor(tones, row.id),
 			});
 		});
 		const other = Math.max(0, aggregate[i] - entityTotal);
 		if (other > 0) {
 			segments.push({
-				key: '__other__',
+				key: OTHER_KEY,
 				label: 'Other',
 				count: other,
-				color: OTHER_COLOR,
-				textColor: textColor(OTHER_COLOR),
+				tone: OTHER_TONE,
 			});
 		}
 		segments.sort((a, b) => b.count - a.count);
@@ -227,12 +235,11 @@ interface UsageChartsProps {
 	/** API-grouped response (also carries the aggregate buckets/window). */
 	usage: UsageResponse;
 	apis: EntityUsageRow[];
-	toolkits: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
 
-export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageChartsProps) {
+export function UsageCharts({ usage, apis, agents, className }: UsageChartsProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [width, setWidth] = useState(700);
 	const [lens, setLens] = useState<UsageLens>('apis');
@@ -255,11 +262,11 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 		return () => observer.disconnect();
 	}, []);
 
-	const rows = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
-	const palette = lensPalette(lens);
+	const rows = lens === 'apis' ? apis : agents;
 	const windowSeconds = usage.until - usage.since;
 
-	const bars = useMemo(() => buildBars(usage, rows, palette), [usage, rows, palette]);
+	const tones = useMemo(() => assignChartTones(lens, rows), [lens, rows]);
+	const bars = useMemo(() => buildBars(usage, rows, tones), [usage, rows, tones]);
 
 	// Legend: one chip per entity that appears anywhere in the window,
 	// busiest-first (mirrors mini's allSegments reduction).
@@ -296,13 +303,15 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 		<div
 			ref={containerRef}
 			className={cn(
-				'border-border bg-card relative min-w-0 overflow-hidden rounded-xl border',
+				'bg-surface-1 relative min-w-0 overflow-hidden rounded-lg [--field-bg:var(--surface-field)]',
 				className,
 			)}
 		>
 			<div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5 px-4 pt-3 pb-0">
 				<div>
-					<h2 className="text-foreground text-sm font-semibold">Execution Volume</h2>
+					<h2 className="font-heading text-foreground text-sm font-semibold">
+						Execution Volume
+					</h2>
 					<p className="text-muted-foreground text-xs">
 						{windowSubtitle(windowSeconds)}, colored by {LENS_NOUNS[lens]}
 					</p>
@@ -310,7 +319,6 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'toolkits', label: 'Toolkits' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}
@@ -402,8 +410,9 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 														width={barW}
 														height={Math.max(1, segH)}
 														rx={segH > 4 ? 2 : 0}
-														fill={seg.color}
-														opacity={isDimmed ? 0.2 : 1}
+														fill={seg.tone.fill}
+														data-key={seg.key}
+														opacity={isDimmed ? 0.18 : 1}
 														className="transition-opacity duration-150"
 														onMouseEnter={() =>
 															setHoveredSegKey(seg.key)
@@ -451,7 +460,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 					<AnimatePresence mode="wait">
 						<motion.div
 							key={lens}
-							className="border-border flex flex-wrap items-center gap-3 border-t px-4 py-2.5"
+							className="border-hairline flex flex-wrap items-center gap-3 border-t px-4 py-2.5"
 							initial={{ opacity: 0 }}
 							animate={{ opacity: 1 }}
 							exit={{ opacity: 0 }}
@@ -470,15 +479,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 									onMouseEnter={() => setHoveredSegKey(seg.key)}
 									onMouseLeave={() => setHoveredSegKey(null)}
 								>
-									<span
-										className="flex h-4 w-4 items-center justify-center rounded-full text-[6px] font-bold"
-										style={{
-											backgroundColor: seg.color,
-											color: seg.textColor,
-										}}
-									>
-										{getInitials(seg.label)}
-									</span>
+									<EntityMark tone={seg.tone} label={seg.label} lens={lens} />
 									<span className="text-foreground text-[11px]">{seg.label}</span>
 								</button>
 							))}
@@ -486,7 +487,12 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 					</AnimatePresence>
 
 					{tooltipBar && tooltipBar.total > 0 && (
-						<BarTooltip bar={tooltipBar} x={tooltip!.x} containerWidth={width} />
+						<BarTooltip
+							bar={tooltipBar}
+							lens={lens}
+							x={tooltip!.x}
+							containerWidth={width}
+						/>
 					)}
 				</>
 			)}
@@ -494,12 +500,22 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 	);
 }
 
-function BarTooltip({ bar, x, containerWidth }: { bar: Bar; x: number; containerWidth: number }) {
+function BarTooltip({
+	bar,
+	lens,
+	x,
+	containerWidth,
+}: {
+	bar: Bar;
+	lens: UsageLens;
+	x: number;
+	containerWidth: number;
+}) {
 	const isRight = x > containerWidth * 0.6;
 
 	return (
 		<div
-			className="border-border bg-card pointer-events-none absolute top-14 z-30 w-52 rounded-lg border p-3 shadow-xl"
+			className="bg-surface-field pointer-events-none absolute top-14 z-30 w-52 rounded-lg p-3 shadow-xl"
 			style={{ left: isRight ? x - 220 : x + 20 }}
 		>
 			<div className="mb-2 flex items-center justify-between">
@@ -512,12 +528,7 @@ function BarTooltip({ bar, x, containerWidth }: { bar: Bar; x: number; container
 			<div className="space-y-1.5">
 				{bar.segments.map((seg) => (
 					<div key={seg.key} className="flex items-center gap-2">
-						<span
-							className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[6px] font-bold"
-							style={{ backgroundColor: seg.color, color: seg.textColor }}
-						>
-							{getInitials(seg.label)}
-						</span>
+						<EntityMark tone={seg.tone} label={seg.label} lens={lens} />
 						<span className="text-foreground flex-1 truncate text-xs">{seg.label}</span>
 						<span className="text-foreground text-xs font-medium">{seg.count}</span>
 					</div>

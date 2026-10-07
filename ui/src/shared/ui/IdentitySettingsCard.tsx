@@ -9,8 +9,8 @@ import { Label } from '@/shared/ui/Label';
 import { Textarea } from '@/shared/ui/Textarea';
 
 /**
- * IdentitySettingsCard — the Settings tab's "General" card shared by the
- * detail consoles (toolkit, agent, service account): the immutable, copyable
+ * IdentitySettingsCard — the "General" settings card shared by entity
+ * settings surfaces (an agent's Settings sheet, …): the immutable, copyable
  * entity id plus the editable name/description form.
  *
  * One grammar everywhere:
@@ -24,13 +24,13 @@ import { Textarea } from '@/shared/ui/Textarea';
  *     clobber an in-progress draft, but navigating to a sibling entity must
  *     reseed.
  *
- * Consoles without an update endpoint (service accounts today) omit `onSave`
+ * Consoles without an update endpoint omit `onSave`
  * and pass `readOnlyNote` — the card renders the id row plus the explanation
  * instead of a dead form.
  */
 
 export interface IdentitySettingsCardProps {
-	/** Label for the immutable id row ("Agent ID", "Toolkit ID", "Account ID"). */
+	/** Label for the immutable id row ("Agent ID", "Account ID"). */
 	idLabel: string;
 	idValue: string;
 	/** The entity's current (saved) name. */
@@ -131,7 +131,7 @@ export function IdentitySettingsCard({
 					<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 					{idLabel}
 				</span>
-				<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
+				<span className="bg-surface-field text-foreground-sub inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
 					{idValue}
 					<CopyButton value={idValue} size="icon" variant="ghost" />
 				</span>

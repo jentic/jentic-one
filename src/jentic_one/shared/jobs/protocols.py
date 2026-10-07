@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -61,10 +62,82 @@ class CredentialInjector(Protocol):
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
-        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path."""
+        """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path.
+
+        ``allowed_credential_ids`` is the direct-binding injection boundary
+        (theme-5 Q-02): when not ``None``, only these credential ids may
+        resolve (an empty set denies all). ``credential_id`` pins the exact
+        credential selected at the web edge so the async worker replays the
+        same selection. ``request_server_variables`` are the concrete
+        server-variable values of the request URL; a credential scoped to other
+        values is not a match.
+        """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedExecutionRequest:
+    """What the worker knows about a queued execution when it re-authorizes it.
+
+    Built from the job row (``actor_id`` / ``actor_type`` are the enqueuing
+    actor) and the enqueue payload. ``credential_id`` is the enqueue-time
+    selection, replayed as the disambiguation input so the re-check picks the
+    same credential — never as a grant.
+    """
+
+    actor_id: str
+    actor_type: str
+    method: str
+    upstream_url: str
+    api_vendor: str
+    api_name: str
+    api_version: str
+    operation_id: str | None = None
+    credential_id: str | None = None
+    # Concrete server-variable values of the request URL (from discovery at
+    # enqueue time) — the re-check selects under the same scoping.
+    server_variables: Mapping[str, str] | None = None
+    # Discovery could not determine those values at enqueue time — a credential
+    # scoped by ``server_variables`` is then not selected (fail closed).
+    server_variables_unresolved: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedExecutionVerdict:
+    """The worker-time authorization verdict for a queued execution.
+
+    Allowed → ``allowed_credential_ids`` is the **current** injection boundary
+    (an empty tuple resolves nothing) and ``credential_id`` the credential to
+    pin at injection (``None`` lets injection resolve within the boundary).
+    Denied → ``problem`` is the RFC 9457 body the sync execute route would
+    have returned for the same request; the worker records it on the job
+    result and never injects a credential.
+    """
+
+    allowed: bool
+    allowed_credential_ids: tuple[str, ...] = ()
+    credential_id: str | None = None
+    problem: dict[str, Any] | None = None
+
+
+class ExecutionAuthorizer(Protocol):
+    """Re-authorizes a queued execution at run time with the sync path's policy.
+
+    A queued job can sit in the queue for a while; the actor may be suspended,
+    a binding suspended or removed, or a permission rule changed in the
+    meantime. The worker calls this before resolving any credential so the
+    job is held to the authorization state *at execution time*, exactly like
+    a sync request would be. Implemented broker-side and injected at worker
+    startup so ``shared/jobs/`` never imports ``broker/``.
+    """
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +184,8 @@ class UpstreamExecutor(Protocol):
     The async worker depends on this protocol — never on ``broker/`` — so the
     concrete broker adapter (``PipelineExecutor``, wrapping
     ``run_execution(broker=default_broker(runner))``) can be dependency-
-    injected at worker startup. This is the "one pipeline, two callers" seam
-    (§00 / §05 / §11 RN-0.3): the worker goes through the **same** composed
+    injected at worker startup. This is the "one pipeline, two callers" seam:
+    the worker goes through the **same** composed
     runner (circuit breaker + per-host bulkhead + post-response enrichment) and
     the **same** ``executions``-row persistence as the sync router, instead of a
     second raw-``httpx`` path.

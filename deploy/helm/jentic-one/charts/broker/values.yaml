@@ -25,3 +25,25 @@ service:
 # writable path, since the container runs as a non-root user whose $HOME does
 # not exist.
 extraEnv: {}
+
+# Hardened by default, per docs/security/README.md. Both blocks are values so a
+# cluster whose policy disagrees can relax them without patching templates.
+# runAsUser pairs with `USER 10001` in deploy/docker/*.Dockerfile, and
+# readOnlyRootFilesystem with the /tmp emptyDir the deployment mounts — see
+# charts/common/templates/_security-context.tpl before changing either.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

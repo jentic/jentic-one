@@ -9,18 +9,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.models import ExecutionStatus
+from jentic_one.shared.schemas import OperationInfo
 
 
 async def record_execution(
     session: AsyncSession,
     *,
     execution_id: str,
-    toolkit_id: str,
+    toolkit_id: str | None,
     trace_id: str,
     started_at: datetime,
     status: ExecutionStatus,
     duration_ms: int | None = None,
-    operation_id: str | None = None,
+    operation: OperationInfo | None = None,
     api_vendor: str | None = None,
     api_name: str | None = None,
     api_version: str | None = None,
@@ -34,18 +35,30 @@ async def record_execution(
     credential_id: str | None = None,
     credential_name: str | None = None,
 ) -> str:
-    """Persist a terminal execution record. Returns the record ID."""
+    """Persist a terminal execution record. Returns the record ID.
+
+    ``toolkit_id`` is nullable-legacy: the toolkit path (deleted in theme-5
+    Phase 6b) recorded its mediating toolkit; every execution now passes
+    ``None`` (its consumer attribution is ``credential_id``). Historical rows
+    keep theirs.
+
+    ``operation`` carries the resolved operation's identity as one object;
+    it is flattened onto the record's ``operation_id`` / ``operation_path`` /
+    ``operation_method`` columns here (the DB shape stays flat).
+    """
     if status not in tuple(ExecutionStatus):
         raise ValueError(f"Only terminal statuses allowed, got: {status!r}")
 
     record = ExecutionRecord(
         id=execution_id,
-        toolkit_id=toolkit_id,
+        toolkit_id=toolkit_id or None,
         trace_id=trace_id,
         started_at=started_at,
         status=status,
         duration_ms=duration_ms,
-        operation_id=operation_id,
+        operation_id=operation.id if operation else None,
+        operation_path=operation.path if operation else None,
+        operation_method=operation.method if operation else None,
         api_vendor=api_vendor,
         api_name=api_name,
         api_version=api_version,

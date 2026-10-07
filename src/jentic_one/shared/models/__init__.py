@@ -1,6 +1,5 @@
 """Shared domain models and enums."""
 
-from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
 from jentic_one.shared.models.actors import (
     ActorStatus,
     ActorType,
@@ -26,6 +25,13 @@ from jentic_one.shared.models.credentials import (
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.executions import ExecutionStatus
 from jentic_one.shared.models.jobs import JobKind, JobStatus
+from jentic_one.shared.models.oauth_clients import (
+    OAuthClientApprovalStatus,
+    OAuthConsentModel,
+    OAuthGrantStatus,
+    OAuthRegistrationSource,
+    TokenEndpointAuthMethod,
+)
 from jentic_one.shared.models.registry import (
     ORIGIN_CATALOG,
     ORIGIN_OVERLAY,
@@ -41,8 +47,6 @@ __all__ = [
     "API_FIELD_MAX_LENGTH",
     "ORIGIN_CATALOG",
     "ORIGIN_OVERLAY",
-    "AccessRequestItemStatus",
-    "AccessRequestStatus",
     "ActorStatus",
     "ActorType",
     "ActorVerb",
@@ -61,11 +65,16 @@ __all__ = [
     "InviteState",
     "JobKind",
     "JobStatus",
+    "OAuthClientApprovalStatus",
+    "OAuthConsentModel",
+    "OAuthGrantStatus",
+    "OAuthRegistrationSource",
     "Origin",
     "OverlayDeprecationReason",
     "OverlayStatus",
     "RevisionOrigin",
     "StoredCredentialType",
+    "TokenEndpointAuthMethod",
     "actor_type_from_id",
     "canonical_credential_scope",
     "credential_coverage_where",

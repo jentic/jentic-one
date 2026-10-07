@@ -29,7 +29,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos.oauth_token_repo import ExpiryEventKind, OAuthTokenRepository
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, summary_label
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 if TYPE_CHECKING:
@@ -114,17 +114,30 @@ class CredentialExpiryScanner:
                     if token.expires_at is not None and token.expires_at <= now
                     else "expiring_soon"
                 )
-                # Select only the vendor column — loading the full Credential ORM
-                # object would eager-load its polymorphic credential relationships
-                # (and is unnecessary; only the non-secret vendor goes in the event).
-                api_vendor = (
+                # Select only the name, vendor and owner columns — loading the full
+                # Credential ORM object would eager-load its polymorphic credential
+                # relationships (and is unnecessary; only non-secret columns go in
+                # the event).
+                row = (
                     await control_session.execute(
-                        select(Credential.api_vendor).where(Credential.id == token.credential_id)
+                        select(Credential.name, Credential.api_vendor, Credential.created_by).where(
+                            Credential.id == token.credential_id
+                        )
                     )
-                ).scalar_one_or_none()
+                ).one_or_none()
+                credential_name, api_vendor, owner_id = (
+                    (row.name, row.api_vendor, row.created_by) if row else (None, None, None)
+                )
                 try:
                     async with self._admin_db.transaction() as admin_session:
-                        await self._emit(admin_session, token, kind=kind, api_vendor=api_vendor)
+                        await self._emit(
+                            admin_session,
+                            token,
+                            kind=kind,
+                            api_vendor=api_vendor,
+                            owner_id=owner_id,
+                            credential_name=credential_name,
+                        )
                     await OAuthTokenRepository.mark_expiry_event_emitted(
                         control_session, token, kind=kind, at=now
                     )
@@ -153,25 +166,34 @@ class CredentialExpiryScanner:
         *,
         kind: ExpiryEventKind,
         api_vendor: str | None,
+        owner_id: str | None,
+        credential_name: str | None = None,
     ) -> None:
+        """Emit the expiry event, naming the credential owner in ``created_by``.
+
+        Event reads are owner-scoped, so ``created_by`` is what lets the owner
+        (and ``org:admin``) see their credential's expiry. The summary names
+        the credential by ``credential_name``, falling back to its id.
+        """
+        credential = summary_label(credential_name, token.credential_id)
         expires_at_iso = token.expires_at.isoformat() if token.expires_at is not None else None
         if kind == "expired":
             event_type = EventType.CREDENTIAL_EXPIRED
             severity = EventSeverity.ERROR
             requires_action = True
-            summary = f"Credential {token.credential_id} has expired"
+            summary = f"Credential {credential} has expired"
         else:
             event_type = EventType.CREDENTIAL_EXPIRING_SOON
             severity = EventSeverity.WARNING
             requires_action = False
-            summary = f"Credential {token.credential_id} is expiring soon"
+            summary = f"Credential {credential} is expiring soon"
         await emit_event(
             admin_session,  # type: ignore[arg-type]
             type=event_type,
             severity=severity,
             summary=summary,
             requires_action=requires_action,
-            created_by=None,
+            created_by=owner_id,
             data={
                 "credential_id": token.credential_id,
                 "expires_at": expires_at_iso,

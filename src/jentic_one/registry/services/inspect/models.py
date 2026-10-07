@@ -28,11 +28,18 @@ class TagDescription(BaseModel):
 
 
 class ApiContext(BaseModel):
-    """Contextual information about the API an operation belongs to."""
+    """Contextual information about the API an operation belongs to.
+
+    ``(vendor, name, version)`` is the canonical API reference — the same
+    identity the broker matches credential scopes, revision pins and execution
+    records on. ``display_name`` is a human-readable label only and must never
+    be used as an identifier.
+    """
 
     vendor: str
     name: str
     version: str
+    display_name: str | None = None
     description: str | None = None
     tag_descriptions: list[TagDescription] = []
 
@@ -80,9 +87,9 @@ class RequestBodySchema(BaseModel):
 class OperationInputs(BaseModel):
     """Declared inputs for an operation, grouped by where they belong.
 
-    Restores the query / header / path parameters and request body that spec
-    import used to drop, so a client can construct a complete request rather
-    than only supplying path parameters (issue #768).
+    Declares the query / header / path parameters and request body so a client
+    can construct a complete request rather than only supplying path parameters
+    (issue #768).
     """
 
     path: list[OperationParameter] = []

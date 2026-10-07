@@ -31,7 +31,6 @@ func TestLoadMissingFile(t *testing.T) {
 func TestLoadPresentFile(t *testing.T) {
 	paths := writeConfig(t, `
 base_url: http://example:9000
-default_profile: work
 broker:
   scheme: http
   host: localhost:4000
@@ -43,7 +42,7 @@ broker:
 	if !cfg.Loaded {
 		t.Fatalf("Loaded should be true")
 	}
-	if cfg.BaseURL != "http://example:9000" || cfg.DefaultProfile != "work" {
+	if cfg.BaseURL != "http://example:9000" {
 		t.Errorf("unexpected top-level: %+v", cfg)
 	}
 	if cfg.Broker.Scheme != "http" || cfg.Broker.Host != "localhost:4000" {
@@ -62,9 +61,6 @@ func TestResolvedDefaults(t *testing.T) {
 	cfg := &FileConfig{}
 	if got := cfg.ResolvedBaseURL(); got != DefaultBaseURL {
 		t.Errorf("ResolvedBaseURL = %q, want default", got)
-	}
-	if got := cfg.ResolvedDefaultProfile(); got != DefaultProfile {
-		t.Errorf("ResolvedDefaultProfile = %q, want default", got)
 	}
 }
 
@@ -118,53 +114,16 @@ func TestResolvedPrecedence(t *testing.T) {
 		t.Errorf("broker host flag should win: got %q", got)
 	}
 
-	if got := cfg.ResolvedProfileName("explicit"); got != "explicit" {
-		t.Errorf("profile flag should win: got %q", got)
-	}
 	if got := cfg.ResolvedBaseURLOr(""); got != DefaultBaseURL {
 		t.Errorf("base url empty flag -> default: got %q", got)
 	}
 }
 
-func TestResolvedProfilePrecedence(t *testing.T) {
-	cfg := &FileConfig{DefaultProfile: "cfg"}
-
-	t.Run("flag beats env and config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName("flagprof"); got != "flagprof" {
-			t.Errorf("flag should win: got %q", got)
-		}
-	})
-
-	t.Run("env beats config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName(""); got != "envprof" {
-			t.Errorf("env should win over config: got %q", got)
-		}
-	})
-
-	t.Run("config beats default when env unset", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		if got := cfg.ResolvedProfileName(""); got != "cfg" {
-			t.Errorf("config should win: got %q", got)
-		}
-	})
-
-	t.Run("built-in default when all empty", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		empty := &FileConfig{}
-		if got := empty.ResolvedProfileName(""); got != DefaultProfile {
-			t.Errorf("default should win: got %q", got)
-		}
-	})
-}
-
 func TestSaveRoundTrip(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	cfg := &FileConfig{
-		BaseURL:        "http://example:9000",
-		DefaultProfile: "work",
-		Broker:         BrokerConfig{Scheme: "http", Host: "localhost:4000"},
+		BaseURL: "http://example:9000",
+		Broker:  BrokerConfig{Scheme: "http", Host: "localhost:4000"},
 	}
 	if err := cfg.Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -177,7 +136,7 @@ func TestSaveRoundTrip(t *testing.T) {
 	if !got.Loaded {
 		t.Fatalf("Loaded should be true after Save")
 	}
-	if got.BaseURL != cfg.BaseURL || got.DefaultProfile != cfg.DefaultProfile {
+	if got.BaseURL != cfg.BaseURL {
 		t.Errorf("top-level mismatch: %+v", got)
 	}
 	if got.Broker != cfg.Broker {
@@ -185,134 +144,25 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSetDefaultProfile(t *testing.T) {
-	paths := writeConfig(t, "base_url: http://example:9000\ndefault_profile: old\n")
-	if err := SetDefaultProfile(paths, "new"); err != nil {
-		t.Fatalf("SetDefaultProfile: %v", err)
-	}
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.DefaultProfile != "new" {
-		t.Errorf("DefaultProfile = %q, want new", got.DefaultProfile)
-	}
-	// Existing fields must survive the rewrite.
-	if got.BaseURL != "http://example:9000" {
-		t.Errorf("base_url not preserved: %q", got.BaseURL)
-	}
-}
-
-func TestAgentAccountRoundTrip(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	cfg, err := Load(paths)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.HasAgentUser() {
-		t.Fatal("fresh config should have no agent user")
-	}
-	cfg.SetAgentAccount(AgentAccount{
-		User:           "alice-local-agent",
-		AccountCreated: true,
-		Enabled:        true,
-		HomeDir:        "/Users/Shared/alice-local-agent",
-		ConfigDir:      "/Users/Shared/alice-local-agent/.jentic",
-	})
-	if !cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected AddGrantedDir to report a new grant")
-	}
-	if cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected duplicate AddGrantedDir to be idempotent")
-	}
-	if err := cfg.Save(paths); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if !got.HasAgentUser() {
-		t.Fatal("expected an enabled agent account after reload")
-	}
-	acct, ok := got.AgentAccount()
-	if !ok {
-		t.Fatal("agent account not persisted")
-	}
-	if acct.User != "alice-local-agent" || acct.ConfigDir == "" {
-		t.Errorf("unexpected account: %+v", acct)
-	}
-	if !acct.AccountCreated || !acct.Enabled {
-		t.Error("expected AccountCreated and Enabled to round-trip as true")
-	}
-	if len(acct.GrantedDirs) != 1 {
-		t.Fatalf("granted dirs = %v", acct.GrantedDirs)
-	}
-
-	if !got.RemoveGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected RemoveGrantedDir to report removal")
-	}
-	if got.RemoveGrantedDir("/nope") {
-		t.Fatal("did not expect removal of an absent dir")
-	}
-	acct, _ = got.AgentAccount()
-	if len(acct.GrantedDirs) != 0 {
-		t.Errorf("granted dirs after remove = %v", acct.GrantedDirs)
-	}
-}
-
-// TestMutateReloadsBeforeApplying proves Mutate does a fresh read UNDER the lock,
-// so a mutation applied to a STALE in-memory config (one loaded before another
-// writer committed) doesn't clobber the committed change. Here a first Mutate adds
-// grant A; a second Mutate — driven from a config loaded before A existed — adds
-// grant B. Both must survive, because the second reloads (seeing A) before adding
-// B rather than saving its stale two-grant-less snapshot.
-func TestMutateReloadsBeforeApplying(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	base := &FileConfig{}
-	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
-	if err := base.Save(paths); err != nil {
-		t.Fatalf("seed save: %v", err)
-	}
-
-	// Writer 1 commits grant A.
-	if _, err := Mutate(paths, func(c *FileConfig) error {
-		c.AddGrantedDir("/opt/a/A")
-		return nil
-	}); err != nil {
-		t.Fatalf("mutate A: %v", err)
-	}
-
-	// Writer 2 adds grant B. Even though it's a fresh Mutate, its fn reloads the
-	// on-disk config first, so it sees A and appends B rather than replacing.
-	got, err := Mutate(paths, func(c *FileConfig) error {
-		c.AddGrantedDir("/opt/a/B")
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("mutate B: %v", err)
-	}
-	acct, _ := got.AgentAccount()
-	if len(acct.GrantedDirs) != 2 {
-		t.Fatalf("expected both grants to survive, got %v", acct.GrantedDirs)
-	}
-}
+// The agent-account record and its Mutate-style contention guarantees moved to
+// the XDG agent state; see agentstate_test.go. FileConfig keeps only the legacy
+// read-side (the Agent fields parse) covered by TestLegacyAgentFieldsStillParse
+// there.
 
 // TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
 // the on-disk config is unchanged when fn returns an error.
 func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
-	paths := writeConfig(t, "default_profile: keep\n")
+	paths := writeConfig(t, "base_url: keep\n")
 	_, err := Mutate(paths, func(c *FileConfig) error {
-		c.DefaultProfile = "clobbered"
+		c.BaseURL = "clobbered"
 		return os.ErrInvalid
 	})
 	if err == nil {
 		t.Fatal("expected Mutate to propagate the fn error")
 	}
 	got, _ := Load(paths)
-	if got.DefaultProfile != "keep" {
-		t.Errorf("failed Mutate must not persist changes, got %q", got.DefaultProfile)
+	if got.BaseURL != "keep" {
+		t.Errorf("failed Mutate must not persist changes, got %q", got.BaseURL)
 	}
 }
 
@@ -321,7 +171,7 @@ func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
 // no stray .config-*.tmp.
 func TestSaveLeavesNoTempFile(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
-	if err := (&FileConfig{DefaultProfile: "x"}).Save(paths); err != nil {
+	if err := (&FileConfig{BaseURL: "x"}).Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	entries, err := os.ReadDir(paths.Dir())

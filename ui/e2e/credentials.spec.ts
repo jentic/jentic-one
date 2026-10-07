@@ -1,14 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Credentials primary flow (mocked): log in, open the Credentials module,
+ * Credentials primary flow (mocked): log in, open the credential inventory on Agents,
  * walk the add-credential wizard (guided picker → manual entry → form), create
  * a bearer-token credential, and confirm it lands in the list. Runs against the
  * in-browser MSW credentials handlers, so it exercises the real routing +
  * dialog wiring without a live backend.
  *
- * Note: the create flow no longer surfaces the secret after saving — the
- * one-time-secret dialog was removed in favour of a success toast (secrets are
+ * Note: the create flow doesn't surface the secret after saving (secrets are
  * redacted everywhere once stored), so this asserts the toast + the new row.
  */
 
@@ -30,7 +29,7 @@ async function login(page: Page): Promise<void> {
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 }
 
 test('create a credential and see it in the list', async ({ page }) => {
@@ -38,14 +37,14 @@ test('create a credential and see it in the list', async ({ page }) => {
 
 	await login(page);
 
-	await page.goto('/app/credentials');
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await page.goto('/app/agents?credentials=1');
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
 
-	// Step 1 of the wizard is the guided API picker ("Choose an API"); drop
-	// into manual entry to reach the credential form (step 2).
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	// Step 1 of the wizard is the guided picker (dialog titled "Add
+	// credential"); drop into manual entry to reach the credential form (step 2).
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 	await page.getByRole('button', { name: /Enter manually/i }).click();
 
 	await page.getByPlaceholder('Production API key').fill('CI bearer token');

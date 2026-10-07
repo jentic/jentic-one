@@ -4,12 +4,10 @@
   THEME — Tailwind utility class mappings.
   @theme inline maps CSS vars to Tailwind classes without emitting extra variables.
   All values are wrapped in hsl() so Tailwind opacity modifiers work (bg-primary/50 etc.).
-  Ported from jentic-mini/ui/src/index.css.
 */
 @theme inline {
 	/* Surface colors */
 	--color-background: hsl(var(--background));
-	--color-background-secondary: hsl(var(--background-secondary));
 	--color-foreground: hsl(var(--foreground));
 	--color-foreground-lighter: hsl(var(--foreground-lighter));
 
@@ -22,6 +20,60 @@
 	--color-muted: hsl(var(--muted));
 	--color-muted-foreground: hsl(var(--muted-foreground));
 
+	/* Text tiers (strong = foreground). `name` is entity names in rows/cards;
+	   `sub` = the muted tier; `faint` = labels/meta (still ≥ 4.5:1 on the
+	   tonal surfaces); `group` = big thin group headings; `disabled` = inert. */
+	--color-foreground-name: hsl(0 0% 100% / 0.88);
+	--color-foreground-sub: hsl(var(--foreground-sub));
+	--color-foreground-faint: hsl(var(--foreground-faint));
+	--color-foreground-group: hsl(var(--foreground-group));
+	--color-foreground-disabled: hsl(var(--foreground-disabled));
+
+	/* Tonal surfaces — a surface is raised by lightening it, not by a border
+	   or a shadow. Children sit one step lighter than their container. */
+	--color-surface-1: hsl(var(--surface-1));
+	--color-surface-1-hover: hsl(var(--surface-1-hover));
+	--color-surface-zebra: hsl(var(--surface-zebra));
+	--color-surface-selected: hsl(var(--surface-selected));
+	--color-surface-field: hsl(var(--surface-field));
+	--color-surface-inset: hsl(var(--surface-inset));
+	--color-surface-tonal: hsl(var(--surface-tonal));
+	--color-surface-tonal-hover: hsl(var(--surface-tonal-hover));
+	--color-surface-chip: hsl(var(--surface-chip));
+	--color-surface-chip-active: hsl(var(--surface-chip-active));
+	--color-surface-quiet-cta: hsl(var(--surface-quiet-cta));
+	--color-surface-sheet: hsl(var(--surface-sheet));
+	--color-surface-sheet-foot: hsl(var(--surface-sheet-foot));
+	--color-surface-ghost: hsl(var(--surface-ghost));
+	/* Context-aware field fill: one step lighter than whatever it sits on.
+	   Page → surface-1; a card, sheet or dialog sets --field-bg one step up. */
+	--color-field: hsl(var(--field-bg));
+	--color-hairline: hsl(185 20% 60% / 0.07);
+	--color-hairline-row: hsl(185 20% 60% / 0.055);
+	/* The hairline at a stated strength: the resting edge of form fields and
+	   the dialog panel. Faint, but it reads on the page, cards, sheets and
+	   dialogs so an empty field is easy to spot. */
+	--color-hairline-field: hsl(185 20% 60% / 0.16);
+	/* Discover ledger: the vendor→API tree lines, the `·` meta separator and
+	   the sticky toolbar's glass fill (over the page, under its blur). */
+	--color-ledger-tree: hsl(185 20% 30%);
+	--color-meta-separator: hsl(185 12% 30%);
+	--color-toolbar-glass: hsl(192 35% 8% / 0.9);
+	/* Text inside a search-match highlight (`<mark>`). */
+	--color-search-highlight: #fff;
+	/* An idle (suspended / not-serving) tile's title — dimmed white. */
+	--color-foreground-idle: color-mix(in oklab, #fff 60%, transparent);
+	/* The one resting edge for form controls (see :root). Not for buttons. */
+	--color-control-edge: hsl(var(--control-edge));
+	--color-control-edge-hover: hsl(var(--control-edge-hover));
+	--color-tint: hsl(var(--primary-300) / 0.045);
+	--color-tint-2: hsl(var(--primary-300) / 0.08);
+
+	/* HTTP method text tints (method chips are neutral; only the word is tinted). */
+	--color-method-post: hsl(var(--method-post));
+	--color-method-delete: hsl(var(--method-delete));
+	--color-method-put: hsl(var(--method-put));
+
 	/* Form placeholder — a muted grey, clearly lighter than entered text */
 	--color-input-placeholder: hsl(var(--input-placeholder));
 
@@ -31,59 +83,27 @@
 
 	/* Borders */
 	--color-border: hsl(var(--border));
-	--color-border-hover: hsl(var(--border-hover));
 
 	/* Focus ring */
 	--color-ring: hsl(var(--ring));
 
 	/* Accent colors */
 	--color-accent-orange: hsl(var(--accent-orange));
-	--color-accent-yellow: hsl(var(--accent-yellow));
 	--color-accent-green: hsl(var(--accent-green));
 	--color-accent-teal: hsl(var(--accent-green)); /* alias — no distinct teal in the palette */
 	--color-accent-pink: hsl(var(--accent-pink));
 	--color-accent-blue: hsl(var(--accent-blue));
-	--color-accent-red: hsl(var(--destructive)); /* alias — no distinct red token */
-	--color-accent-amber: hsl(var(--accent-orange)); /* alias — no distinct amber token */
+	--color-accent-yellow: hsl(var(--accent-yellow));
+	--color-accent-amber: hsl(
+		var(--warning)
+	); /* alias — status amber is the desaturated warning ochre */
 
 	/* State colors */
 	--color-success: hsl(var(--success));
 	--color-warning: hsl(var(--warning));
+	--color-caution: hsl(var(--caution));
 	--color-danger: hsl(var(--danger));
 	--color-destructive: hsl(var(--destructive));
-	--color-destructive-foreground: hsl(var(--destructive-foreground));
-
-	/* Button tokens */
-	--color-btn-primary-bg: hsl(var(--btn-primary-bg));
-	--color-btn-primary-bg-hover: hsl(var(--btn-primary-bg-hover));
-	--color-btn-primary-text: hsl(var(--btn-primary-text));
-	--color-btn-primary-border: hsl(var(--btn-primary-border));
-	--color-btn-primary-border-hover: hsl(var(--btn-primary-border-hover));
-	--color-btn-secondary-bg-hover: hsl(var(--btn-secondary-bg-hover));
-	--color-btn-secondary-text: hsl(var(--btn-secondary-text));
-	--color-btn-secondary-border: hsl(var(--btn-secondary-border));
-	--color-btn-secondary-border-hover: hsl(var(--btn-secondary-border-hover));
-
-	/* Table tokens */
-	--color-table-header-bg: hsl(var(--table-header-bg));
-	--color-table-body-bg: hsl(var(--table-body-bg));
-
-	/* Card border tokens */
-	--color-card-border: hsl(var(--card-border));
-	--color-card-border-hover: hsl(var(--card-border-hover));
-
-	/* Dropdown tokens */
-	--color-dropdown-bg: hsl(var(--dropdown-bg));
-	--color-dropdown-border: hsl(var(--dropdown-border));
-	--color-dropdown-hover: hsl(var(--dropdown-hover));
-	--color-dropdown-text: hsl(var(--dropdown-text));
-	--color-dropdown-text-muted: hsl(var(--dropdown-text-muted));
-	--color-dropdown-accent: hsl(var(--dropdown-accent));
-	--color-dropdown-accent-hover: hsl(var(--dropdown-accent-hover));
-
-	/* Navigation tokens */
-	--color-nav-text: hsl(var(--nav-text));
-	--color-nav-hover-bg: hsl(var(--nav-hover-bg));
 
 	/* Fonts */
 	--font-sans: 'Nunito Sans', sans-serif;
@@ -105,19 +125,26 @@
 	--radius-md: calc(var(--radius) - 4px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) * 1.4);
+	/* Fields, CTAs, segmented controls, dock rows, 32–36px marks. */
+	--radius-field: 9px;
+	/* Docked panels (the workspace sidebar). */
+	--radius-panel: 14px;
 
 	/* Motion — a small, restrained baseline (#374 has no formal doc yet).
 	   Fast + subtle: enter/hover transitions and a skeleton shimmer that
-	   reads as "loading" without being noisy. */
+	   reads as "loading" without being noisy. Durations in use: hover 140ms,
+	   card 160ms, sheet in 220ms / out 180ms, flash 1.6s, ghost fly 380ms. */
 	--ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+	/* Exits accelerate away (sheet close). */
+	--ease-in-exit: cubic-bezier(0.4, 0, 1, 1);
 
-	/* Elevation utilities — `shadow-card`, `shadow-card-hover`, `shadow-pop`.
+	/* Elevation utilities — `shadow-card`, `shadow-pop`, `shadow-elevated`.
 	   Backed by the distinctly-named `--elevation-*` sources in :root below, so
 	   this @theme inline mapping is not self-referential (matches the
 	   `--color-X: hsl(var(--X))` pattern used by every other token here). */
 	--shadow-card: var(--elevation-card);
-	--shadow-card-hover: var(--elevation-card-hover);
 	--shadow-pop: var(--elevation-pop);
+	--shadow-elevated: var(--elevation-elevated);
 }
 
 /*
@@ -125,7 +152,7 @@
   Format: `H S% L%` so Tailwind can apply opacity modifiers: bg-primary/50.
 
   Primary scale (higher = darker — standard Tailwind convention):
-    --primary-50  → #F5F7F7 lightest
+    --primary-100 → #E4EAEB lightest
     --primary-950 → #0E1A1D darkest
 */
 :root {
@@ -133,7 +160,6 @@
 	   PRIMARY COLOR SCALE
 	   Higher number = darker (standard Tailwind convention).
 	   ====================================================================== */
-	--primary-50: 180 11% 96%; /* #F5F7F7 - Lightest */
 	--primary-100: 189 15% 91%; /* #E4EAEB */
 	--primary-300: 183 29% 72%; /* #A3CACC */
 	--primary-500: 185 18% 50%; /* #689296 */
@@ -146,10 +172,11 @@
 	   ACCENT COLORS
 	   ====================================================================== */
 	--accent-orange: 31 97% 73%; /* #FDBD79 */
-	--accent-yellow: 52 78% 75%; /* #F1E38B */
 	--accent-green: 162 66% 62%; /* #5EDEB9 */
 	--accent-pink: 358 64% 80%; /* #EDADAF */
 	--accent-blue: 203 78% 67%; /* #68BAEC */
+	/* Syntax only: the program name in a shown command (`jentic …`). */
+	--accent-yellow: 52 78% 75%; /* #F1E38B */
 
 	/* ======================================================================
 	   SEMANTIC MAPPINGS
@@ -157,17 +184,95 @@
 
 	/* Surfaces */
 	--background: var(--primary-950); /* #0E1A1D */
-	--background-secondary: var(--primary-850); /* #193238 */
 	--card: var(--primary-900); /* #162629 */
 	--card-foreground: 0 0% 100%; /* #FFFFFF */
 	--border: var(--primary-700); /* #305256 */
-	--border-hover: var(--primary-500); /* #689296 */
 
 	/* Text */
 	--foreground: 0 0% 100%; /* #FFFFFF */
 	--foreground-lighter: var(--primary-100); /* #E4EAEB */
 	--muted: var(--primary-850); /* #193238 */
-	--muted-foreground: var(--primary-100); /* #E4EAEB */
+	/* Secondary text reads as secondary: the soft grey `sub` tier (≈6:1 on
+	   the page, ≥5:1 on `muted`), not the near-white body tone. */
+	--muted-foreground: var(--foreground-sub); /* #8CA4A6 */
+
+	/* Text tiers */
+	--foreground-sub: 185 13% 60%; /* #8CA4A6 */
+	/* Lifted from the mockups' #5F7E81 so small meta text keeps ≥ 4.5:1 on
+	   surface-1 / zebra / hover / field. */
+	--foreground-faint: 185 14% 52%;
+	--foreground-group: 185 20% 50%;
+	--foreground-disabled: 185 10% 28%; /* #404D4F — inert only */
+
+	/* Tonal surfaces (see @theme) */
+	--surface-1: 192 30% 11.5%; /* #152326 */
+	--surface-1-hover: 192 28% 13%; /* #18272A */
+	--surface-zebra: 192 28% 12.6%; /* #172629 */
+	--surface-selected: 192 26% 15%; /* #1C2C30 */
+	--surface-field: 192 26% 14%; /* #1A292D */
+	--surface-inset: 192 26% 13%; /* #192A2E */
+	--surface-tonal: 192 24% 16%; /* #1F2F33 */
+	--surface-tonal-hover: 192 22% 19.5%; /* #27383D */
+	--surface-chip: 192 22% 17%; /* #223135 */
+	--surface-chip-active: 192 22% 22%;
+	--surface-quiet-cta: 192 22% 18%;
+	--surface-sheet: 192 33% 10%; /* #111F22 */
+	--surface-sheet-foot: 192 33% 9%; /* #0F1B1F */
+	--surface-drop: 192 28% 13.5%;
+	--surface-drop-over: 176 30% 14%;
+	--surface-ghost: 189 37% 18%; /* #1D3A3F — drag ghost */
+	--field-bg: var(--surface-1);
+	/* Shared control edge — fields, selects, textareas, field toggles and the
+	   rules editor's `.edged-controls` fields. Buttons never carry it (fill only).
+	   Stronger than the faint hairline (≈1.3:1): ≈2.9:1 on a card, ≈3.1:1 on
+	   a sheet, ≈2.2:1 on a sheet inset. */
+	--control-edge: 185 16% 38%; /* #516E70 */
+	--control-edge-hover: 183 29% 72% / 0.8;
+
+	/* Page header band (`.page-header-band`): a surface-1 → page fade with a
+	   soft brand-teal wash top-left and a hairline foot carrying the title accent. Glow alphas are kept
+	   low so the band reads as a zone, not a hero. */
+	--page-header-from: var(--surface-1);
+	--page-header-to: var(--background);
+	--page-header-glow: var(--primary-300);
+	--page-header-glow-2: var(--accent-blue);
+	--page-header-rule: 185 20% 60% / 0.1;
+	--page-header-tick: var(--primary-300); /* the title accent on the foot */
+	/* Header actions: no edges — prominence comes from a fill two tonal steps
+	   above the band (the band is ≈ L11–15% where the actions sit), a faint
+	   inner top highlight and a very soft drop shadow. */
+	--header-btn-bg: 192 20% 22%;
+	--header-btn-bg-hover: 192 18% 26%;
+	--header-btn-bg-active: 192 22% 19%;
+	--header-field-bg: 192 22% 18.5%;
+	--header-field-bg-hover: 192 20% 20.5%;
+
+	/* Method text tints (desaturated success / danger / warning). */
+	--method-post: 162 43% 74%; /* #9FD9C7 */
+	--method-delete: 358 46% 80%; /* #E3B3B4 */
+	--method-put: 38 36% 76%; /* #D9C6A8 — on the caution hue, not lemon */
+
+	/* Pastel avatar palette — tile at 80% lightness, initials in the same hue
+	   at 24% (every pair ≥ 5.4:1). Indexed by a stable hash of the identity. */
+	--avatar-0-bg: 200 52% 80%;
+	--avatar-0-fg: 200 60% 24%;
+	--avatar-1-bg: 165 40% 80%;
+	--avatar-1-fg: 165 50% 24%;
+	--avatar-2-bg: 140 34% 80%;
+	--avatar-2-fg: 140 44% 24%;
+	--avatar-3-bg: 45 55% 80%;
+	--avatar-3-fg: 45 60% 24%;
+	--avatar-4-bg: 25 58% 80%;
+	--avatar-4-fg: 25 60% 24%;
+	--avatar-5-bg: 355 45% 80%;
+	--avatar-5-fg: 355 55% 24%;
+	--avatar-6-bg: 300 28% 80%;
+	--avatar-6-fg: 300 38% 24%;
+	--avatar-7-bg: 250 38% 80%;
+	--avatar-7-fg: 250 48% 24%;
+
+	--avatar-neutral-bg: 192 10% 72%;
+	--avatar-neutral-fg: 192 20% 12%;
 
 	/* Placeholder text — deliberately a muted grey so empty fields read as
 	   empty and don't look identical to entered (near-white) text (#673). */
@@ -180,71 +285,38 @@
 
 	/* State */
 	--success: 162 66% 62%; /* #5EDEB9 */
-	--warning: 52 78% 75%; /* #F1E38B */
+	/* Warm states, two steps and both low-chroma. `caution` is a glyph/dot tint only — the words beside it
+	   stay neutral (muted/foreground); ≥6.3:1 on every surface up to a chip.
+	   `warning` is the stronger (still desaturated) ochre kept for states that
+	   truly want action now: Needs attention, 4xx, an unfinished sign-in;
+	   ≥7.5:1. Failures stay `danger`. Meaning is always icon + word. */
+	--caution: 38 30% 66%; /* #C6AE89 */
+	--warning: 36 42% 70%; /* #D4B78F */
 	--danger: 358 64% 80%; /* #EDADAF */
 	--destructive: 13 87% 46%; /* #DB3B0F */
-	--destructive-foreground: 0 0% 100%; /* #FFFFFF */
 
 	/* Misc */
 	--ring: var(--primary-300);
 	--radius: 0.75rem;
 
 	/* ======================================================================
-	   NAVIGATION TOKENS
-	   ====================================================================== */
-	--nav-text: 0 0% 100%; /* #FFFFFF */
-	--nav-hover-bg: var(--primary-850); /* #193238 */
-
-	/* ======================================================================
-	   BUTTON TOKENS
-	   ====================================================================== */
-	--btn-primary-bg: var(--primary-300); /* #A3CACC */
-	--btn-primary-bg-hover: var(--primary-100); /* #E4EAEB */
-	--btn-primary-text: var(--primary-950); /* #0E1A1D */
-	--btn-primary-border: var(--primary-300);
-	--btn-primary-border-hover: var(--primary-100);
-
-	--btn-secondary-bg: transparent;
-	--btn-secondary-bg-hover: var(--primary-850); /* #193238 */
-	--btn-secondary-text: 0 0% 100%; /* #FFFFFF */
-	--btn-secondary-border: var(--primary-700); /* #305256 */
-	--btn-secondary-border-hover: var(--primary-300); /* #A3CACC */
-
-	/* ======================================================================
-	   TABLE TOKENS
-	   ====================================================================== */
-	--table-header-bg: var(--primary-700); /* #305256 */
-	--table-body-bg: var(--primary-950); /* #0E1A1D */
-
-	/* ======================================================================
-	   CARD BORDER TOKENS
-	   ====================================================================== */
-	--card-border: var(--primary-700); /* #305256 */
-	--card-border-hover: var(--primary-500); /* #689296 */
-
-	/* ======================================================================
-	   DROPDOWN TOKENS
-	   ====================================================================== */
-	--dropdown-bg: 192 36% 13%; /* #162629 */
-	--dropdown-border: 185 18% 50%; /* #689296 */
-	--dropdown-hover: 185 18% 50%;
-	--dropdown-text: 30 3% 95%; /* #f4f3f2 */
-	--dropdown-text-muted: 0 0% 85%; /* #d9d9d9 */
-	--dropdown-accent: 183 29% 72%; /* #a3cacc */
-	--dropdown-accent-hover: 186 28% 79%; /* #b8d8da */
-
-	/* ======================================================================
 	   ELEVATION
-	   Soft, dark-first shadows. Cards rest flat with a hairline border and
-	   lift on hover; dialogs sit at the top layer. Kept subtle so the dark
-	   surface still reads as calm, not glossy.
+	   Cards rest flat (a tonal step, no shadow) and lift a soft shadow on
+	   hover; dialogs sit at the top layer. Kept subtle so the dark surface
+	   still reads as calm, not glossy.
 	   ====================================================================== */
-	--elevation-card: 0 1px 2px 0 hsl(var(--primary-950) / 0.4);
-	--elevation-card-hover:
-		0 6px 20px -6px hsl(var(--primary-950) / 0.7), 0 2px 6px -2px hsl(var(--primary-950) / 0.5);
+	--elevation-card: none;
+	--elevation-card-hover: 0 6px 20px -8px hsl(192 35% 4% / 0.7);
 	--elevation-pop:
 		0 16px 40px -12px hsl(var(--primary-950) / 0.85),
 		0 4px 12px -4px hsl(var(--primary-950) / 0.6);
+	/* A standalone card that must lift off the page on its own (the auth
+	   pages' sign-in / setup / password / invite cards): faint top highlight
+	   + a soft drop + a tight contact shadow. Used with the Dialog's
+	   `border-hairline-field` edge; the card keeps its `surface-1` fill. */
+	--elevation-elevated:
+		inset 0 1px 0 hsl(0 0% 100% / 0.04), 0 12px 32px -8px hsl(0 0% 0% / 0.55),
+		0 2px 6px hsl(0 0% 0% / 0.35);
 }
 
 @layer base {
@@ -298,16 +370,235 @@
    UTILITY CLASSES
    ============================================================================ */
 
-.text-link {
-	@apply text-primary hover:text-primary-hover cursor-pointer transition-colors duration-150;
-}
-
-.text-hover-primary {
-	@apply hover:text-primary transition-colors duration-150;
-}
-
+/* Clickable tonal card: lightens and lifts a soft shadow on hover — no move,
+   no border tint (a surface is raised by lightening it). */
 .card-hover {
-	@apply hover:border-card-border-hover transition-colors duration-150;
+	transition:
+		background-color 160ms var(--ease-out-soft),
+		box-shadow 160ms var(--ease-out-soft);
+}
+
+.card-hover:hover {
+	background-color: hsl(var(--surface-1-hover));
+	box-shadow: var(--elevation-card-hover);
+}
+
+/* Page header band (`PageHeader`): marks the title zone on every route. A
+   one-step tonal lift (surface-1) fading into the page, a low-alpha teal glow
+   behind the title, a fainter blue one at the far edge, and a hairline foot
+   with a short brand tick under the title. Pure backgrounds + one
+   pseudo-element: no overflow, transform or stacking context, so it never
+   affects the shell scroller (`#app-scroll`) or sticky children below it. */
+.page-header-band {
+	position: relative;
+	background:
+		radial-gradient(44rem 12rem at 4% 0%, hsl(var(--page-header-glow) / 0.12), transparent 70%),
+		radial-gradient(
+			36rem 10rem at 96% 0%,
+			hsl(var(--page-header-glow-2) / 0.05),
+			transparent 70%
+		),
+		linear-gradient(180deg, hsl(var(--page-header-from)) 0%, hsl(var(--page-header-to)) 100%);
+	box-shadow: inset 0 -1px 0 hsl(var(--page-header-rule));
+}
+
+/* The accent divider: the band's hairline foot, tinted. A 2px line laid ON the
+   1px rule (bottom-aligned, so the two read as one line) across the band's
+   full width, edge to edge, fading from the full accent to transparent —
+   the neutral hairline takes over as it fades. Above it, a very soft glow
+   (4px, ≤ 16% alpha) that fades along the same run and upward, so there is no
+   hotspot. Both layers share one box and one mask; the line's 2px stay fully
+   opaque under it. The band's height is whole pixels (PageHeader's integer
+   line heights), so the line lands crisp. */
+.page-header-band::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
+	left: 0; /* edge to edge: the band itself is full-bleed */
+	right: 0;
+	height: 6px;
+	background:
+		linear-gradient(
+				90deg,
+				hsl(var(--page-header-tick)) 0%,
+				hsl(var(--page-header-tick) / 0.5) 35%,
+				hsl(var(--page-header-tick) / 0.14) 75%,
+				hsl(var(--page-header-tick) / 0) 100%
+			)
+			bottom / 100% 2px no-repeat,
+		linear-gradient(
+			90deg,
+			hsl(var(--page-header-tick) / 0.16) 0%,
+			hsl(var(--page-header-tick) / 0.05) 45%,
+			hsl(var(--page-header-tick) / 0) 85%
+		);
+	-webkit-mask-image: linear-gradient(to top, #000 2px, rgb(0 0 0 / 0.5) 2px, transparent 100%);
+	mask-image: linear-gradient(to top, #000 2px, rgb(0 0 0 / 0.5) 2px, transparent 100%);
+	pointer-events: none;
+}
+
+/* Header actions (`PageHeader` actions slot). Unlayered on purpose: it must
+   beat per-call utility overrides so every tab's header reads the same.
+   Keyed off Button's `data-variant` / `data-size`. No resting borders —
+   prominence is fill: a step lighter on hover, a step darker when pressed.
+   - primary: solid accent CTA, a subtle accent glow, lifts 1px on hover
+   - secondary / tonal / outline / ghost icon (help "?"): `--header-btn-bg`,
+     full-strength text, a faint inner top highlight + soft drop shadow;
+     ghost icon buttons become a 32px square
+   - danger: red-tinted fill, red text
+   - fields: a filled lighter well (`--header-field-bg`), accent ring on focus
+   The focus-visible ring is kept (it is the focus indicator, not a border). */
+.page-header-actions {
+	--field-bg: var(--header-field-bg);
+	--header-btn-lift: inset 0 1px 0 hsl(0 0% 100% / 0.06), 0 1px 2px hsl(192 35% 4% / 0.45);
+}
+
+.page-header-actions [data-variant] {
+	transition-property: translate, transform, background-color, border-color, color, box-shadow;
+}
+
+.page-header-actions [data-variant='primary'] {
+	box-shadow:
+		inset 0 1px 0 hsl(0 0% 100% / 0.22),
+		0 1px 2px hsl(192 35% 4% / 0.5),
+		0 4px 12px -6px hsl(var(--primary-300) / 0.35);
+}
+
+.page-header-actions [data-variant='primary']:hover:not(:disabled) {
+	translate: 0 -1px;
+	box-shadow:
+		inset 0 1px 0 hsl(0 0% 100% / 0.22),
+		0 2px 4px hsl(192 35% 4% / 0.5),
+		0 8px 18px -8px hsl(var(--primary-300) / 0.45);
+}
+
+.page-header-actions
+	:is(
+		[data-variant='secondary'],
+		[data-variant='tonal'],
+		[data-variant='outline'],
+		[data-variant='ghost']:is([data-size='icon'], [data-size='icon-xs'])
+	) {
+	background-color: hsl(var(--header-btn-bg));
+	color: hsl(var(--foreground));
+	box-shadow: var(--header-btn-lift);
+}
+
+.page-header-actions [data-variant='ghost']:is([data-size='icon'], [data-size='icon-xs']) {
+	width: 2rem;
+	height: 2rem;
+	padding: 0;
+	border-radius: var(--radius-field);
+}
+
+.page-header-actions
+	:is(
+		[data-variant='secondary'],
+		[data-variant='tonal'],
+		[data-variant='outline'],
+		[data-variant='ghost']:is([data-size='icon'], [data-size='icon-xs'])
+	):hover:not(:disabled) {
+	background-color: hsl(var(--header-btn-bg-hover));
+}
+
+.page-header-actions
+	:is(
+		[data-variant='secondary'],
+		[data-variant='tonal'],
+		[data-variant='outline'],
+		[data-variant='ghost']:is([data-size='icon'], [data-size='icon-xs'])
+	):active:not(:disabled) {
+	background-color: hsl(var(--header-btn-bg-active));
+	box-shadow: inset 0 1px 2px hsl(192 35% 4% / 0.45);
+}
+
+.page-header-actions [data-variant='danger'] {
+	background-color: hsl(var(--danger) / 0.18);
+	color: hsl(var(--danger));
+	box-shadow: var(--header-btn-lift);
+}
+
+.page-header-actions [data-variant='danger']:hover:not(:disabled) {
+	background-color: hsl(var(--danger) / 0.26);
+}
+
+.page-header-actions [data-variant='danger']:active:not(:disabled) {
+	background-color: hsl(var(--danger) / 0.12);
+	box-shadow: inset 0 1px 2px hsl(192 35% 4% / 0.45);
+}
+
+.page-header-actions [data-variant]:disabled {
+	box-shadow: none;
+	translate: none;
+}
+
+/* The rules above own `box-shadow`, which is also how the focus ring is
+   drawn — redraw it (offset ring) so keyboard focus stays obvious. The
+   doubled attribute outranks the hover rules, so focus wins while hovered. */
+.page-header-actions [data-variant][data-variant]:focus-visible:not(:disabled) {
+	box-shadow:
+		0 0 0 2px hsl(var(--background)),
+		0 0 0 4px hsl(var(--ring));
+}
+
+/* Fields: a filled well, no resting edge (Input's focus ring still draws). */
+.page-header-actions input {
+	border-color: transparent;
+}
+
+/* `faint` placeholder is 3.9:1 on the lighter well; `sub` keeps ≥ 4.5:1. */
+.page-header-actions input::placeholder {
+	color: hsl(var(--foreground-sub));
+}
+
+.page-header-actions input:not(:focus):hover {
+	background-color: hsl(var(--header-field-bg-hover));
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.page-header-actions [data-variant='primary']:hover:not(:disabled) {
+		translate: none;
+	}
+}
+
+/* Edged controls (`.edged-controls`) — a dense editing card inside a sheet
+   (rule editor, rule tester), where the tonal steps alone are too close to
+   tell a field from the card it sits on. Fields use the one shared
+   --control-edge (:root), the same edge as every Input/Select/Textarea and
+   field toggle (≈2.2–3.1:1 on sheet surfaces): the resting hairline becomes
+   the edge; focus/error keep theirs. Buttons stay borderless; here they only
+   retune text and fill against the card:
+   - tonal buttons: full-strength text (secondary already has it)
+   - disabled secondary / tonal: no opacity fade — foreground-sub text (≥5:1)
+     on their fill (disabled primary already does this)
+   - disabled primary ("Save rules"): the tonal fill, so it reads as a button
+     at rest on the inset card */
+.edged-controls :is(input, select, textarea):not(:focus):not([aria-invalid='true']) {
+	border-color: hsl(var(--control-edge));
+}
+
+/* Border and fill on one element: keep the fill inside the edge so the curve
+   reads as one crisp line at the corners. */
+.edged-controls :is(input, select, textarea) {
+	background-clip: padding-box;
+}
+
+.edged-controls
+	:is(input, select, textarea):not(:focus):not(:disabled):not([aria-invalid='true']):hover {
+	border-color: hsl(var(--control-edge-hover));
+}
+
+.edged-controls [data-variant='tonal'] {
+	color: hsl(var(--foreground));
+}
+
+.edged-controls :is([data-variant='secondary'], [data-variant='tonal']):disabled {
+	opacity: 1;
+	color: hsl(var(--foreground-sub));
+}
+
+.edged-controls [data-variant='primary']:disabled {
+	background-color: hsl(var(--surface-tonal));
 }
 
 /* ----------------------------------------------------------------------------
@@ -354,34 +645,248 @@
 	animation: j1-rise 0.32s var(--ease-out-soft) both;
 }
 
-/* Card lift — used by interactive cards/tiles. Pairs a border-tint + elevation
-   on hover; transform is intentionally tiny so it feels responsive, not jumpy. */
+/* Card lift — the transition for interactive tiles that set their own hover
+   colours. No translate: the surface lightens, it doesn't move. */
 .card-lift {
 	transition:
-		transform 0.18s var(--ease-out-soft),
-		box-shadow 0.18s var(--ease-out-soft),
-		border-color 0.18s var(--ease-out-soft),
-		background-color 0.18s var(--ease-out-soft);
+		box-shadow 160ms var(--ease-out-soft),
+		border-color 160ms var(--ease-out-soft),
+		background-color 160ms var(--ease-out-soft);
 }
 
-.card-lift:hover {
-	transform: translateY(-2px);
-}
-
-/* Dialog entrance — small scale + fade, layered over the native top-layer. */
+/* Dialog entrance — a small rise + scale over the native top layer, with the
+   backdrop fading in behind it. The panel itself is NOT faded, like
+   `j1-rise`: starting at opacity:0 would fail visibility/contrast assertions
+   on the first frame. */
 @keyframes j1-dialog-in {
 	from {
-		opacity: 0;
 		transform: translateY(8px) scale(0.98);
 	}
 	to {
-		opacity: 1;
 		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes j1-backdrop-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
 	}
 }
 
 .animate-dialog-in {
 	animation: j1-dialog-in 0.2s var(--ease-out-soft);
+}
+
+.animate-dialog-in::backdrop {
+	animation: j1-backdrop-in 0.2s var(--ease-out-soft);
+}
+
+/* Arriving stream row — a new live event pushes the feed down (the row's
+   height reveal is framer-motion, in RailEventRow) and glows briefly so the
+   eye catches it, then settles to the row's own background. */
+@keyframes j1-arrive {
+	from {
+		background-color: hsl(var(--primary) / 0.16);
+		box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.25);
+	}
+	55% {
+		background-color: hsl(var(--primary) / 0.08);
+	}
+	to {
+		box-shadow: inset 0 0 0 1px transparent;
+	}
+}
+
+.animate-arrive {
+	animation: j1-arrive 1.4s var(--ease-out-soft);
+}
+
+/* The stream's status light (LiveDot): a slow, soft ring that breathes out
+   from the dot — calmer than Tailwind's 1s ping, which reads as an alarm. */
+@keyframes j1-live-ping {
+	0% {
+		transform: scale(1);
+		opacity: 0.55;
+	}
+	70%,
+	100% {
+		transform: scale(2.8);
+		opacity: 0;
+	}
+}
+
+.animate-live-ping {
+	animation: j1-live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* A calm "waiting" light: the dot dims and breathes a faint ring out, slower
+   than the stream's LiveDot so a page that is only listening never reads as
+   an alert. */
+@keyframes j1-soft-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+	}
+	50% {
+		opacity: 0.55;
+		box-shadow: 0 0 0 4px hsl(var(--primary) / 0);
+	}
+}
+
+.animate-soft-pulse {
+	animation: j1-soft-pulse 2.4s ease-in-out infinite;
+}
+
+/* A dot that pops in when a state first appears (a failure landing). */
+@keyframes j1-pop {
+	0% {
+		transform: scale(0);
+	}
+	60% {
+		transform: scale(1.45);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+
+.animate-pop {
+	animation: j1-pop 0.45s var(--ease-out-soft) both;
+}
+
+/* "Just added" — a row lands with a soft green wash that fades out. */
+@keyframes j1-flash-added {
+	from {
+		background-color: hsl(var(--success) / 0.14);
+	}
+	to {
+		background-color: transparent;
+	}
+}
+
+.animate-flash-added {
+	animation: j1-flash-added 1.6s var(--ease-out-soft);
+}
+
+/* ----------------------------------------------------------------------------
+   VIEW TRANSITIONS — page-to-page motion (shared/app/viewTransitions.ts).
+   Pages fade through quickly; the top bar holds still on its own layer; the
+   live activity stream (`activity-stream`: the rail, Monitor's panel and
+   full log) morphs from where it was docked to where it lands. Snapshots are anchored top-left and clipped so a tall feed
+   reveals/crops instead of squashing while the box resizes.
+   ---------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+	/* Fade-through, not a cross-fade: the old page is gone before the new one
+	   arrives, so two layouts never ghost over each other (and the page never
+	   dims to half-opacity mid-way). Only the activity stream travels. */
+	::view-transition-old(root) {
+		animation: j1-page-out 110ms ease-in both;
+	}
+
+	::view-transition-new(root) {
+		animation: j1-page-in 220ms var(--ease-out-soft) 80ms both;
+	}
+
+	/* The nav bars hold still on their own layers, and only their LIVE image shows.
+	   `animation: none` on the group zeroes the image pair's inherited duration
+	   too, so the old snapshot would sit fully opaque under the translucent bar
+	   for the whole transition — a frozen active-tab marker ghosting under the
+	   one sliding to the new tab, which read as the bar buzzing. */
+	::view-transition-group(app-header),
+	::view-transition-group(app-bottom-nav) {
+		animation: none;
+	}
+
+	::view-transition-old(app-header),
+	::view-transition-old(app-bottom-nav) {
+		display: none;
+	}
+
+	/* The activity stream morphs between its dockings (rail ⇄ Monitor panel). */
+	::view-transition-group(activity-stream) {
+		animation-duration: 420ms;
+		animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+		/* No radius here: the rail is flush and square; the panel's snapshot
+		   already carries its card's own rounded corners. */
+		overflow: clip;
+	}
+
+	::view-transition-old(activity-stream),
+	::view-transition-new(activity-stream) {
+		width: 100%;
+		height: 100%;
+		object-fit: none;
+		object-position: top left;
+	}
+
+	/* The stream swaps, it doesn't cross-fade: the new snapshot is opaque from
+	   the first frame and sits on top, so the box travels with the new content
+	   inside it — and a rail that stays put between pages never shows two
+	   feeds ghosting over each other. */
+	::view-transition-new(activity-stream) {
+		animation: none;
+	}
+
+	::view-transition-old(activity-stream) {
+		animation: j1-page-out 90ms ease-in both;
+	}
+
+	/* The log's detail pane (LogDetailPane): the list narrows to make room
+	   while the pane slides in from the right edge, and back out on close.
+	   Stepping between records swaps the pane in place — no slide. */
+	::view-transition-group(log-list) {
+		animation-duration: 320ms;
+		animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+		overflow: clip;
+	}
+
+	::view-transition-old(log-list),
+	::view-transition-new(log-list) {
+		width: 100%;
+		height: 100%;
+		object-fit: none;
+		object-position: top left;
+		animation-duration: 320ms;
+	}
+
+	::view-transition-new(log-detail):only-child {
+		animation: log-detail-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+	}
+
+	::view-transition-old(log-detail):only-child {
+		animation: log-detail-out 200ms var(--ease-out-soft) both;
+	}
+}
+
+@keyframes j1-page-out {
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes j1-page-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}
+
+@keyframes log-detail-in {
+	from {
+		opacity: 0;
+		transform: translateX(24px);
+	}
+}
+
+@keyframes log-detail-out {
+	to {
+		opacity: 0;
+		transform: translateX(24px);
+	}
 }
 
 .hide-scrollbar {
@@ -391,25 +896,6 @@
 
 .hide-scrollbar::-webkit-scrollbar {
 	display: none;
-}
-
-.custom-scrollbar {
-	scrollbar-width: thin;
-	scrollbar-color: hsl(var(--border)) transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-	width: 6px;
-	height: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-	background-color: hsl(var(--border));
-	border-radius: 9999px;
 }
 
 /* ============================================================================
@@ -428,10 +914,18 @@
 	min-height: 100vh;
 }
 
+/* While a ResizeHandle drags: no text selection, col-resize everywhere. */
+html.is-resizing,
+html.is-resizing * {
+	cursor: col-resize !important;
+	user-select: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
-	*::after {
+	*::after,
+	*::backdrop {
 		animation-duration: 0.01ms !important;
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;

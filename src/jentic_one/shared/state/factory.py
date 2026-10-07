@@ -26,8 +26,8 @@ _DEFAULT_REDIS_KEY_PREFIX = "jentic:broker:"
 class BackendKind(StrEnum):
     """Which shared-state implementation to build.
 
-    Defined here as the single source of truth; later PRs (resilience §05)
-    import it from this package rather than defining a second enum.
+    Defined here as the single source of truth; consumers import it from this
+    package rather than defining a second enum.
     """
 
     MEMORY = "memory"

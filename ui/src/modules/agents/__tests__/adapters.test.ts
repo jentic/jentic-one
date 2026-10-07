@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-	agentToEntity,
-	serviceAccountToEntity,
-	toActorStatus,
-	ACTIONS_FOR_STATUS,
-} from '@/modules/agents/api/types';
-import type { AgentResponse, ServiceAccountResponse } from '@/shared/api';
+import { agentToEntity, toActorStatus, ACTIONS_FOR_STATUS } from '@/modules/agents/api/types';
+import type { AgentResponse } from '@/shared/api';
 
 describe('agents adapters', () => {
 	it('maps an AgentResponse into a UI entity, collapsing attribution', () => {
@@ -30,25 +25,6 @@ describe('agents adapters', () => {
 			approvedBy: 'usr_admin',
 			deniedBy: null,
 		});
-	});
-
-	it('maps a ServiceAccountResponse into a UI entity', () => {
-		const res: ServiceAccountResponse = {
-			id: 'sva_1',
-			name: 'svc',
-			description: 'desc',
-			owner_id: 'usr_admin',
-			registered_by: 'usr_admin',
-			approved_by: null,
-			status: 'pending',
-			denial_reason: null,
-			denied_by: null,
-			created_at: '2026-01-01T00:00:00Z',
-			approved_at: null,
-		};
-		const e = serviceAccountToEntity(res);
-		expect(e.status).toBe('pending');
-		expect(e.ownerId).toBe('usr_admin');
 	});
 
 	it('defaults an unknown status to the terminal archived state (defensive)', () => {

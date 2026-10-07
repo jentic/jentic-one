@@ -9,9 +9,9 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
@@ -19,16 +19,18 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
+from jentic_one.shared.jobs.connect_poll_scanner import ConnectPollScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.logging import RequestIDMiddleware
 from jentic_one.shared.metrics import make_metrics_asgi_app
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EventSeverity, EventType, HostOs
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.telemetry.client import TelemetryClient
 from jentic_one.shared.telemetry.instance_id import resolve_instance_id
@@ -38,6 +40,7 @@ from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.errors import request_validation_error_handler
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -87,37 +90,6 @@ SURFACE_MODULES = {
 }
 
 _db_instrumented = False
-_otel_route_guard_installed = False
-
-
-def _install_otel_route_detail_guard() -> None:
-    """Stop OTel FastAPI instrumentation 500ing on partial route matches.
-
-    ``opentelemetry.instrumentation.fastapi._get_route_details`` walks
-    ``app.routes`` and reads ``route.path``. FastAPI now wraps ``include_router``
-    results in an opaque ``_IncludedRouter`` that has no ``path`` (the same quirk
-    handled in ``shared/web/static.py``). Upstream guards the ``Match.FULL``
-    branch with ``try/except AttributeError`` but not the ``Match.PARTIAL`` one,
-    so any request that path-matches an included router without matching a method
-    — a CORS ``OPTIONS`` preflight, a ``405`` — raises ``AttributeError`` and the
-    span-name extraction turns it into a ``500`` (verified on
-    ``opentelemetry-instrumentation-fastapi==0.63b1``). We wrap the function to
-    fall back to the request path. Idempotent; the global guard is process-wide.
-    """
-    global _otel_route_guard_installed
-    if _otel_route_guard_installed:
-        return
-
-    original: Any = otel_fastapi._get_route_details
-
-    def _safe_get_route_details(scope: dict[str, Any]) -> Any:
-        try:
-            return original(scope)
-        except AttributeError:
-            return scope.get("path")
-
-    otel_fastapi._get_route_details = _safe_get_route_details
-    _otel_route_guard_installed = True
 
 
 def attach_http_observability(app: FastAPI) -> None:
@@ -132,7 +104,6 @@ def attach_http_observability(app: FastAPI) -> None:
     `local-prom-app.yaml` overlay therefore sets `prometheus.io/path` to
     "/metrics/" with the trailing slash — keep them in sync.
     """
-    _install_otel_route_detail_guard()
     instrument_inbound_app(app)
 
     metrics_app = make_metrics_asgi_app()
@@ -168,6 +139,7 @@ def _start_worker(
     *,
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
+    execution_authorizer: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
 
@@ -182,7 +154,7 @@ def _start_worker(
     service's config.
 
     ``upstream_executor`` is the broker-side ``UpstreamExecutor`` (the
-    ``PipelineExecutor`` over the shared composed runner, §11 RN-0.3) and
+    ``PipelineExecutor`` over the shared composed runner) and
     ``credential_injector`` is the broker ``CredentialService``; both are built
     by the broker's surface lifespan and stashed on ``app.state`` (so this
     ``shared/`` factory never imports ``broker/``). When the executor is
@@ -191,10 +163,14 @@ def _start_worker(
     response enrichment, single ``executions`` persistence) and resolves
     credentials before the call. Without it the execution handler is not
     registered (a surface with no broker has no upstream calls to run).
+    ``execution_authorizer`` is the broker's run-time re-authorizer: every
+    queued execution is re-checked with the sync route's policy before any
+    credential is resolved (the handler refuses a credential injector without
+    one).
 
     Returns the ``(worker, task)`` pair so the lifespan can **drain** the worker
     (let the in-flight job finish or be reclaimed) before tearing the shared
-    client/runners down — see ``_stop_worker`` (§09 E4.3).
+    client/runners down — see ``_stop_worker``.
     """
     if not ctx.has_db("admin"):
         return None
@@ -211,6 +187,7 @@ def _start_worker(
                 executor=upstream_executor,
                 upstream_timeout_s=ctx.config.broker.upstream_timeout_s,
                 credential_injector=credential_injector,
+                execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
             ),
@@ -304,8 +281,53 @@ async def _stop_catalog_update_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_connect_poll_scanner(
+    ctx: Context,
+    enabled_apps: set[str],
+    *,
+    catalog_auto_importer: CatalogAutoImportProtocol | None = None,
+) -> tuple[ConnectPollScanner, asyncio.Task[None]] | None:
+    """Start the connect-session polling scanner when the control surface runs it.
+
+    Drives the device-flow vendor poll loop server-side so the HTTP
+    ``/status`` surface stays read-only. Control-plane background job:
+    gate on the ``control`` surface being enabled + control-DB reachability
+    (that's where ``connect_sessions`` lives). Broker-only processes with
+    control-DB access for credential resolution do not run this scanner.
+
+    ``catalog_auto_importer`` is threaded into the ``ConnectSessionService``
+    each tick builds so a scanner-driven device-flow finalise
+    (``_finalise_connected`` → ``_maybe_import_catalog``) can enqueue the
+    vendor's OpenAPI import. Without this, the request-scoped importer on
+    ``app.state`` is invisible to the scanner and every device-flow connect
+    silently skips the auto-import.
+    """
+    if "control" not in enabled_apps:
+        return None
+    if not ctx.has_db("control"):
+        return None
+    scanner = ConnectPollScanner(ctx, catalog_auto_importer=catalog_auto_importer)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("connect_poll_scanner_task_started")
+    return scanner, task
+
+
+async def _stop_connect_poll_scanner(
+    handle: tuple[ConnectPollScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the connect-poll scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
-    """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
+    """Gracefully drain then stop the worker (teardown step 2).
 
     Drains first (so the in-flight job finishes or is safely reclaimable) **before**
     the surface lifespan closes the shared ``httpx`` client/runners — otherwise a
@@ -373,12 +395,19 @@ async def _start_telemetry(
                 summary="Instance initialized",
                 created_by=None,
             )
+        # The OS family rides on every boot event (see HostOs) so the
+        # dimension self-heals: a lost POST or a config moved to another
+        # machine is corrected on the next startup, matching how comparable
+        # products (n8n, GitLab, Grafana) report environment facts. Prefer
+        # the install-time value the CLI stamped on the host; in Docker,
+        # runtime detection would report the container's Linux.
         await emit_event_best_effort(
             session,
             type=EventType.INSTANCE_BOOTED,
             severity=EventSeverity.INFO,
             summary="Instance booted",
             created_by=None,
+            tags={HostOs.resolve(cfg.host_os)},
         )
 
     return loop, task, client
@@ -433,7 +462,7 @@ def create_surface_app(
 
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
-    uses it to open/close its shared outbound ``httpx.AsyncClient`` (§04).
+    uses it to open/close its shared outbound ``httpx.AsyncClient``.
 
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
@@ -452,23 +481,37 @@ def create_surface_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        async with extra_lifespan(app) if extra_lifespan else _null_lifespan():
+        # Container-injected lifespans enter after the surface's own
+        # extra_lifespan (so they may read surface state stashed on app.state)
+        # and exit in reverse order before it.
+        async with (
+            extra_lifespan(app) if extra_lifespan else _null_lifespan(),
+            contextlib.AsyncExitStack() as lifespan_stack,
+        ):
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             # Worker starts *inside* the surface lifespan so it can share any
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
-            # extra_lifespan) — §04 / §11 RN-0.3.
+            # extra_lifespan).
             worker_task = _start_worker(
                 ctx,
                 enabled_apps,
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
+                execution_authorizer=getattr(app.state, "broker_execution_authorizer", None),
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                enabled_apps,
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
             try:
                 yield
             finally:
-                # §09 E4.3 drain step 1: signal the admission gate (if any) to
+                # Drain step 1: signal the admission gate (if any) to
                 # report unready + stamp Connection: close, so the LB deregisters
                 # this instance *before* we drain in-flight work and tear down the
                 # worker (step 2) and — in extra_lifespan's exit — the shared
@@ -476,13 +519,17 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                await _stop_connect_poll_scanner(connect_poll_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
                 await ctx.shutdown()
 
-    meta = fastapi_metadata_kwargs()
+    # ``server.public_base_url`` names the control/auth surfaces' origin; a
+    # standalone broker runs on its own, so it keeps the same-origin server.
+    public_base_url = "" if "broker" in enabled_apps else ctx.config.server.public_base_url
+    meta = fastapi_metadata_kwargs(public_base_url)
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
@@ -493,6 +540,24 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — the router reads it via
+        # getattr, so leaving it unset preserves today's 404 exactly. Only the
+        # broker catch-all reads it, so on any other surface the handler can
+        # never fire — say so instead of failing silent.
+        app.state.unregistered_url_handler = container.unregistered_url_handler
+        handler_name = (
+            f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}"
+        )
+        if "broker" in enabled_apps:
+            _logger.info("unregistered_url_handler_installed", handler=handler_name)
+        else:
+            _logger.warning(
+                "unregistered_url_handler_unreachable",
+                handler=handler_name,
+                reason="only the broker catch-all reads this hook and this app has no broker",
+            )
     # Public, schema-hidden agent-discovery documents (the skill set +
     # llms.txt). Mounted on every standalone surface so split deployments
     # (gateway proxying to per-surface backends) serve them too. Registered
@@ -525,6 +590,7 @@ def create_surface_app(
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -550,19 +616,30 @@ def create_combined_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        worker_task = _start_worker(ctx, set(apps))
-        scanner_task = _start_expiry_scanner(ctx, set(apps))
-        catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-        try:
-            yield
-        finally:
-            await _stop_catalog_update_scanner(catalog_scanner_task)
-            await _stop_expiry_scanner(scanner_task)
-            await _stop_worker(worker_task)
-            await _stop_telemetry(telemetry_handle)
-            await ctx.shutdown()
+        # Container-injected lifespans (default empty) — entered after
+        # ctx.startup(), exited in reverse order before ctx.shutdown().
+        async with contextlib.AsyncExitStack() as lifespan_stack:
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
+            worker_task = _start_worker(ctx, set(apps))
+            scanner_task = _start_expiry_scanner(ctx, set(apps))
+            catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+            connect_poll_task = _start_connect_poll_scanner(
+                ctx,
+                set(apps),
+                catalog_auto_importer=getattr(app.state, "catalog_auto_importer", None),
+            )
+            try:
+                yield
+            finally:
+                await _stop_connect_poll_scanner(connect_poll_task)
+                await _stop_catalog_update_scanner(catalog_scanner_task)
+                await _stop_expiry_scanner(scanner_task)
+                await _stop_worker(worker_task)
+                await _stop_telemetry(telemetry_handle)
+                await ctx.shutdown()
 
-    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
+    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads
@@ -572,7 +649,20 @@ def create_combined_app(
     if container.broker is not None:
         root.state.broker = container.broker
         root.state.broker_factory = lambda _runner: container.broker
+    if container.unregistered_url_handler is not None:
+        # Unregistered-URL hook (sync web edge only) — read via getattr in the
+        # broker router, so leaving it unset preserves today's 404 exactly. The
+        # broker never rides the combined app (``__main__`` guards it), so a
+        # handler set here can never fire — warn instead of failing silent.
+        root.state.unregistered_url_handler = container.unregistered_url_handler
+        _logger.warning(
+            "unregistered_url_handler_unreachable",
+            handler=f"{type(container.unregistered_url_handler).__module__}."
+            f"{type(container.unregistered_url_handler).__qualname__}",
+            reason="only the broker catch-all reads this hook and the combined app has no broker",
+        )
     root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(RequestValidationError, request_validation_error_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",

@@ -24,7 +24,7 @@ import (
 // dependencies outside ~ are untouched, so it can't fail to start on an OS/agent
 // update) and scoped to the one thing the sandbox uniquely does — the per-entry
 // distinction inside ~ that DAC cannot express. See
-// docs/security/local-agent/sandbox-exec-plan.md for the full rationale.
+// docs/security/same-host/sandbox-confinement-design.md for the full rationale.
 //
 // Confinement is REQUIRED, not best-effort: when the platform mechanism is
 // unavailable the caller must error closed (refuse the launch) rather than fall
@@ -66,7 +66,7 @@ func AgentUserPrereqs() []Prereq {
 		return []Prereq{lookPathPrereq(
 			"sandbox-exec", "sandbox-exec",
 			"sandbox-exec is not available on this macOS",
-			"sandbox-exec ships with macOS; see docs/security/local-agent/local-agent-isolation.md",
+			"sandbox-exec ships with macOS; see docs/security/same-host/local-agent-isolation.md",
 		)}
 	case "linux":
 		return []Prereq{
@@ -107,9 +107,10 @@ func MissingPrereqs() []Prereq {
 
 // ConfinementAvailable reports whether this machine can run a locked-down agent
 // session, and if not, a short human-readable reason. It is the launch-time gate
-// (see run.go): confinement is REQUIRED, so an unsatisfied prerequisite here means
-// the launch is refused. It shares AgentUserPrereqs with the setup-time gate so
-// the two can never disagree about what this machine can do.
+// (see localagentcmd/run.go): confinement is REQUIRED, so an unsatisfied
+// prerequisite here means the launch is refused. It shares AgentUserPrereqs
+// with the setup-time gate so the two can never disagree about what this
+// machine can do.
 func ConfinementAvailable() (bool, string) {
 	for _, p := range MissingPrereqs() {
 		return false, p.Reason
@@ -221,27 +222,23 @@ func resolveWrapperPath(bin, fallback string) string {
 // ~/.local/bin PATH export), cd's to dir (or the agent's home), and execs the agent
 // binary. agentHome + grantedDirs drive the deny/re-allow set; agentArgs are the
 // operator's `--`-forwarded arguments, appended verbatim (each shell-quoted) to the
-// agent's argv. profile, when non-empty, is exported as JENTIC_PROFILE before the
-// wrapper exec so it carries into the confined session (the agent, and any `jentic`
-// it runs, acts on the operator's checked-out agent profile without a flag). The
-// caller wires os.Stdin/out/err. Callers MUST have checked ConfinementAvailable
-// first — on an unsupported platform confineExec adds no wrapper, so reaching here
-// unconfined is a programming error, not a security posture.
-func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome, profile string, grantedDirs, agentArgs []string) *exec.Cmd {
+// agent's argv. The caller wires os.Stdin/out/err. Callers MUST have checked
+// ConfinementAvailable first — on an unsupported platform confineExec adds no
+// wrapper, so reaching here unconfined is a programming error, not a security
+// posture. (The agent's jentic identity is NOT injected here: `jentic run`
+// exports the active context into the agent home's own XDG store before the
+// launch, so the confined `jentic` resolves it from disk like any other user.)
+func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome string, grantedDirs, agentArgs []string) *exec.Cmd {
 	// Scrub the operator's SSH/GPG agent handles first (see UnsetSensitiveEnvSnippet)
 	// so a compromised agent can't authenticate as the operator over a forwarded
 	// agent socket. Done in the snippet, so it holds regardless of sudoers env_keep.
 	prefix := UnsetSensitiveEnvSnippet()
-	if profile != "" {
-		prefix += "export JENTIC_PROFILE=" + shellQuote(profile) + " && "
-	}
 	// The OUTER shell is deliberately NON-login (agentCmdContextNoLogin → `bash
 	// -c`): it must source no agent-owned rc, so no agent code runs in the window
-	// before the confinement wrapper takes hold. It only exports JENTIC_PROFILE and
-	// execs the wrapper. The wrapper then runs a LOGIN shell (see confineExec), so
-	// the agent's rc — and the PATH export that finds its binary in ~/.local/bin —
-	// is still honoured, but now CONFINED. JENTIC_PROFILE is exported before the
-	// exec so it carries through the wrapper into the confined session.
+	// before the confinement wrapper takes hold. It only execs the wrapper. The
+	// wrapper then runs a LOGIN shell (see confineExec), so the agent's rc — and
+	// the PATH export that finds its binary in ~/.local/bin — is still honoured,
+	// but now CONFINED.
 	inner := prefix + "exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
 	return agentCmdContextNoLogin(ctx, agentUser, inner)
 }
@@ -268,12 +265,13 @@ type SessionDir struct {
 // SessionAccess returns the complete set of directories a confined agent session
 // can reach: the agent's own home and each granted directory (read/write), plus
 // the executable routes on its PATH (read-only). It is the SINGLE source of truth
-// shared by the confinement builders (SandboxProfile on macOS, bwrapArgs on
-// Linux) and any display of "what the agent can see" (`jentic profile view`), so
-// the two can never diverge. Paths are cleaned; the read-only routes are filtered
-// to those that actually exist on this machine, exactly as the launcher computes
-// them. Directories outside a denied human-home root are still reachable via the
-// permissive base and are not enumerated here (they are not session-specific).
+// for the confinement builders (SandboxProfile on macOS, bwrapArgs on Linux);
+// any display of "what the agent can see" must consume it too, so the display
+// and the sandbox can never diverge. Paths are cleaned; the read-only routes are
+// filtered to those that actually exist on this machine, exactly as the launcher
+// computes them. Directories outside a denied human-home root are still reachable
+// via the permissive base and are not enumerated here (they are not
+// session-specific).
 func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	var dirs []SessionDir
 	if agentHome != "" {
@@ -435,7 +433,7 @@ func SandboxProfile(agentHome string, grantedDirs []string) string {
 
 	// Everything the session may reach inside a denied root: the agent's own home
 	// first (always), then each granted directory. Sourced from the shared
-	// SessionAccess so this can't drift from what `jentic profile view` shows.
+	// SessionAccess so this can't drift from what `jentic run --list-grants` shows.
 	reopen := reopenDirs(agentHome, grantedDirs)
 
 	seenMeta := map[string]bool{}
@@ -612,19 +610,62 @@ func bwrapArgs(agentHome string, grantedDirs, cmdArgv []string) []string {
 // namespaces. A var so tests can point the probe at a controlled path.
 var usernsClonePath = "/proc/sys/kernel/unprivileged_userns_clone"
 
+// apparmorUserNSRestrictPath is the Ubuntu 23.10+/24.04 AppArmor knob that gates
+// unprivileged user namespaces INDEPENDENTLY of the legacy clone knob. When it is
+// "1" the kernel refuses unprivileged userns for programs without a matching
+// AppArmor profile — bubblewrap is denied at runtime even though
+// unprivileged_userns_clone may be absent or "1". A var for test injection.
+var apparmorUserNSRestrictPath = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+
+// maxUserNamespacesPath is the hard cap on user namespaces for the calling
+// user/namespace. "0" means unprivileged userns is disabled outright regardless
+// of the other knobs. A var for test injection.
+var maxUserNamespacesPath = "/proc/sys/user/max_user_namespaces"
+
 // unprivilegedUserNSEnabled reports whether the kernel permits unprivileged user
 // namespaces, which bubblewrap needs to build its mount namespace without root.
-// The sysctl is Debian/Ubuntu-specific; when the knob is genuinely ABSENT
-// (mainline kernels, RHEL) unprivileged userns is generally on, so a
-// not-exist error is treated as enabled. Any OTHER read error — the knob exists
-// but is unreadable (a masked /proc, an LSM/AppArmor denial, a hardened
-// container) — is treated as DISABLED: the whole confinement contract is
-// error-closed, so an inconclusive probe must fail closed rather than let
-// ConfinementAvailable claim a boundary it can't confirm.
+//
+// Three knobs are consulted, all fail-closed (M2, review round-3 #6):
+//
+//  1. kernel.unprivileged_userns_clone (Debian/Ubuntu legacy). ABSENT → treated
+//     as enabled (mainline/RHEL kernels don't have it and generally allow
+//     userns); "0" → disabled; unreadable → fail closed.
+//  2. kernel.apparmor_restrict_unprivileged_userns (Ubuntu 23.10+/24.04). "1" →
+//     disabled (AppArmor will deny bwrap without a profile); absent/"0" → no
+//     opinion. This is the knob the legacy check is blind to.
+//  3. user.max_user_namespaces. "0" → disabled outright; anything else / absent
+//     → no opinion.
+//
+// The result is the AND of "not explicitly disabled by any knob": a single knob
+// saying "off" disables it, so an Ubuntu 24.04 box with the AppArmor restriction
+// set is correctly reported unavailable (curated prereq message) instead of
+// reaching a raw bwrap failure.
 func unprivilegedUserNSEnabled() bool {
-	data, err := os.ReadFile(usernsClonePath)
-	if err != nil {
-		return errors.Is(err, os.ErrNotExist) // absent → enabled; unreadable → fail closed
+	// (1) Legacy clone knob: absent → enabled, "0" → disabled, unreadable → closed.
+	if data, err := os.ReadFile(usernsClonePath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false // knob exists but unreadable → fail closed
+		}
+		// absent → fall through; the other knobs decide
+	} else if strings.TrimSpace(string(data)) == "0" {
+		return false
 	}
-	return strings.TrimSpace(string(data)) != "0"
+
+	// (2) AppArmor userns restriction (Ubuntu 23.10+): "1" disables unprivileged
+	// userns for unprofiled programs. Absent/unreadable → no opinion (older
+	// kernels), so don't fail closed on a knob that simply doesn't exist here.
+	if data, err := os.ReadFile(apparmorUserNSRestrictPath); err == nil {
+		if strings.TrimSpace(string(data)) == "1" {
+			return false
+		}
+	}
+
+	// (3) Hard cap: "0" disables userns entirely. Absent/unreadable → no opinion.
+	if data, err := os.ReadFile(maxUserNamespacesPath); err == nil {
+		if strings.TrimSpace(string(data)) == "0" {
+			return false
+		}
+	}
+
+	return true
 }

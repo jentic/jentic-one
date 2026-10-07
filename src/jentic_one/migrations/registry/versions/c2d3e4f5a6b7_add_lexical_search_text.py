@@ -7,8 +7,10 @@ Create Date: 2026-07-01
 Replaces the removed pgvector semantic-search columns with a lexical
 full-text/BM25 search over an ``operations.search_text`` column.
 
-- Drops the legacy ``search_embedding`` columns (and the ``vector`` extension)
-  if they exist, so databases upgraded from the pgvector era are cleaned up.
+- Drops the legacy ``search_embedding`` columns if they exist, so databases
+  upgraded from the pgvector era are cleaned up. The ``vector`` extension is
+  left in place: other tables may still depend on it, and dropping an
+  extension needs its owner's privileges, which the migration role may lack.
 - PostgreSQL: adds ``operations.search_text`` and a GIN expression index over
   ``to_tsvector('english', coalesce(search_text, ''))`` for ``ts_rank_cd``
   ranking via ``websearch_to_tsquery``.
@@ -51,7 +53,6 @@ def upgrade() -> None:
     op.add_column("operations", sa.Column("search_text", sa.Text(), nullable=True))
 
     if dialect == "postgresql":
-        op.execute("DROP EXTENSION IF EXISTS vector")
         op.execute(
             f"CREATE INDEX {_PG_FTS_INDEX} ON operations "
             "USING gin (to_tsvector('english', coalesce(search_text, '')))"

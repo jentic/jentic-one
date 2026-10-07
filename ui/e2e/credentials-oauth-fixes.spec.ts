@@ -54,7 +54,7 @@ async function login(page: Page): Promise<void> {
 	await page.getByLabel('Email').fill('admin@local');
 	await page.getByRole('textbox', { name: 'Password' }).fill('password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
-	await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 }
 
 /** Seed the guided-picker store with a single multi-flow OAuth2 workspace API. */
@@ -81,7 +81,7 @@ async function seedOAuthApi(page: Page): Promise<void> {
 				spec,
 			}),
 		]);
-		// Drop any /apis (etc.) cached from the dashboard render so the picker
+		// Drop any /apis (etc.) cached from the landing render so the picker
 		// refetches against the seeded store.
 		w.__queryClient?.clear();
 	}, OAUTH_SPEC);
@@ -89,12 +89,12 @@ async function seedOAuthApi(page: Page): Promise<void> {
 
 /** Open the create dialog and pick the seeded Acme OAuth API from the picker. */
 async function openFormForAcmeOAuth(page: Page): Promise<void> {
-	await page.goto('/app/credentials');
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await page.goto('/app/agents?credentials=1');
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 	await seedOAuthApi(page);
 
 	await page.getByRole('button', { name: 'Add credential' }).click();
-	await expect(page.getByRole('heading', { name: 'Choose an API' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Add credential' })).toBeVisible();
 
 	// Pick the seeded workspace API (a picker-row button labelled by display name).
 	await page.getByTestId('picker-row').filter({ hasText: 'Acme OAuth' }).first().click();
@@ -131,8 +131,8 @@ test('Issue 3: malformed Token URL blocks submit with no POST /credentials', asy
 	await login(page);
 
 	// Use manual entry so we control every field directly (no spec-seeded URLs).
-	await page.goto('/app/credentials');
-	await expect(page.getByRole('heading', { name: 'Credentials' })).toBeVisible();
+	await page.goto('/app/agents?credentials=1');
+	await expect(page.getByRole('dialog', { name: 'Credentials', exact: true })).toBeVisible();
 	await page.evaluate(() => {
 		const w = window as unknown as {
 			__mswTestHooks?: { resetCredentialsStore: () => void; resetApisStore: () => void };

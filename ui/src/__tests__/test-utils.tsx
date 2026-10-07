@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router';
-import { render, type RenderOptions } from '@testing-library/react';
+import { render, waitFor, type RenderOptions } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 
 interface Options extends Omit<RenderOptions, 'wrapper'> {
@@ -52,13 +52,65 @@ export * from '@testing-library/react';
 export { default as userEvent } from '@testing-library/user-event';
 
 /**
- * Run axe against a rendered container and assert no critical/serious a11y
- * violations. Uses axe-core directly (browser-mode compatible). Feature PRs
- * call this on every page-level test.
+ * Wait until every finite animation and transition touching `root` has
+ * finished. axe reads colours from one frame, so a row still fading in from
+ * opacity 0 (a framer-motion entrance, a sheet sliding in, a tick's colour
+ * transition) reports a colour-contrast failure the settled UI doesn't have.
+ * Call it right before `checkA11y` on a surface that animates. Infinite loops
+ * (spinners, pulses) never end, so they are left out.
  */
-export async function checkA11y(container: Element): Promise<void> {
+export async function settleAnimations(root: Element = document.body): Promise<void> {
+	await waitFor(
+		() => {
+			const moving = document.getAnimations().filter((animation) => {
+				if (animation.playState !== 'running') return false;
+				const target =
+					animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+				if (!target || !root.contains(target)) return false;
+				return animation.effect?.getComputedTiming().endTime !== Infinity;
+			});
+			if (moving.length > 0) {
+				throw new Error(`${moving.length} animation(s) still running under the root`);
+			}
+		},
+		{ timeout: 3000 },
+	);
+}
+
+/**
+ * Run axe against a rendered container and assert no critical/serious violations.
+ *
+ * The caller declares the scope: an overlay spec passes `{ modal: true }` (usually
+ * with `document.body`, since the sheet portals out) and gets the topmost modal
+ * audited. Both directions throw rather than silently audit the other surface.
+ */
+export async function checkA11y(
+	container: Element,
+	options: { modal?: boolean } = {},
+): Promise<void> {
 	const { default: axe } = await import('axe-core');
-	const results = await axe.run(container);
+	// Topmost = last in DOM order: each overlay portals to the end of <body>.
+	// `:not([hidden])` skips a closed `keepMounted` sheet.
+	const modals = container.querySelectorAll<HTMLElement>(
+		'[aria-modal="true"]:not([hidden]), dialog[open]',
+	);
+	if (options.modal && modals.length === 0) {
+		throw new Error(
+			'checkA11y({ modal: true }) found no open modal in the container — ' +
+				'the overlay under test never opened, so nothing was audited.',
+		);
+	}
+	if (!options.modal && modals.length > 0) {
+		throw new Error(
+			`checkA11y found ${modals.length} open modal(s) in a page-level audit. ` +
+				'Pass `{ modal: true }` if the overlay is the surface under test; ' +
+				'otherwise close it and await its removal from the DOM (the exit ' +
+				'transition keeps `aria-modal` in place for ~300ms) before auditing ' +
+				'the page — the backdrop makes contrast results indeterminate.',
+		);
+	}
+	const target = options.modal ? modals[modals.length - 1] : container;
+	const results = await axe.run(target);
 	const critical = results.violations.filter(
 		(v) => v.impact === 'critical' || v.impact === 'serious',
 	);

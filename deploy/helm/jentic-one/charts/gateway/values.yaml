@@ -1,8 +1,32 @@
 image:
-  repository: nginx
+  # The unprivileged variant, not stock `nginx`: stock runs its master process as
+  # root and writes /var/run/nginx.pid, so it cannot satisfy the runAsNonRoot +
+  # readOnlyRootFilesystem posture the rest of the chart uses. This one runs as
+  # uid 101 and keeps its pid in /tmp. The bundled config listens on 8000
+  # (deploy/docker/nginx/parts-gateway.conf), above the privileged range, so no
+  # NET_BIND_SERVICE capability is needed either.
+  repository: nginxinc/nginx-unprivileged
   tag: "1.27-alpine"
 
 replicas: 1
+
+# uid 101 is the unprivileged nginx image's user, not the 10001 the Python
+# surfaces use — the id belongs to the image, so the two do not have to agree.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 101
+  runAsGroup: 101
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
 
 resources:
   requests:

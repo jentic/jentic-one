@@ -25,6 +25,8 @@ from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
 from jentic_one.shared.jobs.protocols import (
     InjectedAuth,
+    QueuedExecutionRequest,
+    QueuedExecutionVerdict,
     UpstreamExecRequest,
     UpstreamExecResult,
 )
@@ -58,9 +60,23 @@ class _StaticInjector:
         api_version: str,
         identity: Any,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Any = None,
         trace_id: str | None = None,
+        request_server_variables: Any = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         return self._injection
+
+
+class _StaticAuthorizer:
+    """Stands in for the broker's run-time re-authorizer with a fixed verdict."""
+
+    def __init__(self, verdict: QueuedExecutionVerdict) -> None:
+        self._verdict = verdict
+
+    async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
+        return self._verdict
 
 
 def _registry(handler: Any) -> JobHandlerRegistry:
@@ -104,6 +120,10 @@ def _payload() -> dict[str, Any]:
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
+        # The resolved operation rides the payload as one dict (plus the
+        # dual-written flat id for pre-dict workers).
+        "operation": {"id": "op_widgets", "path": "/v1/widgets", "method": "GET"},
+        "operation_id": "op_widgets",
     }
 
 
@@ -124,6 +144,7 @@ async def test_async_job_dispatches_through_executor(
     handler = ExecutionHandler(
         executor=executor,
         credential_injector=injector,  # pragma: allowlist secret
+        execution_authorizer=_StaticAuthorizer(QueuedExecutionVerdict(allowed=True)),
     )
     job_id = await _insert_execution_job(admin_db, _payload())
 
@@ -140,6 +161,13 @@ async def test_async_job_dispatches_through_executor(
     assert req.headers["Cookie"] == "sid=csecret"
     # The execution id from the 202 is threaded through for the executions row.
     assert req.metadata["execution_id"] == "exec_int_1"
+    # The operation dict reaches the executor metadata intact so the record
+    # persists the human-readable identity.
+    assert req.metadata["operation"] == {
+        "id": "op_widgets",
+        "path": "/v1/widgets",
+        "method": "GET",
+    }
 
     # The job completed and the upstream body was persisted as the job result.
     async with admin_db.session() as session:
@@ -179,3 +207,38 @@ async def test_async_job_records_failed_on_pipeline_error(
     assert job.status == JobStatus.COMPLETED
     assert result.body["status"] == "failed"
     assert result.body["http_status"] is None
+
+
+async def test_async_job_denied_at_run_time_records_failed_result(
+    admin_db: DatabaseSession, clean_jobs: None
+) -> None:
+    """A run-time authorization denial completes the job with a failed result
+    carrying the problem body; nothing is injected or dispatched upstream."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"hello", content_type=None, duration_ms=1)
+    )
+    problem = {"type": "unauthorized", "title": "Unauthorized", "status": 401}
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=_StaticInjector(
+            InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+        ),
+        execution_authorizer=_StaticAuthorizer(
+            QueuedExecutionVerdict(allowed=False, problem=problem)
+        ),
+    )
+    job_id = await _insert_execution_job(admin_db, _payload())
+
+    worker = WorkerLoop(admin_db, _registry(handler), worker_config=WorkerConfig())
+    await worker._tick()
+
+    assert executor.last_request is None
+    async with admin_db.session() as session:
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()
+        result = (
+            await session.execute(select(JobResult).where(JobResult.job_id == job_id))
+        ).scalar_one()
+    assert job.status == JobStatus.COMPLETED
+    assert result.body["status"] == "failed"
+    assert result.body["http_status"] == 401
+    assert result.body["problem"] == problem

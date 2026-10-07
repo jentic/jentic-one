@@ -1,0 +1,93 @@
+{{- /*
+Release-scoped Ingress, off by default.
+
+One Ingress for the whole release rather than one per subchart: parts mode
+fronts several surfaces behind a single host, and the gateway subchart already
+owns the prefix-to-surface map (deploy/docker/nginx/parts-gateway.conf). So the
+default backend is resolved once — the gateway service when the gateway is
+enabled, otherwise the app service — and paths route to it rather than being
+re-listed here. Restating the nginx map in Helm would create a second copy that
+drifts from the one nginx actually serves. A path entry can name its own
+`service`/`port` when an operator does want to split traffic (e.g. sending the
+broker's data plane to a different host).
+*/ -}}
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.hosts }}
+  {{- fail "ingress.enabled=true requires at least one entry under ingress.hosts (see docs/installation/helm.md)" }}
+{{- end }}
+{{- /*
+Default backend: the gateway when it is enabled (parts mode), else the combined
+app, else the broker. Anything else means no HTTP surface is enabled at all.
+*/ -}}
+{{- $default := "" -}}
+{{- range $name := (list "gateway" "app" "broker") -}}
+  {{- if and (eq $default "") (index $.Values $name) (index $.Values $name "enabled") -}}
+    {{- $default = $name -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq $default "" -}}
+  {{- fail "ingress.enabled=true but no gateway, app, or broker surface is enabled to route to" -}}
+{{- end -}}
+{{- $defaultPort := (index .Values $default "service").port -}}
+{{- /*
+Rate-limit identity behind a proxy: the OAuth limiters key on the socket address
+unless auth.oauth_rate_limit.trusted_proxies lists the proxy, and an Ingress
+always puts a proxy in front. Without it every client shares the controller's IP
+bucket, so one noisy caller rate-limits the whole fleet out of /authorize. The
+chart cannot know the controller's pod CIDR, so it refuses the install rather
+than shipping a fleet-wide bucket. Only the surfaces that serve the auth routes
+are checked (combined `app`, and `admin` in parts mode — the gateway sends /auth
+there). Set it per surface as either
+  <surface>.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES
+or auth.oauth_rate_limit.trusted_proxies in a mounted config file; or terminate
+rate limiting upstream and set ingress.skipTrustedProxiesCheck=true.
+*/ -}}
+{{- if not .Values.ingress.skipTrustedProxiesCheck }}
+{{- range $name := (list "app" "admin") }}
+  {{- $svc := index $.Values $name }}
+  {{- if and $svc $svc.enabled }}
+    {{- $fromEnv := hasKey ($svc.extraEnv | default dict) "JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES" }}
+    {{- $fromFile := dig "contents" "auth" "oauth_rate_limit" "trusted_proxies" "" ($svc.configFile | default dict) }}
+    {{- if and (not $fromEnv) (not $fromFile) }}
+      {{- fail (printf "ingress.enabled=true but %s has no trusted proxies configured, so every client would share the ingress controller's rate-limit bucket. Set %s.extraEnv.JENTIC__AUTH__OAUTH_RATE_LIMIT__TRUSTED_PROXIES to your ingress controller's pod CIDR/IPs (see docs/installation/helm.md), or set ingress.skipTrustedProxiesCheck=true if you rate-limit upstream." $name $name) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: jentic-one
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        {{- /* A rule with no paths is not a valid Ingress, so a host on its own
+        means "route everything to the default backend". */}}
+        paths:
+          {{- range .paths | default (list (dict "path" "/" "pathType" "Prefix")) }}
+          - path: {{ .path | default "/" }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ printf "%s-%s" $.Release.Name (.service | default $default) }}
+                port:
+                  number: {{ .port | default $defaultPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

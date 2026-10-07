@@ -4,68 +4,28 @@
  * rule forbids deep `@/shared/lib/*` imports from `src/modules/**`, so anything
  * a module needs is surfaced here.
  *
- * Kept intentionally narrow — only the access-request repository (the durable
- * approval queue the Dashboard's "Pending requests" card reads) is exposed.
- * Do NOT re-export the rail's React providers/components here; those are app
- * shell concerns, not module-consumable repositories.
+ * Kept intentionally narrow. Do NOT re-export the rail's React
+ * providers/components here; those are app shell concerns, not
+ * module-consumable repositories.
  */
+
+// Permission-rule display primitives — the typed broker-rule shape and the
+// shared humanising summary used by the binding permissions editor/tester.
 export {
-	listAccessRequests,
-	getAccessRequest,
-	decideAccessRequest,
-	decideAllPending,
-	amendAccessRequest,
-	itemTargetLabel,
-	isSpecificResource,
-	isScopeGrant,
-	scopeLabel,
-	summarizeAccessRequest,
-	ACCESS_REQUEST_STATUS_VARIANT,
-	rulesAreEnforceable,
-	parseItemRules,
 	ruleSummary,
-	isUnrestrictedAllow,
-	type AccessRequest,
-	type AccessRequestOwner,
-	type AccessRequestItem,
-	type AccessRequestEvaluation,
-	type AccessRequestEvaluationCheck,
-	type AccessRequestPage,
-	type ListAccessRequestsParams,
-	type ItemDecision,
-	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
 	type PermissionRuleMatchMode,
-} from '@/shared/lib/accessRequests';
-
-// Provisioning-plan classification/shape helpers — used by the fulfilment
-// wizard that decides `--provision` requests (create → amend → approve).
-export {
-	isProvisioningPlan,
-	planApiReference,
-	planAuthType,
-	planIsNoAuth,
-	planSteps,
-	planChains,
-	chainAuthType,
-	chainIsNoAuth,
-	chainItems,
-	findItem,
-	itemKey,
-	FULFILMENT_ITEM_TYPES,
-	type PlanApiReference,
-	type PlanStep,
-	type PlanChain,
-	type PlanShape,
-} from '@/shared/lib/provisioningPlan';
+} from '@/shared/lib/permissionRules';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
-// picker and the actor (agent/service-account) platform-permission picker.
+// picker and the agent platform-permission picker.
 export {
 	type ScopeOrigin,
 	type EnhancedScope,
 	type ScopeGroup,
+	type ScopeVocabulary,
+	VOCABULARY_NOUNS,
 	extractResourceFromScope,
 	formatResourceName,
 	groupScopesByResource,
@@ -73,31 +33,48 @@ export {
 	filterScopeGroups,
 } from '@/shared/lib/scopes';
 
-export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
-
-// Canonical per-severity event icon — the single source of truth shared by
-// Monitor's Events tab and the Dashboard's "Needs attention" card so the same
-// event reads identically in both surfaces.
-export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
+// The shell scrolls `<main>`, not the window: read and drive page scroll here.
+export { shellScroller, shellScrollRoot, shellScrollTop } from '@/shared/lib/shellScroll';
+export {
+	SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR,
+	RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE,
+	retiredServiceAccountLabel,
+	MIGRATED_SERVICE_ACCOUNT_KEY_WARNING,
+	holdsMigratedServiceAccountKey,
+} from '@/shared/lib/retiredActors';
 
 // Narrow, module-consumable slices of the agent-stream data layer (NOT the
-// rail's React components): the HAL-link id parser (so Monitor's Events
-// drill-in and the rail parse links with the same rules) and the
-// provider-optional stream hook (so Monitor's acknowledge mutation can sync
+// rail's React components): the provider-optional stream hook (so Monitor's acknowledge mutation can sync
 // the rail's in-memory copy when the shell's stream is mounted, and no-op in
 // tests/embedded surfaces where it isn't).
-export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+export { useAgentStreamOptional } from '@/shared/lib/agentStream';
+
+// The event → UI adaptation and its wording helpers, so Monitor's Activity
+// feed reads an event exactly the way the rail and toasts do (same kind
+// label, same day separators, same "where does this lead" destination).
+export {
+	adaptEvent,
+	primaryDestinationFor,
+	STREAM_KIND_LABEL,
+	formatStreamDayLabel,
+	formatStreamTime,
+	streamDayKey,
+	isFailureSeverity,
+	isRetiredEventType,
+	EVENTS_FORBIDDEN_COPY,
+} from '@/shared/lib/agentStream';
+export type { StreamEvent, StreamKind, StreamSeverity } from '@/shared/lib/agentStream';
 
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
-// friendly primary line. Originally lived in `modules/discover/api/adapters.ts`
-// (`titleFromApiId`); moved here so Discover, the credential picker, and the
-// toolkit surfaces all share the same rule.
+// friendly primary line — shared so Discover, the credential picker, and the
+// binding surfaces all apply the same rule (implementation: `api-display.ts`).
 export {
-	humanizeDomainSlug,
-	humanizeName,
 	titleFromApiId,
-	toolkitCredDisplayName,
 	apiRefDisplayName,
 	apiIdentityTuple,
+	workspaceApiTitle,
+	vendorIconPropsFor,
+	formatApiVersion,
+	formatOperation,
 } from '@/shared/lib/api-display';

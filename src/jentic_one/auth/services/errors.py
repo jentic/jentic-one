@@ -27,30 +27,55 @@ class ActorNotFoundError(AuthServiceError):
         self.actor_id = actor_id
 
 
-class ToolkitBindingConflictError(AuthServiceError):
-    """Raised when a toolkit binding already exists."""
+class CredentialBindingConflictError(AuthServiceError):
+    """Raised when a direct agent↔credential binding already exists."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' is already bound to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is already bound to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
 
 
-class ToolkitBindingNotFoundError(AuthServiceError):
-    """Raised when a toolkit binding does not exist."""
+class CredentialBindingNotFoundError(AuthServiceError):
+    """Raised when a direct agent↔credential binding does not exist."""
 
-    def __init__(self, agent_id: str, toolkit_id: str) -> None:
-        super().__init__(f"Agent '{agent_id}' has no binding to toolkit '{toolkit_id}'")
+    def __init__(self, agent_id: str, credential_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' has no binding to credential '{credential_id}'")
         self.agent_id = agent_id
-        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
+
+
+class CredentialNotVisibleError(AuthServiceError):
+    """Raised when the bind target credential does not exist or is not visible.
+
+    One error for both cases so the response does not leak whether a
+    credential id exists outside the caller's visibility.
+    """
+
+    def __init__(self, credential_id: str) -> None:
+        super().__init__(f"Credential '{credential_id}' not found")
+        self.credential_id = credential_id
 
 
 class InvalidGrantError(AuthServiceError):
-    """Raised when a token grant is invalid (expired, consumed, or not found)."""
+    """Raised when a token grant is invalid (expired, consumed, or not found).
 
-    def __init__(self, reason: str = "invalid_grant") -> None:
+    ``oauth_error_code`` is the RFC 6749 §5.2 error code the token endpoint's
+    dialect reshaping (``_TokenRoute`` in ``auth/web/routers/oauth.py``) emits
+    as the top-level ``error`` member. It defaults to ``invalid_grant``; raise
+    sites whose condition §5.2 names differently (``invalid_request`` for
+    malformed/missing parameters, ``invalid_client``,
+    ``unsupported_grant_type``) override it. The platform Problem Details
+    handler ignores it (every subclass instance still maps to
+    ``type=invalid_grant`` there).
+    """
+
+    def __init__(
+        self, reason: str = "invalid_grant", *, oauth_error_code: str = "invalid_grant"
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.oauth_error_code = oauth_error_code
 
 
 class UserNotAdmittedError(AuthServiceError):
@@ -107,6 +132,34 @@ class InvalidOwnerError(AuthServiceError):
         self.owner_id = owner_id
 
 
+class UnknownPermissionError(AuthServiceError):
+    """Raised when a permission to grant to an agent is not in the permission catalogue."""
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' is not a known permission")
+        self.permission = permission
+
+
+class PermissionNotGrantableError(AuthServiceError):
+    """Raised when the caller may not grant a permission to an agent.
+
+    A caller without ``org:admin`` may only grant permissions it holds itself (plus
+    the default agent baseline), and never ``org:admin`` or ``agents:write``.
+    """
+
+    def __init__(self, permission: str) -> None:
+        super().__init__(f"Permission '{permission}' cannot be granted by the caller")
+        self.permission = permission
+
+
+class OwnerTransferForbiddenError(AuthServiceError):
+    """Raised when a caller without ``org:admin`` tries to change an agent's owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Changing the owner of agent '{agent_id}' requires org:admin")
+        self.agent_id = agent_id
+
+
 class ClaimTokenInvalidError(AuthServiceError):
     """Raised when an agent-ownership claim token is missing, wrong, or expired."""
 
@@ -127,7 +180,7 @@ class ClaimActorNotAllowedError(AuthServiceError):
     """Raised when a non-user actor tries to claim agent ownership.
 
     ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
-    agent. An authenticated agent/service-account/toolkit presenting the claim
+    agent. An authenticated agent presenting the claim
     token is rejected here rather than being allowed to write a non-user id into
     the users-FK column (which would fail as an unhandled integrity error).
     """
@@ -135,3 +188,96 @@ class ClaimActorNotAllowedError(AuthServiceError):
     def __init__(self, actor_type: str) -> None:
         super().__init__(f"Actor type '{actor_type}' cannot claim agent ownership")
         self.actor_type = actor_type
+
+
+class RateLimitExceededError(AuthServiceError):
+    """Raised when a pre-auth rate limit is exceeded (429)."""
+
+    def __init__(self, retry_after: int = 1) -> None:
+        super().__init__("Too many requests")
+        self.retry_after = retry_after
+
+
+class ConsentAgentNotEligibleError(AuthServiceError):
+    """Raised when the mint-time re-check refuses a consent→agent grant.
+
+    ``OAuthGrantService.create_grant`` locks the agent row (``FOR UPDATE``)
+    and re-checks the consent predicate — exists, ``active``, owned by the
+    consenting user — INSIDE the mint transaction, closing the TOCTOU where
+    an ownership transfer commits between the consent screen's unlocked
+    validation read and the grant write. The consent flow maps this to the
+    same human error page as a failed picker validation (never an OAuth
+    redirect carrying a code, never a 500).
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' is not eligible for a consent grant")
+        self.agent_id = agent_id
+
+
+class OAuthGrantNotFoundError(AuthServiceError):
+    """Raised when an oauth_client_grants row does not exist."""
+
+    def __init__(self, grant_id: str) -> None:
+        super().__init__(f"OAuth grant '{grant_id}' not found")
+        self.grant_id = grant_id
+
+
+class OAuthGrantAccessDeniedError(AuthServiceError):
+    """Raised when a caller may not operate on an OAuth grant.
+
+    Grant ``:revoke`` is owner-or-admin: the consenting user
+    owns the grant; anyone else needs the admin permission. 403, not 404 —
+    the grant id is a ksuid, not a secret.
+
+    ``resource_id`` is the denied resource — a grant id on the ``:revoke``
+    path, an agent id on the per-agent listing path (the listing gate denies
+    before any grant is in hand).
+    """
+
+    def __init__(self, resource_id: str, *, message: str | None = None) -> None:
+        super().__init__(message or f"Not permitted to operate on OAuth grant '{resource_id}'")
+        self.resource_id = resource_id
+
+
+class InvalidClientMetadataError(AuthServiceError):
+    """Raised when anonymous DCR client metadata is rejected (RFC 7591 §3.2.2).
+
+    Maps to 400 ``invalid_client_metadata`` — the RFC 7591 error code for a
+    registration request whose metadata is invalid or unsupported (e.g. a
+    confidential ``token_endpoint_auth_method``, an unsupported grant type, or
+    a malformed redirect URI). The DCR front door only mints public clients.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidRevocationRequestError(AuthServiceError):
+    """Raised when an RFC 7009 revocation request is malformed (G11).
+
+    Maps to 400 ``invalid_request`` (RFC 7009 §2.2.1 via RFC 6749 §5.2) — the
+    ONLY error arm of the revocation endpoint's form-encoded path: a request
+    missing the required ``token`` parameter. Invalid, unknown, foreign, and
+    already-revoked tokens are deliberately NOT errors (200 no-op, no oracle).
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class InvalidIntrospectionRequestError(AuthServiceError):
+    """Raised when an RFC 7662 introspection request body is malformed.
+
+    Maps to 400 ``invalid_request`` (RFC 7662 §2.1: a request missing the
+    required ``token`` parameter answers 400) on both the form-encoded and
+    JSON arms of ``POST /oauth/introspect``. Whether the *token* is invalid,
+    unknown, or expired is never an error — that verdict is the RFC 7662 §2.2
+    ``{"active": false}`` response body.
+    """
+
+    def __init__(self, reason: str = "token is required") -> None:
+        super().__init__(reason)
+        self.reason = reason

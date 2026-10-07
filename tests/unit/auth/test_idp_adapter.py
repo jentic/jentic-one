@@ -113,6 +113,43 @@ def test_map_claims_email_verified_false(adapter: OidcAdapter) -> None:
     assert claims.email_verified is False
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (True, True),
+        ("true", True),
+        ("TRUE", True),
+        (" True ", True),
+        (False, False),
+        ("false", False),
+        ("False", False),
+        ("", False),
+        ("yes", False),
+        ("1", False),
+        (1, False),
+        (None, False),
+    ],
+)
+def test_map_claims_email_verified_is_strict(
+    adapter: OidcAdapter, raw: object, expected: bool
+) -> None:
+    """Only boolean true or the string "true" count as verified; "false" does not."""
+    userinfo: dict[str, object] = {
+        "sub": "ext-user-123",
+        "email": "user@example.com",
+        "email_verified": raw,
+    }
+    assert adapter.map_claims(userinfo).email_verified is expected
+
+
+def test_google_map_claims_string_false_is_unverified(google_config: IdpConfig) -> None:
+    adapter = GoogleOidcAdapter(google_config)
+    claims = adapter.map_claims(
+        {"sub": "g-1", "email": "user@example.com", "email_verified": "false"}
+    )
+    assert claims.email_verified is False
+
+
 # ── Google provider profile (WI-2) ───────────────────────────────────────────
 
 

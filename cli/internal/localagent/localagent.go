@@ -1,10 +1,10 @@
 // Package localagent holds the OS-level primitives behind `jentic run`: the
 // known coding-agent descriptors, and the helpers that probe/grant/launch as a
 // dedicated agent user. It is deliberately free of any cobra/config coupling so
-// the command layer (internal/cmd) stays a thin orchestrator over these.
+// the command layer (internal/cli/*) stays a thin orchestrator over these.
 //
 // The security model this implements is documented in
-// docs/security/local-agent/local-agent-isolation.md: the agent runs as its own
+// docs/security/same-host/local-agent-isolation.md: the agent runs as its own
 // unprivileged Unix user, is granted access to individual working directories via
 // inherited ACLs rather than by widening any human's home, and is launched under a
 // per-session process-confinement profile (confine.go) that trims its view of the
@@ -170,7 +170,7 @@ func UserExists(ctx context.Context, user string) bool {
 // account: a subdirectory of an existing shared parent that the operator can be
 // granted into without touching any human's home. macOS uses /Users/Shared,
 // Linux uses /opt — both are world-traversable roots owned by root, matching the
-// setup recipe in docs/security/local-agent/local-agent-isolation.md.
+// setup recipe in docs/security/same-host/local-agent-isolation.md.
 func DefaultHomeDir(agentUser string) string {
 	if runtime.GOOS == "darwin" {
 		return "/Users/Shared/" + agentUser
@@ -178,14 +178,33 @@ func DefaultHomeDir(agentUser string) string {
 	return "/opt/" + agentUser
 }
 
-// AgentConfigDir returns the agent's own jentic config directory (~/.jentic
-// inside the agent's home). This is the single source of truth for a self-user
-// agent's platform identity — the operator's config only references it (see
-// config.LocalAgent.ConfigDir). It matches the default JENTIC_HOME layout
-// (<home>/.jentic) so the agent, running as itself, finds its identity with no
-// extra configuration.
+// AgentConfigDir returns the agent's own LEGACY jentic config directory
+// (~/.jentic inside the agent's home) — the V1 home of a self-user agent's
+// platform identity, matching the default JENTIC_HOME layout. Current releases
+// export the agent's identity into its home's XDG store instead; this remains
+// only as the legacy entry in AgentIdentityDirs so reset keeps clearing it.
 func AgentConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".jentic")
+}
+
+// AgentIdentityDirs returns every agent-home location that holds the agent's
+// own jentic identity — the registration, tokens, and Ed25519 signing key:
+//
+//   - <home>/.config/jentic       (context export: minimal config + key)
+//   - <home>/.local/state/jentic  (context export: tokens)
+//   - <home>/.jentic              (legacy V1 identity/profiles)
+//
+// `jentic reset` removes all of them even when the home is KEPT, so credential
+// material handed to the agent never survives a teardown in the re-owned home,
+// and a later `jentic setup` that reuses the home can't resurrect a
+// torn-down registration. Every path is a fixed join under the (validated)
+// home, so the list is safe to hand to a privileged rm.
+func AgentIdentityDirs(homeDir string) []string {
+	return []string{
+		filepath.Join(homeDir, ".config", "jentic"),
+		filepath.Join(homeDir, ".local", "state", "jentic"),
+		AgentConfigDir(homeDir),
+	}
 }
 
 // AgentLocalBinDir returns the agent's own ~/.local/bin — the home-local
@@ -219,7 +238,7 @@ type AccountStep struct {
 // CreateAccountCmds returns the ordered, platform-specific steps that create the
 // agent's Unix account, materialise its home, and grant the operator inherited
 // read/write into that home — the privileged half of the setup recipe in
-// docs/security/local-agent/local-agent-isolation.md. It does NOT touch the
+// docs/security/same-host/local-agent-isolation.md. It does NOT touch the
 // operator's own home: in-home confidentiality against the agent is enforced per
 // session by the process-confinement layer (see confine.go), not by locking ~.
 //
@@ -228,6 +247,10 @@ type AccountStep struct {
 // the directory; the operator ACL is an inherited `chmod +a` allow. Linux:
 // `useradd -m` creates the home in one step, then two `setfacl` calls lay down
 // the operator's access ACL and a matching default ACL for future contents.
+//
+// Note that sysadminctl can REFUSE the add yet still exit 0 (e.g. "User with
+// full name '…' already exists"), so callers must verify the account actually
+// exists afterwards (UserExists) rather than trusting the step's exit code.
 func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 	if runtime.GOOS == "darwin" {
 		return []AccountStep{
@@ -235,7 +258,7 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 				What: "create the agent account",
 				//nolint:gosec // operator/agentUser/homeDir are config-derived account names and a resolved path.
 				Cmd: exec.Command("sudo", "sysadminctl", "-addUser", agentUser,
-					"-fullName", operator+" Local Agent", "-home", homeDir, "-password", "-"),
+					"-fullName", AccountFullName(operator, agentUser), "-home", homeDir, "-password", "-"),
 			},
 			{
 				What: "create the agent's home directory",
@@ -267,6 +290,18 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 	}
 }
 
+// AccountFullName is the display (full) name recorded for the agent account on
+// macOS. It MUST be unique per account name, not merely per operator: macOS Open
+// Directory refuses a duplicate full name, so a constant "<operator> Local Agent"
+// made every SECOND agent account for the same operator (any custom name) collide
+// with the first's record — and sysadminctl reports that refusal on stderr while
+// still exiting 0, so the collision surfaced only as a cascade of "unknown user"
+// failures much later. Embedding the account name (which the OS already
+// guarantees unique) makes the full name collision-free by construction.
+func AccountFullName(operator, agentUser string) string {
+	return agentUser + " (jentic agent of " + operator + ")"
+}
+
 // GrantOperatorHomeCmd gives the operator RECURSIVE, inherited read/write on the
 // agent's home, so the operator can seed config, write the agent's jentic identity
 // (mkdir <home>/.jentic) before handing it over, AND later read the agent's own
@@ -289,12 +324,63 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 // widens access to the correct set. Runs as root.
 func GrantOperatorHomeCmd(operator, homeDir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "find", homeDir, "!", "-type", "l", //nolint:gosec // operator is the current login user; homeDir is a resolved path.
-			"-exec", "chmod", "+a#", "0", "user:"+operator+" allow "+macLeafACE, "{}", "+")
+		args := append([]string{"find", homeDir}, aclWalkFilter...)
+		args = append(args, "-exec", "chmod", "+a#", "0", "user:"+operator+" allow "+macLeafACE, "{}", "+")
+		return exec.Command("sudo", args...) //nolint:gosec // operator is the current login user; homeDir is a resolved path.
 	}
-	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
-		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
-	return exec.Command("sudo", "sh", "-c", setfacl) //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
+	return exec.Command("sudo", "sh", "-c", linuxACLGrantScript(operator, homeDir)) //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
+}
+
+// aclWalkFilter is the find(1) predicate every privileged recursive ACL grant
+// walks with: never a symlink (chmod/setfacl would act on its target), and
+// never a non-directory with more than one hard link. The trees these grants
+// walk are writable by the agent, which could hard-link a file from elsewhere
+// on the same filesystem into them; stamping an ACL on that inode would grant
+// access to the original file too. Directories cannot be hard-linked by an
+// unprivileged user, so they are always visited. find does not follow
+// symlinks (-P is the default), including a symlinked starting point.
+var aclWalkFilter = []string{"!", "-type", "l", "(", "-type", "d", "-o", "-links", "1", ")"}
+
+// chownWalkFilter is aclWalkFilter for recursive chowns, which DO visit
+// symlinks: `chown -h` re-owns the link itself, never its target. Multiply
+// hard-linked non-directories are skipped for the same reason as above — a
+// chown of that inode would re-own the original file wherever it lives.
+var chownWalkFilter = []string{"(", "-type", "d", "-o", "-links", "1", ")"}
+
+// shellFindFilter renders a find predicate for interpolation into a sh -c
+// script (the parentheses and ! need escaping from the shell).
+func shellFindFilter(filter []string) string {
+	out := make([]string, len(filter))
+	for i, tok := range filter {
+		out[i] = shellQuote(tok)
+	}
+	return strings.Join(out, " ")
+}
+
+// linuxACLGrantScript is the Linux form of a recursive, inherited rwX grant
+// for user on dir: an access ACL on every entry aclWalkFilter admits plus a
+// default ACL on every directory, so later-created files inherit it. It is
+// the find-driven equivalent of `setfacl -R -m … && setfacl -R -d -m …`,
+// which would follow hard links out of the tree.
+func linuxACLGrantScript(user, dir string) string {
+	entry := "u:" + shellQuote(user) + ":rwX"
+	return "find " + shellQuote(dir) + " " + shellFindFilter(aclWalkFilter) +
+		" -exec setfacl -m " + entry + " {} +" +
+		" && find " + shellQuote(dir) + " -type d -exec setfacl -d -m " + entry + " {} +"
+}
+
+// recursiveChownCmd re-owns dir's tree to owner without following symlinks
+// (-h, find's default -P walk) and without touching multiply hard-linked
+// non-directories (chownWalkFilter). force adds -f for callers that expect
+// unchangeable entries (macOS SIP/TCC template files). Runs as root.
+func recursiveChownCmd(owner, dir string, force bool) *exec.Cmd {
+	flags := "-h"
+	if force {
+		flags = "-fh"
+	}
+	args := append([]string{"find", dir}, chownWalkFilter...)
+	args = append(args, "-exec", "chown", flags, owner, "{}", "+")
+	return exec.Command("sudo", args...) //nolint:gosec // owner is a config account name; dir is a resolved path.
 }
 
 // BinaryStatus is the outcome of probing whether an agent's binary is runnable
@@ -311,16 +397,20 @@ const (
 	BinaryMissing
 )
 
-// ProbeBinary checks whether desc.Binary is runnable as the agent user, in a
-// login shell so the probe sees exactly what the launch will. It distinguishes
-// on-PATH, found-off-PATH, and missing so the caller can fix vs. reinstall.
+// ProbeBinary checks whether desc.Binary is runnable as the agent user. The
+// probe shell reads none of the agent's startup files (see agentBashArgs), so
+// "on PATH" means on the fixed system/shared PATH; a binary in the agent's own
+// ~/.local/bin is reported as found-off-PATH via desc.ProbePaths, and the
+// caller then (idempotently) ensures the profile export the confined launch
+// relies on. It distinguishes on-PATH, found-off-PATH, and missing so the
+// caller can fix vs. reinstall.
 func ProbeBinary(ctx context.Context, agentUser string, desc Descriptor) BinaryStatus {
 	if runAsAgent(ctx, agentUser, "command -v "+shellQuote(desc.Binary)) == nil {
 		return BinaryOnPath
 	}
 	for _, p := range desc.ProbePaths {
-		// A leading "~" is expanded by the agent's login shell, so it resolves
-		// to the agent's home — quote only the non-tilde remainder.
+		// A leading "~" is expanded by the agent's shell (HOME is the agent's
+		// home under `sudo -H`) — quote only the non-tilde remainder.
 		if runAsAgent(ctx, agentUser, "test -x "+quoteProbePath(p)) == nil {
 			return BinaryFoundOffPath
 		}
@@ -473,14 +563,16 @@ const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," 
 // target, which find stamps directly when it visits it), so skipping links is both
 // correct and quiet. (macOS chmod also refuses -R and -h together, ruling out the
 // obvious alternative.)
+//
+// Both forms walk with aclWalkFilter: the leaf is agent-writable once granted,
+// so a re-grant must not follow a hard link the agent placed in it.
 func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return sudoC("find", dir, "!", "-type", "l",
-			"-exec", "chmod", "+a#", "0", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
+		args := append([]string{"find", dir}, aclWalkFilter...)
+		args = append(args, "-exec", "chmod", "+a#", "0", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
+		return sudoC(args...)
 	}
-	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
-		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
-	return sudoC("sh", "-c", script)
+	return sudoC("sh", "-c", linuxACLGrantScript(agentUser, dir))
 }
 
 // LeafRevokeCmd removes the agent's rwx-leaf allow from dir (and its subtree),
@@ -557,16 +649,18 @@ func aclUserNeedle(agentUser string) string {
 // (no-dereference) is a security boundary, not a nicety: the tree is agent-owned,
 // so the agent could plant a symlink to a file OUTSIDE it (e.g. /etc/passwd) and a
 // dereferencing recursive chown would re-own that target to the operator. With
-// `-h` chown acts on the link itself, never its target. Runs as root.
+// `-h` chown acts on the link itself, never its target. For the same reason
+// the walk skips non-directories with more than one hard link (see
+// chownWalkFilter). Runs as root.
 func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-Rfh", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
+	return recursiveChownCmd(operator, homeDir, true)
 }
 
 // ReclaimAgentHomeCmd (re-)establishes the agent as the owner of its whole home
 // tree. It is run when setting up the agent account, and matters most when the
 // home ALREADY EXISTS: a prior `jentic reset` that kept the home re-owned it to
 // the operator (ReownHomeCmd), and `createhomedir` only creates missing files —
-// it never reclaims ownership of existing content. Without this, a re-bootstrap
+// it never reclaims ownership of existing content. Without this, a re-run of setup
 // over that home leaves .claude/.aws/etc. operator-owned, so the agent can read
 // but not WRITE them (fresh-config screens, provider token-cache failures,
 // EACCES transcript writes). It mirrors ReownHomeCmd's `-Rf`: a macOS home carries
@@ -576,9 +670,10 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 // Linux, so this doesn't cost the operator access. The `-h` (no-dereference)
 // matches ReownHomeCmd: an existing agent-owned home can contain agent-planted
 // symlinks, and a dereferencing recursive chown would re-own their targets outside
-// the tree. Runs as root.
+// the tree; multiply hard-linked non-directories are skipped likewise
+// (chownWalkFilter). Runs as root.
 func ReclaimAgentHomeCmd(agentUser, homeDir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-Rfh", agentUser, homeDir) //nolint:gosec // agentUser is a config account name; homeDir is a resolved path.
+	return recursiveChownCmd(agentUser, homeDir, true)
 }
 
 // ChownToAgentCmd gives the agent ownership of dir (recursively). It is used after
@@ -587,9 +682,10 @@ func ReclaimAgentHomeCmd(agentUser, homeDir string) *exec.Cmd {
 // and tokens must be readable by the agent when it later runs as itself, so we
 // hand the whole config dir to the agent. The `-h` (no-dereference) keeps the
 // recursive chown from following a symlink out of the config dir and re-owning its
-// target — the same boundary ReownHomeCmd/ReclaimAgentHomeCmd hold. Runs as root.
+// target, and multiply hard-linked files are skipped — the same boundary
+// ReownHomeCmd/ReclaimAgentHomeCmd hold. Runs as root.
 func ChownToAgentCmd(agentUser, dir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-Rh", agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path under the agent's home.
+	return recursiveChownCmd(agentUser, dir, false)
 }
 
 // DeleteHomeCmd permanently removes the agent's home tree. `jentic reset` runs it
@@ -600,15 +696,22 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
 }
 
-// RemoveAgentIdentityCmd permanently removes the agent's own jentic config dir
-// (its ~/.jentic — the reference-model home of the agent's platform identity: the
-// registration, tokens, and signing key). `jentic reset` runs it even when the
-// agent's home is KEPT, so a later `jentic bootstrap` that reuses the same home
-// can't resurrect a torn-down (now-archived) agent registration from a stale
-// ~/.jentic. It is a no-op when the dir is absent. Runs as root because the dir is
-// owned by the agent account (and is settled before the home re-own/delete step).
-func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
-	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
+// RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
+// dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
+// legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
+// runs it even when the agent's home is KEPT, so a later `jentic setup`
+// that reuses the same home can't resurrect a torn-down (now-archived) agent
+// registration, and no credential material outlives the account in the
+// re-owned home. `rm -f` makes absent dirs a no-op. Runs as root because the
+// dirs are owned by the agent account (and are settled before the home
+// re-own/delete step). Returns nil when there is nothing to remove. `--` ends
+// option parsing so a path can never be mistaken for an rm flag.
+func RemoveAgentIdentityCmd(dirs []string) *exec.Cmd {
+	if len(dirs) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-rf", "--"}, dirs...)
+	return exec.Command("sudo", args...) //nolint:gosec // dirs are fixed joins under the validated, config-recorded agent home.
 }
 
 // RemoveAgentProfileCmd deletes a single profile directory (key, tokens, metadata)
@@ -646,7 +749,7 @@ func SudoersRule(operator, agentUser string) string {
 
 // InstallSudoersCmd adds operator's passwordless-launch rule for agentUser to the
 // shared /etc/sudoers.d/jentic-agent drop-in. It is OPTIONAL and gated on explicit
-// operator consent (bootstrap's passwordless prompt): without it, every `jentic
+// operator consent (setup's passwordless prompt): without it, every `jentic
 // run` prompts for the operator's password (cached per-terminal ~5 min); with it,
 // the operator can become the agent user (to launch it) with no prompt.
 //
@@ -656,14 +759,23 @@ func SudoersRule(operator, agentUser string) string {
 // validation passes — so a bad edit can never lock the operator out of sudo. Runs
 // as root. Mirrors RemoveSudoersCmd, the teardown that `jentic reset` runs.
 func InstallSudoersCmd(operator, agentUser string) *exec.Cmd {
-	rule := shellQuote(SudoersRule(operator, agentUser))
+	return installSudoersRuleCmd(SudoersRule(operator, agentUser))
+}
+
+// installSudoersRuleCmd is the shared idempotent, visudo-validated sudoers
+// edit behind InstallSudoersCmd (launch-shell rule) and InstallSudoersRuleCmd
+// (argv-pinned MCP rule): build the new content in a temp file, add the exact
+// rule line only if absent, validate with `visudo -cf` BEFORE installing, and
+// only replace the 0440 drop-in when validation passes.
+func installSudoersRuleCmd(sudoersRule string) *exec.Cmd {
+	rule := shellQuote(sudoersRule)
 	f := shellQuote(sudoersPath)
 	script := `f=` + f + `; tmp="$(mktemp)"; ` +
 		`[ -f "$f" ] && cat "$f" > "$tmp"; ` +
 		`grep -qxF ` + rule + ` "$tmp" 2>/dev/null || echo ` + rule + ` >> "$tmp"; ` +
 		`if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +
 		`rm -f "$tmp"`
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // operator/agentUser are shell-quoted; the script edits a fixed sudoers path via visudo validation.
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // the rule is built from validated inputs and shell-quoted; the script edits a fixed sudoers path via visudo validation.
 }
 
 // RemoveSudoersCmd drops the agent user's passwordless-launch lines from the
@@ -717,39 +829,78 @@ func IsUnderHome(home, dir string) bool {
 	return dir == home || strings.HasPrefix(dir, home+string(filepath.Separator))
 }
 
-// agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
-// bash. Shared by every agent invocation (probe, grant, and the confined launch).
+// agentBashArgs builds the sudo argv that runs snippet as agentUser in a
+// NON-login, non-interactive bash that reads no startup files (`--noprofile
+// --norc`). Shared by every unconfined agent invocation (preflight, probes,
+// PATH fixes, and the install route); the confined launch has its own builder.
 //
-// We use `sudo -u <user> -H /bin/bash -lc` rather than `sudo -i`: `-i`
+// The agent's rc/profile files are agent-writable, so sourcing them here would
+// run agent-controlled code outside the confinement wrapper. They are only ever
+// sourced by the login shell confineExec starts INSIDE the wrapper. Because no
+// profile is read, the snippet runs with a fixed system PATH (agentProbePATH)
+// instead of whatever the agent's profile exports; ProbeBinary accounts for the
+// one directory our own profile export adds (~/.local/bin) via ProbePaths.
+//
+// We use `sudo -u <user> -H /bin/bash …` rather than `sudo -i`: `-i`
 // re-serializes the command through the login shell (mangling any
 // multi-token/multi-line snippet), while plain sudo passes argv straight
-// through. `-H` points HOME at the agent's home and `bash -l` still sources the
-// agent's login profiles (so a PATH export we added there is honoured). The
-// shell is named by its ABSOLUTE path (agentLaunchShell): sudo resolves a bare
-// command name against ITS environment's PATH, which is empty on the launch
-// path (launchEnv carries no PATH) and not guaranteed by sudoers `secure_path`
-// (macOS's default sudoers sets none) — a bare `bash` fails there with
-// "sudo: bash: command not found". The absolute path needs no resolution and is
-// the exact command the sudoers NOPASSWD rule is scoped to.
+// through. `-H` points HOME at the agent's home. The shell is named by its
+// ABSOLUTE path (agentLaunchShell): sudo resolves a bare command name against
+// ITS environment's PATH, which is empty on the launch path (launchEnv carries
+// no PATH) and not guaranteed by sudoers `secure_path` (macOS's default
+// sudoers sets none) — a bare `bash` fails there with "sudo: bash: command not
+// found". The absolute path needs no resolution and is the exact command the
+// sudoers NOPASSWD rule is scoped to (the rule does not pin arguments).
 func agentBashArgs(agentUser, snippet string) []string {
-	return []string{"-u", agentUser, "-H", agentLaunchShell, "-lc", snippet}
+	return []string{
+		"-u", agentUser, "-H", agentLaunchShell, "--noprofile", "--norc", "-c",
+		"export PATH=" + shellQuote(agentProbePATH()) + "; " + snippet,
+	}
 }
 
-// agentCmd builds `sudo -u <user> -H bash -lc <snippet>` with the working
+// agentSystemPATH is the fixed PATH unconfined agent commands run with: the
+// standard system binary directories every account's login PATH starts from.
+const agentSystemPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// agentProbePATH is agentSystemPATH plus the world-traversable operator tool
+// dirs (SharedBinPaths) that `jentic run` adds to the agent's profile right
+// after provisioning — so a binary the agent reaches through them still probes
+// as on-PATH, matching what the confined login shell will resolve.
+func agentProbePATH() string {
+	return strings.Join(append([]string{agentSystemPATH}, SharedBinPaths(OperatorHome())...), ":")
+}
+
+// agentCmd builds `sudo -u <user> -H bash --noprofile --norc -c <snippet>` with the working
 // directory pinned to "/". Pinning is essential: the parent process's cwd is
 // typically inside the operator's now-700 home, which the agent user cannot
 // read — inheriting it makes bash spew `getcwd: Permission denied` before the
 // snippet even runs. "/" is traversable by everyone.
+//
+// The environment is the curated launchEnv allowlist, NOT the operator's full
+// environment — the same env the confined launch hands to sudo. This is what
+// keeps the binary PROBE truthful: sudo's env_reset preserves the caller's
+// PATH unless sudoers sets secure_path (macOS's default sudoers sets none), so
+// an inherited environment leaks the OPERATOR's PATH into the agent's shell —
+// `command -v <binary>` then resolves the operator's copy under the operator's
+// (agent-unreachable) home, the provisioning flow is skipped as "already
+// installed", and the launch (which does use the curated env) dies with
+// `exec: <binary>: not found`. Probing with the launch's own environment makes
+// the probe answer the question the launch will actually ask. It also stops
+// operator-exported secrets from riding into agent-side commands.
 func agentCmd(agentUser, snippet string) *exec.Cmd {
 	cmd := exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted / a fixed literal.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
-// agentCmdContext is agentCmd with a cancellation context (for the launch).
+// agentCmdContext is agentCmd with a cancellation context. It carries the same
+// curated launchEnv environment — see agentCmd for why the probe/launch envs
+// must match.
 func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
@@ -852,7 +1003,7 @@ done`
 // under the operator's 700 home and are therefore unreachable by the agent no
 // matter how they are referenced (a symlink resolves with the AGENT's
 // credentials and dangles with EACCES at the home boundary). Those home-local
-// dirs are deliberately NOT shared; see docs/security/local-agent/
+// dirs are deliberately NOT shared; see docs/security/same-host/
 // local-agent-isolation.md ("Sharing the operator's installed CLI tools").
 //
 // /usr/bin, /bin, /usr/sbin, /sbin, and /usr/local/bin are already on the
@@ -923,10 +1074,10 @@ func OperatorBinaryPath(ctx context.Context, binary string) string {
 
 // LookupHomeDir resolves the agent account's home directory from the OS account
 // database (os/user), returning an error if the account does not exist. This is
-// the authoritative home — it replaces the old `$(eval echo ~<user>)` shell
-// expansion, which spliced the account name into a command line where a crafted
-// name could have escaped into arbitrary shell. Resolving in Go means the name is
-// never interpreted by a shell at all.
+// the authoritative home. Resolving in Go means the account name is never
+// interpreted by a shell — a shell expansion like `$(eval echo ~<user>)` would
+// splice the name into a command line where a crafted name could escape into
+// arbitrary shell.
 func LookupHomeDir(agentUser string) (string, error) {
 	u, err := user.Lookup(agentUser)
 	if err != nil {
@@ -965,21 +1116,132 @@ func VerifyManagedHome(agentUser, recordedHome string) error {
 	return nil
 }
 
+// HomeClaimedBy returns the name of an existing OS account, OTHER than agentUser,
+// whose recorded home directory is exactly homeDir — or "" when no other account
+// claims it. It is the guard in front of CREATING an account: the account-setup
+// form prefixes the home from the DEFAULT name, so an operator who edits the name
+// but not the home (or hand-edits config) can point a brand-new account at an
+// EXISTING agent account's live home — and the create path (unlike reuse, which
+// goes through VerifyManagedHome) would then stamp operator ACLs over that home
+// and chown it wholesale to the new account. Refusing when another account claims
+// the home closes that.
+//
+// Enumeration shells to the platform account database (`dscl . -list /Users
+// NFSHomeDirectory` on macOS, `getent passwd` on Linux). It is best-effort in the
+// safe direction for a pure lookup: an enumeration failure returns "" (no claim
+// found) rather than blocking setup, because the post-create UserExists
+// verification still backstops a create that the OS refused.
+func HomeClaimedBy(ctx context.Context, agentUser, homeDir string) string {
+	target := filepath.Clean(homeDir)
+	for name, home := range accountHomes(ctx) {
+		if name != agentUser && filepath.Clean(home) == target {
+			return name
+		}
+	}
+	return ""
+}
+
+// accountHomes enumerates the OS account database as a name→home map, returning
+// nil on any failure (see HomeClaimedBy for why that is the safe direction).
+func accountHomes(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	if runtime.GOOS == "darwin" {
+		data, err := exec.CommandContext(ctx, "dscl", ".", "-list", "/Users", "NFSHomeDirectory").Output()
+		if err != nil {
+			return nil
+		}
+		// Each line is "<name><spaces><home>"; the home may itself contain
+		// spaces, so split off the FIRST field as the name and rejoin the rest
+		// as the home. This is robust to variable dscl column spacing and to a
+		// name that happens to be a prefix of its home path (a plain TrimPrefix
+		// would mangle those).
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			out[fields[0]] = strings.Join(fields[1:], " ")
+		}
+		return out
+	}
+	data, err := exec.CommandContext(ctx, "getent", "passwd").Output()
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) >= 6 && parts[0] != "" {
+			out[parts[0]] = parts[5]
+		}
+	}
+	return out
+}
+
 // CopyBinaryCmd copies the operator's binary at src into the agent user's
-// ~/.local/bin and chowns it to the agent. It runs as root (sudo sh -c) so it
-// can write into the agent's home and change ownership in one step. agentHome is
-// resolved by the caller in Go (LookupHomeDir) — never via shell expansion of the
-// account name — so the name can't reach a shell as anything but a quoted literal.
+// ~/.local/bin. Only the READ of src is privileged (it usually sits under the
+// operator's 0700 home): root opens it as the stdin of a shell running AS THE AGENT,
+// which creates the destination and renames a fresh temp file over it. Every
+// path the write touches is agent-owned, so it runs with the agent's own
+// permissions — an existing symlink (or a symlinked ~/.local / ~/.local/bin)
+// can't redirect a privileged write, and the final rename replaces a link
+// rather than writing through it. The result is owned by the agent, so no
+// chown is needed. agentHome is resolved by the caller in Go (LookupHomeDir)
+// — never via shell expansion of the account name — so the name can't reach a
+// shell as anything but a quoted literal.
+//
+// src is attached with a shell redirection rather than piped from cat: if root
+// cannot open it the agent side never runs and the command fails, instead of
+// the pipeline's status (the writer's) reporting success for an empty file.
 func CopyBinaryCmd(agentUser, agentHome, src, binary string) *exec.Cmd {
-	dest := shellQuote(agentHome + "/.local/bin")
-	binName := shellQuote(binary)
-	script := "mkdir -p " + dest + " && cp " + shellQuote(src) + " " + dest + "/" + binName +
-		" && chown -R " + shellQuote(agentUser) + ": " + dest + "/" + binName
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary/agentHome are config/descriptor-derived and Go-resolved, shell-quoted.
+	script := copyBinaryScript(asAgentPrefix(agentUser), agentHome, src, binary)
+	cmd := exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary/agentHome are config/descriptor-derived and Go-resolved, shell-quoted.
+	// The agent-side shell inherits the working directory; the operator's cwd
+	// is typically unreadable to the agent (see agentCmd), so pin it to "/".
+	cmd.Dir = "/"
+	return cmd
+}
+
+// copyBinaryScript is CopyBinaryCmd's root-side script; asAgent is the
+// command prefix that switches to the agent (asAgentPrefix), which tests
+// leave empty to run the real script unprivileged.
+func copyBinaryScript(asAgent, agentHome, src, binary string) string {
+	return fixedPATHPrefix + asAgent + shellQuote(agentLaunchShell) + " --noprofile --norc -c " +
+		shellQuote(agentInstallFromStdinScript(AgentLocalBinDir(agentHome), binary)) + " < " + shellQuote(src)
+}
+
+// asAgentPrefix is the root-side command prefix that runs the rest of the
+// command line as agentUser (root needs no password for it).
+func asAgentPrefix(agentUser string) string {
+	return "sudo -u " + shellQuote(agentUser) + " -H "
+}
+
+// fixedPATHPrefix pins PATH to the system dirs for both halves of the
+// privileged copy pipelines (CopyBinaryCmd / CopyConfigCmd), so the helpers
+// they call (sudo, mkdir, mktemp, tar, …) never resolve through whatever PATH
+// the invoking environment carried (sudo keeps the caller's PATH when sudoers
+// sets no secure_path, as on macOS).
+const fixedPATHPrefix = "PATH=" + agentSystemPATH + "; export PATH; "
+
+// agentInstallFromStdinScript is the agent-side half of CopyBinaryCmd: create
+// dir, write stdin to a new temp file in it, mark it executable, and rename it
+// onto dir/binary. mktemp creates the temp file exclusively (never an existing
+// path). A symlink already at the destination is removed first — mv(1)
+// resolves a destination link to a DIRECTORY and would move the file into it —
+// and a real directory there is an error rather than a silent move-into.
+func agentInstallFromStdinScript(dir, binary string) string {
+	d := shellQuote(dir)
+	dest := shellQuote(dir + "/" + binary)
+	return fixedPATHPrefix + `set -e; umask 022; mkdir -p ` + d + `; ` +
+		`if [ -L ` + dest + ` ]; then rm -f ` + dest + `; ` +
+		`elif [ -d ` + dest + ` ]; then echo ` + dest + `": is a directory" >&2; exit 1; fi; ` +
+		`t="$(mktemp ` + shellQuote(dir+"/."+binary+".XXXXXX") + `)"; ` +
+		`trap 'rm -f "$t"' EXIT; ` +
+		`cat > "$t"; chmod 0755 "$t"; mv -f "$t" ` + dest + `; trap - EXIT`
 }
 
 // InstallBinaryCmd runs an agent's documented fresh-install command as the
-// agent user in a login shell, so the toolchain lands in the agent's home.
+// agent user (no startup files, system PATH), so the toolchain lands in the
+// agent's home.
 func InstallBinaryCmd(agentUser, installCmd string) *exec.Cmd {
 	return agentCmd(agentUser, installCmd)
 }
@@ -1044,33 +1306,60 @@ func SafeSeedSources(operatorHome string, srcs []string) (safe, skipped []string
 
 // CopyConfigCmd copies the operator's agent config paths (already expanded to
 // absolute paths under the operator's home) into the agent user's home at the
-// same tilde-relative location, then chowns them to the agent. It runs as root
-// so it can read out of the operator's 700 home and write into the agent's.
+// same tilde-relative location. Only the READ is privileged (it reaches into
+// the operator's 700 home): root archives each source with tar and streams it
+// into a tar running AS THE AGENT, which extracts it into the agent's home.
 //
-// Symlink safety: it copies with `cp -RP` (never dereference a symlink — copy it
-// as a link) and chowns with `chown -Rh` (re-own the link itself, not its
-// target). A symlink nested inside a copied tree therefore lands in the agent's
-// home as a symlink owned by the agent; it can never cause root to copy the
-// contents of, or re-own, whatever the link points at (e.g. /etc/shadow). The
-// top-level source is already constrained to the operator's home by
-// SafeSeedSources; this closes the same hole for links buried in the tree.
+// Symlink safety: tar archives a symlink as a link (it never dereferences
+// without -h), so a link nested in a copied tree lands in the agent's home as
+// a link and can never make root copy the contents of whatever it points at
+// (e.g. /etc/shadow). The top-level source is already constrained to the
+// operator's home by SafeSeedSources. Because the WRITE side runs with the
+// agent's own permissions, a symlink or hard link the agent already placed at
+// (or above) a destination can't redirect a privileged write, and the
+// extracted files are agent-owned without a recursive root chown.
 //
 // CAUTION: these files may carry provider-specific secrets (e.g. an API key the
 // operator saved in the agent's own config). This deliberately hands the agent
 // a copy of those; it is the operator's settings the agent is meant to inherit.
+//
+// The root side is bash with pipefail, not sh: a pipeline's status is
+// otherwise the extracting side's, so a source root could not read (or any
+// tar -c error) would be reported as a successful, empty or partial copy.
 func CopyConfigCmd(agentUser, agentHome, operatorHome string, srcs []string) *exec.Cmd {
-	var b strings.Builder
+	script := copyConfigScript(asAgentPrefix(agentUser), agentHome, operatorHome, srcs)
+	cmd := exec.Command("sudo", agentLaunchShell, "--noprofile", "--norc", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
+	// The agent-side tar inherits the working directory; pin it to "/" (the
+	// operator's cwd is typically unreadable to the agent, see agentCmd).
+	cmd.Dir = "/"
+	return cmd
+}
+
+// copyConfigScript is CopyConfigCmd's root-side (bash) script; asAgent is as
+// for copyBinaryScript.
+func copyConfigScript(asAgent, agentHome, operatorHome string, srcs []string) string {
+	steps := make([]string, 0, len(srcs))
 	for _, src := range srcs {
 		rel := strings.TrimPrefix(src, filepath.Clean(operatorHome)+string(filepath.Separator))
-		dest := shellQuote(filepath.Join(agentHome, rel))
-		// Recreate the parent dir, copy recursively without following symlinks
-		// (-P), then chown without dereferencing them (-h).
-		b.WriteString("mkdir -p \"$(dirname " + dest + ")\" && ")
-		b.WriteString("cp -RP " + shellQuote(src) + " " + dest + " && ")
-		b.WriteString("chown -Rh " + shellQuote(agentUser) + ": " + dest + " && ")
+		destParent := filepath.Dir(filepath.Join(agentHome, rel))
+		steps = append(steps, operatorArchiveCmdline(src)+" | "+asAgent+
+			shellQuote(agentLaunchShell)+" --noprofile --norc -c "+shellQuote(agentExtractScript(destParent)))
 	}
-	script := strings.TrimSuffix(b.String(), " && ")
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
+	return fixedPATHPrefix + "set -o pipefail; " + strings.Join(steps, " && ")
+}
+
+// operatorArchiveCmdline is the privileged half of CopyConfigCmd: a tar of src
+// (as the single member ./<base>, relative to its parent) written to stdout.
+// COPYFILE_DISABLE keeps macOS tar from adding AppleDouble ._ entries.
+func operatorArchiveCmdline(src string) string {
+	return "COPYFILE_DISABLE=1 tar -C " + shellQuote(filepath.Dir(src)) + " -cf - " +
+		shellQuote("./"+filepath.Base(src))
+}
+
+// agentExtractScript is the agent-side half of CopyConfigCmd: create the
+// destination parent and extract the tar on stdin into it.
+func agentExtractScript(destParent string) string {
+	return fixedPATHPrefix + "umask 022; mkdir -p " + shellQuote(destParent) + " && tar -C " + shellQuote(destParent) + " -xf -"
 }
 
 // ExpandedSecretPaths returns the descriptor's SecretConfigPaths expanded against
@@ -1304,7 +1593,7 @@ func expandTilde(p, home string) string {
 	return p
 }
 
-// runAsAgent runs a shell snippet as the agent user in a login shell and returns
+// runAsAgent runs a shell snippet as the agent user (no startup files) and returns
 // its error (nil on exit 0). Output is discarded; callers only need the verdict.
 func runAsAgent(ctx context.Context, agentUser, snippet string) error {
 	cmd := agentCmdContext(ctx, agentUser, snippet)
@@ -1313,8 +1602,8 @@ func runAsAgent(ctx context.Context, agentUser, snippet string) error {
 	return cmd.Run()
 }
 
-// quoteProbePath quotes a probe path for a `bash -lc` test, leaving a leading
-// "~/" unquoted so the agent's login shell expands it to the agent's home
+// quoteProbePath quotes a probe path for an agent-shell test, leaving a leading
+// "~/" unquoted so the agent's shell expands it to the agent's home
 // (single-quoting the whole string would make bash treat "~" literally).
 func quoteProbePath(p string) string {
 	if rest, ok := strings.CutPrefix(p, "~/"); ok {
@@ -1324,14 +1613,15 @@ func quoteProbePath(p string) string {
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quotes, so
-// it is safe to interpolate into a `bash -lc` snippet.
+// it is safe to interpolate into a `bash -c` snippet.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // BanClass describes how a path is protected from being handed to the agent.
-// The two classes are handled differently at the grant prompt (see run.go): a
-// SoftBan blocks only the path itself, a HardBan blocks its whole subtree.
+// The two classes are handled differently at the grant prompt (see
+// localagentcmd/run.go): a SoftBan blocks only the path itself, a HardBan
+// blocks its whole subtree.
 type BanClass int
 
 const (
@@ -1557,7 +1847,7 @@ func OperatorHome() string {
 // I trust this folder"). Other operators (hermes, …) plug their own reader in here
 // as they are added — the trusted-projects format is per-agent, so this dispatches
 // on the descriptor rather than pretending one format is shared. See
-// docs/security/local-agent/local-agent-isolation.md ("Bringing workspaces over").
+// docs/security/same-host/local-agent-isolation.md ("Bringing workspaces over").
 //
 // The strict access rules always take precedence: every candidate is run through
 // Classify and any banned one (HardBan subtree like ~/.ssh/~/.aws, or a SoftBan

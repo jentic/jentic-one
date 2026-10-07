@@ -5,62 +5,62 @@
  * hooks, which call the repository (`./client`), which calls `@/shared/api`.
  * Views must never reach past this layer (ESLint-enforced).
  *
- * Lifecycle mutations follow the verified response contract: approve/deny
- * return the updated row (we seed the detail cache from it), while
- * disable/enable/archive return 204, so those invalidate the affected slices to
- * force a refetch.
+ * Lifecycle mutations invalidate the roster slices they change, so every
+ * surface reading the fleet refetches the agent's new state.
  */
 import {
+	isCancelledError,
 	keepPreviousData,
 	useInfiniteQuery,
+	useIsMutating,
 	useMutation,
+	useQueries,
 	useQuery,
 	useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { toast } from '@/shared/ui';
+import { AUDIT_READ, ORG_ADMIN, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	approveAgent,
-	approveServiceAccount,
 	archiveAgent,
-	archiveServiceAccount,
 	createAgent,
-	createServiceAccount,
 	updateAgent,
 	type AgentPatch,
 	denyAgent,
-	denyServiceAccount,
 	disableAgent,
-	disableServiceAccount,
 	enableAgent,
-	enableServiceAccount,
 	generateAgentApiKey,
-	generateServiceAccountApiKey,
-	getAgent,
 	getAgentApiKeyHistory,
 	getAgentApiKeyInfo,
-	getAgentScopes,
-	getServiceAccount,
-	getServiceAccountScopes,
-	getToolkitName,
-	listAgentToolkits,
+	getAgentPermissions,
 	listAgents,
-	listLinkableToolkits,
 	listPermissions,
-	listServiceAccounts,
-	replaceAgentScopes,
-	replaceServiceAccountScopes,
+	replaceAgentPermissions,
 	revokeAgentApiKey,
-	bindToolkitToAgent,
-	unbindToolkitFromAgent,
-	fetchActorAccessRequests,
-	fetchActorsUsage,
+	listAgentCredentialBindings,
+	bindCredentialToAgent,
+	unbindCredentialFromAgent,
+	resumeAgentCredentialBinding,
+	listAgentBindingPermissions,
+	replaceAgentBindingPermissions,
+	testAgentBindingPermissions,
+	getBindingRuleSet,
+	detachAgentBindingRuleSet,
 	fetchActorUsageDetail,
+	fetchCredentialUsageTotals,
 	fetchActorExecutions,
+	fetchInstanceIdentity,
+	fetchLatestMcpActivity,
+	fetchMcpSessions,
 	listActorAudit,
+	listAgentOauthGrants,
+	revokeOauthGrant,
+	AgentsApiError,
 	type ActorAuditEntry,
-	type ActorUsage,
 	type ActorUsageDetail,
+	type CredentialUsageTotals,
 	type ActorExecutionEntity,
 	type ListResult,
 } from '@/modules/agents/api/client';
@@ -69,13 +69,20 @@ import type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
-	LinkableToolkit,
+	BindingPermissionRule,
+	BindingPermissionTestResult,
+	BindingRuleSetEntity,
+	CredentialBindingEntity,
+	InstanceIdentityEntity,
+	McpSessionEntity,
+	OAuthGrantEntity,
 	PermissionCatalogEntry,
-	ServiceAccountEntity,
-	ToolkitBindingEntity,
+	PermissionRuleInput,
 } from '@/modules/agents/api/types';
-import type { AccessRequest } from '@/shared/lib';
 import { sharedQueryKeys } from '@/shared/api';
+import { credentialKeys } from '@/shared/credentials/api';
+import { usePendingAgentsCount } from '@/shared/hooks';
+import { agentToEntity } from '@/modules/agents/api/types';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so the persistent nav
@@ -85,25 +92,31 @@ const agentsKeys = {
 	all: sharedQueryKeys.agentsRoot,
 	lists: () => [...agentsKeys.all, 'list'] as const,
 	list: (status: string) => [...agentsKeys.all, 'list', status] as const,
-	detail: (id: string) => [...agentsKeys.all, 'detail', id] as const,
-	toolkits: (id: string) => [...agentsKeys.all, 'toolkits', id] as const,
 	apiKeyInfo: (id: string) => [...agentsKeys.all, 'api-key-info', id] as const,
 	apiKeyHistory: (id: string) => [...agentsKeys.all, 'api-key-history', id] as const,
-	scopes: (id: string) => [...agentsKeys.all, 'scopes', id] as const,
+	permissions: (id: string) => [...agentsKeys.all, 'permissions', id] as const,
+	/** Mutation key for API-key generation, so a surface can tell one is in flight. */
+	generateApiKey: () => [...agentsKeys.all, 'generate-api-key'] as const,
+	/** Direct credential bindings for one agent (`GET /agents/{id}/credentials`). */
+	credentialBindings: (id: string) => [...agentsKeys.all, 'credential-bindings', id] as const,
+	/** Prefix over every agent's binding list — a credential delete removes
+	 * bindings from every bound agent, not just the scoped one. */
+	credentialBindingsRoot: () => [...agentsKeys.all, 'credential-bindings'] as const,
+	/** The ordered rules on one direct (agent, credential) binding. */
+	bindingPermissions: (agentId: string, credentialId: string) =>
+		[...agentsKeys.all, 'binding-permissions', agentId, credentialId] as const,
+	/** Prefix over every (agent, credential) rule slice. */
+	bindingPermissionsRoot: () => [...agentsKeys.all, 'binding-permissions'] as const,
+	/** One shared permission rule set a binding points at. */
+	ruleSet: (ruleSetId: string) => [...agentsKeys.all, 'rule-set', ruleSetId] as const,
+	/** Prefix over every rule-set read — a detach changes a set's binding count. */
+	ruleSetRoot: () => [...agentsKeys.all, 'rule-set'] as const,
 };
 
 /** Test-only handle on the agents key factory so the cross-module-key guard
  * (#511/#652) can pin `agentsKeys.all` to `sharedQueryKeys.agentsRoot` without
  * widening the module's public surface. Not for production use. */
 export const agentsKeysForTest = agentsKeys;
-
-const serviceAccountKeys = {
-	all: ['service-accounts'] as const,
-	lists: () => [...serviceAccountKeys.all, 'list'] as const,
-	list: (status: string) => [...serviceAccountKeys.all, 'list', status] as const,
-	detail: (id: string) => [...serviceAccountKeys.all, 'detail', id] as const,
-	scopes: (id: string) => [...serviceAccountKeys.all, 'scopes', id] as const,
-};
 
 /**
  * Platform permission catalogue (`GET /permissions`). Module-private (the
@@ -114,52 +127,18 @@ const serviceAccountKeys = {
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
 
 /**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Kept
- * under **its own root** (not ``agentsKeys.all``) so a broad
- * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
- * doesn't pointlessly refetch ``GET /toolkits``. Mirrors the
- * toolkits module keeping its ``linkableAgents`` cache under its own toolkits
- * root for the same reason.
+ * OAuth consent grants binding clients to one agent, keyed by
+ * agent + status slice under the shared `oauthGrantsRoot`: grant creation
+ * happens out-of-band (a consent screen in another tab) and lands as an
+ * `oauth_grant.created` SSE event, which the shared agent-stream provider
+ * bridges into an invalidation of that root — so the slice must live under it.
  */
-const linkableToolkitsKey = ['agents-linkable-toolkits'] as const;
+const agentOauthGrantsKey = (agentId: string, status: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId, status] as const;
 
-/**
- * Human name for a SINGLE bound toolkit, keyed by its id. Powers per-row name
- * resolution on the detail page's "Bound toolkits" card (#607): each row reads
- * `GET /toolkits/{id}` for just its own name instead of the whole workspace
- * paying `useLinkableToolkits`' paginated `GET /toolkits` sweep on every page
- * load (which would also defeat the picker dialog's `enabled` gate).
- *
- * Keyed under the shared `toolkitNameRoot` (`['toolkit-name',id]`) — its OWN
- * top-level root, NOT under `agentsRoot` and NOT under `toolkitsRoot`. That
- * isolation is deliberate: (a) agent lifecycle mutations (approve/deny/create)
- * invalidate `sharedQueryKeys.agentsRoot` and must NOT refetch every visible
- * bound toolkit's cosmetic name; and (b) ordinary toolkit-side mutations (key
- * rotation, credential bind/unbind, active toggle, create/delete) invalidate
- * `toolkitKeys.all` (`['toolkits']`) but leave a toolkit's NAME unchanged, so
- * they must not ripple here either. The one event that changes a name — a
- * rename via the Toolkits module's `useUpdateToolkit` — invalidates this shared
- * root (id-scoped), so a renamed toolkit's cached label refreshes instantly.
- */
-const toolkitNameKey = (toolkitId: string) =>
-	[...sharedQueryKeys.toolkitNameRoot, toolkitId] as const;
-
-/**
- * Access requests filed BY an actor (#619), keyed by the actor's id + status.
- * `actor_id` is globally unique across agents and service accounts, so one key
- * factory serves both detail pages.
- */
-export const actorAccessRequestsKey = (actorId: string, status: string) =>
-	['access-requests', 'by-actor', actorId, status] as const;
-
-/**
- * Prefix key covering EVERY status slice for one actor. A decision moves a
- * request between the pending / approved / denied / all views, so invalidating
- * this root refreshes them all in one call — and keeps the key shape owned here
- * (the single source of truth) rather than hand-written at the call site.
- */
-export const actorAccessRequestsRootKey = (actorId: string) =>
-	['access-requests', 'by-actor', actorId] as const;
+/** Prefix key covering every status slice of one agent's grants. */
+const agentOauthGrantsRootKey = (agentId: string) =>
+	[...sharedQueryKeys.oauthGrantsRoot, 'by-agent', agentId] as const;
 
 function notifyError(error: unknown, fallback: string): void {
 	toast({
@@ -180,9 +159,19 @@ function notifyError(error: unknown, fallback: string): void {
  * narrowing is client-side on the loaded pages (the page always fetches
  * `all`), so one cache entry serves every status segment.
  */
-export function useAgents(params: { status?: string } = {}) {
+export function useAgents(
+	params: {
+		status?: string;
+		enabled?: boolean;
+		/** Poll the list — a surface waiting for an agent to register (the stream's fallback). */
+		refetchInterval?: number | false;
+	} = {},
+) {
 	const status = params.status ?? 'all';
 	return useInfiniteQuery<ListResult<AgentEntity>>({
+		// A disabled observer neither fetches nor re-triggers a drain another
+		// mounted consumer is already running.
+		enabled: params.enabled ?? true,
 		queryKey: agentsKeys.list(status),
 		queryFn: ({ pageParam }) =>
 			listAgents({
@@ -192,120 +181,493 @@ export function useAgents(params: { status?: string } = {}) {
 		initialPageParam: null,
 		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
+		refetchInterval: params.refetchInterval,
 	});
 }
 
-export function useAgent(id: string | null) {
-	return useQuery<AgentEntity>({
-		queryKey: agentsKeys.detail(id ?? ''),
-		queryFn: () => getAgent(id as string),
+/** The approval banner's slice: the rows plus the drain facts. */
+export interface PendingAgentsResult {
+	/** Backend order preserved (`created_at DESC`), so the longest-waiting
+	 * agent is LAST. */
+	agents: AgentEntity[];
+	/** `agents.length` is a floor — hedge derived counts as "N+". */
+	atLeast: boolean;
+	/** True only when every pending page loaded. */
+	complete: boolean;
+}
+
+/**
+ * The agents awaiting approval, for the flat surface's banner. Wraps
+ * `usePendingAgentsCount` — same query key and poll, so the badge and the banner
+ * cannot disagree.
+ */
+export function usePendingAgents(): PendingAgentsResult {
+	const { agents, atLeast, complete } = usePendingAgentsCount();
+	const entities = useMemo(() => agents.map(agentToEntity), [agents]);
+	return { agents: entities, atLeast, complete };
+}
+
+// ---------------------------------------------------------------------------
+// Direct agent↔credential bindings (theme 5 phase 5a).
+//
+// The direct binding path: the agent detail Access tab's "Bound
+// credentials" card lists/binds/suspends/resumes here, and each binding's
+// rules live on the credential-side `/credentials/{cid}/agents/{aid}/
+// permissions` surface (list / replace / dry-run).
+// ---------------------------------------------------------------------------
+
+/** The agent's direct credential bindings, suspended rows included. */
+export function useAgentCredentialBindings(id: string | null) {
+	return useQuery<CredentialBindingEntity[]>({
+		queryKey: agentsKeys.credentialBindings(id ?? ''),
+		queryFn: () => listAgentCredentialBindings(id as string),
 		enabled: id != null,
 	});
 }
 
-export function useAgentToolkits(id: string | null) {
-	return useQuery<ToolkitBindingEntity[]>({
-		queryKey: agentsKeys.toolkits(id ?? ''),
-		queryFn: () => listAgentToolkits(id as string),
-		enabled: id != null,
+/**
+ * Every listed agent's bindings at once, sharing cache entries with
+ * `useAgentCredentialBindings`. Failed reads are absent, never an invented zero.
+ */
+export function useAgentsCredentialBindings(
+	ids: string[],
+): ReadonlyMap<string, CredentialBindingEntity[]> {
+	return useQueries({
+		queries: ids.map((id) => ({
+			queryKey: agentsKeys.credentialBindings(id),
+			queryFn: () => listAgentCredentialBindings(id),
+		})),
+		combine: (results) => {
+			const map = new Map<string, CredentialBindingEntity[]>();
+			results.forEach((result, index) => {
+				const id = ids[index];
+				if (id != null && result.data) map.set(id, result.data);
+			});
+			return map;
+		},
 	});
 }
 
-/**
- * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Fetched
- * only while the dialog is open (``enabled``) so it costs nothing on the rest
- * of the detail page. Keyed under its own root (``linkableToolkitsKey``) rather
- * than ``agentsKeys.all`` so a broad ``sharedQueryKeys.agentsRoot``
- * invalidation (used by approve/deny/create) does not pointlessly refetch
- * ``GET /toolkits``.
- */
-export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = {}) {
-	return useQuery<LinkableToolkit[]>({
-		queryKey: linkableToolkitsKey,
-		queryFn: () => listLinkableToolkits(),
-		enabled,
-	});
-}
-
-/**
- * Resolve one bound toolkit's human name (`GET /toolkits/{id}`), safe to call
- * once per bound row (#607). Names are slow-changing, so it's cached generously
- * (5 min) — the card can mount many of these without a thundering herd. Returns
- * ``null`` for a since-deleted / not-found toolkit so the row falls back to the
- * id. Disabled until an id is present.
- */
-export function useToolkitName(toolkitId: string | null) {
-	return useQuery<string | null>({
-		queryKey: toolkitNameKey(toolkitId ?? ''),
-		queryFn: () => getToolkitName(toolkitId as string),
-		enabled: toolkitId != null,
-		staleTime: 5 * 60 * 1000,
-	});
-}
-
-/**
- * Bind/unbind an agent↔toolkit (#607) ripples across three surfaces: the
- * agent's own bound-toolkits list, the picker's candidate list (the just-bound
- * toolkit becomes ineligible), and the toolkit-side "Bound Agents" card (the
- * binding is bidirectional). Invalidate them together so none goes stale.
- * Mirrors the sibling `useInvalidateToolkitSurfaces` in the toolkits module.
- *
- * The toolkit-side card is refreshed via the narrow shared
- * `toolkitAgentsRoot` (`['toolkits','agents']`) — the reverse-lookup slices
- * only — rather than the whole `toolkitsRoot`, which would needlessly refetch
- * every mounted toolkits query (list, detail, keys, bindings). Null-guards the
- * agent id so a call before the agent resolves is a no-op on the agent slice.
- */
-function useInvalidateAgentBindingSurfaces(agentId: string | null) {
+/** Re-read every agent's bindings. A caller that inverts the fleet's bindings
+ * cannot retry one agent's list — the missing one is the list it lacks. */
+export function useRefreshFleetCredentialBindings(): () => void {
 	const qc = useQueryClient();
-	// Memoised on [agentId, qc] so the returned handle keeps a stable identity
-	// across renders — a caller can safely store it in a memoised child's props
-	// or an effect dependency list without re-running on every render.
 	return useCallback(() => {
-		if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
-		qc.invalidateQueries({ queryKey: linkableToolkitsKey });
-		qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitAgentsRoot });
-	}, [agentId, qc]);
+		void qc.invalidateQueries({ queryKey: agentsKeys.credentialBindingsRoot() });
+	}, [qc]);
 }
 
-/** Bind a toolkit to this agent (#607) — refreshes both the agent's bound
- * toolkits list and the picker's candidates list on success. Mirrors the
- * toolkit page's "Link agent". Accepts a nullable agent id and refuses to fire
- * without one so a stray call before the agent has resolved cannot POST to
- * ``/agents//toolkits``. */
-export function useBindToolkitToAgent(agentId: string | null) {
-	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
-	return useMutation<void, Error, string>({
-		mutationFn: (toolkitId: string) => {
-			if (!agentId) {
-				return Promise.reject(new Error('Cannot bind a toolkit before the agent loads.'));
-			}
-			return bindToolkitToAgent(agentId, toolkitId);
+/** Effect breakdown of one binding's EFFECTIVE operator rules; `_system` rules
+ * excluded. */
+export interface BindingRuleSummary {
+	total: number;
+	allow: number;
+	deny: number;
+	/** Set when a shared rule set governs the binding: the counts are the set's
+	 * rules, and the binding's inline rules are dormant. */
+	ruleSet?: { name: string; curated: boolean };
+}
+
+/** Summarise one binding's saved rules — the tile grid and the access sheet
+ * read the same breakdown, so both derive it here. */
+export function summarizeBindingRules(rules: readonly BindingPermissionRule[]): BindingRuleSummary {
+	const operator = rules.filter((rule) => !rule._system);
+	return {
+		total: operator.length,
+		allow: operator.filter((rule) => String(rule.effect) === 'allow').length,
+		deny: operator.filter((rule) => String(rule.effect) === 'deny').length,
+	};
+}
+
+/** One binding's rules as the tiles see them: the breakdown once read, or
+ * where the read stands. A failed read is `'error'` — never silently absent,
+ * so a tile can't read as Ready over rules it couldn't see. */
+export type BindingRulesState = BindingRuleSummary | 'loading' | 'error';
+
+type RuleSetRead = BindingRuleSetEntity | 'loading' | 'error';
+
+/** The shared rule sets behind `ruleSetIds`, keyed by id: the set once read,
+ * or where its read stands. */
+function useBindingRuleSets(ruleSetIds: string[]): ReadonlyMap<string, RuleSetRead> {
+	const combine = useCallback(
+		(results: { data?: BindingRuleSetEntity; isError: boolean }[]) => {
+			const map = new Map<string, RuleSetRead>();
+			results.forEach((result, index) => {
+				const ruleSetId = ruleSetIds[index];
+				if (ruleSetId == null) return;
+				map.set(ruleSetId, result.data ?? (result.isError ? 'error' : 'loading'));
+			});
+			return map;
 		},
-		onSuccess: () => {
-			invalidate();
-			toast({ title: 'Toolkit bound', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to bind the toolkit.'),
+		[ruleSetIds],
+	);
+	return useQueries({
+		queries: ruleSetIds.map((ruleSetId) => ({
+			queryKey: agentsKeys.ruleSet(ruleSetId),
+			queryFn: () => getBindingRuleSet(ruleSetId),
+		})),
+		combine,
 	});
 }
 
-/** Unbind a toolkit from this agent (#607). See {@link useBindToolkitToAgent}
- * for the null-guard and cache-invalidation rationale. */
-export function useUnbindToolkitFromAgent(agentId: string | null) {
-	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
-	return useMutation<void, Error, string>({
-		mutationFn: (toolkitId: string) => {
-			if (!agentId) {
-				return Promise.reject(new Error('Cannot unbind a toolkit before the agent loads.'));
+function inlineRulesState(results: { data?: BindingPermissionRule[]; isError: boolean }[]) {
+	return results.map((result): BindingRulesState =>
+		result.data ? summarizeBindingRules(result.data) : result.isError ? 'error' : 'loading',
+	);
+}
+
+/**
+ * Rule states for one agent's bindings, keyed by credential id (one
+ * `useAgentBindingPermissions` read per binding). Every read's `combine` is
+ * stable, so the Map keeps its identity until a read actually changes and the
+ * tile grid doesn't re-render on every host render.
+ *
+ * A binding that points at a shared rule set is summarised from the SET's rules
+ * (what the broker evaluates), never its dormant inline list; until the set is
+ * read its state is the set read's, rather than guessed from the inline rules.
+ */
+export function useAgentBindingRuleSummaries(
+	agentId: string | null,
+	credentialIds: string[],
+): ReadonlyMap<string, BindingRulesState> {
+	const bindings = useAgentCredentialBindings(agentId).data;
+	const ruleSetIdByCredential = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const binding of bindings ?? []) {
+			if (binding.ruleSetId) map.set(binding.credentialId, binding.ruleSetId);
+		}
+		return map;
+	}, [bindings]);
+	const ruleSetIds = useMemo(
+		() => Array.from(new Set(ruleSetIdByCredential.values())).sort(),
+		[ruleSetIdByCredential],
+	);
+	const ruleSets = useBindingRuleSets(ruleSetIds);
+	const inline = useQueries({
+		queries: credentialIds.map((credentialId) => ({
+			queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId),
+			queryFn: () => listAgentBindingPermissions(agentId as string, credentialId),
+			enabled: agentId != null,
+		})),
+		combine: inlineRulesState,
+	});
+	return useMemo(() => {
+		const map = new Map<string, BindingRulesState>();
+		credentialIds.forEach((credentialId, index) => {
+			const ruleSetId = ruleSetIdByCredential.get(credentialId);
+			if (ruleSetId) {
+				const ruleSet = ruleSets.get(ruleSetId) ?? 'loading';
+				map.set(
+					credentialId,
+					typeof ruleSet === 'string'
+						? ruleSet
+						: {
+								...summarizeBindingRules(ruleSet.rules),
+								ruleSet: { name: ruleSet.name, curated: ruleSet.curated },
+							},
+				);
+				return;
 			}
-			return unbindToolkitFromAgent(agentId, toolkitId);
+			map.set(credentialId, inline[index] ?? 'loading');
+		});
+		return map;
+	}, [credentialIds, ruleSetIdByCredential, ruleSets, inline]);
+}
+
+/** Re-read one binding's rules (the tile's "Status unavailable · Retry") — its
+ * inline list and any shared rule set read that failed. */
+export function useRetryBindingRules(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		(credentialId: string) => {
+			if (!agentId) return;
+			void qc.refetchQueries({
+				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+			void qc.refetchQueries({
+				queryKey: agentsKeys.ruleSetRoot(),
+				predicate: (query) => query.state.status === 'error',
+			});
 		},
-		onSuccess: () => {
-			invalidate();
-			toast({ title: 'Toolkit unbound', variant: 'success' });
+		[agentId, qc],
+	);
+}
+
+/**
+ * A direct binding change ripples across two surfaces: the agent's tiles
+ * (binding list + rules) and the credential-side "Bound agents" view. `scope: 'credential'` sweeps the whole
+ * `credential-bindings` / `binding-permissions` prefixes instead of one agent's
+ * slices — a delete removes the binding from every bound agent.
+ */
+export function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		(credentialId: string, scope: 'binding' | 'credential' = 'binding') => {
+			if (scope === 'credential') {
+				qc.invalidateQueries({ queryKey: agentsKeys.credentialBindingsRoot() });
+				qc.invalidateQueries({ queryKey: agentsKeys.bindingPermissionsRoot() });
+			} else if (agentId) {
+				qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+				qc.invalidateQueries({
+					queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+				});
+			}
+			qc.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
 		},
-		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),
+		[agentId, qc],
+	);
+}
+
+/**
+ * Bind a credential to this agent with the wizard's chosen initial grant.
+ * `rules: null` is the deliberate "start blocked" mode. `silent` suppresses the
+ * toasts for callers that bind several credentials and report each themselves.
+ */
+export function useBindAgentCredential(agentId: string | null, options?: { silent?: boolean }) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	const silent = options?.silent ?? false;
+	return useMutation<
+		CredentialBindingEntity,
+		Error,
+		{ credentialId: string; rules: PermissionRuleInput[] | null }
+	>({
+		mutationFn: ({ credentialId, rules }) => {
+			if (!agentId) {
+				return Promise.reject(
+					new Error('Cannot bind a credential before the agent loads.'),
+				);
+			}
+			return bindCredentialToAgent(agentId, credentialId, rules);
+		},
+		onSuccess: (_binding, { credentialId }) => {
+			invalidate(credentialId);
+			if (!silent) toast({ title: 'Credential bound', variant: 'success' });
+		},
+		onError: (e) => {
+			if (!silent) notifyError(e, 'Failed to bind the credential.');
+		},
+	});
+}
+
+/**
+ * Unbind a credential from this agent. Default (`purge: false`) SUSPENDS the
+ * binding — reversible, rules survive, `:resume` restores. `purge: true`
+ * deletes the binding outright (the stronger, rule-destroying action).
+ */
+export function useUnbindAgentCredential(agentId: string | null) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<void, Error, { credentialId: string; purge?: boolean }>({
+		mutationFn: ({ credentialId, purge = false }) => {
+			if (!agentId) {
+				return Promise.reject(
+					new Error('Cannot unbind a credential before the agent loads.'),
+				);
+			}
+			return unbindCredentialFromAgent(agentId, credentialId, purge);
+		},
+		onSuccess: (_void, { credentialId, purge }) => {
+			invalidate(credentialId);
+			toast({
+				title: purge ? 'Credential unbound' : 'Binding suspended',
+				description: purge
+					? undefined
+					: 'The binding and its rules survive — resume to restore access.',
+				variant: 'success',
+			});
+		},
+		onError: (e) => notifyError(e, 'Failed to update the binding.'),
+	});
+}
+
+/**
+ * Orphan bindings already purged (or tried) this session, as `agentId:credentialId`.
+ * Module-level so a remount never re-fires the same purge: one attempt per orphan,
+ * whatever it returned.
+ */
+const attemptedOrphanPurges = new Set<string>();
+
+/** Test-only: forget which orphans were attempted, so each spec starts fresh. */
+export function resetOrphanPurgeAttemptsForTest(): void {
+	attemptedOrphanPurges.clear();
+}
+
+/**
+ * Quietly purge an agent's orphaned bindings — ones whose credential was deleted
+ * (a credential delete leaves its bindings behind, #1426). The caller decides
+ * which bindings are orphans and must only pass ones PROVEN gone: missing from a
+ * complete, successfully drained credentials list read by an `org:admin` (see
+ * `isOrphanBinding`). As a second guard this hook fires nothing unless the
+ * signed-in user is known to be an `org:admin`: a non-admin's list is
+ * owner-scoped, so a credential missing from it may just be someone else's.
+ *
+ * Silent by design: the grid already hides orphans, so a success needs no toast,
+ * and a failure (403 for a read-only viewer, 404 for an already-gone row) just
+ * leaves the orphan hidden. Each orphan is attempted once per session.
+ */
+export function usePurgeOrphanBindings(agentId: string | null, orphanCredentialIds: string[]) {
+	const qc = useQueryClient();
+	const viewerIsAdmin = viewerIsOrgAdmin(useOptionalCurrentUser());
+	useEffect(() => {
+		if (!agentId || !viewerIsAdmin) return;
+		for (const credentialId of orphanCredentialIds) {
+			const key = `${agentId}:${credentialId}`;
+			if (attemptedOrphanPurges.has(key)) continue;
+			attemptedOrphanPurges.add(key);
+			unbindCredentialFromAgent(agentId, credentialId, true)
+				.catch(() => undefined)
+				.finally(() => {
+					// A 404 means the row is gone too — refresh either way.
+					qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+				});
+		}
+	}, [agentId, viewerIsAdmin, orphanCredentialIds, qc]);
+}
+
+/** Lift a suspended binding (`POST …/credentials/{id}:resume`). */
+export function useResumeAgentCredentialBinding(agentId: string | null) {
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<CredentialBindingEntity, Error, string>({
+		mutationFn: (credentialId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot resume a binding before the agent loads.'));
+			}
+			return resumeAgentCredentialBinding(agentId, credentialId);
+		},
+		onSuccess: (_binding, credentialId) => {
+			invalidate(credentialId);
+			toast({ title: 'Binding resumed', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to resume the binding.'),
+	});
+}
+
+/** The ordered rules on one direct binding — read per bound row (the binding
+ * list response carries no rules inline). */
+export function useAgentBindingPermissions(agentId: string | null, credentialId: string | null) {
+	return useQuery<BindingPermissionRule[]>({
+		queryKey: agentsKeys.bindingPermissions(agentId ?? '', credentialId ?? ''),
+		queryFn: () => listAgentBindingPermissions(agentId as string, credentialId as string),
+		enabled: agentId != null && credentialId != null,
+	});
+}
+
+/** What governs one direct binding, and the rules the broker evaluates for it. */
+export interface AgentBindingEffectiveRules {
+	/** The shared rule set the binding points at; null when its inline rules
+	 * apply; undefined until the binding row is read. */
+	ruleSetId: string | null | undefined;
+	/** The attached rule set, when there is one. */
+	ruleSet: BindingRuleSetEntity | undefined;
+	/** The effective ordered rules: the set's while one is attached, else the
+	 * binding's inline rules. Undefined while loading or after an error. */
+	rules: BindingPermissionRule[] | undefined;
+	isPending: boolean;
+	isError: boolean;
+	refetch: () => void;
+}
+
+/**
+ * The effective policy of one direct binding. While a shared rule set is
+ * attached the broker and `permissions:test` evaluate the SET, and the inline
+ * rules (still returned by `GET …/permissions`) are dormant — so a surface that
+ * shows "what this agent can reach" reads this, not the inline list.
+ */
+export function useAgentBindingEffectiveRules(
+	agentId: string | null,
+	credentialId: string | null,
+): AgentBindingEffectiveRules {
+	const bindings = useAgentCredentialBindings(agentId);
+	const ruleSetId =
+		credentialId == null || bindings.data === undefined
+			? undefined
+			: (bindings.data.find((b) => b.credentialId === credentialId)?.ruleSetId ?? null);
+	// Read either way: the inline list is what a detach would make effective.
+	const inline = useAgentBindingPermissions(agentId, credentialId);
+	const ruleSet = useQuery<BindingRuleSetEntity>({
+		queryKey: agentsKeys.ruleSet(ruleSetId ?? ''),
+		queryFn: () => getBindingRuleSet(ruleSetId as string),
+		enabled: typeof ruleSetId === 'string',
+	});
+	if (typeof ruleSetId === 'string') {
+		return {
+			ruleSetId,
+			ruleSet: ruleSet.data,
+			rules: ruleSet.data?.rules,
+			isPending: ruleSet.isPending,
+			isError: ruleSet.isError,
+			refetch: () => void ruleSet.refetch(),
+		};
+	}
+	if (ruleSetId === null) {
+		return {
+			ruleSetId,
+			ruleSet: undefined,
+			rules: inline.data,
+			isPending: inline.isPending,
+			isError: inline.isError,
+			refetch: () => void inline.refetch(),
+		};
+	}
+	return {
+		ruleSetId,
+		ruleSet: undefined,
+		rules: undefined,
+		isPending: !bindings.isError,
+		isError: bindings.isError,
+		refetch: () => void bindings.refetch(),
+	};
+}
+
+/**
+ * Detach a binding's shared rule set (idempotent `DELETE …/rule-set`). Its
+ * inline rules become the effective policy, so every surface reading the
+ * binding (its row, its rules, the credential's roster) is refreshed.
+ */
+export function useDetachAgentBindingRuleSet(agentId: string, credentialId: string) {
+	const qc = useQueryClient();
+	const invalidate = useInvalidateCredentialBindingSurfaces(agentId);
+	return useMutation<void, Error, void>({
+		mutationFn: () => detachAgentBindingRuleSet(agentId, credentialId),
+		onSuccess: async () => {
+			invalidate(credentialId);
+			qc.invalidateQueries({ queryKey: agentsKeys.ruleSetRoot() });
+			// Await the binding row: until it reads `ruleSetId: null` the host keeps
+			// rendering the attached set.
+			await qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+			toast({ title: 'Rule set detached', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to detach the rule set.'),
+	});
+}
+
+/** Replace the full rule set on one direct binding (idempotent PUT). */
+export function useReplaceAgentBindingPermissions(agentId: string, credentialId: string) {
+	const qc = useQueryClient();
+	return useMutation<BindingPermissionRule[], Error, PermissionRuleInput[]>({
+		mutationFn: (rules) => replaceAgentBindingPermissions(agentId, credentialId, rules),
+		onSuccess: (saved) => {
+			// Seed the read with the PUT's echo so an open editor reads clean at
+			// once (no "Unsaved changes" flash while the refetch is in flight).
+			qc.setQueryData(agentsKeys.bindingPermissions(agentId, credentialId), saved);
+			qc.invalidateQueries({
+				queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+			});
+			qc.invalidateQueries({ queryKey: agentsKeys.credentialBindings(agentId) });
+			toast({ title: 'Permission rules saved', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to save permission rules.'),
+	});
+}
+
+/** Broker dry-run against this binding's SAVED rules (`…/permissions:test`).
+ * No vendor pooling — the verdict is exactly this binding's policy. */
+export function useTestAgentBindingPermissions(agentId: string, credentialId: string) {
+	return useMutation<
+		BindingPermissionTestResult,
+		Error,
+		{ method: string; path: string; operation_id?: string }
+	>({
+		mutationFn: (body) => testAgentBindingPermissions(agentId, credentialId, body),
 	});
 }
 
@@ -334,15 +696,14 @@ export function useApproveAgent() {
 	return useMutation({
 		mutationFn: (id: string) => approveAgent(id),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			// Approving removes the agent from the pending pool the Dashboard's
-			// action inbox (`ActionInboxBell`) reads, and the persistent
-			// nav badge (`usePendingAgentsCount`, keyed under the shared agents
-			// root). Refresh both shared roots so those surfaces update instantly
+			// Approving removes the agent from the pending pool the
+			// Notifications bell reads, and the persistent nav badge
+			// (`usePendingAgentsCount`, keyed under the shared agents root).
+			// Refresh both shared roots so those surfaces update instantly
 			// instead of waiting for their fallback poll.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent approved',
 				description: `${agent.name} is now active.`,
@@ -358,13 +719,12 @@ export function useDenyAgent() {
 	return useMutation({
 		mutationFn: ({ id, reason }: { id: string; reason: string }) => denyAgent(id, reason),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Denying also clears the agent from the pending pool — keep the
-			// Dashboard's pending-agents surfaces AND the nav badge in sync
+			// Notifications bell AND the nav badge in sync
 			// immediately (both read off the shared agents root).
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent denied',
 				description: `${agent.name} was rejected.`,
@@ -375,29 +735,63 @@ export function useDenyAgent() {
 	});
 }
 
+/**
+ * Thrown by {@link useSetAgentServing} when the write SUCCEEDED but the roster
+ * refetch failed — the state did change; only the grid may be stale.
+ */
+export class ServingRefreshError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'ServingRefreshError';
+	}
+}
+
+/** The dock's serving-toggle verbs and their target state. */
+export interface SetServingVariables {
+	id: string;
+	/** `true` → `:enable`, `false` → `:disable`. */
+	serving: boolean;
+}
+
+/**
+ * The AgentDock's serving toggle. Does NOT toast — the dock owns its feedback,
+ * including an Undo on deactivate — and surfaces a failed roster refetch as
+ * {@link ServingRefreshError}.
+ */
+export function useSetAgentServing() {
+	const qc = useQueryClient();
+	return useMutation<void, Error, SetServingVariables>({
+		mutationFn: async ({ id, serving }) => {
+			// Any failure HERE is a real toggle failure and propagates as-is.
+			if (serving) await enableAgent(id);
+			else await disableAgent(id);
+
+			// The write landed. From here on, a failure is only a stale view.
+			try {
+				await qc.refetchQueries({ queryKey: agentsKeys.lists() }, { throwOnError: true });
+			} catch (error) {
+				// A superseded refetch (CancelledError) is not a stale view: the
+				// replacement fetch is refreshing the very roster we awaited.
+				if (isCancelledError(error)) return;
+				throw new ServingRefreshError(
+					serving
+						? 'The agent is enabled, but the fleet view could not refresh.'
+						: 'The agent is disabled, but the fleet view could not refresh.',
+				);
+			}
+		},
+	});
+}
+
 export function useDisableAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => disableAgent(id),
-		onSuccess: (_void, id) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
 			toast({ title: 'Agent disabled', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to disable the agent.'),
-	});
-}
-
-export function useEnableAgent() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => enableAgent(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
-			toast({ title: 'Agent enabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to enable the agent.'),
 	});
 }
 
@@ -405,9 +799,8 @@ export function useArchiveAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => archiveAgent(id),
-		onSuccess: (_void, id) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(id) });
 			toast({ title: 'Agent archived', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to archive the agent.'),
@@ -417,8 +810,11 @@ export function useArchiveAgent() {
 export function useCreateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
-			createAgent(input),
+		mutationFn: (input: {
+			name: string;
+			description?: string | null;
+			permissions?: string[];
+		}) => createAgent(input),
 		onSuccess: (agent) => {
 			// Invalidate the whole agents root (not just lists()) so the
 			// persistent pending-agents nav badge — keyed under agentsRoot, not
@@ -427,8 +823,8 @@ export function useCreateAgent() {
 			// (#652). The root prefix subsumes the list cache.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
 			// A freshly created agent starts in the pending pool, so refresh the
-			// Dashboard's pending-agents surfaces too.
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			// Notifications bell too.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent created',
 				description: `${agent.name} created successfully.`,
@@ -440,25 +836,23 @@ export function useCreateAgent() {
 }
 
 /**
- * Partial in-place edit (PATCH /agents/{id}): rename, re-describe, or
- * reassign the owner from the detail page's Settings tab. Invalidates the
- * detail cache rather than seeding it from the PATCH response — the response
- * row is built without the `has_api_key` join (always false), so seeding it
- * would make the Keys tab forget an existing key. The roster refresh lets the
- * fleet table pick the new name up immediately, and the dashboard root covers
- * the pending-agents tile, which renders agent names.
+ * Partial in-place edit (PATCH /agents/{id}): rename or re-describe from the
+ * Settings sheet. Refetches the roster rather than seeding it from the PATCH
+ * response — the response row is built without the `has_api_key` join (always
+ * false), so seeding it would make the API key sheet forget an existing key.
+ * The attention root covers the Notifications bell, which lists pending agents
+ * by name.
  */
 export function useUpdateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: ({ id, patch }: { id: string; patch: AgentPatch }) => updateAgent(id, patch),
 		onSuccess: (agent) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			// A rename changes what every `ActorLabel` renders — monitor rows,
-			// toolkit audit, access requests, and the "Registered by / Approved
-			// by" grid on this very page all resolve names through the actor
+			// audit trails, and the Settings sheet's "Registered by / Approved
+			// by" grid all resolve names through the actor
 			// directory (5-min staleTime, no focus refetch). Invalidate it so the
 			// new name shows up immediately instead of after the staleTime.
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
@@ -475,9 +869,12 @@ export function useUpdateAgent() {
 export function useGenerateAgentApiKey() {
 	const qc = useQueryClient();
 	return useMutation<ApiKeyResult, Error, string>({
+		mutationKey: agentsKeys.generateApiKey(),
 		mutationFn: (agentId: string) => generateAgentApiKey(agentId),
 		onSuccess: (_result, agentId) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agentId) });
+			// `hasApiKey` rides on the roster row, and it decides whether the next
+			// press is a first issue or a confirmed rotation.
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyInfo(agentId) });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyHistory(agentId) });
 		},
@@ -485,12 +882,18 @@ export function useGenerateAgentApiKey() {
 	});
 }
 
+/** True while any agent API key is being generated — its plaintext is shown once,
+ * so a surface hosting the reveal holds itself open until the key lands. */
+export function useIsGeneratingAgentApiKey(): boolean {
+	return useIsMutating({ mutationKey: agentsKeys.generateApiKey() }) > 0;
+}
+
 export function useRevokeAgentApiKey() {
 	const qc = useQueryClient();
 	return useMutation<void, Error, string>({
 		mutationFn: (agentId: string) => revokeAgentApiKey(agentId),
 		onSuccess: (_void, agentId) => {
-			qc.invalidateQueries({ queryKey: agentsKeys.detail(agentId) });
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyInfo(agentId) });
 			qc.invalidateQueries({ queryKey: agentsKeys.apiKeyHistory(agentId) });
 			toast({ title: 'API key revoked', variant: 'success' });
@@ -499,135 +902,14 @@ export function useRevokeAgentApiKey() {
 	});
 }
 
-export function useGenerateServiceAccountApiKey() {
-	return useMutation<ApiKeyResult, Error, string>({
-		mutationFn: (serviceAccountId: string) => generateServiceAccountApiKey(serviceAccountId),
-		onError: (e) => notifyError(e, 'Failed to generate API key.'),
-	});
-}
-
 // ---------------------------------------------------------------------------
-// Service accounts
-// ---------------------------------------------------------------------------
-
-/** Cursor-paginated service accounts — same infinite-query shape as
- * {@link useAgents} so the page renders both tabs with one component. */
-export function useServiceAccounts(params: { status?: string } = {}) {
-	const status = params.status ?? 'all';
-	return useInfiniteQuery<ListResult<ServiceAccountEntity>>({
-		queryKey: serviceAccountKeys.list(status),
-		queryFn: ({ pageParam }) =>
-			listServiceAccounts({
-				status: status === 'all' ? null : status,
-				cursor: (pageParam as string | null) ?? null,
-			}),
-		initialPageParam: null,
-		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
-		placeholderData: keepPreviousData,
-	});
-}
-
-export function useServiceAccount(id: string | null) {
-	return useQuery<ServiceAccountEntity>({
-		queryKey: serviceAccountKeys.detail(id ?? ''),
-		queryFn: () => getServiceAccount(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useCreateServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
-			createServiceAccount(input),
-		onSuccess: (sa) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			// Unlike agents, service accounts are approved at creation (the
-			// backend calls set_approval inside the create transaction).
-			toast({
-				title: 'Service account created',
-				description: `${sa.name} is ready to use.`,
-				variant: 'success',
-			});
-		},
-		onError: (e) => notifyError(e, 'Failed to create the service account.'),
-	});
-}
-
-export function useApproveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => approveServiceAccount(id),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account approved', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to approve the service account.'),
-	});
-}
-
-export function useDenyServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-			denyServiceAccount(id, reason),
-		onSuccess: (sa) => {
-			qc.setQueryData(serviceAccountKeys.detail(sa.id), sa);
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			toast({ title: 'Service account denied', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to deny the service account.'),
-	});
-}
-
-export function useDisableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => disableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account disabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to disable the service account.'),
-	});
-}
-
-export function useEnableServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => enableServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account enabled', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to enable the service account.'),
-	});
-}
-
-export function useArchiveServiceAccount() {
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (id: string) => archiveServiceAccount(id),
-		onSuccess: (_void, id) => {
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
-			qc.invalidateQueries({ queryKey: serviceAccountKeys.detail(id) });
-			toast({ title: 'Service account archived', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, 'Failed to archive the service account.'),
-	});
-}
-
-// ---------------------------------------------------------------------------
-// Scopes (#615)
+// Permissions (#615)
 // ---------------------------------------------------------------------------
 
 /**
  * The platform permission catalogue. Small + slow-changing, so it's cached
- * generously; the Scopes editor maps it into the picker's scope list and uses
- * `grantableByCaller` to disable scopes the operator can't grant.
+ * generously; the Permissions editor maps it into the picker's list and uses
+ * `grantableByCaller` to disable permissions the operator can't grant.
  */
 export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	return useQuery<PermissionCatalogEntry[]>({
@@ -638,77 +920,40 @@ export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	});
 }
 
-export function useAgentScopes(id: string | null) {
+export function useAgentPermissions(id: string | null) {
 	return useQuery<string[]>({
-		queryKey: agentsKeys.scopes(id ?? ''),
-		queryFn: () => getAgentScopes(id as string),
+		queryKey: agentsKeys.permissions(id ?? ''),
+		queryFn: () => getAgentPermissions(id as string),
 		enabled: id != null,
 	});
 }
 
-export function useReplaceAgentScopes() {
+export function useReplaceAgentPermissions() {
 	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceAgentScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(agentsKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
+	return useMutation<string[], Error, { id: string; permissions: string[] }>({
+		mutationFn: ({ id, permissions }) => replaceAgentPermissions(id, permissions),
+		onSuccess: (permissions, { id }) => {
+			qc.setQueryData(agentsKeys.permissions(id), permissions);
+			toast({ title: 'Permissions updated', variant: 'success' });
 		},
-		onError: (e) => notifyError(e, "Failed to update the agent's scopes."),
-	});
-}
-
-export function useServiceAccountScopes(id: string | null) {
-	return useQuery<string[]>({
-		queryKey: serviceAccountKeys.scopes(id ?? ''),
-		queryFn: () => getServiceAccountScopes(id as string),
-		enabled: id != null,
-	});
-}
-
-export function useReplaceServiceAccountScopes() {
-	const qc = useQueryClient();
-	return useMutation<string[], Error, { id: string; scopes: string[] }>({
-		mutationFn: ({ id, scopes }) => replaceServiceAccountScopes(id, scopes),
-		onSuccess: (scopes, { id }) => {
-			qc.setQueryData(serviceAccountKeys.scopes(id), scopes);
-			toast({ title: 'Scopes updated', variant: 'success' });
-		},
-		onError: (e) => notifyError(e, "Failed to update the service account's scopes."),
+		onError: (e) => notifyError(e, "Failed to update the agent's permissions."),
 	});
 }
 
 /**
- * Per-actor execution stats for the fleet table's activity columns
- * (`GET /monitoring/usage?group_by=agent`, trailing 7 days). Kept under its
- * OWN root (like `linkableToolkitsKey`) so agent lifecycle invalidations —
- * which sweep `sharedQueryKeys.agentsRoot` on approve/deny/create — don't
- * pointlessly re-aggregate the monitoring window. Resolves `null` for
- * non-admins (403): the table renders without activity columns rather than
- * erroring, and `retry: false` stops TanStack from hammering a gate that
- * won't open. Any other failure also degrades to no columns (no toast — the
- * roster itself is the page's primary data, usage is enrichment).
- */
-export function useActorsUsage(actorType: 'agent' | 'service_account') {
-	return useQuery<Map<string, ActorUsage> | null>({
-		queryKey: ['agents-usage', actorType],
-		queryFn: () => fetchActorsUsage(actorType),
-		staleTime: 60 * 1000,
-		retry: false,
-	});
-}
-
-/**
- * One actor's usage stats + volume buckets (trailing 7 days) for the detail
- * page's KPI strip and Activity chart. Same `agents-usage` root and 403/`null`
- * degrade contract as `useActorsUsage` (see its docblock).
+ * One actor's usage stats + volume buckets (trailing 7 days) for the Agents
+ * page's stat strip and the Activity sheet's chart. Under its own `agents-usage` root, so
+ * agent lifecycle invalidations don't re-aggregate the window. `null` on 403,
+ * and `null` without a request for a caller who isn't `org:admin` (the
+ * aggregate's only permission).
  */
 export function useActorUsageDetail(actorId: string | null) {
+	const allowed = useCanAccess(ORG_ADMIN);
 	return useQuery<ActorUsageDetail | null>({
-		queryKey: ['agents-usage', 'detail', actorId],
-		queryFn: () => fetchActorUsageDetail(actorId as string),
+		queryKey: ['agents-usage', 'detail', actorId, { allowed }],
+		queryFn: () => (allowed ? fetchActorUsageDetail(actorId as string) : null),
 		enabled: actorId != null,
-		// Matches useActorExecutions below: the KPI/volume chart and the
+		// Matches useActorExecutions below: the volume chart and the
 		// recent-executions feed render side by side and must go stale
 		// together, or the feed refreshes ahead of the chart and the two
 		// disagree for up to 30s (#913).
@@ -718,8 +963,24 @@ export function useActorUsageDetail(actorId: string | null) {
 }
 
 /**
- * The most recent executions attributed to one actor — the detail page's
- * Activity feed. Single page by design: the full, filterable history lives in
+ * Call volume per credential over the trailing 7 days. Same `agents-usage` root
+ * and `null` contract (403, or no request without `org:admin`) as
+ * {@link useActorUsageDetail}.
+ */
+export function useCredentialUsageTotals(enabled: boolean) {
+	const allowed = useCanAccess(ORG_ADMIN);
+	return useQuery<CredentialUsageTotals | null>({
+		queryKey: ['agents-usage', 'credential-totals', { allowed }],
+		queryFn: () => (allowed ? fetchCredentialUsageTotals() : null),
+		enabled,
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The most recent executions attributed to one actor — the Activity sheet's
+ * feed and the stat strip's last-used figure. Single page by design: the full, filterable history lives in
  * Monitor (the feed carries a pre-filtered deep-link). `null` on 403.
  */
 export function useActorExecutions(actorId: string | null) {
@@ -733,33 +994,134 @@ export function useActorExecutions(actorId: string | null) {
 }
 
 /**
- * Access requests filed by a single actor (`GET /access-requests?actor_id=…`),
- * defaulting to the still-pending queue (#619). Works for both agents and
- * service accounts — the backend keys requests by `actor_id`, which is the
- * actor's own id. Pass `status: null` to fetch every status (the "All" filter).
- * `enabled` only when an id is present so the detail page's loading/not-found
- * states aren't disturbed.
+ * The OAuth clients holding a consent→agent grant on this agent — the
+ * Permissions sheet's "Connected clients" card. Owner-or-admin on the
+ * backend; a 403 surfaces as an error the card renders honestly.
+ *
+ * Cursor-paginated like {@link useAgents}: the first page renders
+ * immediately and the card offers "Load more" through `next_cursor`, so an
+ * agent with more than one page of grants (default 50) is fully reachable.
  */
-export function useActorAccessRequests(actorId: string | null, status: string | null = 'pending') {
-	return useQuery<AccessRequest[]>({
-		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
-		queryFn: () => fetchActorAccessRequests(actorId as string, status),
-		enabled: actorId != null,
+export function useAgentOauthGrants(
+	agentId: string | null,
+	status: 'active' | 'revoked' | null = 'active',
+) {
+	return useInfiniteQuery<ListResult<OAuthGrantEntity>>({
+		queryKey: agentOauthGrantsKey(agentId ?? '', status ?? 'all'),
+		queryFn: ({ pageParam }) =>
+			listAgentOauthGrants(agentId as string, status, {
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
+		enabled: agentId != null,
 	});
 }
 
 /**
- * Actor-scoped audit trail for the detail console's "Recent changes" panel —
- * the lifecycle events recorded against this agent / service account as the
- * TARGET. Mirrors the toolkit console's `useToolkitAudit`. Non-admins resolve
- * to an empty list (the client maps 401/403), so the panel renders its
- * graceful "no entries" state instead of erroring.
+ * Revoke a consent→agent grant (§4.6 kill switch). Invalidates every status
+ * slice of the agent's grants (the row moves active→revoked) plus the shared
+ * oauth-clients root, whose rows carry a per-client active-grant count.
+ *
+ * A 403 gets an HONEST toast: the server's reason (the revoke predicate is
+ * the grant's consenting user or a write-set admin — narrower than the list
+ * predicate, G10) rather than a generic "failed". The card already disables
+ * the button on `canRevoke=false`, so this is the belt-and-braces arm for a
+ * capability that went stale between render and click.
  */
-export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: string | null) {
+export function useRevokeOauthGrant(agentId: string | null) {
+	const qc = useQueryClient();
+	return useMutation<void, Error, string>({
+		mutationFn: (grantId: string) => revokeOauthGrant(grantId),
+		onSuccess: () => {
+			if (agentId) {
+				void qc.invalidateQueries({ queryKey: agentOauthGrantsRootKey(agentId) });
+			}
+			void qc.invalidateQueries({ queryKey: sharedQueryKeys.oauthClientsRoot });
+			toast({ title: 'Grant revoked', variant: 'success' });
+		},
+		onError: (e) => {
+			if (e instanceof AgentsApiError && e.status === 403) {
+				toast({
+					title: 'Not permitted to revoke this grant',
+					// The server's problem-details reason, carried through the
+					// repository's error normalisation.
+					description: e.message,
+					variant: 'error',
+				});
+				return;
+			}
+			notifyError(e, 'Failed to revoke the grant.');
+		},
+	});
+}
+
+/**
+ * Actor-scoped audit trail for the Activity sheet's "Recent changes" section —
+ * the lifecycle events recorded against this agent as the TARGET. A caller
+ * without `audit:read` (or `org:admin`) resolves to an empty list without a
+ * request, and a 401/403 maps to one too, so the panel never errors on access.
+ */
+export function useActorAudit(actorId: string | null) {
+	const allowed = useCanAccess(AUDIT_READ);
 	return useQuery<ActorAuditEntry[]>({
-		queryKey: ['agents', 'audit', actorKind, actorId],
-		queryFn: () => listActorAudit(actorKind, actorId as string),
+		queryKey: ['agents', 'audit', 'agent', actorId, { allowed }],
+		queryFn: () => (allowed ? listActorAudit(actorId as string) : []),
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport visibility (local-MCP 2-E2, #1188).
+//
+// Keyed under their OWN `agents-mcp` root (like `agents-usage`) so agent
+// lifecycle mutations — which sweep the broad
+// `sharedQueryKeys.agentsRoot` on approve/deny/create — don't pointlessly
+// refetch the events table. All are enrichment reads with the same
+// `null`-on-403 / `retry: false` degrade contract as `useActorUsageDetail`.
+// ---------------------------------------------------------------------------
+
+/**
+ * One agent's MCP session history (`mcp.session_started` internal events) —
+ * the MCP sheet's sessions card. `null` for viewers without
+ * `events:read` (the card renders a quiet permission note).
+ */
+export function useMcpSessions(actorId: string | null) {
+	return useQuery<McpSessionEntity[] | null>({
+		queryKey: ['agents-mcp', 'sessions', actorId],
+		queryFn: () => fetchMcpSessions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * When this agent last executed over MCP — the "last active" line on the
+ * sessions card. `null` means no MCP execution known (or gated); the card
+ * shows a dash, never an error.
+ */
+export function useLatestMcpActivity(actorId: string | null) {
+	return useQuery<string | null>({
+		queryKey: ['agents-mcp', 'last-activity', actorId],
+		queryFn: () => fetchLatestMcpActivity(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The instance's self-described identity (`GET /instance`) for the MCP config
+ * card. Slow-changing (it's deploy config), so cached generously; a failure
+ * resolves `undefined` and the card falls back to the browser origin.
+ */
+export function useInstanceIdentity() {
+	return useQuery<InstanceIdentityEntity>({
+		queryKey: ['instance-identity'],
+		queryFn: () => fetchInstanceIdentity(),
+		staleTime: 5 * 60 * 1000,
+		retry: false,
 	});
 }

@@ -62,6 +62,7 @@ def _make_revision(*, state: str = "draft", api_id: uuid.UUID | None = None) -> 
     rev.submitted_by = "bot"
     rev.operation_count = 3
     rev.servers = []
+    rev.origin = None
     rev.promoted_at = None
     rev.archived_at = None
     rev.created_at = datetime(2024, 1, 1, tzinfo=UTC)
@@ -87,6 +88,11 @@ async def test_promote_draft_succeeds() -> None:
             return_value=revision,
         ),
         patch(
+            "jentic_one.registry.services.revision_service.UrlIndexRepository.find_live_hosts_of_other_vendors",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",
             new_callable=AsyncMock,
             return_value=1,
@@ -94,6 +100,17 @@ async def test_promote_draft_succeeds() -> None:
         patch(
             "jentic_one.registry.services.revision_service.ApiRepository.set_current_revision",
             new_callable=AsyncMock,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.host_baseline_revision_id",
+            new_callable=AsyncMock,
+            return_value=old_pub_id,
+        ),
+        patch(
+            # Same (empty) server set on both revisions: no host change to guard.
+            "jentic_one.registry.services.revision_service.ServerRepository.list_url_specs",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
         patch(
             "jentic_one.registry.services.revision_service.ApiService._fetch_api_view",
@@ -138,6 +155,11 @@ async def test_promote_archives_imported_revisions() -> None:
             return_value=revision,
         ),
         patch(
+            "jentic_one.registry.services.revision_service.UrlIndexRepository.find_live_hosts_of_other_vendors",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.set_state",
             new_callable=AsyncMock,
             return_value=1,
@@ -146,6 +168,17 @@ async def test_promote_archives_imported_revisions() -> None:
             "jentic_one.registry.services.revision_service.ApiRevisionRepository.archive_all_active_imported",
             new_callable=AsyncMock,
         ) as mock_archive_imported,
+        patch(
+            # Never-live API: no baseline, and the draft declares no servers.
+            "jentic_one.registry.services.revision_service.ApiRevisionRepository.host_baseline_revision_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "jentic_one.registry.services.revision_service.ServerRepository.list_url_specs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch(
             "jentic_one.registry.services.revision_service.ApiRepository.set_current_revision",
             new_callable=AsyncMock,

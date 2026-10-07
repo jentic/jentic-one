@@ -10,6 +10,7 @@ import type { ProviderDiscoveryResponse } from '@/shared/api';
 import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
+	CredentialAgentListResponse,
 	CredentialCreateRequest,
 	CredentialCreateResponse,
 	CredentialListResponse,
@@ -60,7 +61,13 @@ export function deleteCredential(credentialId: string): Promise<void> {
 	return CredentialsService.deleteCredential({ credentialId });
 }
 
-/** POST /credentials/{id}/connect — begin the OAuth redirect flow. */
+/** POST /credentials/{id}/connect — begin the OAuth connect flow.
+ *
+ * The wire response is a discriminated union (authorization_code carries
+ * `authorize_url` / `state`; device_code carries `user_code` /
+ * `verification_uri`). The generated client type is stale (models only the
+ * authorization_code shape), so we cast through the hand-authored union in
+ * `./types` until `make openapi` rewires the codegen. */
 export function connectCredential(
 	credentialId: string,
 	body: ConnectRequestBody = {},
@@ -68,10 +75,26 @@ export function connectCredential(
 	return CredentialsService.connectCredential({
 		credentialId,
 		requestBody: body,
-	});
+	}) as unknown as Promise<ConnectChallengeResponse>;
 }
 
 /** GET /credentials/providers — discovery metadata for configured providers. */
 export function getProviders(): Promise<ProviderDiscoveryResponse> {
 	return CredentialsService.listProviders();
+}
+
+/**
+ * GET /credentials/{id}/agents — agents directly bound to a credential
+ * (the binding's reverse lookup; suspended bindings included with their
+ * flag set). Cursor-paginated like `listCredentials`.
+ */
+export function listCredentialAgents(
+	credentialId: string,
+	params: { cursor?: string | null; limit?: number } = {},
+): Promise<CredentialAgentListResponse> {
+	return CredentialsService.listCredentialAgents({
+		credentialId,
+		cursor: params.cursor ?? undefined,
+		limit: params.limit,
+	});
 }

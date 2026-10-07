@@ -1,4 +1,4 @@
-"""Protocols and data types for broker token resolution and toolkit binding checks."""
+"""Protocols and data types for broker token resolution and binding enforcement."""
 
 from __future__ import annotations
 
@@ -9,16 +9,29 @@ from typing import Any, Protocol, runtime_checkable
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
 @dataclass(frozen=True, slots=True)
 class ResolveResult:
-    """A resolved operation with its API identity and extracted path parameters."""
+    """A resolved operation with its API identity and extracted path parameters.
 
-    operation_id: str
+    ``server_variables`` are the concrete OpenAPI server-variable values of the
+    matched request URL (e.g. ``{"region": "eu"}`` for ``/eu/widgets``); the
+    broker only injects a credential whose ``server_variables`` agree with them.
+    ``server_variable_defaults`` are the declared defaults of variables the URL
+    left as a literal ``{name}`` placeholder, substituted when no credential
+    supplies a value. ``server_variables_unresolved`` is True when the registry
+    could not determine the URL's server-variable values; the broker then
+    injects no credential scoped by ``server_variables`` (fail closed).
+    """
+
+    operation: OperationInfo
     api: APIReference
     path_params: dict[str, str]
+    server_variables: dict[str, str] = field(default_factory=dict)
+    server_variable_defaults: dict[str, str] = field(default_factory=dict)
+    server_variables_unresolved: bool = False
 
 
 class RevisionPinOutcome(StrEnum):
@@ -26,7 +39,7 @@ class RevisionPinOutcome(StrEnum):
 
     A neutral, transport-free enum so the resolver (which lives in ``registry/``)
     never leaks registry exception types across the architecture boundary — the
-    broker maps each outcome to its own domain exception (§10).
+    broker maps each outcome to its own domain exception.
     """
 
     RESOLVED = "resolved"
@@ -72,7 +85,7 @@ class RegistryResolverProtocol(Protocol):
         rev_label: str,
         identity: Identity,
     ) -> RevisionPinResult:
-        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id`` (§10).
+        """Translate a ``vendor:name:version=rev_…`` pin to a ``revision_id``.
 
         Performs the in-process lookup + access-rule check and returns a neutral
         :class:`RevisionPinResult`; it never raises a registry-specific exception
@@ -93,9 +106,8 @@ class TokenResolverProtocol(Protocol):
 class RuleEvaluation:
     """Outcome of a permission-rule evaluation with just enough context to explain a deny.
 
-    ``allowed`` is the same signal the pre-#578 bare-bool evaluator emitted.
-    ``rules_loaded`` distinguishes two very different deny paths that used to
-    collapse into one bare 403 (#578): a zero-length pool (nothing matched
+    ``rules_loaded`` distinguishes two very different deny paths (#578): a
+    zero-length pool (nothing matched
     because there was nothing to match — wrong vendor, unbound credential,
     empty binding, misconfigured store) vs a non-empty pool where no rule
     happened to match. The router turns this into a two-variant detail
@@ -106,40 +118,12 @@ class RuleEvaluation:
     rules_loaded: int
 
 
-@runtime_checkable
-class RuleEvaluatorProtocol(Protocol):
-    """Evaluates toolkit permission rules against an inbound request.
-
-    Returns a :class:`RuleEvaluation` with the allow/deny outcome and the
-    size of the vendor-pooled rule list evaluated. Evaluation follows
-    first-match-wins over an ordered rule list; an exhausted list defaults
-    to deny (secure-by-default).
-    """
-
-    async def evaluate(
-        self,
-        *,
-        toolkit_id: str,
-        method: str,
-        path: str,
-        operation_id: str | None,
-        api_vendor: str = "",
-    ) -> RuleEvaluation: ...
-
-
-@runtime_checkable
-class ToolkitBindingCheckerProtocol(Protocol):
-    """Checks whether an agent has a binding to a specific toolkit."""
-
-    async def has_binding(self, agent_id: str, toolkit_id: str) -> bool: ...
-
-
 @dataclass(frozen=True, slots=True)
 class IdentityMismatch:
     """A nearest-miss credential identity for an unresolved-but-bound API.
 
-    Populated when the agent is bound to toolkit(s) but no credential's stored
-    identity covers the (concrete) operation identity — the #747/#748 case. All
+    Populated when the agent is bound but no credential's stored identity
+    covers the (concrete) operation identity — the #747/#748 case. All
     fields are plain strings so the directive layer can serialize them directly
     without touching a pydantic model.
     """
@@ -154,44 +138,76 @@ class IdentityMismatch:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolkitDerivation:
-    """Result of toolkit derivation, carrying *why* the toolkit set may be empty.
+class BoundCredential:
+    """One direct agent→credential binding candidate for an API identity.
 
-    ``toolkits`` is the intersection callers use (``()`` → 403, one → use it,
-    many → 409). The remaining fields let the broker distinguish the empty cases
-    and emit the right recovery directive without a second DB round-trip:
-
-    - ``agent_bound_any`` — the agent has at least one toolkit binding at all.
-    - ``api_served_toolkits`` — every toolkit whose bound credential covers the
-      API (independent of the agent). ``()`` means no toolkit serves the API yet;
-      this subsumes the old ``any_toolkit_serves_api`` probe. **These ids can
-      belong to other owners** (the derivation is agent-independent), so only its
-      *truthiness* may be consumed here — the raw ids must not be serialized into
-      a directive/response without owner-scoping, or they'd leak cross-tenant
-      toolkit ids.
-    - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
-      bound but nothing serves the API because a bound credential's identity does
-      not cover the operation.
+    Carries the binding's ``rule_set_id`` alongside the credential id so the
+    rule evaluator can honour an attached shared rule set without a second
+    admin-DB round-trip after credential selection.
     """
 
-    toolkits: tuple[str, ...]
+    credential_id: str
+    rule_set_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialDerivation:
+    """Result of direct-binding credential derivation (theme-5).
+
+    ``credentials`` is the intersection of the agent's **active**
+    (non-suspended) direct bindings with the credentials whose stored identity
+    covers the API. The remaining fields explain an empty set so the denial
+    picks the right directive:
+
+    - ``agent_bound_any`` — the agent has at least one active direct binding.
+    - ``api_served`` — at least one active credential (bound to this agent or
+      not) covers the API. Deliberately a *bool*, not ids: covering credentials
+      can belong to other owners, so carrying their ids here would invite a
+      cross-tenant leak into a directive.
+    - ``identity_mismatch`` — nearest-miss diagnostic when the agent is bound
+      but none of its bound credentials cover the operation identity.
+    """
+
+    credentials: tuple[BoundCredential, ...]
     agent_bound_any: bool
-    api_served_toolkits: tuple[str, ...]
+    api_served: bool
     identity_mismatch: IdentityMismatch | None
 
 
 @runtime_checkable
-class ToolkitDeriverProtocol(Protocol):
-    """Derives which of an agent's toolkits contain a given API identity.
+class CredentialDeriverProtocol(Protocol):
+    """Derives which of an agent's directly-bound credentials cover an API identity.
 
-    Empty ``toolkits`` → 403, one → use it, many → 409 (caller disambiguates with
-    the ``Jentic-Toolkit-Id`` header). The full :class:`ToolkitDerivation` also
-    carries why an empty set is empty so the denial can pick the right directive.
+    Empty ``credentials`` → 403, one → use it, many → name/id header
+    disambiguation then most-specific-wins (a genuine unaddressed tie → 409).
     """
 
-    async def derive_toolkits(
+    async def derive_credentials(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> ToolkitDerivation: ...
+    ) -> CredentialDerivation: ...
+
+
+@runtime_checkable
+class AgentRuleEvaluatorProtocol(Protocol):
+    """Evaluates direct-binding permission rules against an inbound request.
+
+    Keyed on ``(agent_id, credential_id)`` — no vendor pooling (direct bindings
+    evaluate strictly against the specific binding). When the binding carries a
+    ``rule_set_id`` the shared ``permission_rule_set_rules`` list is evaluated
+    *instead of* the inline rows. First-match-wins over the ordered list; an
+    exhausted list defaults to deny (secure-by-default).
+    """
+
+    async def evaluate(
+        self,
+        *,
+        agent_id: str,
+        credential_id: str,
+        rule_set_id: str | None,
+        method: str,
+        path: str,
+        operation_id: str | None,
+    ) -> RuleEvaluation: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +230,7 @@ class IdempotencyClaim:
 class IdempotencyStore(Protocol):
     """Cross-instance idempotency: claim a key, then store the final response.
 
-    The concrete implementation (§07) is backed by an ``AtomicStore`` so claims
+    The concrete implementation is backed by an ``AtomicStore`` so claims
     are atomic across broker instances.
     """
 
@@ -235,19 +251,19 @@ class TelemetrySink(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Transport-neutral runner value objects (RN-0.1)
+# Transport-neutral runner value objects
 #
-# These types are the *transport-neutral* foundation for the pluggable upstream
-# runners roadmap (design: ``docs/design/designs/broker/impl/11-pluggable-runners.md``).
-# They are deliberately **not** HTTP-shaped: the web layer maps an HTTP method to a
-# neutral :class:`Verb`, headers travel in ``metadata`` as an ``HttpRunner`` detail,
-# and ``code`` is a normalised result code rather than "an HTTP status".
+# These types are the *transport-neutral* foundation for pluggable upstream
+# runners. They are deliberately **not** HTTP-shaped: the web layer maps an HTTP
+# method to a neutral :class:`Verb`, headers travel in ``metadata`` as an
+# ``HttpRunner`` detail, and ``code`` is a normalised result code rather than
+# "an HTTP status".
 #
-# RN-0.1 lands these alongside the existing HTTP-shaped
+# They live alongside the existing HTTP-shaped
 # ``broker/adapters/runners/base.py`` objects (``RunnerRequest``/``RunnerResult``/
-# ``UpstreamRunner``), which stay live and unchanged. The incremental migration of
-# the live runner path onto :class:`PluggableUpstreamRunner` (registry, capability
-# gating, the decorator envelope) is deferred to later §11 sub-PRs.
+# ``UpstreamRunner``), which the live runner path still uses; migrating that path
+# onto :class:`PluggableUpstreamRunner` (registry, capability gating, the
+# decorator envelope) is future work.
 # ---------------------------------------------------------------------------
 
 
@@ -310,7 +326,7 @@ class UpstreamResult:
 
 @dataclass(frozen=True, slots=True)
 class RunnerCapabilities:
-    """What a runner can do — used by later sub-PRs to gate the execution envelope."""
+    """What a runner can do — gates which execution-envelope layers may wrap it."""
 
     verbs: frozenset[Verb]
     credential_types: frozenset[CredentialType]
@@ -323,13 +339,13 @@ class RunnerCapabilities:
 
 @runtime_checkable
 class EgressPolicy(Protocol):
-    """Minimal placeholder for the scheme-aware egress policy (RN-1.1, deferred).
+    """Minimal placeholder for the scheme-aware egress policy (future work).
 
     The real ``EgressPolicy`` (per-runner allowed schemes, host allowlists,
-    private-IP/metadata blocking, DNS pinning) is built in RN-1.1 on top of §08/E2.
-    RN-0.1 only needs a type for the :meth:`PluggableUpstreamRunner.validate_target`
-    signature; this defines just the ``check`` shape so the protocol is mypy-strict
-    clean without prematurely building the full policy.
+    private-IP/metadata blocking, DNS pinning) builds on the shared egress guard.
+    For now only the :meth:`PluggableUpstreamRunner.validate_target` signature
+    needs a type; this defines just the ``check`` shape so the protocol is
+    mypy-strict clean without prematurely building the full policy.
     """
 
     def check(self, target: Target) -> None: ...
@@ -337,19 +353,20 @@ class EgressPolicy(Protocol):
 
 @runtime_checkable
 class PluggableUpstreamRunner(Protocol):
-    """Transport-neutral, pooled upstream runner (RN-0.1 foundation protocol).
+    """Transport-neutral, pooled upstream runner (foundation protocol).
 
     This is the neutral successor to the HTTP-shaped
-    ``broker/adapters/runners/base.py::UpstreamRunner``; that one stays live and is
-    migrated onto this shape in a later §11 sub-PR. Runners are **long-lived pooled
+    ``broker/adapters/runners/base.py::UpstreamRunner``; that one is still what
+    the live path uses — migrating it onto this shape is future work. Runners are
+    **long-lived pooled
     objects** — ``startup()``/``aclose()`` own the connection lifecycle — and apply
     the credential **inside** :meth:`run` (HTTP sets a per-request header; MQTT/FTP
     authenticate at connection establishment).
 
     ``credential`` is typed ``object | None`` for now: the concrete resolved-credential
     type lives in ``broker/services/credentials`` and ``shared`` must not import
-    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``). The
-    credential-application slice that tightens this type lands in a later sub-PR.
+    ``broker`` (layering, enforced by ``tests/arch/test_module_boundaries.py``);
+    tightening this type is future work.
     """
 
     name: str

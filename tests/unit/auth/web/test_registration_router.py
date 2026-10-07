@@ -67,6 +67,65 @@ def test_post_register_returns_201(mock_svc_cls: MagicMock, client: TestClient) 
 
 
 @patch("jentic_one.auth.web.routers.registration.RegistrationService")
+def test_post_register_omits_unset_claim_token_not_null(
+    mock_svc_cls: MagicMock, client: TestClient
+) -> None:
+    """RFC 7591 §3.2.1: on the OSS single-user default no claim-token minter
+    is installed, so ``claim_token`` is OMITTED from the response body —
+    never serialized as JSON ``null`` (the DCR-door/#1250 posture)."""
+    mock_instance = MagicMock()
+    mock_instance.register = AsyncMock(
+        return_value=RegisterResult(
+            client_id="agnt_abc123",
+            registration_access_token="rat_secret",
+            registration_client_uri="https://auth.example.com/register/agnt_abc123",
+            status="pending",
+        )
+    )
+    mock_svc_cls.return_value = mock_instance
+
+    resp = client.post(
+        "/register",
+        json={
+            "client_name": "my-agent",
+            "jwks": {"keys": [{"kty": "OKP", "crv": "Ed25519", "x": "dGVzdA", "kid": "k1"}]},
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "claim_token" not in data
+    # Belt-and-braces: the raw body carries no null members at all.
+    assert b"null" not in resp.content
+
+
+@patch("jentic_one.auth.web.routers.registration.RegistrationService")
+def test_post_register_keeps_set_claim_token(mock_svc_cls: MagicMock, client: TestClient) -> None:
+    """exclude_none must not drop a claim_token that IS minted (multi-user
+    deployments with a claim-token minter installed)."""
+    mock_instance = MagicMock()
+    mock_instance.register = AsyncMock(
+        return_value=RegisterResult(
+            client_id="agnt_abc123",
+            registration_access_token="rat_secret",
+            registration_client_uri="https://auth.example.com/register/agnt_abc123",
+            status="pending",
+            claim_token="clm_secret",
+        )
+    )
+    mock_svc_cls.return_value = mock_instance
+
+    resp = client.post(
+        "/register",
+        json={
+            "client_name": "my-agent",
+            "jwks": {"keys": [{"kty": "OKP", "crv": "Ed25519", "x": "dGVzdA", "kid": "k1"}]},
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["claim_token"] == "clm_secret"
+
+
+@patch("jentic_one.auth.web.routers.registration.RegistrationService")
 def test_get_register_poll_returns_200(mock_svc_cls: MagicMock, client: TestClient) -> None:
     mock_instance = MagicMock()
     mock_instance.poll_status = AsyncMock(

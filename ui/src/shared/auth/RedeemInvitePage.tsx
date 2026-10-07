@@ -6,6 +6,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Button } from '@/shared/ui/Button';
+import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { MIN_PASSWORD_LENGTH } from '@/shared/auth/password';
 
@@ -99,65 +100,62 @@ export function RedeemInvitePage() {
 	}
 
 	return (
-		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
-			<form
-				onSubmit={handleSubmit}
-				className="border-border bg-card w-full max-w-sm rounded-xl border p-6 shadow-sm"
-				aria-labelledby="redeem-invite-heading"
+		<AuthCard onSubmit={handleSubmit} aria-labelledby="redeem-invite-heading">
+			<h1
+				id="redeem-invite-heading"
+				className="font-heading text-foreground-name text-xl font-semibold"
 			>
-				<h1 id="redeem-invite-heading" className="font-display text-xl font-semibold">
-					Finish setting up your account
-				</h1>
-				<p className="text-muted-foreground mt-1 text-sm">
-					Choose a password to activate your account and sign in.
-				</p>
+				Finish setting up your account
+			</h1>
+			<p className="text-muted-foreground mt-1 text-sm">
+				Choose a password to activate your account and sign in.
+			</p>
 
-				<div className="mt-6 space-y-4">
-					<div className="space-y-1">
-						<Label htmlFor="ri-password">Password</Label>
-						<Input
-							id="ri-password"
-							ref={passwordRef}
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							minLength={MIN_PASSWORD_LENGTH}
-							disabled={tokenMissing}
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-						/>
-						<p className="text-muted-foreground text-xs">
-							At least {MIN_PASSWORD_LENGTH} characters.
-						</p>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="ri-confirm">Confirm password</Label>
-						<Input
-							id="ri-confirm"
-							type="password"
-							autoComplete="new-password"
-							showPasswordToggle
-							required
-							disabled={tokenMissing}
-							value={confirm}
-							onChange={(e) => setConfirm(e.target.value)}
-						/>
-					</div>
+			<div className="mt-6 space-y-4">
+				<div className="space-y-1">
+					<Label htmlFor="ri-password">Password</Label>
+					<Input
+						id="ri-password"
+						ref={passwordRef}
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						minLength={MIN_PASSWORD_LENGTH}
+						disabled={tokenMissing}
+						value={password}
+						onChange={(e) => setPassword(e.target.value)}
+					/>
+					<p className="text-muted-foreground text-xs">
+						At least {MIN_PASSWORD_LENGTH} characters.
+					</p>
 				</div>
+				<div className="space-y-1">
+					<Label htmlFor="ri-confirm">Confirm password</Label>
+					<Input
+						id="ri-confirm"
+						type="password"
+						autoComplete="new-password"
+						showPasswordToggle
+						required
+						disabled={tokenMissing}
+						value={confirm}
+						onChange={(e) => setConfirm(e.target.value)}
+					/>
+				</div>
+			</div>
 
-				{error !== null && <ErrorAlert message={error} className="mt-4" />}
+			{error !== null && <ErrorAlert message={error} className="mt-4" />}
 
-				<Button
-					type="submit"
-					loading={submitting}
-					disabled={tokenMissing}
-					fullWidth
-					className="mt-6"
-				>
-					{submitting ? 'Setting up…' : 'Activate account'}
-				</Button>
-			</form>
-		</main>
+			<Button
+				type="submit"
+				loading={submitting}
+				disabled={tokenMissing}
+				fullWidth
+				className="mt-6"
+			>
+				{submitting ? 'Setting up…' : 'Activate account'}
+			</Button>
+		</AuthCard>
 	);
 }

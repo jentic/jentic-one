@@ -3,11 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Type of authenticated actor.
+ * Type of authenticated actor: a human user or an agent.
+ *
+ * Historical records may carry older actor-type values that are no longer
+ * issued; treat unrecognised values as opaque labels.
  */
 export enum ActorType {
     USER = 'user',
     AGENT = 'agent',
-    SERVICE_ACCOUNT = 'service_account',
-    TOOLKIT = 'toolkit',
 }

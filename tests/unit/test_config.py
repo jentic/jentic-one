@@ -2,29 +2,47 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+import structlog.testing
 import yaml
 from pydantic import SecretStr, ValidationError
 
+from jentic_one.shared import config as config_module
 from jentic_one.shared.config import (
+    _ONESHOT_CONFIG_CACHE,
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    AuthConfig,
     CatalogConfig,
     ConfigError,
+    ConnectConfig,
     CredentialsConfig,
+    DirectOAuth2ProviderConfig,
     EgressConfig,
     EncryptionConfig,
+    EncryptionKey,
+    EntitlementConfig,
     RuntimeConfig,
+    SigningKeyConfig,
+    TelemetryConfig,
+    _apps_for_secret_guard,
     _csv_to_list,
     _deep_merge,
     _env_overrides,
+    bind_origin,
+    check_public_url_consistency,
+    effective_auth_base_url,
+    has_spa_platform_client,
     load_config,
+    resolved_auth_base_url,
 )
 
 
@@ -96,6 +114,13 @@ def test_env_coerces_int(config_file: Path):
     assert config.databases.registry.port == 9999
 
 
+def test_http_wire_trace_defaults_off_and_env_enables(config_file: Path):
+    assert load_config(config_file).logging.http_wire_trace is False
+    with patch.dict(os.environ, {"JENTIC__LOGGING__HTTP_WIRE_TRACE": "true"}, clear=False):
+        config = load_config(config_file)
+    assert config.logging.http_wire_trace is True
+
+
 def test_env_coerces_float(config_file: Path):
     env = {"JENTIC__SERVICES__REQUEST_TIMEOUT_S": "60.5"}
     with patch.dict(os.environ, env, clear=False):
@@ -151,11 +176,34 @@ def test_numeric_password_preserved_as_string(config_file: Path):
     assert config.databases.registry.password.get_secret_value() == "123456"
 
 
-def test_default_jwt_secret_allowed_in_development():
-    """The placeholder jwt_secret is fine for local dev (the common case)."""
+def test_default_jwt_secret_generated_in_development():
+    """With no jwt_secret configured, dev mints a random per-process secret.
+
+    The shipped default is empty — images must not contain a secret-shaped
+    literal (AWS Marketplace container policy) — so zero-config local dev
+    relies on this generation. It must be non-empty and stable across repeated
+    config loads in one process, or every re-read would invalidate sessions.
+    """
     with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
-        cfg = AdminAuthConfig()
-    assert cfg.jwt_secret.get_secret_value() == "CHANGE-ME-IN-PRODUCTION"
+        first = AdminAuthConfig()
+        second = AdminAuthConfig()
+    generated = first.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated == second.jwt_secret.get_secret_value()
+
+
+def test_generated_dev_secrets_differ_per_field():
+    """The dev generator must not reuse one value across different secrets.
+
+    jwt_secret / pepper / state_secret have different blast radii; a shared
+    value would let one surface forge another's artifacts (e.g. sign an admin
+    JWT with the connect state secret).
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        jwt = AdminAuthConfig().jwt_secret.get_secret_value()
+        pepper = AdminInviteConfig().pepper.get_secret_value()
+        state = ConnectConfig().state_secret.get_secret_value()
+    assert len({jwt, pepper, state}) == 3
 
 
 def test_default_jwt_secret_rejected_in_production():
@@ -191,6 +239,34 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
     ):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
+
+
+@pytest.mark.parametrize("placeholder", ["change-me-in-production", "ChangeMe-2026"])
+def test_placeholder_jwt_secret_rejected_in_production(placeholder: str):
+    """A change-me placeholder in production is as unsafe as an empty value.
+
+    Placeholder values come from published examples and configs, so they are
+    publicly known — signing tokens with one means anyone can forge admin
+    JWTs. Boot must fail closed, exactly as it does for a blank.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        AdminAuthConfig(jwt_secret=SecretStr(placeholder))
+
+
+def test_placeholder_jwt_secret_replaced_in_development():
+    """A change-me placeholder in dev is treated as unset, never signed with.
+
+    The generated per-process secret takes its place, so a copied example
+    config still boots locally without ever using the publicly-known value.
+    """
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig(jwt_secret=SecretStr("change-me-in-production"))
+    generated = cfg.jwt_secret.get_secret_value()
+    assert generated.strip()
+    assert generated != "change-me-in-production"
 
 
 def test_session_lifetime_defaults():
@@ -273,6 +349,171 @@ def test_explicit_invite_pepper_accepted_in_production():
     with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
         cfg = AdminInviteConfig(pepper=SecretStr("a-real-generated-pepper"))
     assert cfg.pepper.get_secret_value() == "a-real-generated-pepper"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_connect_state_secret_rejected_in_production(blank: str):
+    """The connect state_secret gets the same fail-closed posture as the rest.
+
+    It signs the OAuth connect state; running production with a generated
+    per-process value would break multi-replica deployments silently, so a
+    missing value must be a boot error, not a fallback.
+    """
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match=r"credentials\.connect\.state_secret"),
+    ):
+        ConnectConfig(state_secret=SecretStr(blank))
+
+
+def test_explicit_connect_state_secret_accepted_in_production():
+    with patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False):
+        cfg = ConnectConfig(state_secret=SecretStr("a-real-generated-state-secret"))
+    assert cfg.state_secret.get_secret_value() == "a-real-generated-state-secret"
+
+
+_ALL_GUARDED = {
+    "JENTIC__ADMIN__AUTH__JWT_SECRET": "admin.auth.jwt_secret",
+    "JENTIC__ADMIN__INVITE__PEPPER": "admin.invite.pepper",
+    "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": "credentials.connect.state_secret",
+}
+
+
+@pytest.mark.parametrize(
+    ("apps", "required"),
+    [
+        # Mirrors the Helm chart's per-surface mounts (charts/common _app-secrets.tpl).
+        ("broker", set()),
+        ("registry", {"JENTIC__ADMIN__AUTH__JWT_SECRET"}),
+        (
+            "control",
+            {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET"},
+        ),
+        ("admin,auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET", "JENTIC__ADMIN__INVITE__PEPPER"}),
+        # Auth issues session JWTs and derives its flow keys from the JWT secret.
+        ("auth", {"JENTIC__ADMIN__AUTH__JWT_SECRET"}),
+        ("registry,admin,control,auth", set(_ALL_GUARDED)),
+        # An unaudited (e.g. extension) surface keeps the guard strict.
+        ("broker,enterprise-thing", set(_ALL_GUARDED)),
+    ],
+)
+def test_production_guard_requires_only_secrets_enabled_surfaces_read(
+    config_file: Path, apps: str, required: set[str]
+):
+    """In production each standalone surface needs only the secrets it reads.
+
+    Every required secret missing on its own is a boot error naming the field;
+    with all required secrets present the config loads, and the secrets the
+    surfaces never read are a per-process random value, never empty.
+    """
+    for missing in required:
+        env = {"JENTIC_ENV": "production", "JENTIC__APPS": apps}
+        env |= {k: "a-real-generated-secret" for k in required if k != missing}
+        with (
+            patch.dict(os.environ, env, clear=False),
+            pytest.raises(ConfigError, match=_ALL_GUARDED[missing].replace(".", r"\.")),
+        ):
+            load_config(config_file)
+
+    env = {"JENTIC_ENV": "production", "JENTIC__APPS": apps}
+    env |= dict.fromkeys(required, "a-real-generated-secret")
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    values = {
+        "JENTIC__ADMIN__AUTH__JWT_SECRET": config.admin.auth.jwt_secret,
+        "JENTIC__ADMIN__INVITE__PEPPER": config.admin.invite.pepper,
+        "JENTIC__CREDENTIALS__CONNECT__STATE_SECRET": config.credentials.connect.state_secret,
+    }
+    for key, value in values.items():
+        secret = value.get_secret_value()
+        if key in required:
+            assert secret == "a-real-generated-secret"
+        else:
+            assert secret.strip()
+            assert secret != "a-real-generated-secret"
+
+
+@pytest.mark.parametrize("raw", [[], "registry", ["registry", 1], {"registry": True}])
+def test_production_guard_stays_strict_for_unreadable_apps(raw: object):
+    """An apps value the guard cannot read as surface names keeps it strict."""
+    assert _apps_for_secret_guard(raw) is None
+
+
+def test_production_guard_default_apps_require_every_secret(config_file: Path):
+    """No ``apps`` override means the combined default, which reads all three."""
+    env = {"JENTIC_ENV": "production"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
+    ):
+        os.environ.pop("JENTIC__APPS", None)
+        load_config(config_file)
+
+
+def test_production_guard_stays_strict_outside_load_config(config_file: Path):
+    """Direct model construction has no surface context and so stays strict.
+
+    A relaxed load (standalone broker) must not leak its surface set into
+    later validation in the same process.
+    """
+    env = {"JENTIC_ENV": "production", "JENTIC__APPS": "broker"}
+    with patch.dict(os.environ, env, clear=False):
+        load_config(config_file)
+        with pytest.raises(ConfigError, match=r"admin\.invite\.pepper"):
+            AdminInviteConfig()
+
+
+_LOCAL_DEV_KEY_SEC1 = """\
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIBG7o+PPPIdPqMK4RwNWnj+UaW8fZFzxw7oZD5XFqW5CoAoGCCqGSM49
+AwEHoUQDQgAElriD/rpklmqTXbUOa9uLHAB2l+qr+DoeDmmykYLGblbxs+a1qvxB
+369JIs2Ej4zMfkjBTGES38wMDs1J+PJG6g==
+-----END EC PRIVATE KEY-----"""
+
+_LOCAL_DEV_KEY_PKCS8 = """\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEbuj4888h0+owrhH
+A1aeP5Rpbx9kXPHDuhkPlcWpbkKhRANCAASWuIP+umSWapNdtQ5r24scAHaX6qv4
+Oh4OabKRgsZuVvGz5rWq/EHfr0kizYSPjMx+SMFMYRLfzAwOzUn48kbq
+-----END PRIVATE KEY-----"""
+
+
+def test_local_dev_signing_key_rejected_in_production_sec1():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1))
+            ]
+        )
+
+
+def test_local_dev_signing_key_rejected_in_production_pkcs8():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev signing key material"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(kid="custom-kid", private_key_pem=SecretStr(_LOCAL_DEV_KEY_PKCS8))
+            ]
+        )
+
+
+def test_local_dev_signing_kid_rejected_in_production():
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "production"}, clear=False),
+        pytest.raises(ConfigError, match="local-dev key id"),
+    ):
+        AuthConfig(
+            id_signing=[
+                SigningKeyConfig(
+                    kid="local-dev-key", private_key_pem=SecretStr(_LOCAL_DEV_KEY_SEC1)
+                )
+            ]
+        )
 
 
 def test_boolean_like_password_preserved_as_string(config_file: Path):
@@ -402,6 +643,59 @@ def test_apps_env_comma_separated_with_spaces(config_file: Path):
     assert config.apps == ["registry", "admin", "control"]
 
 
+def test_mcp_oauth_config_defaults(config_file: Path):
+    """MCP OAuth seam, D9 as amended: off by default, and approval-first —
+    auto-approve is an explicit opt-in, false by default."""
+    config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is False
+    assert config.server.mcp.oauth.auto_approve_clients is False
+    assert config.server.mcp.oauth.registration_gc_days == 90
+
+
+def test_mcp_oauth_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__SERVER__MCP__OAUTH__ENABLED": "true",
+        "JENTIC__SERVER__MCP__OAUTH__AUTO_APPROVE_CLIENTS": "true",
+        "JENTIC__SERVER__MCP__OAUTH__REGISTRATION_GC_DAYS": "30",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.mcp.oauth.enabled is True
+    assert config.server.mcp.oauth.auto_approve_clients is True
+    assert config.server.mcp.oauth.registration_gc_days == 30
+
+
+def test_oauth_registration_rate_limit_knobs(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_RPM": "3",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__REGISTRATION_BURST": "2",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.registration_rpm == 3
+    assert config.auth.oauth_rate_limit.registration_burst == 2
+
+
+def test_oauth_approval_status_rate_limit_defaults(config_file: Path):
+    """The approval-status poll bucket: generous defaults (one tab polls at
+    12 rpm; 120/60 holds ~10 NAT'd tabs), independently tunable from
+    /authorize."""
+    config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 120
+    assert config.auth.oauth_rate_limit.approval_status_burst == 60
+
+
+def test_oauth_approval_status_rate_limit_env_overrides(config_file: Path):
+    env = {
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_RPM": "6",
+        "JENTIC__AUTH__OAUTH_RATE_LIMIT__APPROVAL_STATUS_BURST": "3",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.auth.oauth_rate_limit.approval_status_rpm == 6
+    assert config.auth.oauth_rate_limit.approval_status_burst == 3
+
+
 def test_encryption_config_defaults():
     cfg = EncryptionConfig()
     assert cfg.active_id == "v1"
@@ -442,6 +736,288 @@ def test_encryption_active_id_env_override(config_file: Path):
     assert config.credentials.encryption.active_id == "env-id"
 
 
+# A syntactically valid key for source-resolution tests: material_file content
+# is vetted as base64 of exactly 32 bytes at config load.
+_KEY_B64 = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
+
+
+def test_encryption_key_inline_material():
+    key = EncryptionKey(id="v1", material=SecretStr(_KEY_B64))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": _KEY_B64}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+    # Resolved once at validation — later env mutation is irrelevant.
+    assert key.material is not None
+
+
+def test_encryption_key_material_env_strips_whitespace():
+    with patch.dict(os.environ, {"TEST_ENC_KEY": f"  {_KEY_B64}\n"}, clear=False):
+        key = EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_env_unset_fails():
+    env = dict(os.environ)
+    env.pop("TEST_ENC_KEY_MISSING", None)
+    with (
+        patch.dict(os.environ, env, clear=True),
+        pytest.raises(ValidationError, match="TEST_ENC_KEY_MISSING"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY_MISSING")
+
+
+def test_encryption_key_material_file(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64 + "\n")
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_encryption_key_material_file_missing_fails(tmp_path: Path):
+    with pytest.raises(ValidationError, match="cannot read material_file"):
+        EncryptionKey(id="v1", material_file=str(tmp_path / "nope.key"))
+
+
+def test_encryption_key_material_file_empty_fails(tmp_path: Path):
+    key_file = tmp_path / "empty.key"
+    key_file.write_text("  \n")
+    with pytest.raises(ValidationError, match="is empty"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_requires_exactly_one_source():
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1")
+    with pytest.raises(ValidationError, match="exactly one"):
+        EncryptionKey(id="v1", material=SecretStr(_KEY_B64), material_env="TEST_ENC_KEY")
+
+
+@pytest.mark.parametrize("inline", ["", "   ", " \n\t"])
+def test_encryption_key_inline_material_empty_fails(inline: str):
+    """An empty/whitespace inline material fails at validation, not at first
+    credential use — all three sources reject empties identically."""
+    with pytest.raises(ValidationError, match="material is empty"):
+        EncryptionKey(id="v1", material=SecretStr(inline))
+
+
+def test_encryption_key_inline_material_strips_whitespace():
+    """Inline material strips like the env/file sources do, so identical bytes
+    produce identical keys regardless of which source carried them."""
+    key = EncryptionKey(id="v1", material=SecretStr(f"  {_KEY_B64}\n"))
+    assert key.resolved_material.get_secret_value() == _KEY_B64
+
+
+@pytest.mark.parametrize("value", ["", "   ", " \n"])
+def test_encryption_key_material_env_empty_fails(value: str):
+    """A set-but-empty (or whitespace-only) variable must fail like an unset
+    one — it must never resolve to a zero-length key."""
+    with (
+        patch.dict(os.environ, {"TEST_ENC_KEY": value}, clear=False),
+        pytest.raises(ValidationError, match=r"is not set \(or empty\)"),
+    ):
+        EncryptionKey(id="v1", material_env="TEST_ENC_KEY")
+
+
+def test_encryption_key_material_file_rejects_fifo(tmp_path: Path):
+    """A pipe cannot be re-read, so it must be rejected up front — a writer-less
+    FIFO would otherwise block boot forever with no timeout."""
+    fifo = tmp_path / "key.fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(ValidationError, match="must be a regular file"):
+        EncryptionKey(id="v1", material_file=str(fifo))
+
+
+def test_encryption_key_material_file_not_base64_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text("this is not base64!\n")
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_wrong_length_fails_without_length_echo(tmp_path: Path):
+    """The failure must not echo the observed byte length: material_file is
+    reachable with env-write privilege, and echoing the length turns any
+    readable path into a content-length oracle."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(base64.b64encode(b"short-key").decode())
+    with pytest.raises(ValidationError, match="does not contain a 32-byte key") as excinfo:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert "got" not in str(excinfo.value)
+    assert "9 bytes" not in str(excinfo.value)
+
+
+def test_encryption_key_material_file_too_large_fails(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_bytes(b"A" * 8192)
+    with pytest.raises(ValidationError, match="does not contain a base64-encoded key"):
+        EncryptionKey(id="v1", material_file=str(key_file))
+
+
+def test_encryption_key_material_file_permissive_mode_warns(tmp_path: Path):
+    """A group/other-readable key file is the feature's whole security boundary
+    silently gone; the load must say so."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o644)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_material_file_private_mode_does_not_warn(tmp_path: Path):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key_file.chmod(0o600)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    assert not any(log["event"] == "encryption_material_file_permissive" for log in logs)
+
+
+def test_encryption_key_resolution_logs_source_and_fingerprint_not_material(tmp_path: Path):
+    """The boot trail must record where the key came from (id, source, origin,
+    fingerprint) and must never carry the material itself."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    with structlog.testing.capture_logs() as logs:
+        EncryptionKey(id="v1", material_file=str(key_file))
+    resolved = [log for log in logs if log["event"] == "encryption_key_material_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0]["key_id"] == "v1"
+    assert resolved[0]["source"] == "material_file"
+    assert resolved[0]["origin"] == str(key_file)
+    assert len(resolved[0]["fingerprint"]) == 16
+    assert all(_KEY_B64 not in str(v) for v in resolved[0].values())
+
+
+def test_encryption_key_resolved_key_revalidates(tmp_path: Path):
+    """A resolved key survives dump -> validate: the source field is cleared,
+    so re-validation neither trips the exactly-one check nor re-reads the file."""
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    key = EncryptionKey(id="v1", material_file=str(key_file))
+    key_file.unlink()  # re-validation must not go back to the source
+    again = EncryptionKey.model_validate(key.model_dump())
+    assert again.resolved_material.get_secret_value() == _KEY_B64
+    assert again.material_file is None
+
+
+def test_encryption_key_material_file_yaml_roundtrip(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    key_file = tmp_path / "enc.key"
+    key_file.write_text(_KEY_B64)
+    sample_config_dict["credentials"] = {
+        "encryption": {
+            "active_id": "v1",
+            "entries": [{"id": "v1", "material_file": str(key_file)}],
+        }
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    entry = config.credentials.encryption.entries[0]
+    assert entry.resolved_material.get_secret_value() == _KEY_B64
+
+
+def test_load_config_from_pipe_is_cached(sample_config_dict: dict[str, Any]):
+    """A config handed on a one-shot fd (pipe / /dev/fd) survives repeat loads.
+
+    Supervisors that keep secrets off disk pass JENTIC_CONFIG_FILE=/dev/fd/N;
+    consumers like the Alembic env call load_config once per database, so the
+    first read must be cached rather than hitting EOF on the second load.
+    """
+    doc = yaml.dump(sample_config_dict).encode()
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, doc)
+        os.close(write_fd)
+        pipe_path = Path(f"/dev/fd/{read_fd}")
+        first = load_config(pipe_path)
+        with structlog.testing.capture_logs() as logs:
+            second = load_config(pipe_path)  # would be EOF without the cache
+        assert first.databases.registry.name == second.databases.registry.name
+        # The reuse leaves a trail: "why didn't my config change take effect"
+        # must be answerable from the logs.
+        assert any(log["event"] == "oneshot_config_cache_reused" for log in logs)
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_load_config_from_regular_file_is_not_cached(
+    tmp_path: Path, sample_config_dict: dict[str, Any]
+):
+    """Regular files re-read on every load — caching them would defeat keyset
+    rotation (edit the file, reload, still get the stale document)."""
+    path = tmp_path / "cfg.yaml"
+    sample_config_dict["databases"]["registry"]["name"] = "before-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    first = load_config(path)
+    sample_config_dict["databases"]["registry"]["name"] = "after-rotation"
+    path.write_text(yaml.dump(sample_config_dict))
+    second = load_config(path)
+    assert first.databases.registry.name == "before-rotation"
+    assert second.databases.registry.name == "after-rotation"
+    assert _ONESHOT_CONFIG_CACHE == {}
+
+
+def test_load_config_oneshot_empty_source_fails_loudly_and_is_not_cached():
+    """A drained (or never-written) one-shot source must raise a ConfigError
+    naming the real cause — and must NOT be cached, or the process would be
+    permanently pinned to an empty config with no recovery."""
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)  # supervisor closed its end without writing
+    try:
+        with pytest.raises(ConfigError, match="yielded no content"):
+            load_config(Path(f"/dev/fd/{read_fd}"))
+        assert _ONESHOT_CONFIG_CACHE == {}
+    finally:
+        os.close(read_fd)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
+def test_oneshot_cache_is_keyed_on_source_identity_not_path(
+    sample_config_dict: dict[str, Any],
+):
+    """fd numbers are recycled, so two different pipes can both be /dev/fd/N in
+    one process. The cache must key on the source's identity, never the path
+    string — a path-keyed cache silently serves the first pipe's document for
+    the second."""
+    sample_config_dict["databases"]["registry"]["name"] = "config-a"
+    doc_a = yaml.dump(sample_config_dict).encode()
+    sample_config_dict["databases"]["registry"]["name"] = "config-b"
+    doc_b = yaml.dump(sample_config_dict).encode()
+
+    read_a, write_a = os.pipe()
+    read_b = -1
+    try:
+        os.write(write_a, doc_a)
+        os.close(write_a)
+        first = load_config(Path(f"/dev/fd/{read_a}"))
+        os.close(read_a)
+
+        read_b, write_b = os.pipe()
+        os.write(write_b, doc_b)
+        os.close(write_b)
+        # Force the second pipe onto the first pipe's recycled fd number.
+        if read_b != read_a:
+            os.dup2(read_b, read_a)
+            os.close(read_b)
+        read_b = read_a
+        second = load_config(Path(f"/dev/fd/{read_b}"))
+
+        assert first.databases.registry.name == "config-a"
+        assert second.databases.registry.name == "config-b"
+    finally:
+        if read_b >= 0:
+            os.close(read_b)
+        _ONESHOT_CONFIG_CACHE.clear()
+
+
 def test_broker_jobs_api_base_url_defaults_to_none(config_file: Path):
     config = load_config(config_file)
     assert config.broker.jobs_api_base_url is None
@@ -460,6 +1036,83 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.broker.jobs_api_base_url == "https://env.example.com"
+
+
+@pytest.mark.parametrize("value", [False, "false"])
+def test_broker_retired_direct_bindings_flag_false_is_rejected(
+    tmp_path: Path, sample_config_dict: dict[str, Any], value: object
+) -> None:
+    """Pinning the deleted toolkit path must fail boot, not silently switch paths."""
+    sample_config_dict["broker"] = {"direct_bindings_enabled": value}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with pytest.raises(ConfigError, match="direct_bindings_enabled was removed"):
+        load_config(path)
+
+
+def test_broker_retired_direct_bindings_flag_false_env_is_rejected(config_file: Path) -> None:
+    env = {"JENTIC__BROKER__DIRECT_BINDINGS_ENABLED": "false"}
+    with (
+        patch.dict(os.environ, env, clear=False),
+        pytest.raises(ConfigError, match="direct_bindings_enabled was removed"),
+    ):
+        load_config(config_file)
+
+
+def test_broker_retired_direct_bindings_flag_true_is_ignored(
+    tmp_path: Path, sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``true`` was the 0.40 default: harmless, dropped with a one-time warning."""
+    sample_config_dict["broker"] = {"direct_bindings_enabled": True}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    monkeypatch.setattr(config_module, "_retired_direct_bindings_flag_warned", threading.Event())
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert not hasattr(config.broker, "direct_bindings_enabled")
+    warnings = [e for e in logs if e["event"] == "config_retired_setting_ignored"]
+    assert len(warnings) == 1, "the deprecation warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "broker.direct_bindings_enabled"
+
+
+@pytest.mark.parametrize("value", [24, "0"])
+def test_services_retired_sa_sweep_age_is_ignored(
+    tmp_path: Path,
+    sample_config_dict: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    value: object,
+) -> None:
+    """The 0.40 sweep age gate is harmless: dropped with a one-time warning."""
+    sample_config_dict["services"] = {
+        "service_account_sweep_min_stamp_age_hours": value,
+        "retry_max": 5,
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert config.services.retry_max == 5
+    assert not hasattr(config.services, "service_account_sweep_min_stamp_age_hours")
+    warnings = [e for e in logs if e["event"] == "config_retired_setting_ignored"]
+    assert len(warnings) == 1, "the warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "services.service_account_sweep_min_stamp_age_hours"
+
+
+def test_services_retired_sa_sweep_age_env_is_ignored(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_module, "_retired_sa_sweep_age_warned", threading.Event())
+    env = {"JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS": "48"}
+    with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
+        load_config(config_file)
+    assert [e["setting"] for e in logs if e["event"] == "config_retired_setting_ignored"] == [
+        "services.service_account_sweep_min_stamp_age_hours"
+    ]
 
 
 def test_server_backend_defaults_to_local(config_file: Path):
@@ -563,3 +1216,432 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+# --- server.public_base_url + derived-URL consolidation (issue #818) ---------
+
+
+def _min_dbs() -> dict[str, Any]:
+    return {
+        "registry": {"name": "reg"},
+        "admin": {"name": "admin"},
+        "control": {"name": "ctrl"},
+    }
+
+
+def _load(tmp_path: Path, extra: dict[str, Any]) -> AppConfig:
+    data: dict[str, Any] = {"databases": _min_dbs(), **extra}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return load_config(path)
+
+
+def test_public_base_url_default_empty(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.server.public_base_url == ""
+
+
+def test_public_base_url_from_yaml(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com/"}})
+    # normalized: trailing slash stripped
+    assert config.server.public_base_url == "https://jentic.example.com"
+
+
+def test_public_base_url_env_override(tmp_path: Path):
+    with patch.dict(os.environ, {"JENTIC__SERVER__PUBLIC_BASE_URL": "http://127.0.0.1:8020"}):
+        config = _load(tmp_path, {})
+    assert config.server.public_base_url == "http://127.0.0.1:8020"
+
+
+def test_public_base_url_rejects_userinfo(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"server": {"public_base_url": "http://user:pw@host"}})
+
+
+def test_redirect_uri_now_optional(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {"credentials": {"providers": {"direct_oauth2": {"kind": "direct_oauth2"}}}},
+    )
+    pc = config.credentials.providers["direct_oauth2"]
+    assert isinstance(pc, DirectOAuth2ProviderConfig)
+    assert pc.redirect_uri is None
+
+
+def test_effective_auth_base_url_precedence(tmp_path: Path):
+    # explicit auth canonical wins over public_base_url
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://public.example.com"},
+            "auth": {"canonical_base_url": "https://auth.example.com"},
+        },
+    )
+    assert effective_auth_base_url(config) == "https://auth.example.com"
+
+    # public_base_url alone flows through
+    config = _load(tmp_path, {"server": {"public_base_url": "https://public.example.com"}})
+    assert effective_auth_base_url(config) == "https://public.example.com"
+
+    # both unset ≡ empty (today's behaviour)
+    config = _load(tmp_path, {})
+    assert effective_auth_base_url(config) == ""
+
+
+def test_check_public_url_consistency(tmp_path: Path):
+    # unset fields self-derive → no mismatch
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert check_public_url_consistency(config) == []
+
+    # loopback-equivalent explicit URL against a 0.0.0.0 bind → no mismatch
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8020"},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+    # port mismatch against the serving bind → exactly one entry
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8000"},
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert len(mismatches) == 1
+    assert mismatches[0].field == "auth.canonical_base_url"
+
+    # public_base_url explains the origin → no mismatch even when it differs
+    # from the bind
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "0.0.0.0",
+                "port": 8020,
+                "public_base_url": "https://gw.example.com",
+            },
+            "auth": {"canonical_base_url": "https://gw.example.com"},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_excludes_provider_redirect_uri(tmp_path: Path):
+    # A provider redirect_uri override that legitimately differs from the public
+    # origin (split-origin gateway/NodePort) must NOT be flagged — otherwise the
+    # reference Helm deployment fires a false positive on every boot.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "http://localhost:8000"},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:30080/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_never_crashes_on_bad_port(tmp_path: Path):
+    # An out-of-range port must be rejected at config load (ValueError), not
+    # crash the consistency check at startup — the "warn, don't crash" contract.
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"auth": {"canonical_base_url": "http://h:99999"}})
+
+
+@pytest.mark.parametrize(
+    ("host", "port", "expected"),
+    [
+        ("0.0.0.0", 8000, "http://127.0.0.1:8000"),
+        ("::", 8020, "http://127.0.0.1:8020"),
+        ("127.0.0.1", 8020, "http://127.0.0.1:8020"),
+        ("localhost", 9000, "http://localhost:9000"),
+        ("::1", 8000, "http://[::1]:8000"),
+        ("10.0.0.5", 8000, "http://10.0.0.5:8000"),
+    ],
+)
+def test_bind_origin(tmp_path: Path, host: str, port: int, expected: str):
+    config = _load(tmp_path, {"server": {"host": host, "port": port}})
+    assert bind_origin(config) == expected
+
+
+def test_resolved_auth_base_url_falls_back_to_bind(tmp_path: Path):
+    # Request-less consumers (issuer, JWT-Bearer audience, DCR) follow the port
+    # with nothing pinned — the #818 any-port contract.
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert effective_auth_base_url(config) == ""
+    assert resolved_auth_base_url(config) == "http://127.0.0.1:8020"
+
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "https://x.example"}},
+    )
+    assert resolved_auth_base_url(config) == "https://x.example"
+
+
+def _spa_redirects(config: AppConfig) -> list[str]:
+    return next(
+        pc.redirect_uris for pc in config.auth.platform_clients if pc.client_id == "jentic-one-spa"
+    )
+
+
+def test_spa_platform_client_derived_from_loopback_bind(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert _spa_redirects(config) == [
+        "http://127.0.0.1:8020/app/auth/callback",
+        "http://localhost:8020/app/auth/callback",
+    ]
+
+
+def test_spa_platform_client_derived_from_public_base_url(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com"}})
+    assert _spa_redirects(config) == ["https://jentic.example.com/app/auth/callback"]
+
+
+def test_spa_platform_client_explicit_wins(tmp_path: Path):
+    explicit = {"client_id": "jentic-one-spa", "redirect_uris": ["https://spa.example/cb"]}
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://jentic.example.com"},
+            "auth": {"platform_clients": [explicit]},
+        },
+    )
+    assert _spa_redirects(config) == ["https://spa.example/cb"]
+
+
+def test_spa_platform_client_skipped_for_plain_http_lan_bind(tmp_path: Path):
+    # Platform redirect URIs refuse plain http off localhost; config must still
+    # load (SPA login then needs an explicit https public_base_url).
+    config = _load(tmp_path, {"server": {"host": "10.0.0.5", "port": 8000}})
+    assert not any(pc.client_id == "jentic-one-spa" for pc in config.auth.platform_clients)
+
+
+def test_check_public_url_consistency_flags_loopback_public_url_on_wrong_port(tmp_path: Path):
+    # The #818 repro: a loopback bind on 8020 with public_base_url still pinned
+    # to :8000 — every derived URL is unreachable.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "127.0.0.1", "port": 8020, "public_base_url": "http://127.0.0.1:8000"}},
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["server.public_base_url"]
+    assert mismatches[0].expected == "http://127.0.0.1:8020"
+
+
+def test_check_public_url_consistency_flags_stale_loopback_redirect_uri(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:8000/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert [m.field for m in mismatches] == ["credentials.providers.direct_oauth2.redirect_uri"]
+
+
+def test_check_public_url_consistency_loopback_check_skips_all_interfaces_bind(tmp_path: Path):
+    # A 0.0.0.0 bind can sit behind a port mapping / NodePort that legitimately
+    # fronts it on another loopback port — no warning.
+    config = _load(
+        tmp_path,
+        {"server": {"host": "0.0.0.0", "port": 8000, "public_base_url": "http://localhost:30080"}},
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_loopback_check_ignores_non_loopback_urls(tmp_path: Path):
+    # A loopback bind behind a same-host reverse proxy serving a real hostname.
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "127.0.0.1",
+                "port": 8000,
+                "public_base_url": "https://jentic.example.com",
+            }
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_skips_overrides_on_all_interfaces_bind(tmp_path: Path):
+    # No public_base_url + a 0.0.0.0 bind: the public origin is unknowable
+    # (proxy / ingress), so a correctly-proxied override must not be flagged.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8000},
+            "auth": {"canonical_base_url": "https://jentic.example.com"},
+            "control": {"access_requests": {"canonical_base_url": "https://jentic.example.com"}},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_ignores_broker_urls(tmp_path: Path):
+    # The broker's jobs/account-linking URLs name other services' origins.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8000},
+            "broker": {
+                "jobs_api_base_url": "https://api.example.com",
+                "account_linking_base_url": "https://console.example.com",
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_redirect_uri_kept_byte_identical(tmp_path: Path):
+    # The IdP exact-matches the registered redirect URI: no slash stripping,
+    # and a query string is legal (RFC 6749 §3.1.2).
+    for uri in (
+        "https://app.example.com/credentials/oauth/callback/",
+        "https://app.example.com/credentials/oauth/callback?tenant=a",
+    ):
+        config = _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+        pc = config.credentials.providers["direct_oauth2"]
+        assert isinstance(pc, DirectOAuth2ProviderConfig)
+        assert pc.redirect_uri == uri
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://app.example.com/cb#frag",
+        "ftp://app.example.com/cb",
+        "https://user:pw@app.example.com/cb",
+        "https://app.example.com:99999/cb",
+    ],
+)
+def test_redirect_uri_rejects_invalid(tmp_path: Path, uri: str):
+    with pytest.raises(ConfigError):
+        _load(
+            tmp_path,
+            {
+                "credentials": {
+                    "providers": {"direct_oauth2": {"kind": "direct_oauth2", "redirect_uri": uri}}
+                }
+            },
+        )
+
+
+@pytest.mark.parametrize("host", ["localhost", "0.0.0.0"])
+def test_spa_platform_client_registers_both_loopback_aliases(tmp_path: Path, host: str):
+    # A local browser reaches the process as 127.0.0.1 or localhost whichever
+    # alias the bind names.
+    config = _load(tmp_path, {"server": {"host": host, "port": 8020}})
+    redirects = _spa_redirects(config)
+    assert "http://127.0.0.1:8020/app/auth/callback" in redirects
+    assert "http://localhost:8020/app/auth/callback" in redirects
+    assert len(redirects) == len(set(redirects))
+
+
+def test_has_spa_platform_client(tmp_path: Path):
+    assert has_spa_platform_client(_load(tmp_path, {"server": {"host": "127.0.0.1"}}))
+    assert not has_spa_platform_client(_load(tmp_path, {"server": {"host": "10.0.0.5"}}))
+
+
+def test_shipped_local_configs_follow_the_port(monkeypatch: pytest.MonkeyPatch):
+    # Guards against re-pinning :8000 in the shipped local configs.
+    monkeypatch.setenv("JENTIC__SERVER__PORT", "8020")
+    root = Path(__file__).resolve().parents[2]
+    for name in ("local.yaml", "local-sqlite.yaml"):
+        config = load_config(root / "config" / name)
+        assert resolved_auth_base_url(config) == "http://127.0.0.1:8020", name
+        assert "http://127.0.0.1:8020/app/auth/callback" in _spa_redirects(config), name
+        assert check_public_url_consistency(config) == [], name
+
+
+def test_telemetry_host_os_defaults_to_none():
+    """Hand-rolled configs (no CLI stamp) leave host_os unset → runtime fallback."""
+    assert TelemetryConfig().host_os is None
+
+
+def test_telemetry_host_os_from_yaml(tmp_path: Path):
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "telemetry": {"enabled": True, "host_os": "darwin"},
+    }
+    path = tmp_path / "telemetry.yaml"
+    path.write_text(yaml.dump(minimal))
+    config = load_config(path)
+    assert config.telemetry.host_os == "darwin"
+
+
+def test_telemetry_host_os_env_override(config_file: Path):
+    with patch.dict(os.environ, {"JENTIC__TELEMETRY__HOST_OS": "windows"}):
+        config = load_config(config_file)
+    assert config.telemetry.host_os == "windows"
+
+
+# --- EntitlementConfig (AWS Marketplace license gate) -------------------------
+
+
+def test_entitlement_defaults_off(config_file: Path):
+    config = load_config(config_file)
+    assert config.entitlement.enabled is False
+    assert config.entitlement.product_code is None
+    # The live listing is contract-priced, hence the default.
+    assert config.entitlement.pricing_model == "contract"
+    assert config.entitlement.license_dimensions == []
+
+
+def test_entitlement_enabled_requires_product_code():
+    with pytest.raises(ValidationError, match=r"entitlement\.product_code"):
+        EntitlementConfig(enabled=True)
+
+
+def test_entitlement_contract_requires_sku():
+    with pytest.raises(ValidationError, match=r"entitlement\.license_sku"):
+        EntitlementConfig(enabled=True, product_code="prod-abc", pricing_model="contract")
+
+
+def test_entitlement_env_override_round_trip(config_file: Path):
+    env = {
+        "JENTIC__ENTITLEMENT__ENABLED": "true",
+        "JENTIC__ENTITLEMENT__PRODUCT_CODE": "prod-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_SKU": "prod-id-abc123",
+        "JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS": "users,executions",
+        "JENTIC__ENTITLEMENT__REGION": "eu-west-1",
+        "JENTIC__ENTITLEMENT__REFRESH_INTERVAL_SECONDS": "600",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.entitlement.enabled is True
+    assert config.entitlement.product_code == "prod-abc123"
+    assert config.entitlement.license_sku == "prod-id-abc123"
+    assert config.entitlement.license_dimensions == ["users", "executions"]
+    assert config.entitlement.region == "eu-west-1"
+    assert config.entitlement.refresh_interval_seconds == 600

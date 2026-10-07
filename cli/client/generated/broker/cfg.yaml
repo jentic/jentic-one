@@ -1,0 +1,14 @@
+package: broker
+generate:
+  models: true
+  client: true
+  strict-server: false
+# NB: oapi-codegen resolves `output` relative to the WORKING DIRECTORY of the
+# invocation (the cli/ module root in the Makefile), not relative to this config
+# file — hence the full path, or client.go would land at cli/client.go.
+output: client/generated/broker/client.go
+output-options:
+  skip-prune: true
+  # Kept identical to the control plane for consistency: the broker spec does not
+  # currently collide, but the suffix is harmless and keeps both planes uniform.
+  response-type-suffix: "HTTPResp"

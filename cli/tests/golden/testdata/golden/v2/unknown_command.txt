@@ -1,0 +1,5 @@
+exit: 1
+--- stdout ---
+
+--- stderr ---
+{"actionable_step":"Check the command, its arguments, and flags — run with --help to see the accepted form.","error":"unknown command \"definitely-not-a-command\" for \"jentic\"","error_code":"MISSING_ARGUMENT","schema_version":"1"}

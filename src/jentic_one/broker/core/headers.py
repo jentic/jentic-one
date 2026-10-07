@@ -36,7 +36,6 @@ class JenticHeader(StrEnum):
     """Response header names the broker adds to every proxied response."""
 
     EXECUTION_ID = "Jentic-Execution-Id"
-    TOOLKIT_ID = "Jentic-Toolkit-Id"
     OPERATION = "Jentic-Operation"
     API_VENDOR = "Jentic-Api-Vendor"
     # The credential the broker resolved and used for this execution (#740). The
@@ -48,8 +47,7 @@ class JenticHeader(StrEnum):
     # used — broker-origin failures before credential resolution carry neither.
     # Note: ``Jentic-Credential-Name`` is *also* a request header that clients
     # send inbound to disambiguate ambiguous resolution — the outbound response
-    # header shares the name intentionally (same convention as
-    # ``Jentic-Toolkit-Id``, which is both request and response).
+    # header shares the name intentionally.
     CREDENTIAL_ID = "Jentic-Credential-Id"
     CREDENTIAL_NAME = "Jentic-Credential-Name"
     UPSTREAM_STATUS = "Jentic-Upstream-Status"
@@ -60,7 +58,7 @@ class JenticHeader(StrEnum):
 
 
 # Diagnostic hint appended (via the ``Jentic-Hint`` header, never by rewriting
-# the mirrored upstream body — §6b B-002 passthrough invariant) when an upstream
+# the mirrored upstream body — the passthrough invariant) when an upstream
 # 401/403 lands on an API whose spec uses a templated host / server variable
 # (e.g. ``https://{region}.posthog.com``). A valid key that still 401s here is
 # very often a region/server-variable mismatch (#638), so we surface the likely
@@ -79,15 +77,15 @@ REGION_MISMATCH_HINT = (
 TRACESTATE_HEADER = "tracestate"
 
 
-# The inbound multi-valued revision-pin request header (§10). A reused literal
+# The inbound multi-valued revision-pin request header. A reused literal
 # (read in the router, stripped from outbound forwarding via
 # ``BROKER_CONSUMED_HEADERS``), so it lives as a module-level constant.
 JENTIC_REVISION_HEADER = "jentic-revision"
 
 
 # Security-bearing response headers scrubbed before a response is serialized into
-# any broker-side store (idempotency replay cache here; the async jobs store in
-# §05 shares this list). The broker must never hoard a valid upstream session
+# any broker-side store (idempotency replay cache here; the async jobs store
+# shares this list). The broker must never hoard a valid upstream session
 # token / API key for the replay window. Lower-cased for case-insensitive match.
 SENSITIVE_RESPONSE_HEADERS: frozenset[str] = frozenset(
     {
@@ -126,9 +124,13 @@ BROKER_CONSUMED_HEADERS: frozenset[str] = frozenset(
         "prefer",
         "idempotency-key",
         "jentic-revision",
+        # Retired request header: no longer read, but still stripped so an old
+        # client's value is never forwarded to a third-party upstream. Kept
+        # through the toolkit deprecation window (no earlier than 2026-12-01).
         "jentic-toolkit-id",
         "x-jentic-api-key",
         "jentic-credential-name",
+        "jentic-credential-id",
     }
 )
 

@@ -24,9 +24,7 @@ import {
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
-	getJob,
-	importSources,
-	listApis,
+	listApiNotes,
 	listOperations,
 	listOverlays,
 	listRevisions,
@@ -37,16 +35,24 @@ import {
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
+import {
+	specAuthRequirement,
+	type SpecAuthRequirement,
+} from '@/modules/workspace/api/specOperations';
 import type {
+	ApiNote,
 	ApiOperation,
 	ApiRevision,
 	CursorPage,
-	ImportSource,
-	JobStatus,
 	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
+// The job poll is shared with the spec import (which is itself shared, so the
+// Add-APIs tray can upload a spec) — one loop, two callers, one reading of the
+// backend's terminal-status vocabulary.
+import { invalidateApiLists, jobSucceeded, pollJobToTerminal } from '@/shared/credentials/api';
 import { sharedQueryKeys } from '@/shared/api';
+import { pendingOverlaysRoot } from '@/shared/hooks';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const workspaceKeys = {
@@ -60,16 +66,21 @@ export const workspaceKeys = {
 	revisions: (key: ApiKey) => [...workspaceKeys.all, 'revisions', formatApiKey(key)] as const,
 	overlays: (key: ApiKey) => [...workspaceKeys.all, 'overlays', formatApiKey(key)] as const,
 	spec: (key: ApiKey) => [...workspaceKeys.all, 'spec', formatApiKey(key)] as const,
+	notes: (key: ApiKey) => [...workspaceKeys.all, 'notes', formatApiKey(key)] as const,
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
 };
 
-/** The workspace API list. */
-export function useWorkspaceApis(): UseQueryResult<CursorPage<WorkspaceApi>> {
+/**
+ * Notes attached to an API (`GET /notes?api=…`, first page). Degrades quietly:
+ * the hub renders the block only when the read succeeds with rows.
+ */
+export function useApiNotes(key: ApiKey | null): UseQueryResult<CursorPage<ApiNote>> {
 	return useQuery({
-		queryKey: workspaceKeys.apis(),
-		queryFn: () => listApis(),
-		placeholderData: keepPreviousData,
+		queryKey: key ? workspaceKeys.notes(key) : [...workspaceKeys.all, 'notes', 'disabled'],
+		queryFn: () => listApiNotes(key as ApiKey),
+		enabled: key != null,
+		retry: false,
 	});
 }
 
@@ -305,6 +316,38 @@ export function useApiSpec(
 	});
 }
 
+/**
+ * Whether this API needs a credential, for the hub.
+ *
+ * `GET /apis` only carries the DECLARED scheme types (`securitySchemes`), not
+ * whether any operation requires one, so the hub reads the resolved live spec
+ * (the same `useApiSpec` cache the Operations tab and spec viewer share) and
+ * asks it (`specAuthRequirement`). Until that read lands — or when it fails,
+ * or the API has no live revision — declared schemes count as required. An
+ * API that declares schemes is never read as needing none: a spec that doesn't
+ * require them makes the credential `optional`.
+ */
+export function useApiAuthRequirement(api: WorkspaceApi): {
+	requirement: SpecAuthRequirement;
+	/** The spec read is in flight — `requirement` may still change. */
+	pending: boolean;
+	/** Where the answer came from. */
+	source: 'spec' | 'declared';
+} {
+	const declared = api.securitySchemes.length > 0;
+	const spec = useApiSpec(api.api, declared && api.currentRevisionId !== null);
+	const fromSpec = spec.data !== undefined ? specAuthRequirement(spec.data) : null;
+	if (fromSpec != null) {
+		const requirement = fromSpec === 'none' && declared ? 'optional' : fromSpec;
+		return { requirement, pending: false, source: 'spec' };
+	}
+	return {
+		requirement: declared ? 'required' : 'none',
+		pending: spec.isLoading,
+		source: 'declared',
+	};
+}
+
 /** Promote / archive a revision, invalidating the API + its revision/op/spec lists. */
 export function useRevisionActions(key: ApiKey) {
 	const queryClient = useQueryClient();
@@ -317,6 +360,8 @@ export function useRevisionActions(key: ApiKey) {
 		// per-revision specs) are stale. `spec(key)` is the prefix of both the live
 		// key and the `revisionSpec` keys, so this one call covers them all.
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+		// Live vs Draft is a list-level field too.
+		invalidateApiLists(queryClient);
 	}, [queryClient, key]);
 
 	const promote = useMutation({
@@ -402,6 +447,9 @@ export function useOverlayActions(key: ApiKey) {
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.operations(key) });
 		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+		// The Library's docked panel counts pending overlays per API through a
+		// shared read — refresh it so a confirm/deprecate drops the count.
+		queryClient.invalidateQueries({ queryKey: pendingOverlaysRoot });
 	}, [queryClient, key]);
 
 	const confirm = useMutation({
@@ -496,7 +544,7 @@ export function useSnoozeCatalogUpdate(key: ApiKey) {
 				description: "You won't be notified again until a newer version is published.",
 			});
 			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+			invalidateApiLists(queryClient);
 		},
 		onError: (error: unknown) => {
 			toast({
@@ -525,7 +573,7 @@ export function useDeleteApi() {
 	return useMutation<void, Error, ApiKey>({
 		mutationFn: (key) => deleteApi(key),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+			invalidateApiLists(queryClient);
 			toast({ variant: 'success', title: 'API removed' });
 		},
 		onError: (error) => {
@@ -538,72 +586,6 @@ export function useDeleteApi() {
 	});
 }
 
-const JOB_POLL_INTERVAL_MS = 1500;
-const JOB_POLL_TIMEOUT_MS = 60_000;
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'error']);
-
-export interface UseImportSpec {
-	importSpec: (sources: ImportSource[]) => Promise<JobStatus>;
-	isImporting: boolean;
-}
-
-/**
- * Enqueue a spec import via `POST /apis` and poll the job to a terminal state.
- *
- * Import is async: 202 returns a job id, then we poll `/jobs/{id}` until
- * `succeeded`/`failed`. On success we invalidate the workspace list so the new
- * API materializes; on failure we surface the job's `error` (e.g. the backend
- * embeddings-extra gap verified against the live backend). The dialog awaits
- * the returned `JobStatus` so it can keep the form open + show the error on a
- * failed job, per the dialog state-lifecycle convention.
- */
-export function useImportSpec(): UseImportSpec {
-	const queryClient = useQueryClient();
-	const [isImporting, setIsImporting] = useState(false);
-	const activeRef = useRef(true);
-
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
-	useEffect(() => {
-		activeRef.current = true;
-		return () => {
-			activeRef.current = false;
-		};
-	}, []);
-
-	const importSpec = useCallback(
-		async (sources: ImportSource[]): Promise<JobStatus> => {
-			setIsImporting(true);
-			try {
-				const job = await importSources(sources);
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
-
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
-
-				if (status.status === 'succeeded') {
-					toast({
-						variant: 'success',
-						title: 'API imported',
-						description: `Import job ${status.jobId} completed.`,
-					});
-					queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
-				}
-				return status;
-			} finally {
-				if (activeRef.current) setIsImporting(false);
-			}
-		},
-		[queryClient],
-	);
-
-	return { importSpec, isImporting };
-}
-
 /**
  * Re-import a catalog-backed API to adopt an upstream spec update (Flow-3).
  *
@@ -613,7 +595,7 @@ export function useImportSpec(): UseImportSpec {
  * enqueues. Import is async: the 202 only means *queued*, and the new revision
  * (which clears `update_available` server-side) doesn't exist yet. Invalidating
  * on the 202 therefore re-reads the *stale* API and the "Update available" badge
- * lingers until some unrelated later refetch. So — like `useImportSpec` — we
+ * lingers until some unrelated later refetch. So — like the shared spec import — we
  * poll the job to a terminal state and only then invalidate the API's detail +
  * revision caches, so the cleared `update_available` and new revision are what
  * re-reads. We toast the queued job immediately and again on completion.
@@ -623,8 +605,9 @@ export function useReimportFromCatalog(key: ApiKey) {
 	const [isReimporting, setIsReimporting] = useState(false);
 	const activeRef = useRef(true);
 
-	// Flip the guard on unmount so an in-flight poll loop stops touching state
-	// (and breaks out at the next interval) instead of warning post-unmount.
+	// Flip the guard on unmount so ONLY the `isReimporting` write below is skipped —
+	// the poll and the invalidations must still finish, or navigating away mid-import
+	// leaves the API's detail and revision caches stale.
 	useEffect(() => {
 		activeRef.current = true;
 		return () => {
@@ -643,20 +626,18 @@ export function useReimportFromCatalog(key: ApiKey) {
 					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
 				});
 
-				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
-				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-					if (!activeRef.current) break;
-					status = await getJob(job.jobId);
-				}
+				const status = await pollJobToTerminal({
+					jobId: job.jobId,
+					status: job.status,
+					error: null,
+				});
 
 				// Only invalidate once the job has actually landed the new revision;
 				// otherwise the API re-reads stale and the "Update available" badge
 				// stays lit (the bug this poll fixes). A timeout without a terminal
 				// state still invalidates as a best effort — the next fetch is at
 				// worst as stale as before.
-				if (status.status === 'succeeded') {
+				if (jobSucceeded(status)) {
 					toast({
 						variant: 'success',
 						title: 'Re-import complete',
@@ -665,6 +646,7 @@ export function useReimportFromCatalog(key: ApiKey) {
 				}
 				queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
 				queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+				invalidateApiLists(queryClient);
 			} catch (error: unknown) {
 				toast({
 					variant: 'error',

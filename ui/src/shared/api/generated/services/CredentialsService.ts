@@ -8,15 +8,21 @@ import type { BasicAuthCreateRequest } from '../models/BasicAuthCreateRequest';
 import type { BasicAuthUpdateRequest } from '../models/BasicAuthUpdateRequest';
 import type { BearerTokenCreateRequest } from '../models/BearerTokenCreateRequest';
 import type { BearerTokenUpdateRequest } from '../models/BearerTokenUpdateRequest';
-import type { ConnectChallengeResponse } from '../models/ConnectChallengeResponse';
 import type { ConnectRequestBody } from '../models/ConnectRequestBody';
+import type { CredentialAgentListResponse } from '../models/CredentialAgentListResponse';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
 import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
+import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
+import type { PermissionRuleSchema } from '../models/PermissionRuleSchema';
+import type { PermissionsPatchRequest } from '../models/PermissionsPatchRequest';
+import type { PermissionTestRequest } from '../models/PermissionTestRequest';
+import type { PermissionTestResponse } from '../models/PermissionTestResponse';
 import type { ProviderDiscoveryResponse } from '../models/ProviderDiscoveryResponse';
+import type { RuleSetAttachRequest } from '../models/RuleSetAttachRequest';
 import type { Sigv4CreateRequest } from '../models/Sigv4CreateRequest';
 import type { Sigv4UpdateRequest } from '../models/Sigv4UpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -241,9 +247,271 @@ export class CredentialsService {
         });
     }
     /**
+     * List agents bound to credential
+     * List agents directly bound to a credential with cursor-based pagination.
+     *
+     * The reverse lookup for the credential-detail "Agents" view (theme 5
+     * phase 1) — the direct-binding successor of the removed
+     * ``GET /toolkits/{id}/agents``.
+     * Suspended bindings are included with their flag set.
+     * @returns CredentialAgentListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listCredentialAgents({
+        credentialId,
+        cursor,
+        limit = 50,
+    }: {
+        credentialId: string,
+        cursor?: (string | null),
+        limit?: number,
+    }): CancelablePromise<CredentialAgentListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{credential_id}/agents',
+            path: {
+                'credential_id': credentialId,
+            },
+            query: {
+                'cursor': cursor,
+                'limit': limit,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List binding permission rules
+     * List the ordered PBAC rules for a direct `(agent, credential)` binding.
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAgentCredentialPermissions({
+        credentialId,
+        agentId,
+    }: {
+        credentialId: string,
+        agentId: string,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Patch binding permission rules
+     * Additively add and/or remove permission rules on a binding.
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static patchAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: PermissionsPatchRequest,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Replace binding permission rules
+     * Replace the full set of permission rules for a binding (idempotent PUT).
+     * @returns PermissionRuleListResponse Successful Response
+     * @throws ApiError
+     */
+    public static replaceAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: Array<PermissionRuleSchema>,
+    }): CancelablePromise<PermissionRuleListResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Dry-run permission evaluation
+     * Answer "what would the broker do for this request?" without calling upstream.
+     *
+     * Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+     * binding's rules are one ordered first-match-wins list, so the result is
+     * exactly this binding's policy. Default-deny when nothing matches.
+     * @returns PermissionTestResponse Successful Response
+     * @throws ApiError
+     */
+    public static testAgentCredentialPermissions({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: PermissionTestRequest,
+    }): CancelablePromise<PermissionTestResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/credentials/{credential_id}/agents/{agent_id}/permissions:test',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Detach rule set from binding
+     * Detach the binding's shared rule set — its inline rules apply again.
+     *
+     * Idempotent: detaching a binding already on inline rules is a no-op 204.
+     * @returns void
+     * @throws ApiError
+     */
+    public static detachAgentCredentialRuleSet({
+        credentialId,
+        agentId,
+    }: {
+        credentialId: string,
+        agentId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/credentials/{credential_id}/agents/{agent_id}/rule-set',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Attach rule set to binding
+     * Point the binding at a shared rule set (idempotent PUT).
+     *
+     * While attached, the set's ordered list is the binding's effective policy
+     * and its inline rules are dormant — `permissions:test` evaluates the set.
+     * The set must exist (404 `rule_set_not_found`). The caller must be the
+     * set's creator or an org admin, unless the set is curated (created by an
+     * org admin), which any caller who may write the binding's rules can
+     * attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+     * binding already points at is a no-op.
+     * @returns void
+     * @throws ApiError
+     */
+    public static attachAgentCredentialRuleSet({
+        credentialId,
+        agentId,
+        requestBody,
+    }: {
+        credentialId: string,
+        agentId: string,
+        requestBody: RuleSetAttachRequest,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/credentials/{credential_id}/agents/{agent_id}/rule-set',
+            path: {
+                'credential_id': credentialId,
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
      * Begin OAuth connect flow
      * Initiate the OAuth connect flow for a credential.
-     * @returns ConnectChallengeResponse Successful Response
+     *
+     * Discriminates on the provider's returned challenge: OAuth2
+     * authorization-code providers return an ``authorize_url`` for popup
+     * redirect; device-flow providers return ``user_code`` /
+     * ``verification_uri`` for the RFC 8628 human step.
+     * @returns any Successful Response
      * @throws ApiError
      */
     public static connectCredential({
@@ -252,7 +520,7 @@ export class CredentialsService {
     }: {
         credentialId: string,
         requestBody: ConnectRequestBody,
-    }): CancelablePromise<ConnectChallengeResponse> {
+    }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/credentials/{credential_id}/connect',

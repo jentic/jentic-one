@@ -45,14 +45,6 @@ const ACTORS = [
 		name: 'agent',
 		body: 'An autonomous identity (Ed25519 keypair) that brokers API calls on a human’s behalf.',
 	},
-	{
-		name: 'service_account',
-		body: 'A non-human programmatic identity for backend integrations; mints task tokens.',
-	},
-	{
-		name: 'toolkit',
-		body: 'A grouping that binds credentials and rides the agent token flow at execution time.',
-	},
 ];
 
 export function ArchitectureSection() {
@@ -85,7 +77,7 @@ export function ArchitectureSection() {
 				</h3>
 				<p className="text-foreground/65 mb-2 max-w-2xl text-sm">
 					Every authenticated call belongs to one of four actor types. What an actor may
-					do is decided by its scopes and ownership — not its type (see{' '}
+					do is decided by its permissions and ownership — not its type (see{' '}
 					<a href="#permissions" className="text-primary underline">
 						Permissions
 					</a>

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 
@@ -23,6 +25,8 @@ class ExecutionRecordRepository:
         status: str,
         duration_ms: int | None = None,
         operation_id: str | None = None,
+        operation_path: str | None = None,
+        operation_method: str | None = None,
         api_vendor: str | None = None,
         api_name: str | None = None,
         api_version: str | None = None,
@@ -43,6 +47,8 @@ class ExecutionRecordRepository:
             status=status,
             duration_ms=duration_ms,
             operation_id=operation_id,
+            operation_path=operation_path,
+            operation_method=operation_method,
             api_vendor=api_vendor,
             api_name=api_name,
             api_version=api_version,
@@ -61,8 +67,19 @@ class ExecutionRecordRepository:
         return record
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, record_id: str) -> ExecutionRecord | None:
-        return await session.get(ExecutionRecord, record_id)
+    async def get_by_id(
+        session: AsyncSession,
+        record_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> ExecutionRecord | None:
+        if filters is None:
+            return await session.get(ExecutionRecord, record_id)
+        stmt = select(ExecutionRecord).where(ExecutionRecord.id == record_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def list_all(
@@ -81,6 +98,7 @@ class ExecutionRecordRepository:
         api_version: str | None = None,
         actor_id: str | None = None,
         origin: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[ExecutionRecord]:
         stmt = (
             select(ExecutionRecord)
@@ -114,5 +132,8 @@ class ExecutionRecordRepository:
             stmt = stmt.where(ExecutionRecord.actor_id == actor_id)
         if origin is not None:
             stmt = stmt.where(ExecutionRecord.origin == origin)
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())

@@ -9,6 +9,8 @@
 // a Section's fields/summary, and map it in render.go.
 package install
 
+import "strings"
+
 // Runtime paths the user can install onto.
 const (
 	RuntimeSource = "source" // run from source (uv) on the host
@@ -51,6 +53,13 @@ type Draft struct {
 	PGUser     string
 	PGPassword string
 
+	// PGExposeHostPort publishes the managed Postgres container's 5432 on the
+	// host (Docker path only). Off by default: the app and broker reach the
+	// database over the compose network, so a host publish is purely a
+	// debugging/tooling convenience — and it was one of #992's exposure
+	// surfaces. When enabled, PGPort is the published host port.
+	PGExposeHostPort bool
+
 	// SQLiteDir is the directory holding per-surface *.db files (BackendSQLite).
 	SQLiteDir string
 
@@ -82,8 +91,8 @@ type Draft struct {
 	MetricsExporter string
 	TracingExporter string
 
-	// Auth (maps to AppConfig.auth). AuthBaseURL overrides canonical_base_url;
-	// when empty it is derived from the server binding.
+	// Auth (maps to server.public_base_url). AuthBaseURL overrides the public
+	// origin; when empty it is derived from the server binding.
 	AuthBaseURL string
 
 	// SSO / external IdP. When SSOEnabled, the config gains an auth.idp block
@@ -133,6 +142,13 @@ type Draft struct {
 	// directly instead of `make install` + `uv run`.
 	VenvPython string
 
+	// StackRef is the git ref the stack was actually built from, when the build
+	// synced the managed clone to one (build-local from git). Empty for a pulled
+	// release image or a local-checkout build; the manifest then records the CLI
+	// version as before. Recording the real ref keeps `jenticctl update`'s
+	// tracking honest when the stack was built from a branch/tag/commit.
+	StackRef string
+
 	// MigrationsDone reports whether the wizard already applied migrations. When
 	// true the next steps skip the migrate command and only cover starting the app.
 	MigrationsDone bool
@@ -156,13 +172,18 @@ type Draft struct {
 // defaults (mirroring config/local.yaml).
 func NewDraft() *Draft {
 	return &Draft{
-		RuntimePath:     RuntimeDocker,
-		DBBackend:       BackendPostgres,
-		PGHost:          "localhost",
-		PGPort:          "5432",
-		PGName:          "jentic",
-		PGUser:          "postgres",
-		PGPassword:      "postgres",
+		RuntimePath: RuntimeDocker,
+		DBBackend:   BackendPostgres,
+		PGHost:      "localhost",
+		PGPort:      "5432",
+		PGName:      "jentic",
+		PGUser:      "postgres",
+		// Deliberately empty: the Docker path's managed Postgres gets a
+		// generated random password from FillSecrets (#992 — the old
+		// "postgres" default was a guessable credential on a database that
+		// could end up internet-reachable). The local path prompts, since the
+		// user's own Postgres has whatever password it has.
+		PGPassword:      "",
 		SQLiteDir:       ".data",
 		Apps:            []string{"registry", "admin", "control", "auth"},
 		ServerHost:      "127.0.0.1",
@@ -183,6 +204,27 @@ func (d *Draft) IsPostgres() bool { return d.DBBackend == BackendPostgres }
 
 // IsDocker reports whether the containerized runtime path was chosen.
 func (d *Draft) IsDocker() bool { return d.RuntimePath == RuntimeDocker }
+
+// PublishHost is the host interface Docker publishes container ports on,
+// derived from the wizard's bind-host answer. It exists because the Docker
+// path has TWO distinct binds that must not be conflated: the in-container
+// process bind (always 0.0.0.0 so the published port is reachable — see
+// render.go toConfig) and the host-side publish address, which must honour
+// the user's choice. An unqualified compose port mapping publishes on all
+// interfaces, so omitting this prefix would silently expose a
+// loopback-intended install to the network (#992).
+//
+// localhost is normalized to 127.0.0.1 (Docker requires an IP for the
+// host prefix); empty defaults to loopback; 0.0.0.0 passes through as the
+// user's explicit choice to publish on all interfaces.
+func (d *Draft) PublishHost() string {
+	switch d.ServerHost {
+	case "", "localhost":
+		return "127.0.0.1"
+	default:
+		return d.ServerHost
+	}
+}
 
 // BaseURL is the canonical control-plane URL derived from the server binding.
 // A 0.0.0.0 bind is reported as 127.0.0.1 since that is the reachable address.
@@ -212,8 +254,9 @@ func (d *Draft) BrokerURL() string {
 	return "http://" + host + ":" + port
 }
 
-// CanonicalBaseURL is the auth canonical_base_url: the explicit override when
-// set, otherwise the URL derived from the server binding.
+// CanonicalBaseURL is the deployment's public base URL: the explicit override
+// when set, otherwise the URL derived from the server binding. It is what the
+// wizard shows and what `jentic register --url` should target.
 func (d *Draft) CanonicalBaseURL() string {
 	if d.AuthBaseURL != "" {
 		return d.AuthBaseURL
@@ -221,8 +264,43 @@ func (d *Draft) CanonicalBaseURL() string {
 	return d.BaseURL()
 }
 
-// OAuthCallbackURL returns the redirect URI for the direct_oauth2 credential
-// provider, derived from the canonical base URL and the control surface callback path.
-func (d *Draft) OAuthCallbackURL() string {
-	return d.CanonicalBaseURL() + "/credentials/oauth/callback"
+// backendDerivedBaseURL mirrors the backend's bind_origin (shared/config.py)
+// for the server block this draft renders: http://{host}:{port}, with the
+// all-interfaces bind reported as 127.0.0.1. Under Docker the in-container
+// bind is always 0.0.0.0 (see toConfig), so the backend derives 127.0.0.1.
+func (d *Draft) backendDerivedBaseURL() string {
+	host := d.ServerHost
+	if d.IsDocker() || host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	port := d.ServerPort
+	if port == "" {
+		port = "8000"
+	}
+	return "http://" + host + ":" + port
+}
+
+// PublicBaseURL is the server.public_base_url to render, or "" to leave it
+// unset. It is written only when the backend cannot derive the right origin on
+// its own — an explicit override, or a Docker install published on a
+// non-loopback host the container cannot see. Leaving it unset keeps every
+// derived URL (OAuth callback, issuer, token audience, SPA login callback)
+// tracking server.port, so a later port change needs no other edit.
+func (d *Draft) PublicBaseURL() string {
+	if base := d.CanonicalBaseURL(); !sameLoopbackOrigin(base, d.backendDerivedBaseURL()) {
+		return base
+	}
+	return ""
+}
+
+// sameLoopbackOrigin reports whether a and b are the same URL, treating the
+// loopback aliases 127.0.0.1 and localhost as one host — a browser reaches
+// the backend's derived 127.0.0.1 origin as either, and the backend accepts
+// both, so pinning public_base_url for a `localhost` answer would needlessly
+// freeze the port.
+func sameLoopbackOrigin(a, b string) bool {
+	norm := func(s string) string {
+		return strings.Replace(s, "://localhost:", "://127.0.0.1:", 1)
+	}
+	return norm(a) == norm(b)
 }

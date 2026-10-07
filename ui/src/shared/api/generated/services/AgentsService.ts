@@ -5,17 +5,19 @@
 import type { AgentCreateRequest } from '../models/AgentCreateRequest';
 import type { AgentListResponse } from '../models/AgentListResponse';
 import type { AgentPatchRequest } from '../models/AgentPatchRequest';
+import type { AgentPermissionsRequest } from '../models/AgentPermissionsRequest';
+import type { AgentPermissionsResponse } from '../models/AgentPermissionsResponse';
 import type { AgentResponse } from '../models/AgentResponse';
-import type { AgentScopesRequest } from '../models/AgentScopesRequest';
-import type { AgentScopesResponse } from '../models/AgentScopesResponse';
 import type { ApiKeyHistoryResponse } from '../models/ApiKeyHistoryResponse';
 import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
 import type { ClaimRequest } from '../models/ClaimRequest';
-import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
-import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
-import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
-import type { ToolkitBindRequest } from '../models/ToolkitBindRequest';
+import type { CredentialBindingListResponse } from '../models/CredentialBindingListResponse';
+import type { CredentialBindingResponse } from '../models/CredentialBindingResponse';
+import type { CredentialBindRequest } from '../models/CredentialBindRequest';
+import type { DenyRequest } from '../models/DenyRequest';
+import type { JwksUpdateRequest } from '../models/JwksUpdateRequest';
+import type { OAuthGrantListResponse } from '../models/OAuthGrantListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -81,7 +83,12 @@ export class AgentsService {
     }
     /**
      * Archive Agent
-     * Soft-archive an agent — revokes scope grants and toolkit bindings.
+     * Archive an agent — terminal-but-kept.
+     *
+     * The row is retained for history, but the action is not reversible and
+     * the agent's authority is swept: permission grants, credential bindings, and
+     * OAuth consent grants are revoked. For the reversible kill switch use
+     * ``:disable`` / ``:enable`` instead.
      * @returns void
      * @throws ApiError
      */
@@ -219,19 +226,19 @@ export class AgentsService {
         });
     }
     /**
-     * Get Agent Scopes
-     * List scopes granted to an agent.
-     * @returns AgentScopesResponse Successful Response
+     * List Credentials
+     * List direct credential bindings for an agent — requires agents:read or self.
+     * @returns CredentialBindingListResponse Successful Response
      * @throws ApiError
      */
-    public static getAgentScopes({
+    public static listAgentCredentials({
         agentId,
     }: {
         agentId: string,
-    }): CancelablePromise<AgentScopesResponse> {
+    }): CancelablePromise<CredentialBindingListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/agents/{agent_id}/scopes',
+            url: '/agents/{agent_id}/credentials',
             path: {
                 'agent_id': agentId,
             },
@@ -246,79 +253,24 @@ export class AgentsService {
         });
     }
     /**
-     * Replace Agent Scopes
-     * Replace all scopes for an agent.
-     * @returns AgentScopesResponse Successful Response
+     * Bind Credential
+     * Directly bind a credential to an agent (theme 5 phase 1).
+     *
+     * The caller must own the target credential (or hold ``org:admin``); a
+     * credential that does not exist or that the caller does not own returns 404.
+     * @returns CredentialBindingResponse Successful Response
      * @throws ApiError
      */
-    public static replaceAgentScopes({
+    public static bindAgentCredential({
         agentId,
         requestBody,
     }: {
         agentId: string,
-        requestBody: AgentScopesRequest,
-    }): CancelablePromise<AgentScopesResponse> {
-        return __request(OpenAPI, {
-            method: 'PUT',
-            url: '/agents/{agent_id}/scopes',
-            path: {
-                'agent_id': agentId,
-            },
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * List Toolkits
-     * List toolkit bindings for an agent — requires agents:read or self.
-     * @returns ToolkitBindingListResponse Successful Response
-     * @throws ApiError
-     */
-    public static listAgentToolkits({
-        agentId,
-    }: {
-        agentId: string,
-    }): CancelablePromise<ToolkitBindingListResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/agents/{agent_id}/toolkits',
-            path: {
-                'agent_id': agentId,
-            },
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Bind Toolkit
-     * Bind a toolkit to an agent.
-     * @returns ToolkitBindingResponse Successful Response
-     * @throws ApiError
-     */
-    public static bindToolkit({
-        agentId,
-        requestBody,
-    }: {
-        agentId: string,
-        requestBody: ToolkitBindRequest,
-    }): CancelablePromise<ToolkitBindingResponse> {
+        requestBody: CredentialBindRequest,
+    }): CancelablePromise<CredentialBindingResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/agents/{agent_id}/toolkits',
+            url: '/agents/{agent_id}/credentials',
             path: {
                 'agent_id': agentId,
             },
@@ -335,25 +287,205 @@ export class AgentsService {
         });
     }
     /**
-     * Unbind Toolkit
-     * Unbind a toolkit from an agent.
+     * Unbind Credential
+     * Unbind a credential from an agent — suspend by default, purge on request.
      * @returns void
      * @throws ApiError
      */
-    public static unbindToolkit({
+    public static unbindAgentCredential({
         agentId,
-        toolkitId,
+        credentialId,
+        purge = false,
     }: {
         agentId: string,
-        toolkitId: string,
+        credentialId: string,
+        /**
+         * Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
+         */
+        purge?: boolean,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/agents/{agent_id}/toolkits/{toolkit_id}',
+            url: '/agents/{agent_id}/credentials/{credential_id}',
             path: {
                 'agent_id': agentId,
-                'toolkit_id': toolkitId,
+                'credential_id': credentialId,
             },
+            query: {
+                'purge': purge,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Resume Credential Binding
+     * Lift a suspended credential binding — the reverse of the default unbind.
+     * @returns CredentialBindingResponse Successful Response
+     * @throws ApiError
+     */
+    public static resumeAgentCredentialBinding({
+        agentId,
+        credentialId,
+    }: {
+        agentId: string,
+        credentialId: string,
+    }): CancelablePromise<CredentialBindingResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/agents/{agent_id}/credentials/{credential_id}:resume',
+            path: {
+                'agent_id': agentId,
+                'credential_id': credentialId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Update Agent Jwks
+     * Update an agent's JWKS (public keys for JWT-bearer authentication).
+     *
+     * The JWKS must contain at least one Ed25519 public key and must not contain
+     * any private key material. This enables the agent to authenticate via
+     * JWT-bearer assertions signed with the corresponding private key.
+     * @returns AgentResponse Successful Response
+     * @throws ApiError
+     */
+    public static updateAgentJwks({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: JwksUpdateRequest,
+    }): CancelablePromise<AgentResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/agents/{agent_id}/jwks',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * List agent OAuth grants
+     * List OAuth consent grants binding clients to this agent.
+     *
+     * The "Connected clients" surface: every grant carries the client's display
+     * name and redirect-URI origin, the granted scopes, the consenting user,
+     * and created/last-used timestamps. Allowed for the agent's owner or an
+     * admin — authorization is enforced in the service layer, mirroring the
+     * ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+     * same as an agent that does not exist.
+     * @returns OAuthGrantListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAgentOauthGrants({
+        agentId,
+        status,
+        limit = 50,
+        cursor,
+    }: {
+        agentId: string,
+        /**
+         * Filter by grant lifecycle state.
+         */
+        status?: ('active' | 'revoked' | null),
+        limit?: number,
+        cursor?: (string | null),
+    }): CancelablePromise<OAuthGrantListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/{agent_id}/oauth-grants',
+            path: {
+                'agent_id': agentId,
+            },
+            query: {
+                'status': status,
+                'limit': limit,
+                'cursor': cursor,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Get Agent Permissions
+     * List permissions granted to an agent.
+     * @returns AgentPermissionsResponse Successful Response
+     * @throws ApiError
+     */
+    public static getAgentPermissions({
+        agentId,
+    }: {
+        agentId: string,
+    }): CancelablePromise<AgentPermissionsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/agents/{agent_id}/permissions',
+            path: {
+                'agent_id': agentId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Replace Agent Permissions
+     * Replace all permissions for an agent.
+     * @returns AgentPermissionsResponse Successful Response
+     * @throws ApiError
+     */
+    public static replaceAgentPermissions({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: AgentPermissionsRequest,
+    }): CancelablePromise<AgentPermissionsResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/agents/{agent_id}/permissions',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
@@ -367,6 +499,12 @@ export class AgentsService {
     /**
      * Approve Agent
      * Approve a pending agent.
+     *
+     * Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+     * (an unclaimed self-registration) can be approved only by an ``org:admin``,
+     * who becomes its owner. Any other caller gets a 404, whatever the agent's
+     * status, so the response does not reveal agents outside the caller's
+     * ownership.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -402,13 +540,13 @@ export class AgentsService {
      *
      * Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
      * only a human can own an agent. The ``require_actor_type`` gate rejects a
-     * non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+     * non-user actor (an agent) at the boundary with a 403;
      * ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
      *
      * ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
      * claiming is an onboarding step a brand-new user may hit before they have
      * rotated a temporary password, so a must-change-password state must not block
-     * it. The claim only sets ownership — it grants no scopes and cannot act as the
+     * it. The claim only sets ownership — it grants no permissions and cannot act as the
      * agent — so allowing it under an expired password is low-risk.
      * @returns AgentResponse Successful Response
      * @throws ApiError
@@ -441,6 +579,10 @@ export class AgentsService {
     /**
      * Deny Agent
      * Deny a pending agent.
+     *
+     * Same authorization as approve: the agent's owner or an ``org:admin``, and
+     * only an ``org:admin`` for an agent with no owner. Any other caller gets a
+     * 404.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */
@@ -449,7 +591,7 @@ export class AgentsService {
         requestBody,
     }: {
         agentId: string,
-        requestBody: jentic_one__auth__web__schemas__agents__DenyRequest,
+        requestBody: DenyRequest,
     }): CancelablePromise<AgentResponse> {
         return __request(OpenAPI, {
             method: 'POST',

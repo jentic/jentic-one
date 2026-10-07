@@ -1,0 +1,980 @@
+# Releasing Jentic One
+
+Operational runbook for cutting a release. The *why* (versioning policy, the
+decisions behind this setup) lives in [`VERSIONING.md`](../../VERSIONING.md); this
+is the *how*.
+
+## Cutting a release
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please)
+(config: [`release-please-config.json`](../../release-please-config.json)):
+
+1. Merge feature/fix PRs to `main` as usual (Conventional Commits, squash-merge).
+2. release-please keeps a standing **Release PR** titled `chore(main): release X.Y.Z`.
+   Its diff bumps the version in lockstep across `pyproject.toml`, `uv.lock`, and
+   every Helm `Chart.yaml`, and updates `CHANGELOG.md`. You may edit the
+   changelog directly in that PR (optional).
+3. **Merging the Release PR is the release.** release-please then tags `vX.Y.Z`,
+   creates the GitHub Release, and (because the tag is pushed with the release
+   App token) triggers [`release.yml`](../../.github/workflows/release.yml):
+   - **gate** — builds the app, runs every migration on a fresh ephemeral
+     SQLite DB, asserts each DB reached an Alembic head, and checks `/health`
+     serves the tag version. Nothing publishes if this fails.
+   - **smoke** — the full Helm smoke matrix (combined / parts / broker / +obs)
+     on a kind cluster, reusing `smoke-helm.yml`. Unlike the post-merge run on
+     `main`, this one blocks: a release cannot ship while any deployment mode
+     is red.
+   - **publish-image** — builds the `app` container image and pushes it to GHCR
+     as `ghcr.io/<owner>/jentic-one-app` (tagged `X.Y.Z` — the `v` is stripped
+     — and the short SHA; `latest` moves only on stable releases). One image
+     serves every surface via `JENTIC__APPS`; this is the image self-hosters
+     pull — see
+     [`docs/installation/docker.md`](../installation/docker.md).
+   - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
+     `jentic` binaries (cosign keyless + syft SBOMs) and publishes the package
+     channels: the Homebrew cask, a winget manifest PR against
+     `microsoft/winget-pkgs`, and the scoop bucket manifest. The winget/scoop
+     publishes are token-gated: with `WINGET_TOKEN` / `SCOOP_BUCKET_TOKEN`
+     unset the entry is skipped (logged, never fails the release) — see the
+     one-time setup below.
+
+Releases continue the pre-1.0 `0.x` line — see `VERSIONING.md` for the
+versioning policy.
+
+### Forcing or recovering a release
+
+For a **partially failed run** (e.g. `publish-image` succeeded but GoReleaser
+failed, or cosign/Sigstore hiccuped after the image pushed), the first move is
+**"Re-run failed jobs"** on that run in the Actions UI: it re-executes only the
+red jobs, leaving the already-pushed image (and its signature) untouched.
+Two states worth knowing by name:
+
+- **Published-but-unsigned**: the image push succeeded but the sign/attest
+  step failed. `:latest` has *not* moved (it only moves after signing), but
+  the `X.Y.Z`/SHA tags are live unsigned. Re-run the failed jobs — signing
+  targets the already-pushed digest, so it converges.
+- **Full re-run**: re-running *all* jobs rebuilds the image and `docker push`
+  **overwrites** the existing `X.Y.Z`/SHA tags with a **new digest** (builds
+  aren't bit-reproducible; the old digest stays pullable but untagged). The
+  digest echoed by the *first* run then no longer matches the tag — anyone
+  who pinned it keeps the old (still-signed) image. Prefer "Re-run failed
+  jobs" precisely to avoid this.
+
+When the run can't be recovered in place (the workflow itself needs a fix),
+force a fresh release instead. release-please only opens a Release PR when
+there are user-facing commits since the last release (`ci`, `chore`, `test`
+and other hidden types don't trigger a bump) — to force one anyway, land a
+commit on `main` whose footer sets the version explicitly:
+
+```
+ci(release): force patch release to republish artifacts
+
+Release-As: 0.38.3
+```
+
+release-please then opens a `chore(main): release 0.38.3` PR; merging it cuts the
+tag and re-runs `release.yml` (now from the fixed workflow on `main`), producing
+a complete set of signed binaries + the package channels (cask, winget, scoop). A failed release version
+is superseded by the next one — every release rebuilds all artifacts from
+scratch, so nothing is lost by skipping it.
+
+
+## Upgrading to the first theme-5 release
+
+Operator-facing changes shipped by the theme-5 (toolkit removal) release —
+read this before rolling it out. Each active window below is also tracked in
+the Deprecations table.
+
+- **The migration run performs the toolkit → direct-binding cutover.** On
+  this release the broker authorizes on direct agent↔credential bindings by
+  default (`broker.direct_bindings_enabled: true`), so every toolkit-bound
+  agent needs its direct bindings **before** the new version serves traffic.
+  `python -m jentic_one.migrations.run` does that itself: once every database
+  is at head it runs two one-shot upgrade steps and prints one
+  `==> upgrade step <name>: <action>` line (plus a JSON summary) for each —
+  1. `theme5_retire_toolkit_keys` migrates every resolvable `jntc_live_`
+     key to a successor agent (see the next bullet);
+  2. `theme5_flatten_toolkits` derives a direct binding, carrying the pair's
+     rules, for every `(agent, credential)` pair reachable through a toolkit
+     (the `flatten-toolkits` job below). It runs **once per install** and is
+     recorded in the control DB's `upgrade_steps` table, so a later upgrade
+     never re-creates a binding you have since removed. It is skipped when a
+     verified flatten is already acknowledged.
+
+  Nothing extra to run on Helm (the pre-upgrade migrate hook), `jenticctl
+  update`, or a hand-run migration. **Only a failed flatten blocks the
+  upgrade**: the runner exits `4` so the new version never starts without
+  its bindings; fix the logged cause and re-run (it is idempotent and not
+  recorded until it completes). A key-retirement problem never blocks — it
+  prints a `==> WARNING` line naming the recovery command, and the control
+  plane retries the job at every boot. To get past a step deliberately,
+  `--skip-upgrade-step <name>` defers that one step to the next full
+  migration run (`--skip-upgrade-steps` defers both); on Helm set
+  `migrate.extraArgs`, e.g. `["--skip-upgrade-step",
+  "theme5_flatten_toolkits"]` — and then run `flatten-toolkits` yourself
+  before serving traffic. Read the summary: `created_default_deny` counts
+  pairs bound with **no** allow rule (conflicting toolkit rules, or a
+  rule-less pair) and is also printed as a warning — the rest of the
+  `flatten-toolkits` report categories are counted under `findings`; run
+  `jentic_one flatten-toolkits --diff-only --report report.jsonl` to get the
+  full lines for review.
+- **Toolkit changes during a rolling upgrade are not flattened.** Helm (and
+  any rolling deploy) migrates while the previous version still serves: a
+  toolkit, toolkit binding, or agent–toolkit binding created on the old
+  version *after* the migration's flatten has no direct binding on the new
+  one, and the migration never flattens a second time. Freeze toolkit edits
+  for the rollout, or re-run `jentic_one flatten-toolkits` once the new
+  version is live (idempotent: it only adds the missing pairs).
+- **`jntc_live_` toolkit keys are retired; migration to an agent is
+  automatic.** No new keys are issued. The migration run (and every
+  control-plane boot) migrates every existing key digest to a successor
+  agent (before theme 8 the job created a service account instead, which
+  the theme-8 migration then moved onto an agent), and the **unchanged
+  plaintext keeps authenticating** as that agent for the deprecation window.
+  Keys with no resolvable owner are skipped and
+  reported (a `==> WARNING` line on the migration run): **their holders stop
+  authenticating** until you run `jentic_one retire-toolkit-keys --owner
+  <admin-email>`. The job writes a `migrated_actor_id` stamp on each
+  `toolkit_keys` row and creates the successor agents and their bindings; a
+  0.39.x rollback ignores all three. Watch `deprecated_toolkit_key_used`
+  WARNING logs to find holders still presenting the old key form, and rotate
+  them to the successor agent's `jak_` key (`sak_` keys can no longer be
+  issued).
+- **Docker images run as uid `10001`** (was `999`), so kubelet can verify
+  `runAsNonRoot`. Anything the container writes must be writable by that uid:
+  `jenticctl` re-owns its SQLite data volume automatically on `update` and
+  `start`; for a hand-run `docker run` with a SQLite volume, run
+  `docker run --rm --user 0:0 --entrypoint chown -v <volume>:/data <image>
+  -R 10001:10001 /data` once before starting the new version (the symptom
+  otherwise is `attempt to write a readonly database`). Postgres installs are
+  unaffected.
+- **The toolkit management surface is gone.** All `/toolkits/*` and
+  `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
+  `toolkits:write`, and `owner:toolkits:read` permissions are retired: no route
+  requires them and they grant nothing, but they are **tolerated in stored
+  grants** — re-submitting a permission row that predates
+  the retirement never fails validation. Access is managed on the
+  agent↔credential axis instead: the agent detail **Access** tab ("Bound
+  credentials") in the UI, or `POST /agents/{agent_id}/credentials`.
+- **CLI: `--toolkit` → `--api`.** At this release, `jentic access request
+  --api <vendor/name>` was the verb (`--provision` when nothing served the
+  API yet), with `--toolkit` surviving as a hidden, deprecated alias for
+  `--api`. *(Superseded: the theme-7 release —
+  [epic #1374](https://github.com/jentic/jentic-one/issues/1374) — removes
+  the access-request flow and the `jentic access` group entirely; the
+  agent-driven connect flow, `jentic connect <vendor>` over
+  `POST /integrations:connect`, is the replacement.)*
+- **Broker headers.** Requests are disambiguated with `Jentic-Credential-Name`
+  or `Jentic-Credential-Id` (the id is authoritative); responses attribute the
+  credential used via the same two headers. The `Jentic-Toolkit-Id` response
+  header is emitted only on the legacy flag-off toolkit path
+  (`broker.direct_bindings_enabled: false`) and is removed in Phase 6b —
+  adopt the credential headers now.
+- **Toolkit tables are still present.** The stored toolkit rows (bindings,
+  keys) survive this release; they are dropped in Phase 6b. Before that
+  release you must complete the Phase 6a verify/acknowledge runbook below
+  — the Phase-6b drop migrations refuse to run until the acknowledgement is
+  on record. The acknowledgement is never automatic.
+
+### Phase 6a runbook: export, flatten, verify, acknowledge
+
+Run these against **production data** (all commands read/write the live
+control + admin databases configured for the process). Order matters. The
+migration run already performed the flatten (step 3) once; the remaining
+steps are what stands between you and Phase 6b.
+
+1. **Export first**: `jentic_one export-toolkits --out toolkit-export.json`.
+   The file captures all five legacy tables (`toolkits`, `toolkit_keys`,
+   `toolkit_credential_bindings`, `toolkit_permission_rules`,
+   `agent_toolkit_bindings`) with row counts and dialect-neutral values. It
+   embeds key hash digests — store it like a secrets backup.
+2. *(Optional)* preview: `jentic_one flatten-toolkits --diff-only --report
+   preview.jsonl` writes the report without touching either database.
+3. **Flatten** (already done once by the migration run — re-run it if
+   toolkits changed on the old version during the rollout):
+   `jentic_one flatten-toolkits --report flatten.jsonl`. Every
+   `(agent, credential)` pair reachable through a toolkit gains a direct
+   binding carrying the pair's rules. Read the report: `rule_conflict` lines
+   are pairs whose toolkit paths disagreed — they were bound **default-deny**
+   (the safer outcome) and need a rules decision from you;
+   `inactive_toolkit_binding` lines are live access you may have believed
+   disabled (an inactive toolkit never gated bound agents) — they were
+   migrated, review them; `pooled_rule_drift` lines are pairs whose effective
+   rules narrowed from vendor-pooled to per-pair; `active_toolkit_key` lines
+   want `retire-toolkit-keys` (or a revoke) on 0.40.x — the command is gone
+   in 0.41.0, whose `--verify` fails (and whose drop migration refuses to
+   run) while any such key remains.
+4. **Double-run-and-diff** (the concurrency check — binds racing step 3 are
+   possible since OSS cannot quiesce the bind endpoints): run
+   `jentic_one flatten-toolkits` again and confirm it reports **zero
+   creations**. If it created rows, repeat until a run creates nothing.
+5. **Verify**: `jentic_one flatten-toolkits --verify` — recomputes the legacy
+   pair set and fails unless every pair exists as a direct binding (extra
+   hand-created bindings are fine). Rule-list divergence is reported, not
+   fatal.
+6. **Acknowledge**: `jentic_one flatten-toolkits --verify --acknowledge` —
+   records the sentinel row (`toolkit_flattening_acks`, control DB) that the
+   Phase-6b drop migrations require. It is refused unless the verification
+   passes in that same invocation.
+
+**Rollback after Phase 6b** is two steps, not one — see the Phase 6b
+section below.
+
+## Upgrading to 0.41.0
+
+0.41.0 is the theme-5 Phase 6b release: it drops the toolkit tables (details
+in the next section). Two rules:
+
+1. **Upgrade via 0.40.x first.** 0.40.x runs the toolkit-key retirement and
+   the one-shot flatten that 0.41.0 no longer carries. Skipping straight from
+   an older release leaves unmigrated `jntc_live_` keys (they stop
+   authenticating) and a toolkit graph with no direct bindings.
+2. **Run `jentic_one flatten-toolkits --verify --acknowledge` on 0.41 before
+   the drops.** An acknowledgement written by 0.40 does not qualify. On the
+   0.41 image: `jentic_one flatten-toolkits` (it backfills execution toolkit
+   names), re-run until it creates nothing, then `jentic_one
+   flatten-toolkits --verify --acknowledge`, then `python -m
+   jentic_one.migrations.run`. Until then the drop migration refuses to run
+   and names the missing step, leaving the toolkit tables untouched.
+
+Take the Phase 6a export (`jentic_one export-toolkits --out <file>`) before
+upgrading. A rollback of an upgrade that stopped before the service-account
+drop needs it (see [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a)).
+
+0.41.0 also carries theme-8 Phase 4, which drops the service-account tables
+([below](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
+A third rule applies:
+
+3. **Snapshot both the admin and the control databases before upgrading.**
+   The service-account retirement is **automatic** — there is no command to
+   run and nothing to acknowledge — but it is **irreversible**, and it
+   writes to **both** databases: the service-account tables in admin are
+   dropped, and the `sva_`-keyed inline permission rules in control are
+   deleted. Once that has happened, the data comes back only from the
+   snapshots. **Rollback** is: restore **both** the admin and the control
+   databases from these snapshots, then roll the code back to 0.40.x (see
+   [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a)); restoring admin
+   alone is not a rollback. The migration
+   runner (`python -m jentic_one.migrations.run`, the deployment Job) stops
+   admin just before the drop, migrates every remaining service account to
+   its successor agent, verifies the result, sweeps the service-account
+   side, and only then drops the tables. If the verification fails it
+   **refuses**: it exits `4`, names each service account and why, and
+   **drops nothing** — see [If the retirement refuses](#if-the-retirement-refuses).
+   An install that never had service accounts just drops the empty tables.
+4. **Move `sak_` callers to `jak_` keys before upgrading.** **Breaking:**
+   `sak_` service-account keys stop working in 0.41.0. Every request with
+   one gets a `401` whose detail says the key was retired and names the
+   replacement (a `jak_` key for the successor agent), and the refusal is
+   logged at INFO (`retired_service_account_key_refused`, with the successor
+   agent id). There is no grace period. For **zero downtime**, do it on
+   0.40.x: the successor agents already exist there (0.40.x migrated every
+   service account at boot), named `service-account:<sva_ id>`. For each
+   one, mint a key (`POST /agents/{agent_id}:generate-api-key`, or the
+   agent's **Keys** panel in the UI), switch the callers to it, and only
+   then upgrade. 0.41.0 lists every service account and its successor agent
+   in a WARNING summary when the retirement completes (see
+   [the Phase-4 section](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
+   `jntc_live_` toolkit keys are **not** affected: a converted one keeps
+   authenticating as its successor agent until at least 2026-12-01.
+
+## Upgrading to the theme-5 Phase 6b release (the drops)
+
+This is the release that deletes the toolkit data model. It refuses to
+migrate until the Phase 6a runbook above has been completed and
+acknowledged. Read this **before** running migrations.
+
+- **Prerequisite: an acknowledgement written by *this* release.** The
+  control-DB migration drops `toolkit_permission_rules`,
+  `toolkit_credential_bindings`, `toolkit_keys`, and `toolkits` (children
+  first). It is gated guard-and-raise: it proceeds only when either every
+  one of those tables is empty (fresh installs, CI), or a qualifying
+  `toolkit_flattening_acks` row exists. Qualifying means both:
+  - **Written by this release's `flatten-toolkits --verify --acknowledge`.**
+    An acknowledgement from 0.40 does **not** qualify: 0.40's verification
+    never checked that historical execution records carry their toolkit
+    name (see *Historical executions* below), and the drop would erase the
+    names it missed. Existing rows are marked non-qualifying by control
+    migration `f2b3c4d5e6a7`.
+  - **Not stale.** The acknowledgement records a digest of the legacy toolkit
+    rows it covered. Toolkit rows added or removed afterwards (e.g. edits
+    served by a 0.40 replica during a rolling upgrade) refuse the drop.
+
+  Independently of the acknowledgement, the drop also refuses while any
+  `toolkit_keys` row is **live and unmigrated** (`revoked = false` and no
+  `migrated_actor_id`): that key has no successor agent and would stop
+  authenticating the moment the table drops. This release's
+  `flatten-toolkits --verify` fails on the same condition (a
+  `verify_live_toolkit_keys` report line), so `--acknowledge` is refused
+  too. Remediation: upgrade via 0.40.x and run `retire-toolkit-keys` (no
+  release ships a command or route that revokes a toolkit key; if the key
+  must not get a successor, set `revoked = true` on its `toolkit_keys` row
+  in SQL instead). 0.41 no longer ships `retire-toolkit-keys`; to use it after
+  the drop has refused, downgrade control to `e1a2b3c4d5f6` on the 0.41
+  image (`python -m jentic_one.migrations.run --db control --direction down
+  --target e1a2b3c4d5f6`), run the command on 0.40.x, then upgrade again.
+
+  On any other state it raises naming the reason (live unmigrated keys / no
+  ack / earlier-release ack / stale ack), with the runbook steps, and leaves
+  the toolkit tables untouched. The runner exits `1` with a Python traceback
+  whose last line is that `RuntimeError` message (unlike the service-account
+  refusal below, which exits `4` with a plain message). `migrations.run` has already applied `f2b3c4d5e6a7` by then, so
+  on the new release's image: run `jentic_one flatten-toolkits` (it backfills
+  the execution names), re-run until it creates nothing, run
+  `jentic_one flatten-toolkits --verify --acknowledge`, and re-run
+  `migrations.run`.
+- **Enterprise deployments: apply the overlay migration first.** On
+  PostgreSQL the drop also refuses to run while any table outside the
+  toolkit set still holds a foreign key into `toolkits` (the enterprise
+  `toolkit_user_grants` FK). Apply the jentic-one-enterprise migration that
+  drops that table (`d47c3a91be02`) before this release's migrations; the
+  error message names it.
+- **Admin DB**: `agent_toolkit_bindings` is dropped behind an analogous gate.
+  When the migration's connection can read the control schema's
+  `toolkit_flattening_acks` (PostgreSQL, one database, a role with access to
+  both schemas), it applies the same rule as the control drop: a qualifying
+  acknowledgement whose digest covers the current bindings. Otherwise (the
+  default per-surface roles, separate databases, or SQLite) it falls back to
+  in-DB evidence that the flattening ran — at least one direct binding in
+  `agent_credential_bindings` — and relies on the control drop, which
+  `migrations.run` applies first, for the strict check. The retired `toolkits:read` /
+  `toolkits:write` / `owner:toolkits:read` scope strings are also swept from
+  every stored grant and token surface — they have granted nothing since
+  Phase 5b, and after the sweep they no longer appear in `/me` or token
+  introspection output.
+- **Key retirement ends; migrated `jntc_live_` keys keep working until the
+  published date.** The `jentic_one retire-toolkit-keys` command, the
+  control-plane boot retirement task and the `theme5_retire_toolkit_keys` /
+  `theme5_flatten_toolkits` post-migration steps are gone with the
+  `toolkit_keys` table. `--skip-upgrade-step` still accepts those two names
+  so an old Helm `migrate.extraArgs` keeps working, but they are ignored.
+  A key that was **migrated** before this upgrade keeps authenticating as
+  its successor agent (theme-8 Phase 1 moved every migrated service account
+  onto one) — the plaintext is resolved by its digest, which needs no
+  toolkit table — until the deprecation window in the table below closes
+  (no earlier than **2026-12-01**). A live key **not** migrated (e.g. an
+  ownerless key never handed `retire-toolkit-keys --owner`) would stop
+  authenticating (`401`), so the drop refuses to run while one exists (see
+  the prerequisite above): resolve every ownerless-key warning from the 0.40
+  migration run — retire or revoke the key — before upgrading. Afterwards, rotate holders flagged by
+  the `deprecated_toolkit_key_used` WARNING log to a `jak_` key minted for
+  their successor agent. The service-account → agent migration no longer
+  copies toolkit bindings or re-stamps `toolkit_keys` (both tables are gone);
+  it still copies permission grants, credential bindings and their inline rules.
+- **The `Jentic-Toolkit-Id` header is gone**, on both sides: it is no longer
+  read on requests (it was already ignored on the default path) and no
+  longer emitted on responses. A request that still sends it is served
+  normally; the broker strips the header rather than forwarding it
+  upstream, through the deprecation window (no earlier than 2026-12-01). Attribution rides `Jentic-Credential-Id` /
+  `Jentic-Credential-Name`. The `tracestate` vendor value keeps its
+  five-field shape; the second (toolkit) segment is now always `_`.
+- **The `broker.direct_bindings_enabled` config key is deleted.** Direct
+  agent↔credential bindings are the only authorization path. A leftover
+  `true` (the 0.40 default) is ignored; a leftover `false` — in the config
+  file or as `JENTIC__BROKER__DIRECT_BINDINGS_ENABLED` — **fails config
+  validation at boot** with a message naming the key, because the toolkit
+  path it selected no longer exists to fall back to. Remove it; deployments
+  that had it `false` must complete Phase 6a first.
+- **Historical executions keep their toolkit names.** Execution list/detail
+  responses still show `toolkit_name` for pre-flattening records: the name
+  is denormalized onto `execution_records` (backfilled by this release's
+  `flatten-toolkits`, which is why an acknowledgement from 0.40 does not
+  unblock the drop) instead of resolved from the dropped `toolkits` table.
+  Records whose toolkit was deleted before the backfill show `null`, exactly
+  as before. Monitoring `group_by=toolkit` keeps working off the surviving
+  `toolkit_id` attribution column.
+
+### Rollback (Phase 6b → 6a)
+
+0.41.0 also carries the theme-8 Phase-4 service-account drop (admin
+`e2f3a4b5c6d7`), which is **irreversible**: its downgrade refuses. Which
+rollback applies depends on how far the upgrade got — check with `python -m
+jentic_one.migrations.run --check` (the `STATUS admin` line):
+
+- **Admin is past `e2f3a4b5c6d7`** (the upgrade completed): restore **both**
+  the admin and the control databases from the snapshots taken before the
+  upgrade, then roll the code back to 0.40.x. The snapshots already hold the
+  0.40.x schema — toolkit tables and service accounts included — so there is
+  nothing to downgrade or re-import. Changes written since the upgrade are
+  lost. Do not restore admin alone: the retirement deleted the `sva_`-keyed
+  inline permission rules from the control database, which 0.40.x still
+  needs for any service account that was unmigrated at snapshot time.
+- **Admin stopped at `d1e2f3a4b5c6` or below** (for example, the
+  service-account retirement refused, so nothing was dropped on the
+  service-account side): the on-image downgrade below still works.
+
+The downgrade path runs **on the 0.41 image first**, then moves the code
+back. The previous release (0.40.x) does not ship this release's revision
+scripts (control `f2b3c4d5e6a7` / `f3c4d5e6a7b8`, admin `c0e1f2a3b4c5` /
+`d1e2f3a4b5c6`), so its Alembic cannot downgrade them — nor even start
+against a database stamped with them. Order:
+
+1. **Downgrade, on the 0.41 image**, to the last revisions 0.40.x knows:
+   `python -m jentic_one.migrations.run --db control --direction down
+   --target e1a2b3c4d5f6` and `python -m jentic_one.migrations.run --db
+   admin --direction down --target 3e7a91c4b2d8`. The drops' `downgrade()` recreates the five tables
+   **empty** — it cannot restore rows. The admin downgrade also reverts
+   `c0e1f2a3b4c5`, which drops `execution_records.toolkit_name` (the
+   historical names 0.40 resolves from the restored `toolkits` table
+   instead), and the control one reverts `f2b3c4d5e6a7`, dropping the
+   acknowledgement evidence columns.
+2. **Re-import, on the 0.41 image**: `jentic_one export-toolkits --import
+   toolkit-export.json` with the file from Phase 6a step 1. Restoring the
+   toolkit path with an empty `toolkit_permission_rules` is a **total
+   default-deny authorization outage** for every agent on the legacy path —
+   never skip the import. The import is additive and idempotent by primary
+   key, so re-running it (or importing over rows created after the
+   downgrade) is safe.
+3. **Only then roll the code back** to 0.40.x.
+
+The scope sweep is not reversed on rollback: the swept scopes granted
+nothing.
+
+## Upgrading to the first theme-8 release
+
+Operator-facing changes shipped by the theme-8 (service-account removal)
+Phase-1 release. Service accounts are migrated to successor **agents**; the
+SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
+
+- **Migration is automatic and idempotent.** The combined/control server runs
+  `migrate-service-accounts` once at startup (best-effort; the CLI is the
+  recovery path). Every service account is copied to a successor agent —
+  stored permission grants (empty stays empty; never the default agent
+  permission set), toolkit/credential bindings, the per-binding inline permission
+  rules (control DB), and the API-key digest — its outstanding opaque
+  sessions are revoked, and the row is stamped (`migrated_to_actor_id`).
+  **API-key callers keep authenticating**: the resolver is now agent-first,
+  so migrated `sak_`/`jntc_live_` plaintexts keep working without a key
+  change (`sak_` keys only until 0.41.0, which refuses them) — but they now authenticate **as the successor agent**, which
+  changes behaviour on a few endpoints (next bullet). Non-active SAs
+  (pending/rejected/archived) are skipped-but-stamped; disabled SAs get a
+  disabled successor.
+- **Breaking for migrated `sak_` callers** (they are agents now):
+  `POST /oauth/mint` returns `403` (it requires a service-account actor);
+  `POST /integrations:connect` rejects `agent_id` in the request body (an
+  agent caller *is* the agent); and an agent-initiated connect session can
+  no longer be confirmed by the same caller — agent-initiated sessions need
+  a human on the review page. Move these flows to a user/owner identity
+  before upgrading.
+- **Ownership and visibility shift.** The successor is created with
+  `parent_actor_id` = the SA's owner, so (a) it becomes visible to
+  `owner:agents:read` holders, and (b) any copied `owner:*` delegation permission
+  now widens to the **owner's** resources — review SAs holding `owner:*`
+  grants in the report. (c) Control-DB objects `created_by` the `sva_` id
+  (credentials and access requests, whose owner-scoped reads key on
+  `created_by`) are **not** re-attributed, so the successor loses
+  owner-scoped access to them; re-create or re-assign them if the caller
+  needs them. The JSONL report's `owner_visibility_note` repeats this per
+  migrated SA.
+- **Broker JWTs may only assert `actor_type=agent`.** A trusted-issuer JWT
+  claiming `service_account` is now refused (uniform 401; `jwt_refused`
+  WARNING with `jwt_actor_type_not_allowed`) — the JWT path reads no DB and
+  would bypass the migration entirely. Re-issue such tokens against the
+  successor agent. **Breaking** for issuers minting SA claims.
+- **Rotating a successor agent's API key ends the old plaintext.** The
+  migrated `sak_`/`jntc_live_` plaintext authenticates via the copied
+  digest (`sak_` until 0.41.0); rotating or revoking the successor's key replaces that digest —
+  deliberate, audited, irreversible.
+
+### Theme-8 Phase 1 runbook: snapshot, migrate, sweep, verify, acknowledge
+
+> **0.40.x only.** 0.41.0 (theme-8 Phase 4) removed the
+> `migrate-service-accounts` command, the boot job and the acknowledgement:
+> the migration runner migrates, verifies and sweeps any remaining service
+> account automatically before the drop
+> ([below](#upgrading-to-the-theme-8-phase-4-release-service-account-tables-dropped)).
+> The steps here describe the 0.40.x tooling; running them first on 0.40.x
+> is optional.
+
+Run against **production data**; order matters.
+
+1. **Snapshot first**: take admin-DB and control-DB snapshots before the
+   first production run. Pre-sweep reversal is stamp-based and lossless
+   (delete successor agents + their credential/grant/binding rows and their
+   control-DB inline permission rules by stamp, clear the stamps — the SA
+   originals are still live); **post-sweep reversal requires the
+   snapshots**. Token revocation is acceptable-irreversible in both stages.
+2. *(Optional)* preview: `jentic_one migrate-service-accounts --diff-only
+   --report preview.jsonl` — evaluates dispositions without writing. Review
+   the JSONL: `had_client_secret` names every client-credentials holder
+   (that grant channel dies in Phase 2), and the owner-visibility notes tell
+   you which successors become visible to `owner:agents:read` holders.
+3. **Migrate**: `jentic_one migrate-service-accounts --report run.jsonl`
+   (or let the boot job do it). Re-runs are cheap no-ops via the stamp and
+   pick up SAs created during the window.
+4. **Dual-kill note (the window)**: disabling a migrated SA is refused
+   (`409 service_account_migrated`) and would not cut its key anyway — new
+   pods resolve agent-first and never consult SA status. **To cut a key,
+   disable the successor agent** (the stamp gives the `sva_ → agnt_`
+   mapping) or revoke its API key; new pods then **fail closed** — a
+   disabled successor (or a stamped SA whose successor digest is gone)
+   never falls back to the SA row (`migrated_key_fail_closed` WARNING).
+   Old-image pods still honour the SA status until the fleet rollout
+   completes. **Client-credentials holders** are not cut by either lever —
+   a pre-sweep `client_credentials` login still mints an SA session (step
+   7); the kill lever for them is the sweep: `jentic_one
+   migrate-service-accounts --sweep-migrated` archives the SA (the grant
+   then refuses it) and revokes every SA session it minted since the
+   migration, in one transaction.
+5. **Watch the fallback signal**: every key still resolving through the SA
+   fallback logs a `service_account_fallback_resolve` WARNING and bumps the
+   `auth_service_account_fallback_resolves` OTel counter
+   (`auth_service_account_fallback_resolves_total` on the Prometheus
+   exporter; needs `metrics.exporter` configured — it is an operator
+   metric, not a phone-home telemetry event). Trending to zero is the sweep-readiness signal;
+   sustained hits after the fleet rollout mean unmigrated stragglers —
+   re-run the job.
+6. **Sweep**: the boot job's automatic sweep archives migrated SAs (deleting
+   the SA-keyed grant/binding rows and the `sva_`-keyed inline permission
+   rules, NULLing the SA-side digest, and revoking any SA sessions minted
+   since the migration) only once
+   a stamp is older than
+   `services.service_account_sweep_min_stamp_age_hours` (default 24 — the
+   full-fleet-rollout proxy; `0` disables the gate, a negative value
+   disables the automatic sweep entirely). Run `jentic_one
+   migrate-service-accounts --sweep-migrated` to sweep immediately — only
+   when no old-image pods remain (their SA arm needs the SA-keyed rows).
+7. **Window semantics, stated**: outstanding SA tokens die at migration;
+   API-key callers keep authenticating as the successor agent (per-request
+   digest re-resolve) with the agent-caller behaviour changes listed above;
+   a pre-sweep client-credentials login still mints a fully-scoped SA
+   session (bounded to pre-existing `client_secret_hash` holders — the
+   step-2 report names them; new client secrets cannot be registered, the
+   endpoint is unrouted) until the sweep revokes those sessions and
+   archives the SA (step 4).
+8. **Verify**: `jentic_one migrate-service-accounts --verify` — zero
+   unstamped rows, grant-twin parity, zero unrevoked live SA tokens, digest
+   parity, no post-stamp mutation, and inline-rule parity (every `sva_`
+   binding still holding control-DB rules has a successor twin with the same
+   rule count; swept rows pass). Live SA sessions minted by
+   client-credentials holders fail criterion 3 until the sweep revokes them.
+9. **Acknowledge**: `jentic_one migrate-service-accounts --verify
+   --acknowledge` — records the sentinel row
+   (`service_account_migration_acks`, admin DB) that the theme-8 Phase-4
+   drop migrations require. Refused unless the verification passes in that
+   same invocation.
+
+## Upgrading to the theme-8 Phase-2 release (service-account surface removed)
+
+**Breaking.** The service-account management and token surface is deleted;
+run the Phase-1 migration (above) first — the boot job still does it.
+
+- **Routes removed:** every `/service-accounts…` route (create, list, get,
+  approve/deny/disable/enable/archive, scopes, `:generate-api-key`) and
+  `POST /oauth/mint` now return `404`. The gateway
+  chart no longer routes `/service-accounts`.
+- **`client_credentials` grant removed:** `POST /oauth/token` with
+  `grant_type=client_credentials` returns `400 unsupported_grant_type`, and
+  `client_credentials` is gone from `grant_types_supported` in the
+  authorization-server metadata. Move holders to the successor agent's
+  `jak_` API key (or the jwt-bearer grant).
+- **SA sessions are dead:** an outstanding `service_account` access or
+  refresh token introspects inactive, cannot be refreshed, and is refused at
+  the broker.
+- **API keys keep working:** migrated `sak_`/`jntc_live_` plaintexts keep
+  authenticating as the successor agent; an unmigrated `sak_` key still
+  resolves through the SA fallback (and `GET /me` / MCP `me` still answer
+  for it) until Phase 4. Phase 4 (0.41.0) refuses every `sak_` key.
+- **Scopes retired:** `service-accounts:read`, `service-accounts:write` and
+  `owner:service-accounts:read` are no longer granted, listed, or implied by
+  `org:admin`; stored grants of them are tolerated (a re-submitted scope
+  set containing them is not a 422) and simply grant nothing.
+- **Actor directory:** `GET /actors` lists users and agents only.
+- **CLI:** the generated control client drops the service-account
+  operations, and `jentic api endpoints --actor service_account` no longer
+  matches any endpoint (agents are the only machine actor — filter with
+  `--actor agent`).
+
+## Upgrading to the theme-8 Phase-4 release (service-account tables dropped)
+
+**Breaking.** This release (0.41.0) drops the `service_accounts`,
+`service_account_credentials` and `service_account_migration_acks` tables
+(admin migration `e2f3a4b5c6d7`) and removes the last service-account code
+paths. Read this **before** running migrations.
+
+- **Snapshot both databases first.** Take admin-DB **and** control-DB
+  snapshots before upgrading. The drop is irreversible (its downgrade
+  refuses) and the retirement writes to both databases, so restoring both
+  snapshots, then rolling the code back, is the only way back (see
+  *Rollback* below).
+- **The retirement is automatic.** On a full upgrade (`python -m
+  jentic_one.migrations.run` with no `--db` or `--target`), the runner
+  migrates control, brings admin to `d1e2f3a4b5c6` (just before the drop),
+  and then, under a lock:
+  1. **Migrates** every service account not yet migrated, exactly as the
+     0.40 job did: the permission grants, credential bindings, control-DB inline
+     permission rules and API-key digest are copied to a successor agent
+     named `service-account:<sva_ id>`, and outstanding SA sessions are
+     revoked. Non-active service accounts are stamped without a successor.
+     The inline rules are copied only onto bindings the retirement creates
+     in this run. For a service account migrated earlier (by 0.40), grants
+     and bindings added to it **after** its migration are copied to the
+     successor too (a binding with its inline rules), unless the successor
+     is archived or gone, or the audit log shows the successor had that
+     permission removed or that binding purged. Nothing is ever copied onto an
+     existing successor grant, binding or rule list: anything an operator
+     removed from the successor since — including a binding whose inline
+     rules were emptied — is **not** restored.
+  2. **Verifies** before touching anything: no failed migration, nothing
+     left unmigrated, every grant and binding present on the successor
+     (except the withheld ones above), and, for the service accounts
+     migrated in this run, the same inline rules per binding in the control
+     DB. The key digest is not
+     checked: `sak_` keys stop working in this release whatever the
+     successor holds (the copied digest only matters for a `jntc_live_`
+     toolkit key that 0.40 converted into a service account).
+  3. **Sweeps** the service-account side (grants, bindings, key digests,
+     sessions, `sva_`-keyed inline rules — including rules left by service
+     accounts that no longer exist), then applies the drop, which also
+     cleans up `sva_`-keyed rows no service account owns and SA-typed token
+     rows.
+
+  It logs one `service_account_migration` line per service account and a
+  `service_account_retirement_done` summary. When the retirement found
+  service accounts, it then prints a WARNING summary to stdout and logs a
+  `service_account_keys_retired` WARNING: each service account id and its
+  successor agent id (ids only, never a key), and that `sak_` keys no longer
+  authenticate — callers must switch to a `jak_` key for the listed agent.
+  Every grant, binding or inline rule list the retirement deliberately did
+  **not** copy (see step 1 — including an earlier successor binding that
+  holds no inline rules while its service account's binding did) is printed
+  as a `==> WARNING (service-account retirement, not copied)` line and
+  logged as a `service_account_retirement_not_copied` WARNING, naming the
+  service account, the successor agent and what was not copied. The
+  retirement proceeds; review each line and re-grant on the successor agent
+  whatever it still needs — the service-account originals are swept.
+  A second run finds nothing to do. There is no command to run, no acknowledgement, and no configuration.
+  If the verification fails, see
+  [If the retirement refuses](#if-the-retirement-refuses).
+- **Targeted or partial upgrades skip the retirement.** `scripts/migrate.sh`
+  with no options runs the full runner. With `--db` (admin
+  only, or admin before control) or `--target` (on the runner or
+  `scripts/migrate.sh`), the runner does not retire,
+  and the drop migration's own gate refuses to run while any service account
+  is unmigrated or not yet swept. It names the ids and points at the full
+  runner; nothing is dropped. A fresh install (empty tables) passes.
+- **Rolling upgrades.** Once the tables are dropped, 0.40.x replicas still
+  serving traffic cannot read them: a `sak_` or `jntc_live_` request to a
+  0.40.x replica returns `500`, and a 0.40.x replica that restarts logs
+  `service_account_migration_startup_failed` (the boot job fails; the
+  server still starts). There is no 0.40.x patch for this: finish the
+  rollout promptly, or drain 0.40.x replicas before the migration Job runs.
+- **Retired permission strings are swept.** `service-accounts:read`,
+  `service-accounts:write` and `owner:service-accounts:read` are removed from
+  every stored grant and token surface, in the same way as the theme-5
+  toolkit-permission sweep. They have granted nothing since Phase 2.
+- **`sak_` keys stop working (breaking).** Every `sak_` key is refused,
+  migrated or not, before any lookup: `401` with the detail *"Service-account
+  keys (sak_) were retired in Jentic One 0.41: each service account was
+  migrated to an agent. Mint a jak_ key for that agent and use it instead."*
+  (admin, auth and broker surfaces; MCP answers with its usual `401`
+  challenge). Each refusal logs `retired_service_account_key_refused` at
+  INFO with the successor agent id when that agent still holds the retired
+  key's digest (after you mint a new `jak_` key for it, as rule 4 advises,
+  the id is logged as `null`). Move callers to a
+  `jak_` key for the successor agent — ideally on 0.40.x before upgrading
+  (see [Upgrading to 0.41.0](#upgrading-to-0410), rule 4).
+- **Converted `jntc_live_` keys keep working** until at least 2026-12-01:
+  they authenticate **as their successor agent**, and each resolve logs a
+  `deprecated_toolkit_key_used` WARNING. Rotate holders to the agent's
+  `jak_` key. A key that matches no agent is refused (`401`,
+  `retired_key_unresolved` INFO), and so is one whose successor is disabled
+  or whose digest was rotated away (`migrated_key_fail_closed`).
+- **Leftover service-account rows fail closed.** Revoked or expired SA token
+  rows are kept, and every token path refuses them: `/me`, introspection,
+  refresh, revocation and the broker. Historical `sva_` ids in audit, event,
+  execution and control-DB rows are labelled "retired service account" and
+  are never resolved; a catalog auto-import initiated by one is skipped.
+- **Removed:**
+  - the `jentic_one migrate-service-accounts` command (all of `--diff-only`,
+    `--sweep-migrated`, `--verify` and `--acknowledge`) and the
+    control-plane boot migration job;
+  - the `service_account_migration_acks` table — no acknowledgement is
+    needed any more;
+  - the `services.service_account_sweep_min_stamp_age_hours` config key.
+    It is ignored with a single `config_retired_setting_ignored` WARNING;
+    remove it (and `JENTIC__SERVICES__SERVICE_ACCOUNT_SWEEP_MIN_STAMP_AGE_HOURS`)
+    from your config;
+  - the `service_account_fallback_resolve` WARNING and the
+    `auth_service_account_fallback_resolves` OTel counter;
+  - the `service_account` value of `ActorType` in the API (`MeServiceAccount`
+    is gone from `GET /me`);
+  - the CLI's `service-account` mode alias. `--mode service-account`,
+    `JENTIC_MODE=service-account` and a persisted `mode: service-account`
+    are now an unknown mode, fenced like any other; use `agent`.
+
+### If the retirement refuses
+
+The runner exits `4` and prints `Refusing to retire the service accounts …`,
+listing each service account id with the reason (for example, its migration
+failed because its key digest already belongs to another agent, or the
+successor lacks a grant). A
+`service_account_retirement_refused` ERROR log carries the same ids.
+**Nothing was swept or dropped**: admin stays at `d1e2f3a4b5c6` and every
+service-account row is intact. Fix the named rows — typically restore the
+missing grant or binding on the successor agent, or clear the conflicting
+credential — then re-run the migration. Re-running is always safe.
+
+### Rollback (theme-8 Phase 4)
+
+The drop is **irreversible**. `e2f3a4b5c6d7` has no working downgrade:
+`python -m jentic_one.migrations.run --direction down` (or any target below
+it) refuses with `e2f3a4b5c6d7 is irreversible: the service-account data was
+migrated to agents and dropped; restore the admin database from the
+pre-upgrade snapshot …` and changes nothing. Empty service-account tables
+would restore nothing, so none are recreated.
+
+To go back, restore the admin **and** control databases from the snapshots
+taken before the upgrade (control too, for the swept `sva_` inline rules),
+then roll the code back — see [Rollback (Phase 6b → 6a)](#rollback-phase-6b--6a),
+which covers both 0.41.0 drops. Changes written since the upgrade are lost.
+Do not `alembic stamp` past the drop to force a downgrade: the schema would
+claim tables that are not there.
+
+## Reviewing grants and bindings carried over by the upgrade
+
+The theme-5 and theme-8 upgrade steps preserve access exactly: nothing is
+stripped. Two kinds of carried-over access are worth a deliberate review
+after the upgrade:
+
+- **Admin-level scopes on successor agents.** A migrated service account's
+  grants are copied verbatim onto its `service-account:<sva_ id>` successor
+  agent, including admin-level scopes (`org:admin`, `users:write`,
+  `agents:write`, `credentials:write`, `config:write`,
+  `oauth-clients:write`).
+- **Cross-owner credential bindings.** A binding created by flattening or
+  key retirement where the credential's creator is neither the agent's owner
+  nor the agent itself (or where either side is unrecorded).
+
+Where the upgrade reports them (all informational — none fails a step,
+the service-account retirement, `--verify`, or `--acknowledge`; no secret
+material is logged):
+
+| Source | What it emits |
+| ------ | ------------- |
+| Service-account retirement (0.41 migration runner; the 0.40.x boot job or `migrate-service-accounts`) | `copied_scopes` and `admin_level_scopes` per SA on the `service_account_migration` log line (0.40.x: also in the `--report` JSONL), one `service_account_migration_admin_scope_copied` WARNING per admin-level grant, and the copied scope names in the migration's grant audit row. |
+| `migrate-service-accounts --verify` (0.40.x only) | One `successor_admin_scope` report line per admin-level grant still held from the migration, `successor_admin_scope_count` in the summary, and a `==> REVIEW` line. After the drop, use the query below. |
+| Toolkit flattening (upgrade step or `flatten-toolkits`) | `cross_owner_binding` findings in the report (run and `--verify`), a `toolkit_flattening_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+| Toolkit key retirement (upgrade step or boot) | `cross_owner_credential_ids` in the step outcome, a `toolkit_key_retirement_cross_owner_binding` WARNING per binding, and an `==> WARNING` line from the upgrade step. |
+
+The same state can be listed at any time with read-only queries.
+
+**Successor agents holding admin-level grants** (admin DB; on Postgres
+run it with the admin connection's `schema_name` — `admin` in the shipped
+configs — on the `search_path`, or prefix the tables with it):
+
+```sql
+SELECT a.id, a.name, a.owner_id, a.status, g.permission, g.granted_by
+FROM actor_permission_grants g
+JOIN agents a ON a.id = g.actor_id
+WHERE g.actor_type = 'agent'
+  AND a.name LIKE 'service-account:%'
+  AND g.permission IN ('org:admin', 'users:write', 'agents:write',
+                  'credentials:write', 'config:write', 'oauth-clients:write')
+ORDER BY a.id, g.permission;
+```
+
+`granted_by = 'system:theme8-sa-migration'` marks a grant the migration
+copied; any other grantor means someone has granted it since.
+
+**Bindings whose credential creator differs from the agent owner.** The
+bindings live in the admin DB and the credential creators in the control
+DB, so on SQLite (one file per surface) this is two queries. On Postgres,
+when the admin and control connections share one database (the shipped
+configs, schemas `admin` and `control` — substitute your `schema_name`
+values), it is one join; if they point at separate databases, use the
+two-query form.
+
+```sql
+-- Postgres, shared database: one query across the admin and control schemas
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id, c.created_by
+FROM admin.agent_credential_bindings b
+JOIN admin.agents a ON a.id = b.agent_id
+LEFT JOIN control.credentials c ON c.id = b.credential_id
+WHERE c.created_by IS NULL
+   OR a.owner_id IS NULL
+   OR c.created_by NOT IN (a.owner_id, a.id)
+ORDER BY b.agent_id, b.credential_id;
+```
+
+```sql
+-- step 1 (admin DB): every binding with its agent's owner
+SELECT b.agent_id, a.name, a.owner_id, b.credential_id
+FROM agent_credential_bindings b
+JOIN agents a ON a.id = b.agent_id
+ORDER BY b.agent_id;
+
+-- step 2 (control DB): the creators of those credentials
+SELECT id, created_by FROM credentials WHERE id IN ('cred_…', …);
+```
+
+Flag a step-1 row when its credential's `created_by` (step 2) is missing or
+is neither the row's `owner_id` nor its `agent_id`.
+
+**What to do.** Expected rows need no action — the upgrade kept the access
+the old model already allowed. For an unexpected one:
+
+- narrow the agent's permissions with `PUT /agents/{agent_id}/permissions` (the
+  body is the full permission set to keep), or disable the agent while you decide;
+- remove a binding with
+  `DELETE /agents/{agent_id}/credentials/{credential_id}`.
+
+Both are ordinary, audited mutations.
+
+## Upgrading to the permissions-rename release
+
+Internal authorization is spelled "permission" on every surface (OAuth2/OIDC
+names — `scope`, `allowed_scopes`, `scopes_supported`, `insufficient_scope` —
+are unchanged). There are no compatibility aliases; read this before rolling
+it out.
+
+- **Schema.** The admin migration `e3f4a5b6c7d8` renames the table
+  `actor_scope_grants` → `actor_permission_grants` and its column `scope` →
+  `permission` (plus the unique constraint, primary key, and indexes). Stored
+  values are unchanged (`agents:write` stays `agents:write`), and so are the
+  `asg_…` row ids.
+- **Old pods stop working once the migration has run.** The previous
+  release reads `actor_scope_grants` almost everywhere: its ORM model (every
+  grant read and write), the broker's execution gate for every agent
+  (JWT-authenticated ones included), token minting, API-key and opaque-token
+  resolution, and the control plane's grant effects. From the moment the
+  migration renames the table until the last old pod is replaced, those pods
+  fail authentication, execution, and every grant change. The
+  [upgrade contract](../operations/upgrades.md#the-contract) already treats
+  old code on a new schema as unsupported — here it is an outage, so schedule
+  the upgrade in a maintenance window, or scale the app and broker to zero
+  before the migration and back up after it. With Helm, the migration runs as
+  a `pre-upgrade` hook, so the window lasts from the hook until the rollout
+  completes.
+- **HTTP API.**
+  - `GET|PUT /agents/{id}/scopes` is now `/agents/{id}/permissions`, with
+    `{"permissions": […]}` bodies.
+  - `POST /agents` takes its initial grants as `permissions` (was `scopes`).
+    Both `POST /agents` and `PUT /agents/{id}/permissions` now reject unknown
+    body fields with 422, so a client still sending `scopes` fails loudly
+    instead of the key being ignored (which, on `POST /agents`, would have
+    granted the full default permission set).
+  - `GET /me` reports `permissions` / `token_permissions` instead of
+    `scopes` / `token_scopes`.
+  - The agent permission-ceiling problem types are
+    `agent_permission_not_grantable` (403, was `scope_not_grantable`) and
+    `unknown_agent_permission` (422, was `unknown_scope`) — distinct from the
+    admin user-permission types `permission_not_grantable` /
+    `unknown_permission`.
+  - The endpoint reference emits `required_permissions` under schema
+    `jentic.endpoint-permission-tree/v1`.
+- **Audit log.** New agent create/approve/replace/register entries write the
+  `permissions` payload key and the `replace_permissions` /
+  `default_permissions` reason strings, replacing the `scopes` key and
+  `replace_scopes` / `default_scopes` reasons. Entries already in the log keep
+  the old spelling (they are history), so external `GET /audit` consumers that
+  key on `scopes` must read both spellings across the upgrade.
+- **CLI and Go SDK.** `jentic endpoints --scope` is now `--permission`.
+  The generated control client renames `AgentScopesRequest`/`Response` to
+  `AgentPermissionsRequest`/`Response`, and `MeAgent` exposes
+  `Permissions`/`TokenPermissions` — a breaking change for Go importers of
+  `github.com/jentic/jentic-one/cli`. **Upgrade every CLI with the server.**
+  The version-skew guard lives in the new CLI only: a new CLI talking to an
+  old server refuses `/me` and the endpoint reference with a
+  `SERVER_INCOMPATIBLE` error, but an older CLI talking to a new server fails
+  silently — `jentic doctor` reports "scopes: none", `jentic endpoints` shows
+  every route as open to any authenticated caller, and `--scope` matches
+  nothing.
+
+## Deprecations
+
+Active deprecation windows are registered here (the named channel) and
+repeated in the GitHub Release notes of the release that opens each window.
+An entry names what is deprecated, the release that opened the window, the
+runtime signal an operator can watch, and the earliest removal point.
+
+| Deprecated | Since | Runtime signal | Removal |
+| ---------- | ----- | -------------- | ------- |
+| `jntc_live_` toolkit API keys (theme-5 Phase 4). No new keys are issued. Keys migrated before the Phase 6b drops keep authenticating — as their successor **agents** once theme-8 Phase 1 migrates them; the `retire-toolkit-keys` command and the boot/migration retirement steps are gone with the `toolkit_keys` table (Phase 6b), so a key not migrated by then stops authenticating. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-5 Phase 4 (opened 2026-09-11). | `deprecated_toolkit_key_used` WARNING log lines — one per resolve, naming the successor agent presenting the retired key form. | Plaintext acceptance ends no earlier than **2026-12-01** (a follow-up to Phase 6b). |
+| Service accounts (theme-8 Phase 1). Every SA is auto-migrated to a successor agent; the migrated `sak_`/`jntc_live_` plaintext keeps authenticating — as that agent (`sak_` until 0.41.0). The SA management surface, `POST /oauth/mint` and the `client_credentials` grant were removed in theme-8 Phase 2, and broker JWTs may no longer assert `actor_type=service_account`. Rotate holders to the successor agent's `jak_` key. | The first release carrying theme-8 Phase 1. | Until Phase 4: `service_account_fallback_resolve` WARNING log lines and the `auth_service_account_fallback_resolves` OTel counter (both removed with the fallback). | **Removed.** The surface went in theme-8 Phase 2; Phase 4 (0.41.0) retires any remaining service account automatically and drops the tables. |
+| `sak_` service-account API keys (theme-8 Phase 4). No new keys could be issued; a key migrated to a successor agent authenticated as that agent through 0.40.x. Move holders to a `jak_` key for the successor agent (on 0.40.x, before upgrading, for zero downtime). | The first release carrying theme-8 Phase 1. | From 0.41.0: `retired_service_account_key_refused` INFO per refused request, and the upgrade's `service_account_keys_retired` WARNING summary. | **Removed in 0.41.0.** Every `sak_` key is refused with `401`; the detail names the retirement and the `jak_` replacement. Converted `jntc_live_` keys are unaffected (their own row). |
+
+
+## One-time setup (repo/org admin)
+
+The automation is inert until these are provisioned:
+
+- **A scoped GitHub App** for the release trigger (a tag/release made with the
+  default `GITHUB_TOKEN` does not trigger downstream workflows). Install it on
+  this repo with repository permissions **Contents: RW, Issues: RW, Pull
+  requests: RW** (Issues is required — release-please creates its `autorelease:*`
+  labels via the Issues API). Add secrets `RELEASE_PLEASE_APP_ID` and
+  `RELEASE_PLEASE_APP_PRIVATE_KEY`.
+- **`HOMEBREW_TAP_TOKEN`** — a fine-grained token with `contents: write` on
+  `jentic/homebrew-tap` only (for the cross-repo cask push).
+- **`SCOOP_BUCKET_TOKEN`** — same shape: a fine-grained token with
+  `contents: write` on `jentic/scoop-bucket` only. Create that repo (public,
+  empty is fine — GoReleaser commits `jentic.json` to its root on each
+  release) before setting the secret.
+- **`WINGET_TOKEN`** — a **classic** PAT with `public_repo` scope
+  (fine-grained tokens cannot open cross-repo PRs against
+  `microsoft/winget-pkgs`). Fork `microsoft/winget-pkgs` into the `jentic`
+  org first; each release then pushes a manifest branch to the fork and opens
+  the upstream PR. **Keep the fork's `master` synced** (GitHub's "Sync fork"
+  button, or a scheduled sync) — a stale fork makes the generated PR conflict
+  at tag time. The **first** submission goes through Microsoft's human
+  review (typically days); later versions are auto-validated by bots. Until
+  the first manifest lands, `winget install Jentic.Jentic` resolves nothing —
+  the scoop bucket is the immediate Windows channel in the meantime.
+
+Both Windows-channel secrets are **optional**: while unset, GoReleaser skips
+that publisher with a log line and the release stays green (the
+`skip_upload` templates in [`cli/.goreleaser.yaml`](../../cli/.goreleaser.yaml)). Provisioning the secret
+is what turns the channel on.
+
+cosign signing needs no secret — it uses the release job's OIDC token (keyless,
+via Sigstore/Fulcio).
+
+The **`publish-image`** stage needs no extra secret either — it pushes to GHCR
+with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`).
+
+**First-release checklist:** the first push creates the `jentic-one-app`
+package under the repo owner **as private**. After the first release, a
+maintainer must set its visibility to **public** in the package settings —
+until then self-hosters cannot `docker pull` without authenticating. GHCR's
+**immutable tags** option is a trade-off, not a default: it hardens tags
+against re-pushes, but breaks the full-re-run recovery path above (a full
+re-run cannot overwrite `X.Y.Z`) — enable it only if you accept recovering
+via "Re-run failed jobs" or `Release-As` instead. The image is cosign-signed
+with an SBOM attestation; the verify commands live in [`deploy/README.md`](../../deploy/README.md)
+("Verify the signature").
+
+Also consider a **repository ruleset restricting `v*` tag creation** to the
+release App and admins: the workflow trusts any pushed tag, and while the
+gate's version assertion bounds what a rogue tag can ship, a signed release
+should only ever be release-please-initiated.
+
+## Verifying a release (supply chain)
+
+GoReleaser signs `checksums.txt` with cosign keyless. To verify a downloaded
+release:
+
+```bash
+# 1. verify the checksum file's cosign signature (keyless / Sigstore).
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature   checksums.txt.sig \
+  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+
+# 2. verify the artifact against the (now-trusted) checksum file.
+sha256sum --check --ignore-missing checksums.txt
+```
+
+The **certificate identity** is the workflow that produced the signature:
+`https://github.com/jentic/jentic-one/.github/workflows/release.yml@refs/tags/vX.Y.Z`,
+issued by GitHub Actions OIDC (`https://token.actions.githubusercontent.com`).
+Always pin both `--certificate-identity(-regexp)` and `--certificate-oidc-issuer`
+— verifying without them accepts any Sigstore certificate and defeats the point.
+
+Each archive also ships a syft SBOM (`*.sbom.json`) listing its contents.
+
+> Note: the `brew install` path relies on the SHA-256 that Homebrew embeds in
+> the cask (tamper-evident). The cosign signature above is for the direct-download
+> / CI verification path.

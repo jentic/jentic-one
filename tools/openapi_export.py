@@ -28,6 +28,8 @@ from typing import Any
 
 import yaml
 
+from jentic_one.shared.web.openapi_meta import PUBLISHED_SERVERS, SERVERS
+
 # Surfaces that make up the control plane. Broker is intentionally excluded —
 # it has its own hand-curated spec under openapi/broker/.
 CONTROL_PLANE_SURFACES: list[str] = ["control", "admin", "auth", "registry"]
@@ -70,8 +72,20 @@ def build_control_plane_spec() -> dict[str, Any]:
     config = load_config()
     ctx = Context(config, allowed_dbs={"registry", "admin", "control"})
     app = create_combined_app(ctx, list(CONTROL_PLANE_SURFACES))
-    spec: dict[str, Any] = app.openapi()
+    # Pin the same-origin server so a local ``server.public_base_url`` never
+    # leaks into the committed artefacts. Copy so the app's cached schema is
+    # left untouched.
+    spec: dict[str, Any] = {**app.openapi(), "servers": SERVERS}
     return spec
+
+
+def published_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """The checked-in YAML artefact: ``spec`` with placeholder deployment hosts.
+
+    ``ui/openapi.json`` keeps the same-origin server: it is the SPA client's
+    codegen input, and the generator bakes ``servers[0]`` into ``OpenAPI.BASE``.
+    """
+    return {**spec, "servers": PUBLISHED_SERVERS}
 
 
 def dump_spec_yaml(spec: dict[str, Any]) -> str:
@@ -94,14 +108,15 @@ def dump_spec_json(spec: dict[str, Any]) -> str:
 def _serialise(spec: dict[str, Any], path: Path) -> str:
     if path.suffix == ".json":
         return dump_spec_json(spec)
-    return dump_spec_yaml(spec)
+    return dump_spec_yaml(published_spec(spec))
 
 
 def write_control_plane_spec(path: Path | None = None) -> Path:
     """Generate the control-plane spec and write it to ``path``.
 
     Format is chosen by the target extension: ``.json`` for the UI client
-    schema, sorted YAML otherwise (the canonical checked-in control spec).
+    schema, sorted YAML otherwise (the canonical checked-in control spec, which
+    carries the placeholder servers — see :func:`published_spec`).
     """
     target = path or CONTROL_SPEC_PATH
     spec = build_control_plane_spec()
@@ -129,7 +144,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     if args.stdout:
-        sys.stdout.write(dump_spec_yaml(build_control_plane_spec()))
+        sys.stdout.write(dump_spec_yaml(published_spec(build_control_plane_spec())))
         return 0
     output = args.output.resolve() if args.output is not None else None
     written = write_control_plane_spec(output)

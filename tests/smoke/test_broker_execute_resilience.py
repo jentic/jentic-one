@@ -6,7 +6,7 @@ status passthrough, timeouts, and transport failures.
 
 Every proxied call resolves a credential regardless of the op's ``security``
 block (the broker injects for every op, 424 otherwise), so all tests use the
-``executable_harness`` fixture (toolkit + one bearer credential) and an op that
+``executable_harness`` fixture (one directly bound bearer credential) and an op that
 needs no *upstream* auth (``/behavior/echo``) to isolate the resilience
 dimension.
 

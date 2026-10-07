@@ -1,14 +1,15 @@
 /**
  * ToastHost — transient toast surface driven by the live agent stream. Pops the
  * latest stream event as a toast when it matches the operator's chosen scope,
- * auto-dismisses after a TTL, and is pinned to the bottom-right (matching the
- * platform toaster) — shifted left of the rail at `xl+` so the two never
- * overlap. Mounted by the shell alongside `AgentRail`.
+ * auto-dismisses after a TTL, and stacks with the platform toaster in the
+ * shell's toast region, which places both. Mounted by the shell alongside
+ * `AgentRail`.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
+import { ToastAccentBar, toastSurfaceClass } from '@/shared/ui/Toaster';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	formatStreamTime,
@@ -16,10 +17,7 @@ import {
 	isFailureSeverity,
 	matchesToastScope,
 	primaryDestinationFor,
-	RAIL_COLLAPSE_CHANGE_EVENT,
-	RAIL_COLLAPSED_STORAGE_KEY,
 	readToastScope,
-	severityStripeClass,
 	STREAM_KIND_LABEL,
 	TOAST_SCOPE_CHANGE_EVENT,
 	TOAST_SCOPE_STORAGE_KEY,
@@ -27,15 +25,6 @@ import {
 } from '@/shared/lib/agentStream';
 import type { InlineActionSpec, StreamEvent, ToastScope } from '@/shared/lib/agentStream';
 import { cn } from '@/shared/lib/utils';
-
-function readRailCollapsed(): boolean {
-	if (typeof window === 'undefined') return false;
-	try {
-		return window.localStorage.getItem(RAIL_COLLAPSED_STORAGE_KEY) === '1';
-	} catch {
-		return false;
-	}
-}
 
 const TOAST_TTL_MS = 6000;
 const MAX_TOASTS = 3;
@@ -51,7 +40,6 @@ export function ToastHost() {
 	const navigate = useNavigate();
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
-	const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
 	// Ids the operator has EXPLICITLY dismissed. The insert effect re-runs on
 	// every `scope` change with the same `latest`; without this a failure toast
 	// the operator closed would silently re-appear when scope flips, because the
@@ -68,24 +56,18 @@ export function ToastHost() {
 	// inside the window to polite so AT users hear one interruption, not N.
 	const lastAssertiveAtRef = useRef(0);
 
-	// React to scope + rail-collapse changes (same-tab CustomEvent + cross-tab StorageEvent)
+	// React to scope changes (same-tab CustomEvent + cross-tab StorageEvent)
 	useEffect(() => {
 		function onScope() {
 			setScope(readToastScope());
 		}
-		function onCollapse() {
-			setRailCollapsed(readRailCollapsed());
-		}
 		function onStorage(e: StorageEvent) {
 			if (e.key === TOAST_SCOPE_STORAGE_KEY) setScope(readToastScope());
-			if (e.key === RAIL_COLLAPSED_STORAGE_KEY) setRailCollapsed(readRailCollapsed());
 		}
 		window.addEventListener(TOAST_SCOPE_CHANGE_EVENT, onScope);
-		window.addEventListener(RAIL_COLLAPSE_CHANGE_EVENT, onCollapse);
 		window.addEventListener('storage', onStorage);
 		return () => {
 			window.removeEventListener(TOAST_SCOPE_CHANGE_EVENT, onScope);
-			window.removeEventListener(RAIL_COLLAPSE_CHANGE_EVENT, onCollapse);
 			window.removeEventListener('storage', onStorage);
 		};
 	}, []);
@@ -137,14 +119,6 @@ export function ToastHost() {
 	}
 
 	function handleAction(toast: Toast, action: InlineActionSpec) {
-		// Decisions (deny) and the per-item "View" dialog don't belong in a 6s
-		// toast — route the operator into the record to decide deliberately.
-		if (action.decides || action.opensRequest) {
-			const target = primaryDestinationFor(toast);
-			if (target) navigate(target);
-			dismiss(toast.id);
-			return;
-		}
 		if (action.href && !action.acknowledges) {
 			const target = action.href(toast);
 			if (target) navigate(target);
@@ -157,21 +131,10 @@ export function ToastHost() {
 		}
 	}
 
-	// Below xl the rail is hidden → toasts at right-4. At xl+ the rail occupies
-	// the right side (288px open, 40px collapsed) → shift toasts left of it.
-	const xlOffset = railCollapsed ? 'xl:right-14' : 'xl:right-[19rem]';
-
 	if (toasts.length === 0) return null;
 
 	return (
-		<div
-			className={cn(
-				'pointer-events-none fixed right-4 bottom-4 z-[60] flex w-80 flex-col-reverse gap-2',
-				xlOffset,
-			)}
-			role="region"
-			aria-label="Agent notifications"
-		>
+		<div className="flex flex-col-reverse gap-2" role="region" aria-label="Agent notifications">
 			{toasts.map((toast) => (
 				<ToastCard
 					key={toast.id}
@@ -211,14 +174,7 @@ function ToastCard({
 	}, []);
 
 	const headline = KIND_LABEL[toast.kind];
-	// In the toast, collapse the access-request actions (View / Deny) into a
-	// single "Review" affordance — the actual decision is made in the rail row's
-	// dialog (a 6s toast is the wrong place to type a denial reason).
-	const rawActions = inlineActionsFor(toast);
-	const hasDecision = rawActions.some((a) => a.decides || a.opensRequest);
-	const actions: InlineActionSpec[] = hasDecision
-		? [{ kind: 'view_request', label: 'Review', opensRequest: true }]
-		: rawActions;
+	const actions = inlineActionsFor(toast);
 	const critical = toast.severity === 'critical' || toast.severity === 'error';
 	// Burst coalescing: only the first failure inside the window interrupts.
 	const assertive = critical && toast.assertive;
@@ -241,11 +197,18 @@ function ToastCard({
 				}
 			}}
 			className={cn(
-				'bg-muted border-border pointer-events-auto rounded-lg border border-l-4 p-3 shadow-2xl',
-				severityStripeClass(toast.severity),
-				onOpen && 'hover:bg-muted/80 cursor-pointer',
+				// The shared calm toast card: colour lives on the event glyph, and a
+				// failure adds the thin red bar (wider for critical) — no tinted
+				// fill, border or text.
+				toastSurfaceClass,
+				onOpen && 'hover:bg-surface-1 cursor-pointer transition-colors',
 			)}
+			data-testid="stream-toast"
+			data-severity={toast.severity}
 		>
+			{critical && (
+				<ToastAccentBar className={toast.severity === 'critical' ? 'w-1' : undefined} />
+			)}
 			<div className="flex items-start gap-2.5">
 				<StreamEventIcon ev={toast} className="mt-0.5 h-4 w-4" />
 				<div className="min-w-0 flex-1">
@@ -272,10 +235,9 @@ function ToastCard({
 							{actions.map((action) => (
 								<Button
 									key={action.kind}
-									variant={action.kind === 'acknowledge' ? 'primary' : 'ghost'}
-									size="sm"
+									variant="tonal"
+									size="xs"
 									onClick={() => onAction(action)}
-									className="h-7 px-2.5 text-[11px]"
 								>
 									{action.label}
 								</Button>
@@ -283,17 +245,23 @@ function ToastCard({
 						</div>
 					)}
 				</div>
-				<Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss toast">
-					<X className="h-4 w-4" />
+				<Button
+					variant="ghost"
+					size="icon-xs"
+					onClick={onDismiss}
+					aria-label="Dismiss toast"
+					className="-mt-1 -mr-1 h-6 w-6 shrink-0"
+				>
+					<X className="h-3.5 w-3.5" />
 				</Button>
 			</div>
-			<div className="bg-border mt-2 h-0.5 w-full overflow-hidden rounded-full">
+			<div className="bg-surface-tonal mt-2.5 h-0.5 w-full overflow-hidden rounded-full">
 				<div
 					className={cn(
 						'h-full',
-						critical && 'bg-danger',
-						toast.severity === 'warning' && 'bg-warning',
-						toast.severity === 'info' && 'bg-primary',
+						critical && 'bg-danger/60',
+						toast.severity === 'warning' && 'bg-warning/60',
+						toast.severity === 'info' && 'bg-primary/45',
 					)}
 					style={{ width: `${progress}%`, transition: `width ${TOAST_TTL_MS}ms linear` }}
 				/>

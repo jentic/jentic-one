@@ -6,8 +6,13 @@ import asyncio
 
 import httpx
 import pytest
+import structlog.testing
 from fastapi import FastAPI, Request, Response
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+import jentic_one.broker.adapters.runners.http as http_runner_mod
 from jentic_one.broker.adapters.runners.base import RunnerRequest
 from jentic_one.broker.adapters.runners.http import HttpRunner, _HostBulkhead
 from jentic_one.broker.core.exceptions import BrokerError, UpstreamTimeoutError
@@ -86,6 +91,55 @@ async def test_transport_error_maps_to_broker_error() -> None:
         runner = HttpRunner(client)
         with pytest.raises(BrokerError):
             await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
+
+
+_INJECTED_SECRET = "SECRET_TRAILING_NL"
+
+
+def _raise_header_error(_req: httpx.Request) -> httpx.Response:
+    # What h11 raises for a header value carrying CR/LF: the message quotes it.
+    raise httpx.LocalProtocolError(f"Illegal header value b'{_INJECTED_SECRET}\\n'")
+
+
+@pytest.mark.asyncio
+async def test_transport_error_detail_and_span_omit_exception_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(http_runner_mod, "_tracer", provider.get_tracer("test"))
+
+    async with _mock_client(httpx.MockTransport(_raise_header_error)) as client:
+        runner = HttpRunner(client)
+        with structlog.testing.capture_logs() as logs, pytest.raises(BrokerError) as excinfo:
+            await runner.run(RunnerRequest(method="GET", url="https://api.example.com/x"))
+
+    assert excinfo.value.detail == "Upstream transport error (LocalProtocolError)"
+    assert _INJECTED_SECRET not in repr(logs)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
+    (span,) = exporter.get_finished_spans()
+    events = [dict(e.attributes or {}) for e in span.events if e.name == "exception"]
+    # Our transport event (type only) plus the SDK's auto-recorded BrokerError.
+    assert events[0] == {
+        "exception.type": "LocalProtocolError",
+        "exception.message": "Upstream transport error (LocalProtocolError)",
+    }
+    assert _INJECTED_SECRET not in repr(events)
+
+
+@pytest.mark.asyncio
+async def test_stream_transport_error_detail_omits_exception_message() -> None:
+    async with _mock_client(httpx.MockTransport(_raise_header_error)) as client:
+        runner = HttpRunner(client)
+        with structlog.testing.capture_logs() as logs, pytest.raises(BrokerError) as excinfo:
+            async with runner.stream(RunnerRequest(method="GET", url="https://api.example.com/x")):
+                pass  # pragma: no cover - the stream never opens
+
+    assert excinfo.value.detail == "Upstream transport error (LocalProtocolError)"
+    assert _INJECTED_SECRET not in repr(logs)
+    assert [e["error_type"] for e in logs] == ["LocalProtocolError"]
 
 
 @pytest.mark.asyncio

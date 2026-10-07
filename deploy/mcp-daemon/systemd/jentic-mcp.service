@@ -1,0 +1,50 @@
+# The Jentic MCP daemon: serves ONE context's MCP surface over the activated
+# unix socket, under a dedicated service user whose home holds that context's
+# keys. Callers are verified by peer uid; requests are signed daemon-side.
+#
+# EDIT before enabling:
+#   - JENTIC_CONTEXT: the context this daemon embodies (provision it first as
+#     the service user — see deploy/mcp-daemon/README.md).
+#   - --allow-uid: one flag per desktop uid allowed to act as that context.
+
+[Unit]
+Description=Jentic MCP daemon (socket-activated, per-context key custody)
+Requires=jentic-mcp.socket
+After=network.target
+
+[Service]
+Type=exec
+User=_jentic-mcp
+Group=_jentic-mcp
+Environment=XDG_CONFIG_HOME=/var/lib/jentic-mcp/config
+Environment=XDG_STATE_HOME=/var/lib/jentic-mcp/state
+Environment=JENTIC_CONTEXT=main
+# EDIT: replace 1000 with the desktop uid(s) allowed to connect.
+ExecStart=/usr/local/bin/jentic mcp --http --idle-timeout 15m --allow-uid 1000
+# Idle-exit is a clean stop; the socket unit respawns on the next connection.
+SuccessExitStatus=0
+StateDirectory=jentic-mcp
+UMask=0077
+
+# Least privilege: the daemon needs its state dir, the activated socket, and
+# outbound HTTPS to the instance — nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/jentic-mcp
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

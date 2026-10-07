@@ -34,6 +34,17 @@ describe('OAuthPopupReturn', () => {
 		});
 	});
 
+	it('announces the outcome: the card is a status on success and an alert on error', () => {
+		vi.spyOn(window, 'close').mockImplementation(() => {});
+		const ok = renderWithProviders(<OAuthPopupReturn />, {
+			route: '/oauth/connected?status=ok',
+		});
+		expect(screen.getByRole('status')).toHaveTextContent('Sign-in complete');
+		ok.unmount();
+		renderWithProviders(<OAuthPopupReturn />, { route: '/oauth/connected?status=error' });
+		expect(screen.getByRole('alert')).toHaveTextContent('Sign-in failed');
+	});
+
 	it('shows the success copy and closes the window immediately on status=ok', () => {
 		vi.useFakeTimers();
 		const close = vi.spyOn(window, 'close').mockImplementation(() => {});

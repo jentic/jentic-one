@@ -31,7 +31,7 @@ describe('OverviewStrip — update-available re-import', () => {
 		// background loop resolves cleanly; individual tests can override.
 		worker.use(
 			http.get('/jobs/:id', ({ params }) =>
-				HttpResponse.json({ job_id: params.id, status: 'succeeded' }),
+				HttpResponse.json({ job_id: params.id, status: 'completed' }),
 			),
 		);
 	});
@@ -225,7 +225,7 @@ describe('OverviewStrip — update-available re-import', () => {
 			// The job stays queued on the first poll and only then succeeds, proving
 			// the hook waits for a terminal state rather than acting on the 202.
 			http.get('/jobs/:id', ({ params }) => {
-				const status = jobPolled ? 'succeeded' : 'queued';
+				const status = jobPolled ? 'completed' : 'queued';
 				jobPolled = true;
 				return HttpResponse.json({ job_id: params.id, status });
 			}),
@@ -245,5 +245,35 @@ describe('OverviewStrip — update-available re-import', () => {
 		// which is also when the API/revision caches are invalidated.
 		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 		expect(jobPolled).toBe(true);
+	});
+});
+
+describe('OverviewStrip — Security stat', () => {
+	it('names a declared scheme with its friendly label, not the raw id', () => {
+		renderWithProviders(<OverviewStrip api={makeApi({ securitySchemes: ['bearer'] })} />);
+		expect(screen.getByText('Bearer Token')).toBeInTheDocument();
+		expect(screen.queryByText('bearer')).not.toBeInTheDocument();
+	});
+
+	it('joins multiple schemes with friendly labels', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: ['apiKey', 'basic'] })} />,
+		);
+		expect(screen.getByText('API Key, Basic Auth')).toBeInTheDocument();
+	});
+
+	it('reads "None declared" for a live API with no schemes', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: 'rev_1' })} />,
+		);
+		expect(screen.getByText('None declared')).toBeInTheDocument();
+	});
+
+	it('reads "Known once live" for a draft with no schemes yet', () => {
+		renderWithProviders(
+			<OverviewStrip api={makeApi({ securitySchemes: [], currentRevisionId: null })} />,
+		);
+		expect(screen.getByText('Known once live')).toBeInTheDocument();
+		expect(screen.queryByText(/^None/)).not.toBeInTheDocument();
 	});
 });

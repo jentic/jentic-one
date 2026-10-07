@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Index, SmallInteger, String, text
+from sqlalchemy import BigInteger, Index, SmallInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -40,12 +40,34 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         default=lambda: generate_ksuid("exec"),
         server_default=func.generate_ksuid("exec"),
     )
-    toolkit_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Nullable-legacy (theme-5 Phase 2): the toolkit that mediated the execution
+    # on the legacy path. NULL for direct-binding executions — their consumer
+    # attribution is ``credential_id`` — and permanently NULL once toolkits are
+    # retired (Phase 4+). All five toolkit-keyed surfaces (this column, the
+    # idempotency fingerprint, tracestate, repeated-failure keying, lifecycle
+    # events) move to the credential axis together.
+    toolkit_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Denormalized historical name for ``toolkit_id`` (theme-5 Phase 6b): the
+    # control ``toolkits`` table it used to be resolved from at read time is
+    # dropped. Backfilled by the Phase-6a flattening job pre-drop; NULL for
+    # rows whose toolkit was already deleted (exactly what the read-time
+    # resolver reported for them) and for all direct-binding executions.
+    toolkit_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     operation_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Human-readable operation identity, nullable in three cases: rows predating
+    # these columns, legacy in-flight jobs that carry only ``operation_id``,
+    # and executions where discovery resolved no operation at all (then all
+    # three operation_* columns are NULL). ``operation_path`` is the spec's path
+    # template (e.g. ``/repos/{owner}/{repo}``); it mirrors its unbounded
+    # registry source (``operations.path``, Text) so no write seam has to
+    # truncate and no backend silently disagrees about the limit.
+    # ``operation_method``'s width mirrors registry ``operations.method``.
+    operation_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operation_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     api_vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     api_version: Mapped[str | None] = mapped_column(String(128), nullable=True)

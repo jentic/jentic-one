@@ -35,7 +35,15 @@ def _extract_rat(request: Request) -> str:
     return auth[7:]
 
 
-@router.post("/register", status_code=201)
+@router.post(
+    "/register",
+    status_code=201,
+    # RFC 7591 §3.2.1: optional response members without a value (claim_token
+    # on the OSS single-user default — no claim-token minter installed) are
+    # omitted, never emitted as JSON null. Same posture as the anonymous DCR
+    # door (oauth_client_registration.py) and /oauth/token.
+    response_model_exclude_none=True,
+)
 async def register_endpoint(
     body: RegisterRequest,
     reg_svc: RegistrationService = Depends(get_registration_service),

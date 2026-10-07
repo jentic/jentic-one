@@ -69,13 +69,13 @@ def _make_active_agent(jwks: dict[str, Any]) -> MagicMock:
     return agent
 
 
-@patch("jentic_one.auth.services.assertion_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
 @patch("jentic_one.auth.services.assertion_service.TokenService")
 async def test_verify_and_exchange_happy_path(
     mock_token_svc_cls: MagicMock,
     mock_agent_repo: MagicMock,
-    mock_scope_repo: MagicMock,
+    mock_permission_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
@@ -83,8 +83,8 @@ async def test_verify_and_exchange_happy_path(
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
 
     grant = MagicMock()
-    grant.scope = "read"
-    mock_scope_repo.list_for_actor = AsyncMock(return_value=[grant])
+    grant.permission = "read"
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[grant])
 
     token_svc_instance = MagicMock()
     token_svc_instance.issue_pair = AsyncMock(return_value=("at_new", "rt_new"))
@@ -92,14 +92,23 @@ async def test_verify_and_exchange_happy_path(
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
-    access, refresh = await svc.verify_and_exchange(assertion)
+    access, refresh, scopes = await svc.verify_and_exchange(assertion)
 
     assert access == "at_new"
     assert refresh == "rt_new"
+    assert scopes == ["read"]
 
 
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
-async def test_verify_rejects_pending_agent(mock_agent_repo: MagicMock) -> None:
+async def test_verify_pending_agent_gets_distinct_pending_detail(
+    mock_agent_repo: MagicMock,
+) -> None:
+    """A pending agent with a VALID signature gets the distinct pending detail.
+
+    This is what lets the CLI's register/setup/wizard approval wait poll instead
+    of aborting: self-hosted backends mint no claim tokens, so the pending
+    signal must be distinguishable from a hard assertion failure.
+    """
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
@@ -108,7 +117,46 @@ async def test_verify_rejects_pending_agent(mock_agent_repo: MagicMock) -> None:
 
     svc = AssertionService(ctx)
     assertion = _make_assertion(private_key)
-    with pytest.raises(InvalidGrantError, match="invalid"):
+    with pytest.raises(InvalidGrantError, match="pending approval"):
+        await svc.verify_and_exchange(assertion)
+
+
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+async def test_verify_pending_agent_bad_signature_stays_generic(
+    mock_agent_repo: MagicMock,
+) -> None:
+    """Without proof of key possession the status is NOT revealed: a bad
+    signature gets the generic rejection regardless of the agent's status."""
+    ctx = _make_ctx()
+    _, jwks = _generate_keypair()
+    agent = _make_active_agent(jwks)
+    agent.status = "pending"
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+
+    other_private_key = Ed25519PrivateKey.generate()
+    svc = AssertionService(ctx)
+    assertion = _make_assertion(other_private_key)
+    with pytest.raises(InvalidGrantError, match="Assertion is invalid"):
+        await svc.verify_and_exchange(assertion)
+
+
+@pytest.mark.parametrize("status", ["rejected", "disabled", "archived"])
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+async def test_verify_terminal_statuses_stay_generic(
+    mock_agent_repo: MagicMock, status: str
+) -> None:
+    """Terminal (non-waitable) statuses keep the generic rejection even with a
+    valid signature — only PENDING gets a probe signal, because only PENDING
+    is worth polling on."""
+    ctx = _make_ctx()
+    private_key, jwks = _generate_keypair()
+    agent = _make_active_agent(jwks)
+    agent.status = status
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
+
+    svc = AssertionService(ctx)
+    assertion = _make_assertion(private_key)
+    with pytest.raises(InvalidGrantError, match="Assertion is invalid"):
         await svc.verify_and_exchange(assertion)
 
 
@@ -152,19 +200,19 @@ async def test_verify_rejects_wrong_audience(mock_agent_repo: MagicMock) -> None
         await svc.verify_and_exchange(assertion)
 
 
-@patch("jentic_one.auth.services.assertion_service.ActorScopeGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
 @patch("jentic_one.auth.services.assertion_service.AgentRepository")
 @patch("jentic_one.auth.services.assertion_service.TokenService")
 async def test_verify_rejects_replayed_jti(
     mock_token_svc_cls: MagicMock,
     mock_agent_repo: MagicMock,
-    mock_scope_repo: MagicMock,
+    mock_permission_repo: MagicMock,
 ) -> None:
     ctx = _make_ctx()
     private_key, jwks = _generate_keypair()
     agent = _make_active_agent(jwks)
     mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=agent)
-    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
+    mock_permission_repo.list_for_actor = AsyncMock(return_value=[])
 
     token_svc_instance = MagicMock()
     token_svc_instance.issue_pair = AsyncMock(return_value=("at_1", "rt_1"))
@@ -197,3 +245,62 @@ async def test_verify_rejects_unknown_agent(mock_agent_repo: MagicMock) -> None:
     assertion = _make_assertion(private_key)
     with pytest.raises(InvalidGrantError, match="invalid"):
         await svc.verify_and_exchange(assertion)
+
+
+def _make_zero_config_ctx() -> MagicMock:
+    # Nothing pinned, all-interfaces bind: the request-less audience derives
+    # from the bind (http://127.0.0.1:8000).
+    ctx = _make_ctx()
+    ctx.config.auth.canonical_base_url = ""
+    ctx.config.server.public_base_url = ""
+    ctx.config.server.host = "0.0.0.0"
+    ctx.config.server.port = 8000
+    return ctx
+
+
+@pytest.mark.parametrize(
+    "aud",
+    [
+        "http://127.0.0.1:8000/oauth/token",  # request-less bind origin
+        "http://192.168.1.20:8000/oauth/token",  # the advertised token_endpoint
+    ],
+)
+@patch("jentic_one.auth.services.assertion_service.ActorPermissionGrantRepository")
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+@patch("jentic_one.auth.services.assertion_service.TokenService")
+async def test_verify_accepts_request_scoped_audience_zero_config(
+    mock_token_svc_cls: MagicMock,
+    mock_agent_repo: MagicMock,
+    mock_scope_repo: MagicMock,
+    aud: str,
+) -> None:
+    """Zero-config, reached over a LAN address: the discovery token_endpoint
+    (request-scoped) and the bind-derived audience are both accepted."""
+    ctx = _make_zero_config_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+    mock_scope_repo.list_for_actor = AsyncMock(return_value=[])
+    mock_token_svc_cls.return_value = MagicMock(issue_pair=AsyncMock(return_value=("at", "rt")))
+
+    svc = AssertionService(ctx)
+    access, _, _ = await svc.verify_and_exchange(
+        _make_assertion(private_key, aud=aud, jti=f"jti-{aud}"),
+        request_base_url="http://192.168.1.20:8000",
+    )
+    assert access == "at"
+
+
+@patch("jentic_one.auth.services.assertion_service.AgentRepository")
+async def test_verify_rejects_audience_not_matching_request_or_bind(
+    mock_agent_repo: MagicMock,
+) -> None:
+    ctx = _make_zero_config_ctx()
+    private_key, jwks = _generate_keypair()
+    mock_agent_repo.get_by_id_for_update = AsyncMock(return_value=_make_active_agent(jwks))
+
+    svc = AssertionService(ctx)
+    with pytest.raises(InvalidGrantError, match="invalid"):
+        await svc.verify_and_exchange(
+            _make_assertion(private_key, aud="http://evil.example:8000/oauth/token"),
+            request_base_url="http://192.168.1.20:8000",
+        )

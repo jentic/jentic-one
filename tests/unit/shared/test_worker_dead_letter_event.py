@@ -10,7 +10,7 @@ import pytest
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
 from jentic_one.shared.jobs.worker import WorkerLoop
-from jentic_one.shared.models.events import EventType
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventType
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
 
@@ -96,6 +96,8 @@ async def test_dead_letter_emits_job_failed_permanently() -> None:
     assert call_kwargs["type"] == EventType.JOB_FAILED_PERMANENTLY
     assert call_kwargs["requires_action"] is True
     assert call_kwargs["severity"].value == "error"
+    # Cross-check against the documented severity matrix (issue #907).
+    assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.JOB_FAILED_PERMANENTLY]
 
 
 @pytest.mark.asyncio
@@ -118,3 +120,5 @@ async def test_failed_status_emits_import_failed() -> None:
     mock_emit.assert_called_once()
     call_kwargs = mock_emit.call_args.kwargs
     assert call_kwargs["type"] == EventType.IMPORT_FAILED
+    # Cross-check against the documented severity matrix (issue #907).
+    assert call_kwargs["severity"] in EVENT_TYPE_SEVERITIES[EventType.IMPORT_FAILED]

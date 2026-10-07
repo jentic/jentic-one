@@ -2,8 +2,9 @@
  * apiSpec — parse an OpenAPI document into the structured model our native API
  * reference renders. The spec is the source of truth: we render *everything*
  * that's in it (tags, tag groups, every operation, request/response bodies, and
- * the component schemas / "Models"), then enrich each operation with our scope
- * reference (the one thing the spec doesn't carry) by joining on `(method,path)`.
+ * the component schemas / "Models"), then enrich each operation with our
+ * permission reference (the one thing the spec doesn't carry) by joining on
+ * `(method,path)`.
  *
  * Ordering is the standard OpenAPI/Redoc convention:
  *   x-tagGroups (top-level groups) → tags (in each group's declared order) →
@@ -15,7 +16,6 @@
  * sparser model rather than throwing.
  */
 import type { OpenApiDocument } from '@/modules/docs/api/types';
-import { lookupKey } from '@/modules/docs/lib/anchor';
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 
@@ -253,6 +253,75 @@ function readSecurity(op: Obj, specDefault: string[]): string[] {
 
 const UNTAGGED = 'Other';
 
+/**
+ * Placeholder Control Plane origin used by the committed specs (mirrors
+ * `PUBLISHED_SERVERS` in `shared/web/openapi_meta.py`). The Broker spec cites it
+ * for its control-plane links and job URLs.
+ */
+export const CONTROL_PLACEHOLDER_ORIGIN = 'https://control.your-instance.example';
+
+/** Rewrite every occurrence of each `from` origin in the document's string values. */
+export function replaceOrigins(
+	spec: OpenApiDocument,
+	origins: Record<string, string>,
+): OpenApiDocument {
+	const pairs = Object.entries(origins).filter(([from, to]) => from && to && from !== to);
+	if (pairs.length === 0) return spec;
+	const walk = (node: unknown): unknown => {
+		if (typeof node === 'string') {
+			return pairs.reduce((text, [from, to]) => text.replaceAll(from, to), node);
+		}
+		if (Array.isArray(node)) return node.map(walk);
+		if (isObj(node)) {
+			return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, walk(v)]));
+		}
+		return node;
+	};
+	return walk(spec) as OpenApiDocument;
+}
+
+/**
+ * Point a spec at the deployment's own host when it is known.
+ *
+ * The committed Broker spec ships placeholder hosts (it is generated outside any
+ * deployment); when the backend advertises its broker URL the docs show that
+ * instead — as the sole server, and in place of the placeholders wherever the
+ * prose and examples cite them. With no URL the spec is returned untouched.
+ */
+export function withDeploymentServer(
+	spec: OpenApiDocument,
+	url: string | null | undefined,
+): OpenApiDocument {
+	if (!url) return spec;
+	const target = url.replace(/\/+$/, '');
+	// Absolute origins only: a relative entry like `/` would match every path.
+	const placeholders = Array.isArray(spec.servers)
+		? spec.servers
+				.filter(isObj)
+				.map((s) => str(s.url) ?? '')
+				.filter((url) => /^https?:\/\/[^/]/.test(url))
+		: [];
+	const rewritten = replaceOrigins(
+		spec,
+		Object.fromEntries(placeholders.map((from) => [from, target])),
+	);
+	return { ...rewritten, servers: [{ url: target, description: 'This deployment' }] };
+}
+
+/**
+ * Resolve relative `servers` (e.g. the live spec's same-origin `/`) against
+ * `origin`, so the reference shows the absolute base URL a client must call.
+ */
+export function withAbsoluteServers(spec: OpenApiDocument, origin: string): OpenApiDocument {
+	if (!Array.isArray(spec.servers)) return spec;
+	const servers = spec.servers.map((s) => {
+		const url = isObj(s) ? str(s.url) : undefined;
+		if (!url || /^[a-z][a-z0-9+.-]*:/i.test(url)) return s;
+		return { ...s, url: new URL(url, origin).toString().replace(/\/+$/, '') };
+	});
+	return { ...spec, servers };
+}
+
 /** Parse the whole document into the render model. */
 export function parseSpec(spec: OpenApiDocument): ParsedSpec {
 	const info = isObj(spec.info) ? spec.info : {};
@@ -400,15 +469,4 @@ export function derefSchema(
 	const name = refName(node);
 	if (name) return { schema: deref(spec, node), name };
 	return { schema: node };
-}
-
-/** Build a `(method,path)` → parsed operation index (for joining elsewhere). */
-export function indexParsedOperations(parsed: ParsedSpec): Map<string, SpecOperation> {
-	const index = new Map<string, SpecOperation>();
-	for (const g of parsed.groups) {
-		for (const t of g.tags) {
-			for (const op of t.operations) index.set(lookupKey(op.method, op.path), op);
-		}
-	}
-	return index;
 }

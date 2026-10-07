@@ -7,6 +7,25 @@ class RegistryServiceError(Exception):
     """Base for all registry service errors."""
 
 
+class GovernedHostsUnavailableError(RegistryServiceError):
+    """Raised when the governed-hosts derivation is missing a database leg.
+
+    The derivation reads three databases (admin bindings → control credential
+    scopes → registry hosts); a process serving the route without one of them
+    is misdeployed (``SURFACE_DB_DEPS`` in ``__main__.py`` grants a standalone
+    registry surface all three). Surfaced as **503** so the caller retries
+    against a healthy replica instead of receiving a bare 500 — and never as
+    an empty 200, which a gate would read as "govern nothing".
+    """
+
+    def __init__(self, db_name: str) -> None:
+        super().__init__(
+            f"governed-hosts derivation requires the '{db_name}' database, "
+            "which this process is not configured to access"
+        )
+        self.db_name = db_name
+
+
 class ApiNotFoundError(RegistryServiceError):
     """Raised when an API identified by (vendor, name, version) does not exist."""
 
@@ -95,6 +114,20 @@ class RevisionStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class HostOwnedByOtherVendorError(RegistryServiceError):
+    """Raised when a revision would go live on a host another vendor's live API serves.
+
+    A host is served by one vendor at a time: the first vendor whose revision
+    goes live on it keeps it until that API stops serving it. Drafts never own a
+    host, so this is checked when a revision goes live (promote, overlay
+    rollback), not on import.
+    """
+
+    def __init__(self, revision_id: str, detail: str) -> None:
+        super().__init__(f"Revision '{revision_id}' cannot go live: {detail}")
+        self.revision_id = revision_id
+
+
 class OverlayNotFoundError(RegistryServiceError):
     """Raised when an overlay does not exist for a given API."""
 
@@ -127,7 +160,7 @@ class OverlayRollbackTargetMissingError(RegistryServiceError):
 
     Rollback (A5b) promotes the overlay's ``superseded_revision_id`` back to current.
     This is raised when that target is unknown (a first-ever materialize superseded
-    nothing, or a pre-A5a overlay never recorded it) or the target revision is no longer
+    nothing, or an older overlay never recorded it) or the target revision is no longer
     restorable (deleted / not archived) — there is no deterministic revision to serve, so
     the caller must resolve manually (e.g. re-import upstream) rather than the rollback
     silently doing nothing.
@@ -173,8 +206,12 @@ class SearchUnavailableError(RegistryServiceError):
 class InvalidApiFilterError(RegistryServiceError):
     """Raised when an api filter identifier cannot be resolved."""
 
-    def __init__(self, identifier: str) -> None:
-        super().__init__(f"Unknown API filter: {identifier!r}")
+    def __init__(self, identifier: str, hint: str | None = None) -> None:
+        detail = hint or (
+            "expected 'vendor[/name[/version]]' matching an imported API, "
+            "e.g. 'github-com/api-github-com/1.1.4'"
+        )
+        super().__init__(f"Unknown API filter: {identifier!r} ({detail})")
         self.identifier = identifier
 
 
@@ -251,6 +288,28 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
         )
         self.api_id = api_id
         self.overlay_id = overlay_id
+
+
+class HostChangeRequiresOperatorError(RegistryServiceError):
+    """Raised when a promote would change the server hosts of a credential-bound API.
+
+    Making a revision current that declares different server hosts (or moves a host
+    to plaintext ``http``) changes where, or how, the API's bound credentials are
+    sent. That needs an operator holding ``credentials:write``; the caller sees a
+    403 naming the origins involved.
+    """
+
+    def __init__(self, revision_id: str, *, current_hosts: list[str], new_hosts: list[str]) -> None:
+        current = ", ".join(current_hosts) or "(none)"
+        new = ", ".join(new_hosts) or "(none)"
+        super().__init__(
+            f"Revision '{revision_id}' changes the server origins of an API with bound "
+            f"credentials from [{current}] to [{new}], which requires the "
+            "'credentials:write' permission"
+        )
+        self.revision_id = revision_id
+        self.current_hosts = current_hosts
+        self.new_hosts = new_hosts
 
 
 class OverlayRematerializeForbiddenError(RegistryServiceError):

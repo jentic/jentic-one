@@ -3,7 +3,9 @@ import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import {
 	CredentialType,
+	DEVICE_CODE_CONNECT_TIMEOUT_MS,
 	OAUTH_CONNECT_MESSAGE_TYPE,
+	POPUP_CONNECT_TIMEOUT_MS,
 	runConnectFlow,
 	type CredentialRedactedResponse,
 } from '@/shared/credentials/api';
@@ -175,7 +177,7 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// pollMs 50, timeout 600 → a correctly-paced loop reads ~12 times
 		// (600/50) + the initial `before` read. A latched busy-loop would fire
 		// hundreds of back-to-back requests. We post an error message early to
-		// trip the (previously permanent) latch.
+		// trip the latch, which must not be permanent.
 		const flow = runConnectFlow(id, { pollMs: 50, timeoutMs: 600 });
 
 		await new Promise((r) => setTimeout(r, 20));
@@ -192,5 +194,196 @@ describe('runConnectFlow — advisory postMessage (#598)', () => {
 		// orders of magnitude higher. 40 leaves slack for timing jitter while
 		// still failing hard on a regression to the latched behaviour.
 		expect(reads).toBeLessThan(40);
+	});
+});
+
+/**
+ * The device-code branch of ``runConnectFlow`` is a distinct path: no
+ * popup is ever opened (the human types a ``user_code`` at the vendor's
+ * verification URI), and completion is driven by the backend
+ * ``ConnectPollScanner`` rather than the OAuth callback route. These
+ * tests pin the three load-bearing behaviours:
+ *
+ *   * a device-code challenge WITHOUT a caller-supplied render hook
+ *     returns ``unsupported_challenge`` immediately — polling in silence
+ *     would look like a hang from the user's perspective;
+ *   * WITH a render hook, the flow polls the credentials API for
+ *     completion just like auth-code — no popup, no ``window.open`` at all;
+ *   * the cleanup returned from the render hook fires exactly once, on
+ *     every terminal outcome (connected / timeout).
+ */
+describe('runConnectFlow — device-code branch', () => {
+	beforeEach(() => {
+		resetCredentialsStore();
+		setConnectAutoCompletes(false);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetCredentialsStore();
+		setConnectAutoCompletes(true);
+	});
+
+	function seedDeviceCodeCredential(): string {
+		const cred = makeMockCredential({
+			type: CredentialType.OAUTH2,
+			provider: 'device_authorization',
+		});
+		return cred.credential_id;
+	}
+
+	function stubDeviceCodeConnectResponse(id: string): void {
+		worker.use(
+			http.post('/credentials/:id/connect', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				return HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'ABCD-1234',
+					verification_uri: 'https://idp.example.com/device',
+					verification_uri_complete: 'https://idp.example.com/device?user_code=ABCD-1234',
+					poll_interval_seconds: 5,
+				});
+			}),
+		);
+	}
+
+	it('returns unsupported_challenge when no render hook is provided', async () => {
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		const windowOpen = vi.spyOn(window, 'open');
+
+		const outcome = await runConnectFlow(id, { pollMs: 20, timeoutMs: 300 });
+
+		expect(outcome.status).toBe('unsupported_challenge');
+		// No popup on the device-code path — that's the whole point of the
+		// render-hook contract.
+		expect(windowOpen).not.toHaveBeenCalled();
+	});
+
+	it('invokes the render hook, polls until connected, and never opens a popup', async () => {
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		const windowOpen = vi.spyOn(window, 'open');
+
+		let connected = false;
+		worker.use(
+			http.get('/credentials/:id', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				return HttpResponse.json({
+					credential_id: id,
+					provider_account_ref: connected ? 'connected' : null,
+					updated_at: connected ? new Date().toISOString() : null,
+				} as Partial<CredentialRedactedResponse>);
+			}),
+		);
+
+		const rendered: Array<{ user_code: string }> = [];
+		let cleanupCalls = 0;
+		const flow = runConnectFlow(id, {
+			pollMs: 50,
+			timeoutMs: 3000,
+			onDeviceAuthorizationChallenge: (challenge) => {
+				rendered.push({ user_code: challenge.user_code });
+				return () => {
+					cleanupCalls += 1;
+				};
+			},
+		});
+
+		// Simulate the human approving at the vendor and the scanner
+		// vaulting the token — the credential flips connected server-side.
+		await new Promise((r) => setTimeout(r, 100));
+		connected = true;
+
+		const outcome = await flow;
+
+		expect(outcome.status).toBe('connected');
+		// The device-code render hook is called exactly once with the
+		// user_code, and never at all opens a popup.
+		expect(rendered).toEqual([{ user_code: 'ABCD-1234' }]);
+		expect(windowOpen).not.toHaveBeenCalled();
+		// The cleanup returned from the hook fires on the terminal outcome
+		// so the caller can dismiss its modal / dialog.
+		expect(cleanupCalls).toBe(1);
+	});
+
+	it('aborting the signal cancels the device poll loop (no timeout)', async () => {
+		// The device dialog's Cancel button aborts the caller-supplied
+		// AbortSignal; the loop must resolve promptly with a ``cancelled``
+		// outcome (NOT run out the timeout and report ``timeout``), and the
+		// render-hook cleanup must still fire so the modal is dismissed.
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		worker.use(
+			http.get('/credentials/:id', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				return HttpResponse.json({
+					credential_id: id,
+					provider_account_ref: null,
+					updated_at: null,
+				} as Partial<CredentialRedactedResponse>);
+			}),
+		);
+
+		const controller = new AbortController();
+		let cleanupCalls = 0;
+		const startedAt = Date.now();
+		const flow = runConnectFlow(id, {
+			pollMs: 60_000, // would run forever without the abort
+			timeoutMs: 120_000,
+			signal: controller.signal,
+			onDeviceAuthorizationChallenge: () => {
+				return () => {
+					cleanupCalls += 1;
+				};
+			},
+		});
+
+		await new Promise((r) => setTimeout(r, 50));
+		controller.abort();
+
+		const outcome = await flow;
+		expect(outcome.status).toBe('cancelled');
+		// Resolved via the abort, not by waiting out pollMs/timeoutMs.
+		expect(Date.now() - startedAt).toBeLessThan(5000);
+		expect(cleanupCalls).toBe(1);
+	});
+
+	it('runs cleanup on timeout too', async () => {
+		const id = seedDeviceCodeCredential();
+		stubDeviceCodeConnectResponse(id);
+		worker.use(
+			http.get('/credentials/:id', ({ params }) => {
+				if (String(params.id) !== id) return undefined;
+				return HttpResponse.json({
+					credential_id: id,
+					provider_account_ref: null,
+					updated_at: null,
+				} as Partial<CredentialRedactedResponse>);
+			}),
+		);
+
+		let cleanupCalls = 0;
+		const outcome = await runConnectFlow(id, {
+			pollMs: 30,
+			timeoutMs: 200,
+			onDeviceAuthorizationChallenge: () => {
+				return () => {
+					cleanupCalls += 1;
+				};
+			},
+		});
+
+		expect(outcome.status).toBe('timeout');
+		// If cleanup ever stops firing on timeout, a stranded modal would
+		// linger over the credentials page after the flow expires.
+		expect(cleanupCalls).toBe(1);
+	});
+
+	it('gives a device code its full lifetime by default, not the popup’s two minutes', () => {
+		// The human enters the code on another device; vendors issue codes for
+		// about 15 minutes, so the default wait must not discard it sooner (#1428).
+		expect(DEVICE_CODE_CONNECT_TIMEOUT_MS).toBe(15 * 60_000);
+		expect(DEVICE_CODE_CONNECT_TIMEOUT_MS).toBeGreaterThan(POPUP_CONNECT_TIMEOUT_MS);
 	});
 });

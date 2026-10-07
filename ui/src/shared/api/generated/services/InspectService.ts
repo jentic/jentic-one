@@ -9,6 +9,11 @@ export class InspectService {
     /**
      * Inspect operation
      * Inspect an operation — resolve to full structural detail.
+     *
+     * `api.vendor`/`api.name`/`api.version` in the result is the canonical API
+     * reference: the identity to use in credential scopes, revision pins and
+     * other API references. `api.display_name` (optional) is a human-readable
+     * label only.
      * @returns any Successful Response
      * @throws ApiError
      */

@@ -27,6 +27,7 @@ import sys
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
+from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.static import APP_CONFIG_PATH, SPA_MOUNT_PATH, mount_spa
 
 
@@ -81,6 +82,10 @@ def _check_serving() -> None:
         return {"ok": True}
 
     app.include_router(router)
+    # The agent-discovery routes read wheel-shipped package data at request
+    # time, so serving one here pins the packaging of the skill references
+    # (content/<name>/references/*) against the *installed* wheel (#1336).
+    app.include_router(get_agent_discovery_router())
 
     if mount_spa(app, health_path="/admin/health") is not True:
         raise AssertionError("mount_spa returned False despite a packaged bundle")
@@ -129,6 +134,13 @@ def _check_serving() -> None:
     config = client.get(APP_CONFIG_PATH)
     if config.status_code != 200 or config.json() != {"healthPath": "/admin/health"}:
         raise AssertionError("app-config endpoint did not report the deploy-mode health path")
+
+    # A wheel-shipped skill reference must serve 200 (packaging pin: the wheel
+    # force-includes content/jentic/references/*, read via importlib.resources).
+    if client.get("/skills/jentic/references/cli.md").status_code != 200:
+        raise AssertionError(
+            "wheel-shipped skill reference /skills/jentic/references/cli.md did not serve 200"
+        )
 
     # Root icon probes the browser/OS hardcodes to the site root (issue #614)
     # must 307-redirect into /app, and following the redirect must reach a real

@@ -1,7 +1,7 @@
 """Backend-neutral identifier generation.
 
-Produces identifiers in Python so they no longer depend on Postgres-specific
-server-side functions. The KSUID format matches the Postgres ``generate_ksuid``
+Produces identifiers in Python — backend-neutral, with no dependency on
+Postgres-specific server-side functions. The KSUID format matches the Postgres ``generate_ksuid``
 SQL function byte-for-byte so values stay compatible across backends:
 
     ``<prefix>_<8-hex-second-timestamp><16-hex-random>``

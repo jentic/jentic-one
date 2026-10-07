@@ -8,7 +8,15 @@ from fastapi import APIRouter, FastAPI
 
 from jentic_one.registry.services.errors import RegistryServiceError
 from jentic_one.registry.web.errors import service_error_handler
-from jentic_one.registry.web.routers import apis, catalog, inspect, notes, overlays, search
+from jentic_one.registry.web.routers import (
+    apis,
+    catalog,
+    governed_hosts,
+    inspect,
+    notes,
+    overlays,
+    search,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseConsistencyError
 from jentic_one.shared.web.app_factory import create_surface_app
@@ -23,6 +31,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (make_health_router("registry"), "/registry", []),
         (apis.router, "", []),
         (catalog.router, "", []),
+        (governed_hosts.router, "", []),
         (inspect.router, "", []),
         (notes.router, "", []),
         (overlays.router, "", []),

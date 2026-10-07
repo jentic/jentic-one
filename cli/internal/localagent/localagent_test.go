@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,7 +95,7 @@ func TestCreateAccountCmds(t *testing.T) {
 				t.Error("macOS operator-grant step must be BestEffort (SIP/TCC-protected home files can't be ACLed)")
 			}
 		}
-		// The operator grant must carry add_subdirectory: bootstrap writes the agent
+		// The operator grant must carry add_subdirectory: setup writes the agent
 		// identity by `mkdir <home>/.jentic` as the operator, and the macOS "write"
 		// shorthand omits add_subdirectory on a directory (files ok, mkdir EACCES).
 		if !strings.Contains(all, "add_subdirectory") {
@@ -121,14 +122,20 @@ func TestRecursiveChownsDoNotDereferenceSymlinks(t *testing.T) {
 		{"ChownToAgentCmd", ChownToAgentCmd("alice-local-agent", AgentConfigDir(home)).Args},
 	}
 	for _, c := range cases {
-		// The chown flag token is args[2] (sudo, chown, <flags>, owner, path); it must
-		// be recursive AND carry the no-dereference 'h'.
-		if len(c.args) < 3 || c.args[0] != "sudo" || c.args[1] != "chown" {
+		// Shape: sudo find <dir> <chownWalkFilter> -exec chown <flags> <owner> {} +.
+		// The recursion is find's (which never follows symlinks), the chown
+		// carries the no-dereference 'h', and the walk skips multiply
+		// hard-linked non-directories.
+		if len(c.args) < 3 || c.args[0] != "sudo" || c.args[1] != "find" {
 			t.Fatalf("%s: unexpected shape %v", c.name, c.args)
 		}
-		flag := c.args[2]
-		if !strings.HasPrefix(flag, "-") || !strings.ContainsRune(flag, 'R') || !strings.ContainsRune(flag, 'h') {
-			t.Errorf("%s: chown flags %q must be recursive (R) and no-dereference (h)", c.name, flag)
+		joined := strings.Join(c.args, " ")
+		if !strings.Contains(joined, strings.Join(chownWalkFilter, " ")) {
+			t.Errorf("%s: walk must skip multiply hard-linked files (%v): %s", c.name, chownWalkFilter, joined)
+		}
+		i := slices.Index(c.args, "chown")
+		if i < 0 || i+1 >= len(c.args) || !strings.ContainsRune(c.args[i+1], 'h') || strings.ContainsRune(c.args[i+1], 'R') {
+			t.Errorf("%s: find must exec a non-recursive, no-dereference chown (-h): %s", c.name, joined)
 		}
 	}
 }
@@ -148,8 +155,8 @@ func TestGrantOperatorHomeCmd(t *testing.T) {
 	}
 	if runtime.GOOS == "darwin" {
 		// Recursion via `find ! -type l` (chmod -R follows symlinks / refuses -h).
-		if !strings.Contains(joined, "find") || !strings.Contains(joined, "! -type l") {
-			t.Errorf("macOS operator grant must recurse via find ! -type l: %s", joined)
+		if !strings.Contains(joined, "find") || !strings.Contains(joined, strings.Join(aclWalkFilter, " ")) {
+			t.Errorf("macOS operator grant must recurse via find %v: %s", aclWalkFilter, joined)
 		}
 		for _, bit := range []string{"add_subdirectory", "file_inherit", "directory_inherit"} {
 			if !strings.Contains(joined, bit) {
@@ -157,8 +164,8 @@ func TestGrantOperatorHomeCmd(t *testing.T) {
 			}
 		}
 	} else {
-		if !strings.Contains(joined, "-R") {
-			t.Errorf("Linux operator grant must be recursive (-R): %s", joined)
+		if !strings.Contains(joined, "find ") || !strings.Contains(joined, shellFindFilter(aclWalkFilter)) {
+			t.Errorf("Linux operator grant must recurse via find with the hard-link filter: %s", joined)
 		}
 		if !strings.Contains(joined, "-d") {
 			t.Errorf("Linux operator grant must include a default ACL: %s", joined)
@@ -340,6 +347,31 @@ func TestCanRunAsAgentCmdShape(t *testing.T) {
 	}
 }
 
+// TestAgentIdentityDirs pins the identity-scrub surface `jentic reset` removes
+// from a kept home: the exported XDG config/state trees plus the legacy
+// ~/.jentic, every one a strict descendant of the agent's home so the list is
+// safe to hand to a privileged rm.
+func TestAgentIdentityDirs(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	got := AgentIdentityDirs(home)
+	want := []string{
+		filepath.Join(home, ".config", "jentic"),
+		filepath.Join(home, ".local", "state", "jentic"),
+		filepath.Join(home, ".jentic"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AgentIdentityDirs = %v, want %v", got, want)
+	}
+	for i, dir := range want {
+		if got[i] != dir {
+			t.Errorf("AgentIdentityDirs[%d] = %q, want %q", i, got[i], dir)
+		}
+		if filepath.Clean(got[i]) == filepath.Clean(home) || !IsUnderHome(home, got[i]) {
+			t.Errorf("AgentIdentityDirs[%d] = %q must be a strict descendant of %q", i, got[i], home)
+		}
+	}
+}
+
 // TestTeardownCmdShape guards the reset primitives: every one is sudo-fronted and
 // names the agent user (and, where relevant, the target path) so a reset can't
 // silently no-op. TraverseRevokeCmd must mirror TraverseGrantCmd's target.
@@ -355,7 +387,7 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
 		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
-		{"remove-identity", RemoveAgentIdentityCmd(homeDir + "/.jentic").Args, homeDir + "/.jentic", false},
+		{"remove-identity", RemoveAgentIdentityCmd(AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", false},
 		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
 		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
 	}
@@ -386,16 +418,16 @@ func TestTeardownCmdShape(t *testing.T) {
 	// recursive chown onto a target outside the tree. reset marks this step
 	// best-effort, so a residual non-zero exit is reported, not fatal.
 	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
-	if !strings.Contains(reown, "chown -Rfh ") {
-		t.Errorf("re-own must use `chown -Rfh` (recursive, force, no-dereference): %s", reown)
+	if !strings.Contains(reown, "find "+homeDir) || !strings.Contains(reown, "-exec chown -fh alice ") {
+		t.Errorf("re-own must walk with find and exec `chown -fh` (force, no-dereference): %s", reown)
 	}
 
 	// ReclaimAgentHomeCmd is the inverse: it re-owns the home to the AGENT (used when
 	// reusing a home a prior reset handed back to the operator). It must be
 	// sudo-fronted, name the agent user + home, and use `-Rfh` for the same reasons.
 	reclaim := strings.Join(ReclaimAgentHomeCmd("alice-local-agent", homeDir).Args, " ")
-	if !strings.Contains(reclaim, "chown -Rfh ") {
-		t.Errorf("reclaim must use `chown -Rfh`: %s", reclaim)
+	if !strings.Contains(reclaim, "-exec chown -fh ") {
+		t.Errorf("reclaim must exec `chown -fh`: %s", reclaim)
 	}
 	if !strings.Contains(reclaim, "alice-local-agent") || !strings.Contains(reclaim, homeDir) {
 		t.Errorf("reclaim must name the agent user and home: %s", reclaim)
@@ -583,12 +615,16 @@ func TestLinuxLeafGrantAndRevokeUseSetfaclPairs(t *testing.T) {
 	dir := "/home/alice/projects/api"
 	grant := strings.Join(LeafGrantCmd("a-local-agent", dir).Args, " ")
 	for _, want := range []string{
-		"setfacl -R -m u:'a-local-agent':rwX",
-		"setfacl -R -d -m u:'a-local-agent':rwX",
+		"-exec setfacl -m u:'a-local-agent':rwX {} +",
+		"-type d -exec setfacl -d -m u:'a-local-agent':rwX {} +",
+		shellFindFilter(aclWalkFilter),
 	} {
 		if !strings.Contains(grant, want) {
 			t.Errorf("Linux leaf grant missing %q: %s", want, grant)
 		}
+	}
+	if strings.Contains(grant, "setfacl -R") {
+		t.Errorf("Linux leaf grant must recurse via find, not setfacl -R (which follows hard links): %s", grant)
 	}
 	revoke := strings.Join(LeafRevokeCmd("a-local-agent", dir).Args, " ")
 	for _, want := range []string{
@@ -832,15 +868,18 @@ func TestSafeSeedSourcesRefusesAllWhenHomeUnresolvable(t *testing.T) {
 	}
 }
 
-func TestCopyConfigCmdDoesNotDereferenceSymlinks(t *testing.T) {
+func TestCopyConfigCmdWritesAsTheAgent(t *testing.T) {
 	joined := strings.Join(CopyConfigCmd("agent", "/opt/agent", "/Users/alice", []string{"/Users/alice/.aws"}).Args, " ")
-	// cp must copy symlinks as links (-P), and chown must re-own the link, not
-	// its target (-h) — otherwise a link nested in the tree re-owns /etc/shadow.
-	if !strings.Contains(joined, "cp -RP ") {
-		t.Errorf("copy must use `cp -RP` (no symlink deref): %s", joined)
+	// Root only archives the source (tar never dereferences symlinks without
+	// -h); the extraction runs as the agent, so no root write or recursive
+	// root chown touches the agent-writable home.
+	if !strings.Contains(joined, "tar -C '/Users/alice' -cf - './.aws' | sudo -u 'agent' -H ") {
+		t.Errorf("copy must stream a root-side tar into an agent-side extract: %s", joined)
 	}
-	if !strings.Contains(joined, "chown -Rh ") {
-		t.Errorf("chown must use `chown -Rh` (no symlink deref): %s", joined)
+	for _, forbidden := range []string{"cp ", "chown"} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("copy must not run a root %q into the agent home: %s", forbidden, joined)
+		}
 	}
 }
 
@@ -864,6 +903,52 @@ func TestVerifyManagedHome(t *testing.T) {
 	}
 	if err := VerifyManagedHome(me.Username, AgentHomeRoot()+"/"+me.Username); err == nil {
 		t.Error("expected a home mismatch against an existing account to be refused")
+	}
+}
+
+// TestAccountFullName guards the collision-freedom of the macOS display name:
+// Open Directory refuses a duplicate full name (and sysadminctl reports that
+// refusal while exiting 0), so two DIFFERENT account names for the same operator
+// must never map to the same full name — the old constant "<operator> Local
+// Agent" did exactly that and broke every second agent account.
+func TestAccountFullName(t *testing.T) {
+	a := AccountFullName("alice", "alice-local-agent")
+	b := AccountFullName("alice", "alice-agent-2")
+	if a == b {
+		t.Fatalf("full names for different account names must differ, both %q", a)
+	}
+	if !strings.Contains(a, "alice-local-agent") {
+		t.Errorf("full name %q should embed the account name for uniqueness", a)
+	}
+	// The create step must actually use the per-account full name.
+	if runtime.GOOS == "darwin" {
+		joined := strings.Join(CreateAccountCmds("alice", "alice-agent-2", DefaultHomeDir("alice-agent-2"))[0].Cmd.Args, " ")
+		if !strings.Contains(joined, AccountFullName("alice", "alice-agent-2")) {
+			t.Errorf("sysadminctl step must carry the per-account full name: %s", joined)
+		}
+	}
+}
+
+// TestHomeClaimedBy exercises the create-path guard against pointing a NEW
+// account at a home some other existing account already claims, using the real
+// account database (the current user is guaranteed to exist and record a home).
+func TestHomeClaimedBy(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || me.Username == "" || me.HomeDir == "" {
+		t.Skip("cannot resolve current user")
+	}
+	ctx := context.Background()
+	// Another account's recorded home is claimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", me.HomeDir); got != me.Username {
+		t.Errorf("HomeClaimedBy(other, %q) = %q, want %q", me.HomeDir, got, me.Username)
+	}
+	// The account's OWN home is not a conflict (that is the reuse path).
+	if got := HomeClaimedBy(ctx, me.Username, me.HomeDir); got != "" {
+		t.Errorf("HomeClaimedBy(self, own home) = %q, want \"\"", got)
+	}
+	// A home nobody records is unclaimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", "/nowhere/definitely-unclaimed-xyz"); got != "" {
+		t.Errorf("HomeClaimedBy(unclaimed) = %q, want \"\"", got)
 	}
 }
 

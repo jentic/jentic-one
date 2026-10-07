@@ -1,4 +1,4 @@
-"""Credential orchestration — the broker-side ``CredentialInjector`` (§02b).
+"""Credential orchestration — the broker-side ``CredentialInjector``.
 
 Extracts the resolve → refresh → inject sequence out of the web edge so the
 **same** path is shared by the sync router and the async worker (via the shared
@@ -6,12 +6,14 @@ Extracts the resolve → refresh → inject sequence out of the web edge so the
 
 The service is transport-neutral in shape (it returns a shared ``InjectedAuth``)
 but owns the credential-error → broker-domain-exception mapping so both
-call-sites get identical problem+json semantics (plan.md §7.3 home).
+call-sites get identical problem+json semantics.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection, Mapping
+from typing import Any
 
 import structlog
 
@@ -23,6 +25,7 @@ from jentic_one.broker.core.exceptions import (
     CredentialUndecryptableError,
     ErrorOrigin,
     InvalidCredentialNameError,
+    ambiguous_credential_binding_directive,
 )
 from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
@@ -30,19 +33,22 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.core.injection import inject_auth
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialIdNotFoundError,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
     RefreshInvalidGrantError,
     RefreshTransientError,
 )
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
-from jentic_one.broker.services.credentials.resolver import CredentialResolver
+from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
+from jentic_one.shared.access_guidance import connect_vendor_key
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import (
     emit_credential_access,
     emit_event_best_effort,
+    summary_label,
     valid_trace_id_or_none,
 )
 from jentic_one.shared.jobs.protocols import InjectedAuth
@@ -73,7 +79,12 @@ class CredentialService:
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
         trace_id: str | None = None,
+        preresolved: ResolvedCredential | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -82,22 +93,45 @@ class CredentialService:
         exceptions (424/409/401/502) so both call-sites render identical
         problem+json.
 
+        ``credential_id`` / ``allowed_credential_ids`` are the direct-binding
+        path (theme-5 Phase 2): the allowed set is the **injection boundary**
+        (Q-02 — only credentials the caller is bound to may resolve; ``None``
+        keeps the legacy unfiltered behaviour, an empty set denies all), and the
+        id is the authoritative ``Jentic-Credential-Id`` tie-breaker. When the
+        boundary is active an ambiguity maps to ``ambiguous_credential_binding``
+        (candidates are the caller's own bound credentials) instead of the
+        legacy ``ambiguous_credential``.
+
         ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
         an operator inspecting an execution can join the credential-use record
         back to the specific execution that triggered it (#740). Optional so
-        non-execution call-sites (bind-time probes, service accounts) don't
+        non-execution call-sites (e.g. bind-time probes) don't
         have to fabricate one. A malformed value degrades to an uncorrelated
         event rather than failing the injection (#903).
+
+        ``preresolved`` short-circuits resolution: the sync router's direct
+        path already ran :meth:`select` (it needed the credential id for rule
+        evaluation *before* any secret is decrypted), so injection reuses that
+        result instead of resolving twice.
         """
         if not api_vendor:
             return _EMPTY
 
         api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
-        try:
-            resolved = await CredentialResolver(self._ctx).resolve(
-                api=api, caller=identity.sub, credential_name=credential_name
+        resolved = (
+            preresolved
+            if preresolved is not None
+            else await self._resolve_mapped(
+                api,
+                identity,
+                credential_name=credential_name,
+                credential_id=credential_id,
+                allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
             )
-
+        )
+        try:
             try:
                 access_token: str | None = None
                 if resolved.wire_type == CredentialType.OAUTH2:
@@ -122,11 +156,13 @@ class CredentialService:
                 await self._emit_credential_failure(
                     type=EventType.CREDENTIAL_UNDECRYPTABLE,
                     summary=(
-                        f"Credential '{resolved.credential_id}' cannot be decrypted "
-                        f"for '{api.vendor}'"
+                        f"Credential {summary_label(resolved.name, resolved.credential_id)} "
+                        f"cannot be decrypted for '{api.vendor}'"
                     ),
                     identity=identity,
+                    credential_owner=resolved.created_by,
                     requires_action=True,
+                    data={"credential_id": resolved.credential_id, "api_vendor": api.vendor},
                 )
                 raise CredentialUndecryptableError(
                     detail=(
@@ -165,6 +201,8 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
+                    credential_owner=resolved.created_by,
+                    credential_name=resolved.name,
                     # Sanitised: emit_event raises on a malformed trace_id, and
                     # a 500 here would fail the whole execute request (#903).
                     trace_id=valid_trace_id_or_none(trace_id),
@@ -179,6 +217,117 @@ class CredentialService:
                 signing=result.signing,
             )
         except CredentialNotProvisionedError as exc:
+            # Defensive: resolve-phase mapping lives in ``_resolve_mapped``; kept
+            # here so a downstream raise (e.g. an unknown wire type surfacing
+            # late) still renders the canonical 424 instead of a 500.
+            await self._emit_credential_failure(
+                type=EventType.CREDENTIAL_NOT_PROVISIONED,
+                summary=f"No credential provisioned for '{api.vendor}'",
+                identity=identity,
+            )
+            raise self._not_provisioned(api, identity) from exc
+        except RefreshInvalidGrantError as exc:
+            # Jentic-side auth failure: our OAuth refresh against the token
+            # endpoint was rejected (invalid_grant). The auth source rides as a
+            # tag on the single ``credential_refresh_failed`` event rather than a
+            # separate ``auth_failure`` — the flat telemetry payload carries no
+            # per-request correlation id, so two same-timestamp events would be
+            # indistinguishable from two concurrent requests and permanently skew
+            # the funnel (see #446 review, item 3). The upstream-rejected
+            # (auth_thirdparty) half is not observable here — inject() prepares
+            # auth but never makes the upstream call.
+            await self._emit_credential_failure(
+                type=EventType.CREDENTIAL_REFRESH_FAILED,
+                summary=(
+                    f"Credential {summary_label(resolved.name, resolved.credential_id)} "
+                    f"refresh failed for '{api.vendor}'"
+                ),
+                identity=identity,
+                credential_owner=resolved.created_by,
+                tags={ErrorSource.AUTH_JENTIC},
+            )
+            raise CredentialNeedsReconnectError(
+                detail=str(exc),
+                type="credential_needs_reconnect",
+                directive=AgentDirective(
+                    strategy="prompt_human",
+                    human_readable_instruction="The connected credential must be reconnected.",
+                ),
+            ) from exc
+        except RefreshTransientError as exc:
+            # ``str(exc)`` is the credential id + exception class only (the
+            # refresher never forwards raw exception text); ``from None`` keeps
+            # any chained provider/transport error out of rendered tracebacks.
+            raise CredentialRefreshTransientError(
+                detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
+            ) from None
+
+    async def select(
+        self,
+        *,
+        api_vendor: str,
+        api_name: str,
+        api_version: str,
+        identity: Identity,
+        credential_name: str | None = None,
+        credential_id: str | None = None,
+        allowed_credential_ids: Collection[str] | None = None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
+    ) -> ResolvedCredential | None:
+        """Resolve-only credential selection — no refresh, decrypt, or audit.
+
+        The direct-binding path (theme-5 Phase 2) must know *which* credential
+        was selected **before** permission rules can be evaluated (rules are
+        keyed on the ``(agent, credential)`` binding) — and enforcement must
+        happen before any secret is touched or a ``CREDENTIAL_ACCESSED`` audit
+        event fires. This runs the same resolution + error mapping as
+        :meth:`inject` and returns the resolved metadata; pass it back to
+        :meth:`inject` as ``preresolved`` to avoid resolving twice.
+
+        Returns ``None`` when the API tuple has no vendor (no credential path).
+        """
+        if not api_vendor:
+            return None
+        api = APIReference(vendor=api_vendor, name=api_name or "", version=api_version or "")
+        return await self._resolve_mapped(
+            api,
+            identity,
+            credential_name=credential_name,
+            credential_id=credential_id,
+            allowed_credential_ids=allowed_credential_ids,
+            request_server_variables=request_server_variables,
+            server_variables_unresolved=server_variables_unresolved,
+        )
+
+    async def _resolve_mapped(
+        self,
+        api: APIReference,
+        identity: Identity,
+        *,
+        credential_name: str | None,
+        credential_id: str | None,
+        allowed_credential_ids: Collection[str] | None,
+        request_server_variables: Mapping[str, str] | None = None,
+        server_variables_unresolved: bool = False,
+    ) -> ResolvedCredential:
+        """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
+
+        Shared by :meth:`inject` and :meth:`select` so both surfaces render
+        identical problem+json for the resolve-phase failures
+        (424/400/409).
+        """
+        try:
+            return await CredentialResolver(self._ctx).resolve(
+                api=api,
+                caller=identity.sub,
+                credential_name=credential_name,
+                credential_id=credential_id,
+                allowed_credential_ids=allowed_credential_ids,
+                request_server_variables=request_server_variables,
+                server_variables_unresolved=server_variables_unresolved,
+            )
+        except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_NOT_PROVISIONED,
                 summary=f"No credential provisioned for '{api.vendor}'",
@@ -191,39 +340,34 @@ class CredentialService:
                 type="credential_name_not_found",
                 extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
             ) from exc
+        except CredentialIdNotFoundError as exc:
+            # The Jentic-Credential-Id tie-breaker named a credential that is not
+            # among the caller's covering candidates. Same class of caller error
+            # as a bad Jentic-Credential-Name (fix the header value and retry) —
+            # candidates carried so the caller can pick a valid id.
+            raise InvalidCredentialNameError(
+                detail=str(exc),
+                type="credential_id_not_found",
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
+            ) from exc
         except AmbiguousCredentialError as exc:
+            # On the direct-binding path (allowed set present) the candidates are
+            # the caller's own bound credentials — a *binding* ambiguity resolved
+            # with the Jentic-Credential-Id header — so it gets the Phase-2 wire
+            # type + directive. The legacy unfiltered path keeps its vocabulary.
+            if allowed_credential_ids is not None:
+                raise AmbiguousMatchError(
+                    detail=str(exc),
+                    type="ambiguous_credential_binding",
+                    extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
+                    directive=ambiguous_credential_binding_directive(
+                        [c.id for c in exc.candidates]
+                    ),
+                ) from exc
             raise AmbiguousMatchError(
                 detail=str(exc),
                 type="ambiguous_credential",
                 extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
-            ) from exc
-        except RefreshInvalidGrantError as exc:
-            # Jentic-side auth failure: our OAuth refresh against the token
-            # endpoint was rejected (invalid_grant). The auth source rides as a
-            # tag on the single ``credential_refresh_failed`` event rather than a
-            # separate ``auth_failure`` — the flat telemetry payload carries no
-            # per-request correlation id, so two same-timestamp events would be
-            # indistinguishable from two concurrent requests and permanently skew
-            # the funnel (see #446 review, item 3). The upstream-rejected
-            # (auth_thirdparty) half is not observable here — inject() prepares
-            # auth but never makes the upstream call (see plan §446 item 14b).
-            await self._emit_credential_failure(
-                type=EventType.CREDENTIAL_REFRESH_FAILED,
-                summary=f"Credential refresh failed for '{api.vendor}'",
-                identity=identity,
-                tags={ErrorSource.AUTH_JENTIC},
-            )
-            raise CredentialNeedsReconnectError(
-                detail=str(exc),
-                type="credential_needs_reconnect",
-                directive=AgentDirective(
-                    strategy="prompt_human",
-                    human_readable_instruction="The connected credential must be reconnected.",
-                ),
-            ) from exc
-        except RefreshTransientError as exc:
-            raise CredentialRefreshTransientError(
-                detail=str(exc), type="refresh_transient_error", origin=ErrorOrigin.UPSTREAM
             ) from exc
 
     async def _emit_credential_failure(
@@ -232,10 +376,18 @@ class CredentialService:
         type: str,
         summary: str,
         identity: Identity,
+        credential_owner: str | None = None,
         tags: set[EventTag] | None = None,
         requires_action: bool = False,
+        data: dict[str, Any] | None = None,
     ) -> None:
-        """Emit a credential-health event on the admin DB (best-effort)."""
+        """Emit a credential-health event on the admin DB (best-effort).
+
+        ``actor_id`` is the identity whose request hit the failure. When the
+        failure concerns a resolved credential, ``credential_owner`` names its
+        owner as the event's ``created_by`` so the owner sees it under
+        owner-scoped event reads; otherwise ``created_by`` is the actor.
+        """
         try:
             async with self._ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
@@ -243,11 +395,12 @@ class CredentialService:
                     type=type,
                     severity=EventSeverity.WARNING,
                     summary=summary,
-                    created_by=identity.sub,
+                    created_by=credential_owner or identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                     tags=tags,
                     requires_action=requires_action,
+                    data=data,
                 )
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)
@@ -255,24 +408,49 @@ class CredentialService:
     def _not_provisioned(
         self, api: APIReference, identity: Identity
     ) -> DomainCredentialNotProvisionedError:
-        """Build the 424 with a ``prompt_human`` directive enabling a human handoff."""
+        """Build the 424 with a ``prompt_human`` directive enabling a human handoff.
+
+        Phase 1b: when the API reverse-maps onto a vendor-registry key
+        (``connect_vendor_key``), the provisioning leg is agent-initiable —
+        the directive carries a runnable ``parameters.suggested_command``
+        (``jentic connect <key>``, the registry key, never the API identity)
+        and the prose teaches the relay loop. Off the registry the ask stays
+        with the operator (same registry-gated pattern as the 403 arms in
+        ``broker/web/routers/execute.py``); approval stays human either way.
+        """
         intent_id = f"intent_{uuid.uuid4().hex}"
         params: dict[str, object] = {"intent_id": intent_id, "vendor": api.vendor}
 
-        base = self._ctx.config.broker.account_linking_base_url
-        instruction = (
-            f"No credential is connected for '{api.vendor}'; "
-            "ask the user to connect the account before retrying."
+        connect_vendor = connect_vendor_key(
+            self._ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
         )
+        if connect_vendor:
+            params["suggested_command"] = f"jentic connect {connect_vendor}"
+
+        base = self._ctx.config.broker.account_linking_base_url
+        if connect_vendor:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'. Start connecting one "
+                f"yourself: run `jentic connect {connect_vendor}` (or call the "
+                "request_connection tool) and relay the approval_url to your human "
+                "operator — they approve it in the browser; you cannot. Once they "
+                "confirm, verify the new binding with whoami and retry."
+            )
+        else:
+            instruction = (
+                f"No credential is connected for '{api.vendor}'; "
+                "ask the user to connect the account before retrying."
+            )
         if base:
             provisioning_url = (
                 f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
             )
             params["provisioning_url"] = provisioning_url
-            instruction = (
-                f"No credential is connected for '{api.vendor}'. Ask the user to open "
-                f"{provisioning_url} to authorize, then retry once they confirm."
-            )
+            if not connect_vendor:
+                instruction = (
+                    f"No credential is connected for '{api.vendor}'. Ask the user to open "
+                    f"{provisioning_url} to authorize, then retry once they confirm."
+                )
 
         return DomainCredentialNotProvisionedError(
             detail=f"No credential provisioned for '{api.vendor}'.",

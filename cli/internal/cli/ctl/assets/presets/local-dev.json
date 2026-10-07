@@ -1,0 +1,9 @@
+{
+  "runtime": {
+    "debug": true,
+    "log_level": "DEBUG"
+  },
+  "server": {
+    "reload": true
+  }
+}

@@ -1,19 +1,15 @@
 import { test, expect } from '@playwright/test';
-import { captureConsoleErrors, createServiceAccount, uniqueSuffix } from './helpers';
+import { captureConsoleErrors, dismissFirstRunFor } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
- * Agents (real backend). The Agents surface has two tabs: OAuth Agents and
- * Service accounts. On a clean DB both are empty. Service accounts can be
- * created through the public API (verified live: POST /service-accounts -> 201),
- * so this self-seeds one and asserts it surfaces in the roster — the
- * create-then-assert pattern, since the real DB has no MSW fixtures.
- *
- * OAuth agents are created out-of-band via Dynamic Client Registration (the
- * agent self-registers), not from this admin UI, so we assert the empty/list
- * contract for that tab rather than driving a create that the UI doesn't own.
+ * Agents (real backend). One flat fleet with no roster and no tab switch, so the
+ * shell contract is the page's own controls plus the agent strip. Service
+ * accounts were retired in theme 8 — migrated accounts are ordinary agents now.
+ * Agents are created out-of-band via Dynamic Client Registration, so this
+ * asserts the list contract rather than driving a create the UI doesn't own.
  */
-test('the agents surface renders its shell and tab switch', async ({ page }) => {
+test('the agents surface renders its shell without a service-accounts tab', async ({ page }) => {
 	const errors = captureConsoleErrors(page);
 
 	await page.goto('/app');
@@ -23,90 +19,72 @@ test('the agents surface renders its shell and tab switch', async ({ page }) => 
 		.click();
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-	// The Agents/Service-accounts tab switch is present (segmented control).
 	// No emptiness assertion: the shared docker DB accumulates actors from
-	// other specs and reruns, so this pins the shell contract only.
-	await expect(page.getByRole('button', { name: 'Service accounts' })).toBeVisible();
+	// other specs and reruns, so this pins the shell contract only — the
+	// page-level fleet controls and the org-wide credential inventory trigger.
+	await expect(page.getByLabel('Filter agents')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New agent' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Credentials' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Service accounts' })).toHaveCount(0);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('a service account created via the API shows up in the roster', async ({ page, request }) => {
-	const name = `e2e-sa-${uniqueSuffix()}`;
-	await createServiceAccount(request, name);
-
-	await page.goto('/app/agents');
-	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
-
-	// Switch to the Service accounts tab where the seeded account lives.
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The freshly created SA is approved at creation (the backend approves
-	// inside the create transaction), so it renders in the fleet table.
-	await expect(page.getByText(name).first()).toBeVisible();
-});
-
-test('the service-account create sheet opens from the agents surface', async ({ page }) => {
-	await page.goto('/app/agents');
-	await page.getByRole('button', { name: 'Service accounts' }).click();
-
-	// The create affordance opens a sheet/dialog with a name field. We assert it
-	// opens (UI wiring) without submitting, to keep this spec's mutation surface
-	// limited to the API-seeded path above.
-	await page
-		.getByRole('button', { name: /new service account|create service account/i })
-		.first()
-		.click();
-	await expect(page.getByLabel('Name')).toBeVisible();
-});
-
 /**
- * Phase 4/5 (agents rebuild): a DCR-registered agent gets the full identity
- * console — KPI strip, tab shell, per-actor Activity with a Monitor deep-link —
- * and can be renamed in place through the Settings tab (real PATCH /agents/:id
- * round trip against the backend, not MSW).
+ * A DCR-registered agent's path URL lands on the Agents page with it selected:
+ * its dock's Activity sheet carries a Monitor deep link pre-filtered by actor,
+ * and its Settings sheet renames it in place (real PATCH /agents/:id round trip
+ * against the backend, not MSW).
  */
-test('a DCR-registered agent gets the identity console and can be renamed', async ({
+test('a DCR-registered agent opens on the Agents page and can be renamed', async ({
 	page,
 	request,
 }) => {
 	const errors = captureConsoleErrors(page);
 	const agent = await provisionAdminOwnedAgent(request);
+	// On a fresh DB this is the org's only agent — active, with no APIs — which
+	// resumes the first-run landing rather than the fleet. This spec is about
+	// the fleet view, so the operator has left that suggestion.
+	await dismissFirstRunFor(page, agent.clientId);
 
 	await page.goto(`/app/agents/${agent.clientId}`);
-	await expect(page.getByRole('heading', { name: agent.name })).toBeVisible();
-
-	// Console shell: KPI strip + tab set render for a real (fresh) agent.
-	await expect(page.getByRole('group', { name: 'Key metrics' })).toBeVisible();
-	for (const tab of ['Overview', 'Activity', 'Access', 'Keys', 'Settings']) {
-		await expect(page.getByRole('tab', { name: tab })).toBeVisible();
-	}
+	await expect(page).toHaveURL(new RegExp(`/app/agents\\?agent=${agent.clientId}$`));
+	const tab = page.getByRole('tab', { name: new RegExp(agent.name) });
+	await expect(tab).toHaveAttribute('aria-selected', 'true');
+	const dock = page.getByTestId('agent-dock');
 
 	// Activity: a fresh agent has no executions, but the feed card (and its
-	// pre-filtered Monitor deep-link) still renders for an admin viewer —
+	// pre-filtered Monitor deep link) still renders for an admin viewer —
 	// asserted unconditionally so a regression can't silently skip this check.
-	await page.getByRole('tab', { name: 'Activity' }).click();
-	// Two links match (back row + feed card) — both share the same href.
-	const monitorLink = page.getByRole('link', { name: /Open Monitor/ }).first();
+	await dock.getByRole('button', { name: 'Activity' }).click();
+	const activity = page.getByRole('dialog', { name: 'Activity' });
+	const monitorLink = activity.getByRole('link', { name: /Open Monitor/ });
 	await expect(monitorLink).toBeVisible();
 	expect(await monitorLink.getAttribute('href')).toContain(`actor_id=${agent.clientId}`);
+	await activity.getByRole('button', { name: 'Close' }).click();
+	await expect(activity).toBeHidden();
 
 	// Settings: rename via the real PATCH endpoint and verify the round trip.
-	await page.getByRole('tab', { name: 'Settings' }).click();
+	await dock.getByRole('button', { name: 'Settings' }).click();
+	const settings = page.getByRole('dialog', { name: 'Settings' });
+	await expect(settings.getByTestId('agent-provenance')).toBeVisible();
 	const renamed = `${agent.name}-renamed`;
-	await page.getByLabel('Name').fill(renamed);
-	await page.getByRole('button', { name: 'Save changes' }).click();
+	await settings.getByLabel('Name').fill(renamed);
+	await settings.getByRole('button', { name: 'Save changes' }).click();
 
 	await expect(page.getByText('Agent updated')).toBeVisible();
-	await expect(page.getByRole('heading', { name: renamed })).toBeVisible();
+	await expect(page.getByRole('tab', { name: new RegExp(renamed) })).toBeVisible();
 	// Destructive lifecycle lives in the danger zone.
-	await expect(page.getByText('Danger zone')).toBeVisible();
-	await expect(page.getByRole('button', { name: `Archive ${renamed}` })).toBeVisible();
+	await expect(settings.getByText('Danger zone')).toBeVisible();
+	await expect(settings.getByRole('button', { name: `Archive ${renamed}` })).toBeVisible();
 
-	// A hard reload proves the rename persisted server-side — the heading above
-	// could otherwise be satisfied by the client-rendered PATCH response alone.
+	// A hard reload proves the rename persisted server-side — the tab above
+	// could otherwise be satisfied by the client-side refetch alone.
 	await page.reload();
-	await expect(page.getByRole('heading', { name: renamed })).toBeVisible();
+	await expect(page.getByRole('tab', { name: new RegExp(renamed) })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });

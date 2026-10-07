@@ -140,6 +140,9 @@ jentic --help
 ## Notes
 
 - This builds from source, so it needs network access to GitHub and the Go
-  module proxy. There is no prebuilt-binary download path yet.
+  module proxy. Prebuilt signed binaries are published with each
+  [GitHub release](https://github.com/jentic/jentic-one/releases) (verify
+  against `checksums.txt`, signature `checksums.txt.sig`, certificate
+  `checksums.txt.pem`); this script is the build-from-source alternative.
 - The script honors Go's `GOTOOLCHAIN=auto`, so even if the resolved Go is a bit
   older than the one named in `cli/go.mod`, the build can self-upgrade.

@@ -18,8 +18,8 @@ from jentic_one.broker.services.auth import (
 from jentic_one.broker.services.auth.token_validation import _LOG_FIELD_MAXLEN
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 _SECRET = "test-secret"  # pragma: allowlist secret
 
@@ -44,7 +44,7 @@ def _opaque_resolution() -> Identity:
     return Identity(
         sub="agnt_opaque",
         actor_type=ActorType.AGENT,
-        permissions=[BROKER_EXECUTE_SCOPE],
+        permissions=[BROKER_EXECUTE_PERMISSION],
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         active=True,
     )
@@ -91,14 +91,14 @@ async def test_dispatcher_routes_jwt_to_verifier_without_lookup() -> None:
             "sub": "agnt_jwt",
             "exp": exp,
             "actor_type": ActorType.AGENT.value,
-            "scopes": [BROKER_EXECUTE_SCOPE],
+            "scopes": [BROKER_EXECUTE_PERMISSION],
         }
     )
 
     resolved = await dual.validate(token)
 
     assert resolved.sub == "agnt_jwt"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
     assert resolver.calls == []  # no opaque DB lookup for a JWT
 
 
@@ -153,42 +153,44 @@ async def test_missing_actor_type_fails_closed() -> None:
         await validator.validate(token)
 
 
+@pytest.mark.parametrize("actor_type", ["gibberish", "toolkit", "service_account"])
 @pytest.mark.asyncio
-async def test_unknown_actor_type_is_typed_rejection() -> None:
-    """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError."""
+async def test_unknown_actor_type_is_typed_rejection(actor_type: str) -> None:
+    """An unrecognised ``actor_type`` raises the typed error, never a bare enum ValueError.
+
+    ``toolkit`` (theme-5 Phase 4) and ``service_account`` (theme-8 Phase 4)
+    are retired from the enum, so a signed claim carrying either is refused
+    as unknown like any other stray string.
+    """
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": "gibberish"})
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": actor_type})
 
     with pytest.raises(TokenValidationError, match="jwt_actor_type_unknown"):
         await validator.validate(token)
 
 
-@pytest.mark.parametrize("actor_type", ["toolkit", "user"])
 @pytest.mark.asyncio
-async def test_disallowed_actor_type_rejected(actor_type: str) -> None:
-    """toolkit/user identities can't be minted by a bare signed claim (#868)."""
+async def test_disallowed_actor_type_rejected() -> None:
+    """A user identity can't be minted by a bare signed claim (#868)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "x", "exp": exp, "actor_type": actor_type})
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "user"})
 
     with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
         await validator.validate(token)
 
 
-@pytest.mark.parametrize(
-    ("actor_type", "expected"),
-    [("agent", ActorType.AGENT), ("service_account", ActorType.SERVICE_ACCOUNT)],
-)
 @pytest.mark.asyncio
-async def test_allowed_actor_types_validate(actor_type: str, expected: ActorType) -> None:
+async def test_allowed_actor_type_validates() -> None:
+    """AGENT is the only actor type a trusted issuer may assert (theme-8 F3)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "x", "exp": exp, "actor_type": actor_type})
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "agent"})
 
     resolved = await validator.validate(token)
 
-    assert resolved.actor_type is expected
+    assert resolved.actor_type is ActorType.AGENT
 
 
 @pytest.mark.asyncio

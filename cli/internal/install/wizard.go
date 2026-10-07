@@ -44,6 +44,13 @@ type wizard struct {
 	edit   *huh.Form // active section editor
 	editIx int
 
+	// edited flips once the user has opened any section editor; the hub's
+	// quit keys then require a confirmation (UX-9) so a reflexive `q` (pager
+	// muscle memory) can't discard minutes of form-filling instantly. huh
+	// binds values live, so even an esc'd section may have changed the draft.
+	edited      bool
+	confirmQuit bool // waiting on the quit confirmation keypress
+
 	confirmed bool
 	done      bool
 	width     int
@@ -88,6 +95,16 @@ func (w *wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		w.width = m.Width
 	case tea.KeyMsg:
+		if w.confirmQuit {
+			// Confirmation prompt is armed: only an explicit `y` quits; any
+			// other key returns to the hub with the draft intact.
+			if s := m.String(); s == "y" || s == "Y" {
+				w.done = true
+				return w, tea.Quit
+			}
+			w.confirmQuit = false
+			return w, nil
+		}
 		switch m.String() {
 		case "ctrl+c":
 			// ctrl+c always cancels the whole wizard.
@@ -97,8 +114,7 @@ func (w *wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// q quits from any non-text screen. The edit forms accept typed
 			// input (tokens, ports), so q must reach them verbatim there.
 			if w.phase != phaseEdit {
-				w.done = true
-				return w, tea.Quit
+				return w.requestQuit()
 			}
 		}
 	}
@@ -145,8 +161,7 @@ func (w *wizard) updateHub(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w.cursor++
 		}
 	case "esc":
-		w.done = true
-		return w, tea.Quit
+		return w.requestQuit()
 	case "enter", " ", "l", "right":
 		if w.cursor == len(Sections) { // Continue
 			w.confirmed = true
@@ -155,10 +170,23 @@ func (w *wizard) updateHub(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		w.editIx = w.cursor
 		w.edit = newForm(Sections[w.editIx].Groups(w.draft), w.formWidth())
+		w.edited = true // section editors bind live; treat any visit as an edit (UX-9)
 		w.phase = phaseEdit
 		return w, w.edit.Init()
 	}
 	return w, nil
+}
+
+// requestQuit handles a hub/deploy quit key: quit immediately when nothing has
+// been edited (the deploy page and a pristine hub lose nothing), otherwise arm
+// the confirmation prompt (UX-9).
+func (w *wizard) requestQuit() (tea.Model, tea.Cmd) {
+	if w.phase == phaseHub && w.edited {
+		w.confirmQuit = true
+		return w, nil
+	}
+	w.done = true
+	return w, tea.Quit
 }
 
 func (w *wizard) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -220,6 +248,11 @@ func (w *wizard) hubView() string {
 	}
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, list, w.detailBox(detail))
+	if w.confirmQuit {
+		warn := lipgloss.NewStyle().Foreground(theme.Orange).Bold(true)
+		return body + "\n\n" + warn.Render("Quit without installing? Your section edits will be discarded.") +
+			"\n" + hint("y quit · any other key stay")
+	}
 	return body + "\n\n" + hint("↑/↓ move · enter edit · q/esc quit")
 }
 

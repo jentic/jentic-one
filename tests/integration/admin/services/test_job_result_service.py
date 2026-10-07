@@ -16,10 +16,13 @@ from jentic_one.admin.services.errors import (
     JobResultExpiredError,
 )
 from jentic_one.admin.services.job_result_service import JobResultService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import JobKind, JobStatus
 
 pytestmark = pytest.mark.integration
+
+_OWNER = Identity(sub="usr_test", email="test@local")
 
 
 @pytest.fixture()
@@ -48,7 +51,7 @@ async def test_get_result(integration_context: Context, clean_jobs: None) -> Non
     job_id = job.id
 
     service = JobResultService(ctx)
-    view = await service.get(job_id)
+    view = await service.get(job_id, identity=_OWNER)
     assert view.kind == "import"
     assert view.body == {"records_imported": 42}
     assert view.job_id == job_id
@@ -57,7 +60,7 @@ async def test_get_result(integration_context: Context, clean_jobs: None) -> Non
 async def test_get_job_not_found(integration_context: Context, clean_jobs: None) -> None:
     service = JobResultService(integration_context)
     with pytest.raises(JobNotFoundError):
-        await service.get("job_nonexistent0000000000")
+        await service.get("job_nonexistent0000000000", identity=_OWNER)
 
 
 async def test_get_job_not_completed(integration_context: Context, clean_jobs: None) -> None:
@@ -71,7 +74,7 @@ async def test_get_job_not_completed(integration_context: Context, clean_jobs: N
 
     service = JobResultService(ctx)
     with pytest.raises(JobNotCompletedError):
-        await service.get(job_id)
+        await service.get(job_id, identity=_OWNER)
 
 
 async def test_get_result_expired(integration_context: Context, clean_jobs: None) -> None:
@@ -93,7 +96,7 @@ async def test_get_result_expired(integration_context: Context, clean_jobs: None
 
     service = JobResultService(ctx)
     with pytest.raises(JobResultExpiredError):
-        await service.get(job_id)
+        await service.get(job_id, identity=_OWNER)
 
 
 async def test_get_result_missing(integration_context: Context, clean_jobs: None) -> None:
@@ -107,4 +110,4 @@ async def test_get_result_missing(integration_context: Context, clean_jobs: None
 
     service = JobResultService(ctx)
     with pytest.raises(JobResultExpiredError):
-        await service.get(job_id)
+        await service.get(job_id, identity=_OWNER)

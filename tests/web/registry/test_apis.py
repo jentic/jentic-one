@@ -288,7 +288,7 @@ async def test_list_apis_paginates_across_boundary(
     seen: list[str] = []
     cursor: str | None = None
     for _ in range(5):  # safety bound; 3 items at limit=2 needs 2 pages
-        params: dict[str, object] = {"limit": 2}
+        params: dict[str, str | int] = {"limit": 2}
         if cursor is not None:
             params["cursor"] = cursor
         resp = authed_client.get("/apis", params=params)
@@ -308,7 +308,7 @@ async def test_list_and_detail_agree_on_update_available_for_published_over_cata
 ) -> None:
     """The /apis list and single-API detail must agree on ``update_available``.
 
-    Regression for ren-jentic M2: the list surface flags ``update_available`` purely on
+    Regression: the list surface flags ``update_available`` purely on
     ``api_id in outdated_api_ids`` (no gate), but the detail path used to short-circuit on
     ``if current_revision.source_url is not None`` — so in the *documented* caveat case (a
     manually PUBLISHED revision, ``source_url=None``, superseding a catalog import while the

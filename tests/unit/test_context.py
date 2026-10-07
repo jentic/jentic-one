@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from jentic_one.shared.config import AppConfig
+from jentic_one.shared.config import AppConfig, ConfigError
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseSession
 
@@ -86,3 +86,35 @@ def test_single_db_allowed(app_config: AppConfig) -> None:
         _ = ctx.registry_db
     with pytest.raises(RuntimeError, match="not allowed"):
         _ = ctx.control_db
+
+
+async def test_startup_fails_on_invalid_configured_keyset(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """A configured-but-invalid keyset must fail at boot, not at first
+    credential use — otherwise a keyset disaster surfaces as scattered
+    per-credential errors instead of one loud startup failure."""
+    sample_config_dict["credentials"] = {
+        "encryption": {
+            "active_id": "v1",
+            # Valid base64, wrong length: passes config validation for inline
+            # material, must be caught by the eager startup check.
+            "entries": [{"id": "v1", "material": "c2hvcnQ="}],
+        }
+    }
+    config = AppConfig.model_validate(sample_config_dict)
+    ctx = Context(config, allowed_dbs=set())
+    with pytest.raises(ConfigError, match="must be 32 bytes"):
+        await ctx.startup()
+
+
+async def test_startup_without_keyset_boots(app_config: AppConfig) -> None:
+    """A keyset-less config still boots; the ConfigError stays lazy at first
+    credential use (deploys that never write credentials keep working)."""
+    ctx = Context(app_config, allowed_dbs=set())
+    await ctx.startup()
+    try:
+        with pytest.raises(ConfigError, match="must not be empty"):
+            _ = ctx.encryption
+    finally:
+        await ctx.shutdown()

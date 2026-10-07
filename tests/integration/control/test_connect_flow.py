@@ -19,7 +19,11 @@ from jentic_one.control.repos import CredentialRepository, OAuthTokenRepository
 from jentic_one.control.services.credentials.connect_service import ConnectFlowError, ConnectService
 from jentic_one.control.services.credentials.providers.direct_oauth2 import DirectOAuth2Provider
 from jentic_one.control.services.credentials.providers.pipedream import PipedreamProvider
-from jentic_one.control.services.credentials.schemas.connect import ConnectCallback, ConnectRequest
+from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
+    ConnectCallback,
+    ConnectRequest,
+)
 from jentic_one.control.services.credentials.schemas.provision import OAuthTokenView
 from jentic_one.shared.config import DirectOAuth2ProviderConfig, PipedreamProviderConfig
 from jentic_one.shared.context import Context
@@ -135,6 +139,7 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         updated_at_before = snapshot.updated_at
 
     challenge = await svc.begin(credential_id, ConnectRequest(scopes=["read"]))
+    assert isinstance(challenge, AuthCodeChallenge)
     assert "https://idp.example.com/authorize" in challenge.authorize_url
     assert challenge.state
 
@@ -173,6 +178,44 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         assert credential.updated_at > updated_at_before
 
 
+async def test_direct_oauth2_derived_redirect_uri_round_trips(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Issue #818: with no configured redirect_uri, a request-derived callback
+    (e.g. a non-default port) flows from begin_connect into the token exchange."""
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+
+    # Provider configured WITHOUT a redirect_uri — it must derive per request.
+    provider = DirectOAuth2Provider(DirectOAuth2ProviderConfig(default_scopes=["read", "write"]))
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    await _attach_oauth_client(ctx, credential_id)
+
+    svc = ConnectService(ctx)
+    derived = "http://127.0.0.1:8020/credentials/oauth/callback"
+    challenge = await svc.begin(
+        credential_id, ConnectRequest(scopes=["read"]), redirect_uri=derived
+    )
+    assert isinstance(challenge, AuthCodeChallenge)
+    # The non-default port made it into the authorize URL.
+    assert "8020" in challenge.authorize_url
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        )
+        mock_client_cls.return_value = mock_client
+
+        await svc.complete(challenge.state, ConnectCallback(code="auth-code-xyz"))
+
+        # The token exchange replays the derived redirect_uri byte-identically.
+        sent_data = mock_client.post.await_args.kwargs["data"]
+        assert sent_data["redirect_uri"] == derived
+
+
 async def test_direct_oauth2_replay_rejected(
     integration_context: Context, clean_connect_tables: None
 ) -> None:
@@ -190,6 +233,7 @@ async def test_direct_oauth2_replay_rejected(
 
     svc = ConnectService(ctx)
     challenge = await svc.begin(credential_id, ConnectRequest())
+    assert isinstance(challenge, AuthCodeChallenge)
 
     token_response = {
         "access_token": "at_1",
@@ -256,6 +300,7 @@ async def test_pipedream_connect_and_callback_stores_account_ref(
 
         challenge = await svc.begin(credential_id, ConnectRequest())
 
+    assert isinstance(challenge, AuthCodeChallenge)
     assert "pipedream.com" in challenge.authorize_url
 
     result_id = await svc.complete(challenge.state, ConnectCallback(account_id="acct_pd_789"))
@@ -358,6 +403,7 @@ async def test_pipedream_replay_rejected(
 
         challenge = await svc.begin(credential_id, ConnectRequest())
 
+    assert isinstance(challenge, AuthCodeChallenge)
     await svc.complete(challenge.state, ConnectCallback(account_id="acct_1"))
 
     with pytest.raises(ConnectFlowError, match="already used"):

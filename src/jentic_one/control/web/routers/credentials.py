@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-import structlog
-from fastapi import APIRouter, Depends, Query, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from typing import Annotated
 
+import structlog
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import Field
+
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
 from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
     ConnectService,
@@ -16,6 +24,7 @@ from jentic_one.control.services.credentials.providers.base import (
     ProviderError,
 )
 from jentic_one.control.services.credentials.schemas.connect import (
+    AuthCodeChallenge,
     ConnectCallback,
     ConnectRequest,
 )
@@ -26,31 +35,70 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import (
+    OAUTH_CALLBACK_PATH,
+    StateError,
+    decode_state,
+)
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.web.deps import (
     get_connect_service,
+    get_connect_session_service,
     get_credential_service,
 )
 from jentic_one.control.web.schemas.credentials import (
     APIReferenceResponse,
+    AuthCodeConnectChallengeResponse,
     ConnectChallengeResponse,
     ConnectRequestBody,
+    CredentialAgentListResponse,
+    CredentialAgentResponse,
     CredentialCreateRequest,
     CredentialCreateResponse,
     CredentialListResponse,
     CredentialRedactedResponse,
     CredentialUpdateRequest,
+    DeviceAuthorizationConnectChallengeResponse,
     ProviderDiscoveryEntryResponse,
     ProviderDiscoveryResponse,
+    RuleSetAttachRequest,
+    RuleSetCreateRequest,
+    RuleSetListResponse,
+    RuleSetResponse,
+    RuleSetSummaryResponse,
+    RuleSetUpdateRequest,
+)
+from jentic_one.control.web.schemas.permission_rules import (
+    PermissionRuleListResponse,
+    PermissionRuleReadSchema,
+    PermissionRuleSchema,
+    PermissionsPatchRequest,
+    PermissionTestRequest,
+    PermissionTestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web.links import public_base_url
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 router = APIRouter()
 
 _logger = structlog.get_logger(__name__)
+
+
+def _connect_callback_url(request: Request, ctx: Context) -> str:
+    """The deployment-default OAuth connect callback for this request.
+
+    ``server.public_base_url`` (else the request origin) + the callback path.
+    The provider applies its own explicit ``redirect_uri`` override on top;
+    derived here because only the web layer sees the request origin.
+    """
+    return f"{public_base_url(ctx.config, request)}{OAUTH_CALLBACK_PATH}"
 
 
 def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedResponse:
@@ -82,13 +130,16 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
 # delegated agent here leaks nothing — it just keeps the credential reads uniform.
 @router.get("/credentials/providers", summary="List credential providers")
 async def list_providers(
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ProviderDiscoveryResponse:
     """Return discovery metadata for all configured credential providers."""
-    entries = svc.list_providers()
+    default_callback_url = _connect_callback_url(request, ctx)
+    entries = svc.list_providers(default_callback_url=default_callback_url)
     return ProviderDiscoveryResponse(
         providers=[
             ProviderDiscoveryEntryResponse(
@@ -153,6 +204,7 @@ async def create_credential(
         catalog_api_id=result.catalog_api_id,
         provider=result.provider,
         active=result.active,
+        created_by=result.created_by,
         created_at=result.created_at,
         server_variables=result.server_variables,
     )
@@ -216,12 +268,14 @@ def _oauth_callback_error() -> RedirectResponse:
     return RedirectResponse(f"{_CONNECT_RETURN_PATH}?status=error", status_code=303)
 
 
-@router.get("/credentials/oauth/callback", summary="OAuth connect callback")
+@router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback")
 async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    ctx: Context = Depends(get_ctx),
     svc: ConnectService = Depends(get_connect_service),
+    session_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:
     """Handle the OAuth callback from the IdP.
 
@@ -256,6 +310,70 @@ async def oauth_callback(
         )
         return _oauth_callback_error()
 
+    # Peek the state to see if this callback belongs to a connect-session
+    # (agent-driven integration flow). The ``sid`` claim is set by
+    # ``AuthCodeFlowHandler.begin`` — its presence routes completion to
+    # ``ConnectSessionService.complete_from_callback`` instead of the
+    # standalone-credential path. One URL, two consumers; the peek runs the
+    # verify + one-shot nonce consume inside whichever service we dispatch
+    # to, so no bypass around replay protection.
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    session_id: str | None
+    try:
+        session_id = decode_state(state_secret, state).session_id
+    except StateError:
+        # Fall through to the standalone path — it'll re-verify + surface
+        # the canonical error.
+        session_id = None
+
+    if session_id is not None:
+        if error or not code:
+            # Pass the raw state so the error branch runs the same
+            # ``consume_callback_state`` prologue (signature verify +
+            # one-shot nonce consume) as the success branch — a replayed
+            # callback URL carrying ``error=access_denied`` must not be
+            # able to terminate (and cascade-delete) a session that
+            # already connected.
+            try:
+                await session_svc.mark_terminal_from_callback(
+                    raw_state=state, error=error or "no_code_returned"
+                )
+            except StateError as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session.state_invalid",
+                    session_id=session_id,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "oauth_callback.connect_session_error",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+            return _oauth_callback_error()
+        try:
+            # Pass the raw state so ``complete_from_callback`` runs the
+            # shared ``consume_callback_state`` prologue (signature
+            # verify + one-shot nonce consume) — never trust the sid
+            # we peeked at above as a bypass around replay protection.
+            await session_svc.complete_from_callback(raw_state=state, code=code)
+        except StateError as exc:
+            _logger.warning(
+                "oauth_callback.connect_session.state_invalid",
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _oauth_callback_error()
+        except Exception as exc:
+            _logger.warning(
+                "oauth_callback.connect_session_error", session_id=session_id, error=str(exc)
+            )
+            return _oauth_callback_error()
+        _logger.info("oauth_callback.connect_session.connected", session_id=session_id)
+        return _oauth_callback_success()
+
     callback = ConnectCallback(code=code, error=error)
 
     try:
@@ -289,6 +407,403 @@ async def get_credential(
     """Get a single credential with redacted secrets."""
     view = await svc.get(credential_id, identity=identity)
     return _to_redacted_response(view)
+
+
+@router.get(
+    "/credentials/{credential_id}/agents",
+    summary="List agents bound to credential",
+    responses=not_found(),
+)
+async def list_credential_agents(
+    credential_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> CredentialAgentListResponse:
+    """List agents directly bound to a credential with cursor-based pagination.
+
+    The reverse lookup for the credential-detail "Agents" view (theme 5
+    phase 1) — the direct-binding successor of the removed
+    ``GET /toolkits/{id}/agents``.
+    Suspended bindings are included with their flag set.
+    """
+    data, has_more, next_cursor = await svc.list_agents(
+        credential_id, cursor=cursor, limit=limit, identity=identity
+    )
+    return CredentialAgentListResponse(
+        data=[
+            CredentialAgentResponse(
+                agent_id=row.agent_id,
+                agent_name=row.agent_name,
+                status=row.agent_status,
+                bound_at=row.bound_at,
+                suspended=row.suspended,
+                rule_set_id=row.rule_set_id,
+            )
+            for row in data
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+# --- Per-binding permission rules (theme 5 phase 1) ---
+
+
+def _to_permission_rule(rule: AgentPermissionRule) -> PermissionRuleReadSchema:
+    return PermissionRuleReadSchema.model_validate(
+        {
+            "effect": rule.effect,
+            "methods": rule.methods,
+            "path": rule.path,
+            "match_mode": rule.match_mode,
+            "operations": rule.operations,
+            "_system": rule.is_system,
+            "_comment": rule.comment,
+        }
+    )
+
+
+@router.get(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="listAgentCredentialPermissions",
+    summary="List binding permission rules",
+    responses=not_found(),
+)
+async def list_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """List the ordered PBAC rules for a direct `(agent, credential)` binding."""
+    rules = await svc.list_agent_permissions(credential_id, agent_id, identity=identity)
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.put(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="replaceAgentCredentialPermissions",
+    summary="Replace binding permission rules",
+    responses=not_found(),
+)
+async def replace_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Replace the full set of permission rules for a binding (idempotent PUT)."""
+    rules_data = [r.model_dump(exclude_none=True) for r in body]
+    rules = await svc.replace_agent_permissions(
+        credential_id, agent_id, rules_data, identity=identity
+    )
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.patch(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions",
+    operation_id="patchAgentCredentialPermissions",
+    summary="Patch binding permission rules",
+    responses=not_found(),
+)
+async def patch_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: PermissionsPatchRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Additively add and/or remove permission rules on a binding."""
+    add_data = None
+    if body.add:
+        add_data = [r.model_dump(exclude_none=True) for r in body.add]
+    rules = await svc.patch_agent_permissions(
+        credential_id, agent_id, identity=identity, add=add_data, remove=body.remove
+    )
+    return PermissionRuleListResponse(data=[_to_permission_rule(r) for r in rules])
+
+
+@router.post(
+    "/credentials/{credential_id}/agents/{agent_id}/permissions:test",
+    operation_id="testAgentCredentialPermissions",
+    summary="Dry-run permission evaluation",
+    responses=not_found(),
+)
+async def test_agent_permissions(
+    credential_id: str,
+    agent_id: str,
+    body: PermissionTestRequest,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionTestResponse:
+    """Answer "what would the broker do for this request?" without calling upstream.
+
+    Unlike the toolkit `:test` there is **no vendor pooling**: the direct
+    binding's rules are one ordered first-match-wins list, so the result is
+    exactly this binding's policy. Default-deny when nothing matches.
+    """
+    result = await svc.test_agent_permissions(
+        credential_id,
+        agent_id,
+        method=body.method,
+        path=body.path,
+        operation_id=body.operation_id,
+        identity=identity,
+    )
+    return PermissionTestResponse(
+        allowed=result.allowed,
+        matched=result.matched,
+        effect=result.effect,
+        rule_index=result.rule_index,
+        credential_id=result.credential_id,
+        is_system=result.is_system,
+    )
+
+
+# --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+
+@router.put(
+    "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+    operation_id="attachAgentCredentialRuleSet",
+    status_code=204,
+    summary="Attach rule set to binding",
+    responses=not_found(),
+)
+async def attach_agent_rule_set(
+    credential_id: str,
+    agent_id: str,
+    body: RuleSetAttachRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Point the binding at a shared rule set (idempotent PUT).
+
+    While attached, the set's ordered list is the binding's effective policy
+    and its inline rules are dormant — `permissions:test` evaluates the set.
+    The set must exist (404 `rule_set_not_found`). The caller must be the
+    set's creator or an org admin, unless the set is curated (created by an
+    org admin), which any caller who may write the binding's rules can
+    attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+    binding already points at is a no-op.
+    """
+    await svc.attach_binding_rule_set(credential_id, agent_id, body.rule_set_id, identity=identity)
+    return Response(status_code=204)
+
+
+@router.delete(
+    "/credentials/{credential_id}/agents/{agent_id}/rule-set",
+    operation_id="detachAgentCredentialRuleSet",
+    status_code=204,
+    summary="Detach rule set from binding",
+    responses=not_found(),
+)
+async def detach_agent_rule_set(
+    credential_id: str,
+    agent_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Detach the binding's shared rule set — its inline rules apply again.
+
+    Idempotent: detaching a binding already on inline rules is a no-op 204.
+    """
+    await svc.detach_binding_rule_set(credential_id, agent_id, identity=identity)
+    return Response(status_code=204)
+
+
+def _to_rule_set_response(
+    rule_set: PermissionRuleSet, rules: list[PermissionRuleSetRule], binding_count: int
+) -> RuleSetResponse:
+    return RuleSetResponse(
+        rule_set_id=rule_set.id,
+        name=rule_set.name,
+        description=rule_set.description,
+        rules=[
+            PermissionRuleReadSchema.model_validate(
+                {
+                    "effect": r.effect,
+                    "methods": r.methods,
+                    "path": r.path,
+                    "match_mode": r.match_mode,
+                    "operations": r.operations,
+                    "_system": r.is_system,
+                    "_comment": r.comment,
+                }
+            )
+            for r in rules
+        ],
+        binding_count=binding_count,
+        curated=rule_set.curated,
+        created_by=rule_set.created_by,
+        created_at=rule_set.created_at,
+    )
+
+
+@router.get(
+    "/permission-rule-sets",
+    operation_id="listPermissionRuleSets",
+    summary="List permission rule sets",
+)
+async def list_rule_sets(
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> RuleSetListResponse:
+    """List shared rule sets with per-set rule counts (cursor-paginated)."""
+    data, has_more, next_cursor = await svc.list_rule_sets(
+        cursor=cursor, limit=limit, identity=identity
+    )
+    return RuleSetListResponse(
+        data=[
+            RuleSetSummaryResponse(
+                rule_set_id=rs.id,
+                name=rs.name,
+                description=rs.description,
+                rule_count=count,
+                curated=rs.curated,
+                created_by=rs.created_by,
+                created_at=rs.created_at,
+            )
+            for rs, count in data
+        ],
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.post(
+    "/permission-rule-sets",
+    operation_id="createPermissionRuleSet",
+    status_code=201,
+    summary="Create permission rule set",
+    responses=conflict(),
+)
+async def create_rule_set(
+    body: RuleSetCreateRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Create a named, shareable ordered rule list (theme 5 rule grouping).
+
+    N agent-credential bindings can point at one set, so `permissions:test`
+    and "revoke this operation everywhere" stay single-place edits.
+    """
+    rule_set, rules = await svc.create_rule_set(
+        name=body.name,
+        description=body.description,
+        rules=[r.model_dump(exclude_none=True) for r in body.rules],
+        identity=identity,
+    )
+    return _to_rule_set_response(rule_set, rules, binding_count=0)
+
+
+@router.get(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="getPermissionRuleSet",
+    summary="Get permission rule set",
+    responses=not_found(),
+)
+async def get_rule_set(
+    rule_set_id: str,
+    identity: Identity = get_current_identity(
+        required_permissions=["credentials:read", "owner:credentials:read"]
+    ),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Get a rule set with its ordered rules and referencing-binding count."""
+    rule_set, rules, binding_count = await svc.get_rule_set(rule_set_id, identity=identity)
+    return _to_rule_set_response(rule_set, rules, binding_count)
+
+
+@router.patch(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="updatePermissionRuleSet",
+    summary="Update permission rule set",
+    responses=not_found(),
+)
+async def update_rule_set(
+    rule_set_id: str,
+    body: RuleSetUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> RuleSetResponse:
+    """Rename or re-describe a rule set.
+
+    A curated set is editable by an org admin; any other set by its creator
+    or an org admin (403 `rule_set_access_denied` otherwise).
+    """
+    await svc.update_rule_set(
+        rule_set_id, identity=identity, name=body.name, description=body.description
+    )
+    rule_set, rules, binding_count = await svc.get_rule_set(rule_set_id, identity=identity)
+    return _to_rule_set_response(rule_set, rules, binding_count)
+
+
+@router.put(
+    "/permission-rule-sets/{rule_set_id}/rules",
+    operation_id="replacePermissionRuleSetRules",
+    summary="Replace rule set rules",
+    responses=not_found(),
+)
+async def replace_rule_set_rules(
+    rule_set_id: str,
+    body: Annotated[list[PermissionRuleSchema], Field(max_length=100)],
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> PermissionRuleListResponse:
+    """Replace the set's full ordered rule list (idempotent PUT).
+
+    Every binding pointing at the set picks the new list up at once — the
+    single-place edit rule grouping exists for.
+    """
+    rules_data = [r.model_dump(exclude_none=True) for r in body]
+    rules = await svc.replace_rule_set_rules(rule_set_id, rules_data, identity=identity)
+    return PermissionRuleListResponse(
+        data=[
+            PermissionRuleReadSchema.model_validate(
+                {
+                    "effect": r.effect,
+                    "methods": r.methods,
+                    "path": r.path,
+                    "match_mode": r.match_mode,
+                    "operations": r.operations,
+                    "_system": r.is_system,
+                    "_comment": r.comment,
+                }
+            )
+            for r in rules
+        ]
+    )
+
+
+@router.delete(
+    "/permission-rule-sets/{rule_set_id}",
+    operation_id="deletePermissionRuleSet",
+    status_code=204,
+    summary="Delete permission rule set",
+    responses=with_responses(not_found(), conflict()),
+)
+async def delete_rule_set(
+    rule_set_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: CredentialService = Depends(get_credential_service),
+) -> Response:
+    """Delete a rule set nothing references (409 `rule_set_in_use` otherwise)."""
+    await svc.delete_rule_set(rule_set_id, identity=identity)
+    return Response(status_code=204)
 
 
 @router.patch(
@@ -348,26 +863,46 @@ async def delete_credential(
     "/credentials/{credential_id}/connect",
     summary="Begin OAuth connect flow",
     responses=with_responses(not_found(), conflict("Credential is not connectable")),
+    response_model=None,
 )
 async def connect_credential(
     credential_id: str,
     body: ConnectRequestBody,
+    request: Request,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
-) -> ConnectChallengeResponse:
-    """Initiate the OAuth connect flow for a credential."""
+    ctx: Context = Depends(get_ctx),
+) -> ConnectChallengeResponse | JSONResponse:
+    """Initiate the OAuth connect flow for a credential.
+
+    Discriminates on the provider's returned challenge: OAuth2
+    authorization-code providers return an ``authorize_url`` for popup
+    redirect; device-flow providers return ``user_code`` /
+    ``verification_uri`` for the RFC 8628 human step.
+    """
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
+    redirect_uri = _connect_callback_url(request, ctx)
     try:
         challenge = await svc.begin(
             credential_id,
             connect_req,
             actor_id=identity.sub,
             actor_type=identity.actor_type,
+            redirect_uri=redirect_uri,
         )
     except CredentialNotFoundError:
-        return JSONResponse(status_code=404, content={"detail": "Credential not found"})  # type: ignore[return-value]
+        return JSONResponse(status_code=404, content={"detail": "Credential not found"})
     except NotConnectableError as exc:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})  # type: ignore[return-value]
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
     except ProviderError as exc:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})  # type: ignore[return-value]
-    return ConnectChallengeResponse(authorize_url=challenge.authorize_url, state=challenge.state)
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if isinstance(challenge, AuthCodeChallenge):
+        return AuthCodeConnectChallengeResponse(
+            authorize_url=challenge.authorize_url, state=challenge.state
+        )
+    return DeviceAuthorizationConnectChallengeResponse(
+        user_code=challenge.user_code,
+        verification_uri=challenge.verification_uri,
+        verification_uri_complete=challenge.verification_uri_complete,
+        poll_interval_seconds=challenge.poll_interval_seconds,
+    )

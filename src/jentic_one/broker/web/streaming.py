@@ -1,4 +1,4 @@
-"""Streaming-passthrough web edge for the sync proxy (§08 E2.4).
+"""Streaming-passthrough web edge for the sync proxy.
 
 The buffered path (`RunnerResult.body`) is kept for idempotent requests (replay
 needs the whole body) and the async worker (persists the body). This module is
@@ -126,10 +126,8 @@ def _metadata_headers(
         JenticHeader.EXECUTION_ID.value: execution_id,
         JenticHeader.UPSTREAM_STATUS.value: str(status_code),
     }
-    if ctx_req.toolkit_id:
-        metadata[JenticHeader.TOOLKIT_ID.value] = ctx_req.toolkit_id
-    if ctx_req.operation_id:
-        metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
+    if ctx_req.operation:
+        metadata[JenticHeader.OPERATION.value] = ctx_req.operation.id
     if ctx_req.api_vendor:
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     # Credential attribution (#740). Absent when no credential was used, so

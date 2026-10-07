@@ -18,12 +18,6 @@ name: Notify Slack on triaged feedback
 #
 # Setup: add a repo secret SLACK_WEBHOOK_URL (a Slack incoming webhook URL).
 # If the secret is absent the job no-ops (so forks / dry runs don't fail).
-#
-# Originally authored by @sophie-jentic (PR #557); carried forward with the review
-# fixes applied (UTF-8-safe truncation, exact-match label emojis, soft-fail),
-# retimed to fire post-triage, and the card reworked into scannable triage fields
-# (Type · Area · Fit · Severity) — reusing Sophie's per-label emojis and her
-# repo/"file new feedback" navigation footer.
 
 on:
   issues:

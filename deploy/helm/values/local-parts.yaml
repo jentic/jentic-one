@@ -32,6 +32,15 @@ registry:
     # specs from in-cluster ClusterIPs (kind service CIDR is in 10/8).
     JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
     JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
+    # Shared with admin/control below: parts mode splits the issuer and the
+    # verifiers across pods, and the app no longer ships a jwt_secret default
+    # (a per-process random is generated instead — see
+    # config._require_or_generate_secret), so cross-pod verification needs an
+    # explicit shared value. LOCAL/SMOKE-ONLY throwaway, like the passwords
+    # under global.databases. Production parts installs use
+    # global.appSecrets (one generated Secret; each surface mounts only the
+    # keys it reads).
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
 
 admin:
   enabled: true
@@ -41,16 +50,24 @@ admin:
   extraEnv:
     # The admin pod also hosts the auth surface (see admin.Dockerfile). Same
     # contract as combined mode: the JWT-Bearer assertion audience is built
-    # from canonical_base_url and MUST match the URL clients actually use —
+    # from the public base URL and MUST match the URL clients actually use —
     # the gateway on kind host port 8000 — or every token exchange fails
     # 400 invalid_grant. See the longer note in local-combined.yaml.
-    JENTIC__AUTH__CANONICAL_BASE_URL: http://localhost:8000
+    JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
+    # See the note on registry.extraEnv — this pod is the JWT issuer.
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
 
 control:
   enabled: true
   service:
     type: NodePort
     nodePort: 30083
+  extraEnv:
+    # The control surface builds access-request approval links and the OAuth
+    # callback base from the public base URL; front it with the gateway origin.
+    JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
+    # See the note on registry.extraEnv — this pod verifies the same JWTs.
+    JENTIC__ADMIN__AUTH__JWT_SECRET: local-parts-dev-jwt-secret  # pragma: allowlist secret
   # Credential-at-rest encryption keyset (+ the platform OAuth2 provider) —
   # same contract as combined mode (see local-combined.yaml): `entries` is a
   # list, which the flat JENTIC__* env-var convention cannot express, and
@@ -69,9 +86,20 @@ control:
         providers:
           direct_oauth2:
             kind: direct_oauth2
+            # Explicit override: the browser reaches the callback via the
+            # gateway NodePort (30080), which differs from the in-cluster
+            # public_base_url (localhost:8000). The startup
+            # public_url_origin_mismatch check compares provider redirect_uri
+            # overrides only on a loopback bind; the pod binds all interfaces,
+            # so this split origin fires no warning.
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 global:
+  # These overlays deliberately run without the admin JWT secret / invite pepper
+  # / connect state secret (the chart's `production` default would refuse to
+  # boot without them). The config loader mints ephemeral per-process values
+  # instead, which is fine for a single-replica kind cluster and for nothing else.
+  jenticEnv: development
   postgresql:
     enabled: true
   # Dev-only literals (must match docker/local-setup/init-schemas.sql). The

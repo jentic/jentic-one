@@ -1,0 +1,128 @@
+/**
+ * BoundAgentsSection — read-mostly "which agents can use this credential?"
+ * list inside the edit-credential sheet (theme 5 phase 5a). The credential
+ * module has no detail page, and the sheet is already the credential's only
+ * "everything about this credential" surface, so the section lives here
+ * rather than as a new page or a per-row table expandable.
+ *
+ * Read-only by design: binding/rule management belongs to each agent's API
+ * sidebar on the Agents surface (ApiAccessSidebar), so each row just shows
+ * the agent name, suspended state, bound-at time and links to that agent AS
+ * SELECTED on the flat surface — the tab whose tiles hold the bindings this
+ * list is talking about, not a separate per-agent page.
+ *
+ * Every host renders this inside an overlay, and on the Agents surface that
+ * overlay covers the destination. So a plain in-tab click asks the host to
+ * dismiss itself (`onNavigateAway`); a modified click opens a second tab and
+ * leaves this one exactly as it was.
+ *
+ * The list holds only the agents the viewer may see: every bound agent for the
+ * credential's owner or an `org:admin`, but only their own agents for anyone
+ * else it is shared with. For those viewers the copy says "your agents", so it
+ * never claims the credential is unused when other users' agents use it.
+ */
+import type { MouseEvent } from 'react';
+import { Bot, PauseCircle } from 'lucide-react';
+import { AppLink, ErrorAlert, LoadingState, StatusChip } from '@/shared/ui';
+import { ROUTE_PATHS } from '@/shared/app/routes';
+import { timeAgo } from '@/shared/lib/utils';
+import { useOptionalCurrentUser } from '@/shared/auth';
+import { useCredentialAgents } from '@/shared/credentials/api';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
+
+export function BoundAgentsSection({
+	credentialId,
+	createdBy,
+	open,
+	onNavigateAway,
+}: {
+	credentialId: string;
+	/** The credential's creator; with it, a viewer who is neither the creator nor
+	 * an admin reads "your agents" copy. Omitted, the copy is unscoped. */
+	createdBy?: string | null;
+	/** Host sheet visibility — gates the fetch so closed sheets don't poll. */
+	open: boolean;
+	/**
+	 * An agent link was followed IN THIS TAB. Hosts that sit over the Agents
+	 * surface use it to close themselves, so the agent that was just asked for
+	 * isn't left underneath the overlay that asked for it.
+	 */
+	onNavigateAway?: () => void;
+}) {
+	const agents = useCredentialAgents(credentialId, { enabled: open });
+	const rows = agents.data?.data ?? [];
+	const viewer = useOptionalCurrentUser();
+	const yoursOnly =
+		createdBy !== undefined && !credentialEditableBy({ created_by: createdBy }, viewer);
+
+	// Only a plain left click navigates this tab; a modified click is the
+	// browser's own "open elsewhere" and must leave this view untouched.
+	const handleAgentClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		if (event.button !== 0) return;
+		onNavigateAway?.();
+	};
+
+	return (
+		<div className="bg-surface-inset space-y-2 rounded-lg p-3">
+			<p className="text-foreground-name text-sm font-semibold">
+				{yoursOnly ? 'Your bound agents' : 'Bound agents'}
+				{agents.isSuccess ? ` (${rows.length})` : ''}
+			</p>
+			<p className="text-foreground-sub text-xs">
+				{yoursOnly
+					? "Your agents allowed to call APIs with this credential. Other users' agents aren't listed."
+					: 'Agents allowed to call APIs with this credential.'}{' '}
+				Manage bindings from each agent&apos;s API tiles on the Agents page.
+			</p>
+
+			{agents.isPending ? (
+				<LoadingState size="sm" />
+			) : agents.isError ? (
+				<ErrorAlert message="Failed to load bound agents." />
+			) : rows.length === 0 ? (
+				<p
+					className="text-muted-foreground text-xs italic"
+					data-testid="bound-agents-empty"
+				>
+					{yoursOnly
+						? 'None of your agents are bound to this credential.'
+						: 'No agents are bound to this credential.'}
+				</p>
+			) : (
+				<ul className="space-y-1">
+					{rows.map((row) => (
+						<li
+							key={row.agent_id}
+							data-testid="bound-agent-row"
+							className="bg-surface-tonal flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
+						>
+							<span className="flex min-w-0 items-center gap-1.5">
+								<Bot className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+								<AppLink
+									href={ROUTE_PATHS.agentTab(row.agent_id)}
+									onClick={handleAgentClick}
+									className="text-foreground truncate text-xs font-medium hover:underline"
+								>
+									{row.agent_name}
+								</AppLink>
+								{row.suspended && (
+									<StatusChip
+										tone="caution"
+										icon={PauseCircle}
+										data-testid="bound-agent-suspended"
+									>
+										Suspended
+									</StatusChip>
+								)}
+							</span>
+							<span className="text-muted-foreground shrink-0 text-[11px]">
+								bound {timeAgo(row.bound_at)}
+							</span>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}

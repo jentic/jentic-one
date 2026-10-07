@@ -9,6 +9,22 @@ import pytest
 import yaml
 
 
+@pytest.fixture
+def sqlite_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point config at fresh, empty per-database SQLite files.
+
+    Lets migration-infrastructure tests (status probe, per-migration
+    up/down) run the real Alembic chains without Docker/Postgres.
+    """
+    cfg = tmp_path / "jentic-one.yaml"
+    lines = ["databases:"]
+    for name in ("admin", "control", "registry"):
+        lines += [f"  {name}:", "    backend: sqlite", f"    path: {tmp_path / f'{name}.db'}"]
+    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg))
+    return tmp_path
+
+
 @pytest.fixture()
 def sample_config_dict() -> dict[str, Any]:
     """A valid configuration as a plain dict."""

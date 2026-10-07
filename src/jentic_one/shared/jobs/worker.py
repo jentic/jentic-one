@@ -134,7 +134,7 @@ class WorkerLoop:
         A job is claimable when it is ``QUEUED`` with no future ``visible_at``
         (respecting exponential-backoff delay on requeued jobs), **or** it is
         ``RUNNING`` but its ``visible_at`` deadline has passed (orphaned by a
-        dead worker — recover it, §09 E4.2). The claim atomically flips it to
+        dead worker — recover it). The claim atomically flips it to
         ``RUNNING``, stamps a fresh visibility deadline, and increments
         ``attempts`` so a poison job's retry budget is enforced.
         ``SKIP LOCKED`` keeps concurrent workers from contending on the same row.
@@ -193,7 +193,12 @@ class WorkerLoop:
             return result
 
     async def _complete_job(self, job_id: str, kind: str, result: JobResultPayload) -> None:
-        """Mark job completed and write result."""
+        """Mark job completed and write result.
+
+        Only an import job emits ``import.completed``: the event (and the spec
+        import telemetry derived from it) means a spec was imported, which no
+        other job kind does.
+        """
         async with self._db.transaction() as session:
             job = await session.get(Job, job_id)
             if job is None:
@@ -209,6 +214,8 @@ class WorkerLoop:
                 content_type=result.content_type,
             )
             session.add(job_result)
+            if kind != JobKind.IMPORT:
+                return
             try:
                 await emit_event(
                     session,
@@ -329,7 +336,7 @@ class WorkerLoop:
         self._running = False
 
     async def drain(self, timeout_s: float | None = None) -> bool:
-        """Stop claiming new jobs and wait for the in-flight job to finish (§09 E4.3).
+        """Stop claiming new jobs and wait for the in-flight job to finish.
 
         Flips into draining mode so ``_tick`` stops claiming immediately, then
         waits (bounded by ``timeout_s``, default ``WorkerConfig.drain_timeout_s``)

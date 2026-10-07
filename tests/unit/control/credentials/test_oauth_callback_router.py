@@ -15,13 +15,17 @@ These tests pin:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from httpx import Response
+
+# Starlette's TestClient rides httpx2 when it is installed (it is — the mcp
+# SDK depends on it), so client responses are httpx2 types here.
+from httpx2 import Response
 
 from jentic_one.control.services.credentials.connect_service import (
     ConnectFlowError,
@@ -29,8 +33,12 @@ from jentic_one.control.services.credentials.connect_service import (
 )
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.providers.base import ProviderError
-from jentic_one.control.web.deps import get_connect_service
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
+from jentic_one.control.web.deps import get_connect_service, get_connect_session_service
 from jentic_one.control.web.routers import credentials as credentials_router
+from jentic_one.shared.web import get_ctx
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 # Public SPA route the popup is redirected to (under the /app SPA mount).
@@ -48,6 +56,23 @@ _FORBIDDEN_LEAK_FRAGMENTS = (
 )
 
 
+def _fake_ctx() -> SimpleNamespace:
+    """Minimal ctx stand-in — the router only reads ``state_secret`` for the
+    ``sid`` peek. The state strings these tests pass are not valid JWTs, so
+    ``decode_state`` raises ``StateError`` and dispatch falls through to the
+    standalone-credential path (which is what these tests exercise).
+    """
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            credentials=SimpleNamespace(
+                connect=SimpleNamespace(
+                    state_secret=SimpleNamespace(get_secret_value=lambda: "test-secret"),
+                ),
+            ),
+        ),
+    )
+
+
 def _build_app(*, complete_mock: AsyncMock) -> FastAPI:
     """Build a minimal FastAPI app exposing only the credentials router."""
     app = FastAPI()
@@ -56,7 +81,14 @@ def _build_app(*, complete_mock: AsyncMock) -> FastAPI:
     fake_service = AsyncMock(spec=ConnectService)
     fake_service.complete = complete_mock
 
+    fake_session_service = AsyncMock(spec=ConnectSessionService)
+
     app.dependency_overrides[get_connect_service] = lambda: fake_service
+    # Standalone-credential callback tests never trigger the connect-session
+    # branch (no valid ``sid`` claim in the state), so this stub is only here
+    # to satisfy the router-level Depends resolution.
+    app.dependency_overrides[get_connect_session_service] = lambda: fake_session_service
+    app.dependency_overrides[get_ctx] = _fake_ctx
     return app
 
 

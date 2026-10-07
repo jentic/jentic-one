@@ -88,6 +88,7 @@ def test_usage_response_with_null_percentiles() -> None:
 def test_group_by_enum_values() -> None:
     assert GroupBy.API.value == "api"
     assert GroupBy.TOOLKIT.value == "toolkit"
+    assert GroupBy.CREDENTIAL.value == "credential"
     assert GroupBy.AGENT.value == "agent"
 
 

@@ -13,9 +13,13 @@ directly; a subclass named ``Test*`` in the consuming test suite is what runs.
 from __future__ import annotations
 
 import inspect
+import typing
+from itertools import zip_longest
+from typing import Any
 
 from jentic_one.registry.repos.search.protocol import SearchStrategy
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.web.protocols import UnregisteredUrlHandler
 
 #: Dialect names a backend can report from ``DatabaseBackend.dialect_name``.
 #: Keep in sync with the backends in ``jentic_one.shared.db.backends`` — a
@@ -26,25 +30,63 @@ from jentic_one.shared.broker.broker import Broker
 KNOWN_BACKEND_DIALECTS: frozenset[str] = frozenset({"postgres", "sqlite"})
 
 
+#: (name, kind, default, resolved annotation) — one per parameter after ``self``.
+_ParamFact = tuple[str, Any, Any, Any]
+
+
+def _parameter_facts(func: Any) -> tuple[list[_ParamFact], Any]:
+    """Normalise a method into comparable parameter facts + return annotation.
+
+    Annotations are resolved with ``typing.get_type_hints``, so string
+    annotations (a module with ``from __future__ import annotations``) and
+    spelling variants (``Optional[X]`` vs ``X | None``) compare equal to their
+    object forms.
+    """
+    hints = typing.get_type_hints(func)
+    params = list(inspect.signature(func).parameters.values())[1:]  # drop self
+    facts: list[_ParamFact] = [
+        (p.name, p.kind, p.default, hints.get(p.name, inspect.Parameter.empty)) for p in params
+    ]
+    return facts, hints.get("return", inspect.Parameter.empty)
+
+
+def _describe(fact: _ParamFact | None) -> str:
+    if fact is None:
+        return "<missing>"
+    name, kind, default, annotation = fact
+    suffix = "" if default is inspect.Parameter.empty else f" = {default!r}"
+    note = "" if annotation is not inspect.Parameter.empty else " (unannotated)"
+    return f"{name}: {annotation!r}{suffix} [{kind.description}]{note}"
+
+
 def assert_signature_matches(impl: type, protocol: type, method: str) -> None:
     """Assert ``impl.method`` has the same signature as ``protocol.method``.
 
     Closes the ``runtime_checkable`` gap (which only checks method presence).
     Ignores ``self`` and compares parameter names, kinds, defaults, and
-    annotations, plus the return annotation.
+    *resolved* annotations, plus the return annotation — so the check is
+    indifferent to whether either side uses ``from __future__ import
+    annotations`` or spells unions as ``Optional[X]`` vs ``X | None``.
     """
-    proto_sig = inspect.signature(getattr(protocol, method))
-    impl_sig = inspect.signature(getattr(impl, method))
-    proto_params = list(proto_sig.parameters.values())[1:]  # drop self
-    impl_params = list(impl_sig.parameters.values())[1:]
-    assert impl_params == proto_params, (
-        f"{impl.__name__}.{method} parameters diverge from "
-        f"{protocol.__name__}.{method}: {impl_sig} != {proto_sig}"
+    fix_hint = (
+        f"fix: copy the signature of {protocol.__name__}.{method} verbatim — same "
+        "parameter names, same keyword-only markers, same annotations, same return type."
     )
-    assert impl_sig.return_annotation == proto_sig.return_annotation, (
+    proto_params, proto_return = _parameter_facts(getattr(protocol, method))
+    impl_params, impl_return = _parameter_facts(getattr(impl, method))
+    divergences = [
+        f"  impl {_describe(impl_fact)}  !=  protocol {_describe(proto_fact)}"
+        for impl_fact, proto_fact in zip_longest(impl_params, proto_params)
+        if impl_fact != proto_fact
+    ]
+    assert not divergences, (
+        f"{impl.__name__}.{method} parameters diverge from {protocol.__name__}.{method}:\n"
+        + "\n".join(divergences)
+        + f"\n{fix_hint}"
+    )
+    assert impl_return == proto_return, (
         f"{impl.__name__}.{method} return type diverges from "
-        f"{protocol.__name__}.{method}: {impl_sig.return_annotation!r} != "
-        f"{proto_sig.return_annotation!r}"
+        f"{protocol.__name__}.{method}: {impl_return!r} != {proto_return!r}\n{fix_hint}"
     )
 
 
@@ -109,3 +151,40 @@ class BaseBrokerComplianceTest:
 
     def test_execute_streaming_signature(self) -> None:
         assert_signature_matches(type(self.broker_factory()), Broker, "execute_streaming")
+
+
+class BaseUnregisteredUrlHandlerComplianceTest:
+    """Subclass and override ``handler_factory`` to prove an
+    ``UnregisteredUrlHandler`` conforms.
+
+    ``handler_factory`` returns a ready handler instance, e.g.::
+
+        class TestMyHandlerCompliance(BaseUnregisteredUrlHandlerComplianceTest):
+            def handler_factory(self) -> UnregisteredUrlHandler:
+                return MyHandler(...)
+
+    The handler must be **class-shaped** (an instance with an ``async def
+    __call__``), not a bare ``async def`` — ``assert_signature_matches``
+    inspects ``type(handler).__call__``, which a plain function cannot satisfy.
+    The ``isinstance`` check alone carries little weight here
+    (``runtime_checkable`` on a ``__call__``-only protocol matches every
+    callable); the signature and coroutine checks are the real guards.
+    """
+
+    def handler_factory(self) -> UnregisteredUrlHandler:
+        raise NotImplementedError("Subclass must override handler_factory()")
+
+    def test_is_unregistered_url_handler(self) -> None:
+        assert isinstance(self.handler_factory(), UnregisteredUrlHandler)
+
+    def test_call_signature(self) -> None:
+        assert_signature_matches(type(self.handler_factory()), UnregisteredUrlHandler, "__call__")
+
+    def test_call_is_coroutine_function(self) -> None:
+        # ``isinstance`` and the signature check are identical for a sync and an
+        # async ``__call__`` — but the broker router awaits the handler, so a
+        # sync one passes compliance and then 500s on its first discovery miss.
+        handler = self.handler_factory()
+        assert inspect.iscoroutinefunction(inspect.unwrap(type(handler).__call__)), (
+            f"{type(handler).__name__}.__call__ must be `async def` — the broker router awaits it."
+        )

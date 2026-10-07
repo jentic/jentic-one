@@ -1,7 +1,7 @@
 /**
  * OperationsSection — operations of an API's current (live) revision.
  *
- * Ported from jentic-mini's API-detail operations list, adapted to jentic-one:
+ * Design points:
  *  - the backend has no operations search param, so to filter across *every*
  *    operation we load all cursor pages in the background and run the filter
  *    client-side over the full set; the list itself only ever paints one page
@@ -33,7 +33,15 @@ import {
 	OperationDetail,
 	type OperationDetailData,
 } from '@/shared/ui';
-import { ChevronDown, ChevronLeft, ChevronRight, Filter, ListTree, Loader2 } from 'lucide-react';
+import {
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
+	Filter,
+	GitBranch,
+	ListTree,
+	Loader2,
+} from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import {
 	useApiOperations,
@@ -71,17 +79,17 @@ function OperationRow({ operation, spec }: { operation: ApiOperation; spec: Pars
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="hover:bg-muted/50 focus-visible:ring-primary/40 flex w-full items-start gap-3 rounded-md px-2 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
+				className="hover:bg-tint-2 focus-visible:ring-ring flex w-full items-start gap-3 rounded-md px-2 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
 			>
 				<div className="shrink-0 pt-0.5">
 					<MethodBadge method={operation.method} />
 				</div>
 				<div className="min-w-0 flex-1">
-					<code className="text-foreground block truncate font-mono text-xs">
+					<code className="text-foreground-name block truncate font-mono text-xs">
 						{operation.path}
 					</code>
 					{operation.name && operation.name !== operation.path ? (
-						<p className="text-muted-foreground mt-0.5 line-clamp-2 text-sm">
+						<p className="text-foreground-sub mt-0.5 line-clamp-2 text-sm">
 							{operation.name}
 						</p>
 					) : null}
@@ -101,7 +109,7 @@ function OperationRow({ operation, spec }: { operation: ApiOperation; spec: Pars
 				/>
 			</button>
 			{expanded ? (
-				<div className="border-border/40 mt-1 mb-2 ml-3 border-l-2 pl-4">
+				<div className="border-surface-field mt-1 mb-2 ml-3 border-l-2 pl-4">
 					{hasDetail ? (
 						<OperationDetail
 							operation={data}
@@ -123,8 +131,14 @@ function OperationRow({ operation, spec }: { operation: ApiOperation; spec: Pars
 export function OperationsSection({
 	apiKey,
 	totalCount,
+	onShowVersions,
 }: {
 	apiKey: ApiKey;
+	/**
+	 * Switch the hub to its Versions tab (where a draft revision is promoted) —
+	 * the "no live revision" empty state's action.
+	 */
+	onShowVersions: () => void;
 	/**
 	 * The API's known `operation_count`, shown as the total. The operations
 	 * endpoint's page envelope carries no total, so this comes from the API
@@ -196,7 +210,7 @@ export function OperationsSection({
 	return (
 		<Card data-testid="operations-section">
 			<CardHeader className="flex flex-wrap items-center justify-between gap-3">
-				<CardTitle className="flex items-center gap-2">
+				<CardTitle as="h2" className="flex items-center gap-2">
 					Operations
 					{total > 0 ? (
 						<span className="text-muted-foreground text-sm font-normal tabular-nums">
@@ -215,7 +229,7 @@ export function OperationsSection({
 					/>
 				) : null}
 			</CardHeader>
-			<CardBody>
+			<CardBody className="pt-1">
 				{query.isLoading ? (
 					<div className="space-y-2" aria-busy="true">
 						{Array.from({ length: 5 }).map((_, i) => (
@@ -226,7 +240,18 @@ export function OperationsSection({
 					<EmptyState
 						icon={<ListTree size={28} aria-hidden="true" />}
 						title="No live revision yet"
-						description="This API has a draft revision but nothing promoted. Promote a revision below to publish its operations."
+						description="This API has a draft revision but nothing promoted. Promote a revision to publish its operations."
+						action={
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={onShowVersions}
+								data-testid="operations-go-to-versions"
+							>
+								<GitBranch size={14} aria-hidden="true" />
+								Go to Versions
+							</Button>
+						}
 					/>
 				) : query.isError && operations.length === 0 ? (
 					<ErrorAlert
@@ -261,7 +286,7 @@ export function OperationsSection({
 						</ul>
 						{partialLoadError ? (
 							<div
-								className="border-warning/20 bg-warning/10 text-warning mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs"
+								className="bg-surface-inset text-foreground-lighter mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-xs"
 								role="alert"
 								data-testid="operations-partial-error"
 							>
@@ -270,8 +295,8 @@ export function OperationsSection({
 									loaded so far.
 								</span>
 								<Button
-									variant="secondary"
-									size="sm"
+									variant="tonal"
+									size="xs"
 									onClick={query.retry}
 									data-testid="operations-retry"
 								>
@@ -279,7 +304,7 @@ export function OperationsSection({
 								</Button>
 							</div>
 						) : null}
-						<div className="border-border/40 mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+						<div className="border-hairline mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
 							<div className="text-muted-foreground flex items-center gap-2 text-xs">
 								{query.isLoadingAll ? (
 									<Loader2
@@ -300,8 +325,8 @@ export function OperationsSection({
 							{pageCount > 1 ? (
 								<div className="flex items-center gap-2">
 									<Button
-										variant="secondary"
-										size="sm"
+										variant="tonal"
+										size="icon-xs"
 										onClick={goPrev}
 										disabled={safePage === 0}
 										aria-label="Previous page"
@@ -316,8 +341,8 @@ export function OperationsSection({
 										{safePage + 1} / {pageCount}
 									</span>
 									<Button
-										variant="secondary"
-										size="sm"
+										variant="tonal"
+										size="icon-xs"
 										onClick={goNext}
 										disabled={safePage >= pageCount - 1}
 										aria-label="Next page"

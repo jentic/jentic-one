@@ -1,12 +1,16 @@
 /**
  * Usage-aggregation transformers — map `GET /monitoring/usage` responses
- * (`UsageResponse`) into the UI-shaped rows the Overview charts render.
- * Mirrors jentic-mini's `lib/monitor-transformers.ts` (usageToMonitorStats /
- * usageToTopRows / usageToAgentRows), collapsed into one entity-row shape
- * since the jentic-one endpoint returns the same `{key,label,total,success,
- * failed,avg_ms,trend}` rows for every grouping dimension.
+ * (`UsageResponse`) into the UI-shaped rows the Usage charts render.
+ * A single entity-row shape covers every grouping dimension, since the
+ * endpoint returns the same `{key,label,total,success,
+ * failed,avg_ms,trend}` rows for each.
  */
 import type { UsageResponse } from '@/modules/monitor/api';
+import { RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE, retiredServiceAccountLabel } from '@/shared/lib';
+
+/** Row id / label of the bucket for rows with no attributable key. */
+export const UNATTRIBUTED_ID = '__unattributed__';
+export const UNATTRIBUTED_LABEL = 'Unattributed';
 
 /** Overall window stats, UI vocabulary (rates in 0–100 percent). */
 export interface UsageOverview {
@@ -24,7 +28,7 @@ export interface UsageOverview {
 	p95Ms: number | null;
 }
 
-/** One api / toolkit / agent row for the bubble chart + breakdown table. */
+/** One api / credential / agent row for the bubble chart + breakdown table. */
 export interface EntityUsageRow {
 	id: string;
 	label: string;
@@ -52,24 +56,32 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
 /**
  * Format a top-row key into a display label, per grouping dimension. The
  * backend composes keys/labels mechanically (see monitoring_repo.grouped_top):
- *   api     → "vendor/name" with NULL columns coalesced to "unknown"
- *   toolkit → the raw toolkit_id (NOT NULL column)
- *   agent   → "actor_type/actor_id" (both NOT NULL columns)
- * Keys are therefore never NULL on the wire today; the null branches below
- * are defensive display fallbacks (surfaced as "Unattributed", matching
- * jentic-mini) rather than a backend contract.
+ *   api        → "vendor/name" with NULL columns coalesced to "unknown"
+ *   credential → the raw credential_id (NULL coalesced to "unknown")
+ *   agent      → "actor_type/actor_id" (both NOT NULL columns). Historical
+ *                pre-theme-8 `service_account/sva_…` keys are labelled
+ *                "sva_… (retired service account)".
+ * Null/unknown keys are surfaced as an explicit "Unattributed" bucket.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
-	if (!key) return 'Unattributed';
+	if (!key) return UNATTRIBUTED_LABEL;
 	if (groupBy === 'api') {
 		const [vendor, ...rest] = key.split('/');
 		const name = rest.join('/');
-		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return 'Unattributed';
+		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return UNATTRIBUTED_LABEL;
 		return name && name !== 'unknown' ? name : key;
 	}
 	if (groupBy === 'agent') {
 		const slash = key.indexOf('/');
-		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
+		if (slash < 0) return key;
+		const actorId = key.slice(slash + 1);
+		if (!actorId) return UNATTRIBUTED_LABEL;
+		return key.slice(0, slash) === RETIRED_SERVICE_ACCOUNT_ACTOR_TYPE
+			? retiredServiceAccountLabel(actorId)
+			: actorId;
+	}
+	if (groupBy === 'credential') {
+		return key === 'unknown' ? UNATTRIBUTED_LABEL : key;
 	}
 	return key;
 }
@@ -78,7 +90,7 @@ function formatEntityLabel(groupBy: string, key: string | null | undefined): str
  * Map the response's `top` rows into entity rows, sorted busiest-first.
  * The attribution columns are NOT NULL so keys are always present today;
  * empty/missing keys are still mapped to an explicit "Unattributed" bucket
- * as a display fallback rather than silently dropped, matching jentic-mini.
+ * as a display fallback rather than silently dropped.
  */
 export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsageRow[] {
 	if (!usage) return [];
@@ -88,7 +100,7 @@ export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsage
 			const success = row.success ?? 0;
 			const key = (row.key ?? null) as string | null;
 			return {
-				id: key || '__unattributed__',
+				id: key || UNATTRIBUTED_ID,
 				label: formatEntityLabel(usage.group_by, key),
 				totalExecutions: total,
 				successRate: total > 0 ? (success / total) * 100 : 100,

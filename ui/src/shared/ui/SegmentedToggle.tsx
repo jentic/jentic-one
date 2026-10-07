@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
 
@@ -18,7 +18,44 @@ import { cn } from '@/shared/lib/utils';
 export interface SegmentedToggleOption<T extends string = string> {
 	value: T;
 	label: string;
+	/** Optional leading glyph (decorative — the label stays the accessible name). */
+	icon?: ReactNode;
 }
+
+/**
+ * Where the control sits (all borderless; the active segment is a lighter
+ * tonal pill, no ring or shadow): `default` takes one step lighter than its
+ * container (`--field-bg`); `surface` is `surface-1` on the page background;
+ * `inset` is one step lighter than a `surface-1` panel (smaller labels).
+ */
+export type SegmentedToggleTone = 'default' | 'surface' | 'inset';
+
+const TONE_STYLES: Record<
+	SegmentedToggleTone,
+	{ root: string; pill: string; segment: string; active: string; idle: string }
+> = {
+	default: {
+		root: 'bg-field rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-3 py-1 text-xs font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+	surface: {
+		root: 'bg-surface-1 rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-3 py-[5px] text-[12.5px] font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+	inset: {
+		root: 'bg-surface-field rounded-field gap-[2px] border-0 p-[3px]',
+		pill: 'bg-surface-tonal-hover top-[3px] bottom-[3px] rounded-[6px]',
+		segment: 'rounded-[6px] px-2.5 py-1 text-xs font-semibold',
+		active: 'text-white',
+		idle: 'text-foreground-sub',
+	},
+};
 
 interface SegmentedToggleProps<T extends string = string> {
 	options: SegmentedToggleOption<T>[];
@@ -50,6 +87,18 @@ interface SegmentedToggleProps<T extends string = string> {
 	getControls?: (value: T) => string | undefined;
 	/** Map an option value → the `id` to give its tab button. Only for `as='tabs'`. */
 	getTabId?: (value: T) => string | undefined;
+	/**
+	 * Nothing to choose between (e.g. a filter over an empty list): every
+	 * segment is `disabled` and the group is `aria-disabled`.
+	 */
+	disabled?: boolean;
+	/** Surface the control sits on (default: one step lighter than its container). */
+	tone?: SegmentedToggleTone;
+	/**
+	 * The control acts as a form field (a choice inside a form, not a
+	 * toolbar/panel filter): draws the inputs' faint resting edge.
+	 */
+	field?: boolean;
 }
 
 interface PillRect {
@@ -66,7 +115,11 @@ export function SegmentedToggle<T extends string = string>({
 	ariaLabel,
 	getControls,
 	getTabId,
+	disabled = false,
+	tone = 'default',
+	field = false,
 }: SegmentedToggleProps<T>) {
+	const styles = TONE_STYLES[tone];
 	const containerRef = useRef<HTMLDivElement>(null);
 	const btnRefs = useRef(new Map<string, HTMLButtonElement>());
 	const [pill, setPill] = useState<PillRect | null>(null);
@@ -74,7 +127,10 @@ export function SegmentedToggle<T extends string = string>({
 
 	// Measure the active button's box relative to the container after layout,
 	// and re-measure on resize. `useLayoutEffect` so the pill is positioned
-	// before paint (no first-frame flash at 0,0).
+	// before paint (no first-frame flash at 0,0). Both the container AND the
+	// active button are observed: a segment can resize without the container
+	// telling the whole story (e.g. a count in its label ticking over),
+	// which would otherwise leave the pill on a stale rect.
 	useLayoutEffect(() => {
 		function measure() {
 			const container = containerRef.current;
@@ -85,6 +141,8 @@ export function SegmentedToggle<T extends string = string>({
 		measure();
 		const ro = new ResizeObserver(measure);
 		if (containerRef.current) ro.observe(containerRef.current);
+		const activeBtn = btnRefs.current.get(value);
+		if (activeBtn) ro.observe(activeBtn);
 		return () => ro.disconnect();
 	}, [value, options]);
 
@@ -113,18 +171,40 @@ export function SegmentedToggle<T extends string = string>({
 			ref={containerRef}
 			role={isTabs ? 'tablist' : ariaLabel ? 'group' : undefined}
 			aria-label={ariaLabel}
+			aria-disabled={disabled || undefined}
 			className={cn(
-				'border-border bg-muted/50 relative flex rounded-lg border p-0.5',
+				// Structural backstop for the invariant above: even if a stale
+				// rect ever slipped through, overflow past the control's border
+				// never becomes visible or scrollable. The pill is inset
+				// (its top/bottom offsets equal the padding), so nothing is cut at rest.
+				'relative flex overflow-x-clip',
+				styles.root,
+				field && 'border-control-edge border',
+				disabled && 'opacity-50',
 				className,
 			)}
+			data-tone={tone}
 		>
 			{pill && (
 				<motion.div
 					aria-hidden="true"
-					className="bg-foreground/10 ring-border/50 pointer-events-none absolute top-0.5 bottom-0.5 rounded-md shadow-sm ring-1"
+					className={cn('pointer-events-none absolute', styles.pill)}
 					initial={false}
 					animate={{ left: pill.left, width: pill.width }}
-					transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+					// INVARIANT: the pill must never extend past the control's own
+					// bounds. At rest the measurement guarantees it (offsetLeft/
+					// offsetWidth are relative to the same padding box the pill
+					// positions against); mid-animation it holds because this
+					// spring is critically damped (damping ≥ 2·√stiffness ≈ 44.7):
+					// `left` and `width` approach their targets monotonically, so
+					// `left + width` stays inside the endpoints' envelope. The
+					// underdamped original (damping 35) overshot proportionally to
+					// the jump size, which inside an `overflow-x-auto` wrapper
+					// (phone toolbars) could poke the pill's right edge past the
+					// content width and blip a horizontal scrollbar. The root's
+					// overflow-x-clip is the structural backstop for the same
+					// invariant. Pinned by the bounds test in SegmentedToggle.test.
+					transition={{ type: 'spring', stiffness: 500, damping: 45 }}
 				/>
 			)}
 			{options.map((option) => {
@@ -136,27 +216,37 @@ export function SegmentedToggle<T extends string = string>({
 						role={isTabs ? 'tab' : undefined}
 						id={isTabs ? getTabId?.(option.value) : undefined}
 						aria-selected={isTabs ? isActive : undefined}
+						aria-pressed={isTabs ? undefined : isActive}
 						aria-controls={isTabs ? getControls?.(option.value) : undefined}
 						tabIndex={isTabs ? (isActive ? 0 : -1) : undefined}
 						ref={(el) => {
 							if (el) btnRefs.current.set(option.value, el);
 							else btnRefs.current.delete(option.value);
 						}}
+						disabled={disabled}
 						onClick={() => onChange(option.value)}
 						onKeyDown={handleKeyDown}
 						className={cn(
-							'relative rounded-md px-3 py-1 text-xs font-medium transition-colors',
-							!isActive && 'cursor-pointer',
+							'relative flex items-center transition-colors',
+							styles.segment,
+							disabled ? 'cursor-not-allowed' : !isActive && 'cursor-pointer',
 						)}
 					>
 						<span
 							className={cn(
-								'relative z-10 transition-colors',
+								'relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors',
 								isActive
-									? 'text-foreground'
-									: 'text-muted-foreground hover:text-foreground',
+									? styles.active
+									: disabled
+										? styles.idle
+										: cn(styles.idle, 'hover:text-foreground'),
 							)}
 						>
+							{option.icon && (
+								<span aria-hidden="true" className="inline-flex shrink-0">
+									{option.icon}
+								</span>
+							)}
 							{option.label}
 						</span>
 					</button>

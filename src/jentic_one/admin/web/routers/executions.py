@@ -46,6 +46,8 @@ def _execution_response(view: ExecutionView, request: Request) -> ExecutionRespo
         duration_ms=view.duration_ms,
         status=view.status,
         operation_id=view.operation_id,
+        operation_path=view.operation_path,
+        operation_method=view.operation_method,
         api=api,
         pinned_revisions=view.pinned_revisions,
         http_status=view.http_status,
@@ -114,6 +116,7 @@ async def list_executions(
             actor_id=actor_id,
             origin=origin,
         ),
+        identity=identity,
         cursor=cursor,
         limit=limit,
     )
@@ -132,5 +135,5 @@ async def get_execution(
     exec_svc: ExecutionService = Depends(get_execution_service),
 ) -> ExecutionResponse:
     """Get an execution record by ID."""
-    view = await exec_svc.get_by_id(execution_id)
+    view = await exec_svc.get_by_id(execution_id, identity=identity)
     return _execution_response(view, request)

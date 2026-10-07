@@ -194,7 +194,7 @@ def smoke(mode: str, obs: bool) -> None:
         "BASE_URL": base_url,
         "OBS": "1" if obs else "",
         # The smoke-upstream harness as seen by the broker (in-cluster DNS) and by
-        # the test runner (kind host port). These match the Phase 4 fixture
+        # the test runner (kind host port). These match the deploy fixture
         # defaults, but are exported explicitly so non-default clusters work too.
         "UPSTREAM_INCLUSTER_URL": "http://jentic-smoke-upstream:8084",
         "UPSTREAM_DIRECT_URL": "http://localhost:8084",

@@ -69,6 +69,30 @@ class ConflictError(AdminServiceError):
     """Raised when an operation conflicts with existing state."""
 
 
+class UserManagementForbiddenError(AdminServiceError):
+    """Raised when a caller may not change another user's email, status or permissions.
+
+    Changing another user's permissions, or disabling, enabling, deleting or
+    re-inviting them, requires that the caller already holds every permission
+    the target user holds (``org:admin`` holders may manage anyone). Changing
+    another user's email requires ``org:admin``.
+    """
+
+    def __init__(self, user_id: str, reason: str | None = None) -> None:
+        super().__init__(
+            reason or f"Managing user '{user_id}' requires holding all of that user's permissions"
+        )
+        self.user_id = user_id
+
+
+class LastActiveAdminError(ConflictError):
+    """Raised when an operation would leave the deployment with no active org:admin."""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(f"User '{user_id}' is the last active org:admin")
+        self.user_id = user_id
+
+
 class InvalidInputError(AdminServiceError):
     """Raised when input fails business-rule validation (beyond schema)."""
 
@@ -211,9 +235,9 @@ class AgentNotFoundError(NotFoundError):
         self.agent_id = agent_id
 
 
-class ServiceAccountNotFoundError(NotFoundError):
-    """Raised when a service account identified by ID does not exist."""
+class OAuthClientNotFoundError(NotFoundError):
+    """Raised when an OAuth client does not exist."""
 
-    def __init__(self, service_account_id: str) -> None:
-        super().__init__(f"ServiceAccount '{service_account_id}' not found")
-        self.service_account_id = service_account_id
+    def __init__(self, id: str) -> None:
+        super().__init__(f"OAuth client '{id}' not found")
+        self.id = id

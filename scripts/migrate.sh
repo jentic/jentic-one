@@ -7,66 +7,88 @@ cd "$PROJECT_ROOT"
 
 usage() {
     cat <<USAGE
-Usage: $(basename "$0") --db <name> [--target <revision>] [--dry-run]
+Usage: $(basename "$0") [--db <name>]... [--target <revision>] [--check]
+       $(basename "$0") --dry-run --db <name> [--target <revision>]
+
+With no options, runs the full migrations runner
+(uv run python -m jentic_one.migrations.run): every database to head, in
+dependency order, including the cross-database steps — the service-account
+retirement before the admin drop, and the post-migration upgrade steps. This
+is the normal upgrade path.
 
 Options:
-  --db <name>        Database to migrate (registry, control, admin). Required.
-  --target <rev>     Target revision (default: head).
-  --dry-run          Generate SQL without applying.
+  --db <name>        Only migrate this database (registry, control, admin);
+                     repeatable. A partial upgrade SKIPS the service-account
+                     retirement and the upgrade steps (the admin drop then
+                     refuses while any service account is unretired).
+  --target <rev>     Target revision (default: head). A targeted upgrade also
+                     skips the retirement and the upgrade steps.
+  --check            Report each database's schema state; change nothing.
+  --dry-run          Generate the SQL for ONE database (--db required) with
+                     plain Alembic, without applying it. The SQL never
+                     includes the service-account retirement (it is not a
+                     schema step), so it is for review only.
   -h, --help         Show this help.
 USAGE
     exit "${1:-0}"
 }
 
-DB_NAME=""
-TARGET="head"
+DBS=()
+TARGET=""
 DRY_RUN=false
+CHECK=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --db) DB_NAME="$2"; shift 2 ;;
+        --db) DBS+=("$2"); shift 2 ;;
         --target) TARGET="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
+        --check) CHECK=true; shift ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1"; usage 1 ;;
     esac
 done
 
-if [[ -z "$DB_NAME" ]]; then
-    echo "ERROR: --db is required"
-    usage 1
-fi
-
 VALID_DBS=("registry" "control" "admin")
-if [[ ! " ${VALID_DBS[*]} " =~ " ${DB_NAME} " ]]; then
-    echo "ERROR: invalid database '$DB_NAME'. Must be one of: ${VALID_DBS[*]}"
-    exit 1
-fi
+for db in "${DBS[@]+"${DBS[@]}"}"; do
+    if [[ ! " ${VALID_DBS[*]} " =~ " ${db} " ]]; then
+        echo "ERROR: invalid database '$db'. Must be one of: ${VALID_DBS[*]}"
+        exit 1
+    fi
+done
 
 LOG_DIR="$PROJECT_ROOT/logs/migrations"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_FILE="$LOG_DIR/${DB_NAME}_${TIMESTAMP}.log"
-
-echo "==> Database: $DB_NAME"
-echo "==> Target:   $TARGET"
-
-echo "==> Current revision:"
-uv run alembic -n "$DB_NAME" current 2>&1 | tee -a "$LOG_FILE"
 
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo ""
-    echo "==> Dry-run: generating SQL (not applying)..."
-    uv run alembic -n "$DB_NAME" upgrade "$TARGET" --sql 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${#DBS[@]} -ne 1 ]]; then
+        echo "ERROR: --dry-run needs exactly one --db"
+        usage 1
+    fi
+    DB_NAME="${DBS[0]}"
+    LOG_FILE="$LOG_DIR/${DB_NAME}_${TIMESTAMP}.log"
+    echo "==> Dry-run: generating SQL for $DB_NAME to ${TARGET:-head} (not applying;"
+    echo "    the service-account retirement is not part of it)..."
+    uv run alembic -n "$DB_NAME" upgrade "${TARGET:-head}" --sql 2>&1 | tee -a "$LOG_FILE"
     echo ""
     echo "==> Dry-run complete. SQL logged to: $LOG_FILE"
-else
-    echo ""
-    echo "==> Applying migrations..."
-    uv run alembic -n "$DB_NAME" upgrade "$TARGET" 2>&1 | tee -a "$LOG_FILE"
-    echo ""
-    echo "==> New revision:"
-    uv run alembic -n "$DB_NAME" current 2>&1 | tee -a "$LOG_FILE"
-    echo ""
-    echo "==> Migration complete. Log: $LOG_FILE"
+    exit 0
 fi
+
+ARGS=()
+for db in "${DBS[@]+"${DBS[@]}"}"; do
+    ARGS+=(--db "$db")
+done
+if [[ -n "$TARGET" ]]; then
+    ARGS+=(--target "$TARGET")
+fi
+if [[ "$CHECK" == "true" ]]; then
+    ARGS+=(--check)
+fi
+
+LOG_FILE="$LOG_DIR/migrate_${TIMESTAMP}.log"
+echo "==> Running the migrations runner ${ARGS[*]+"${ARGS[*]}"}"
+uv run python -m jentic_one.migrations.run "${ARGS[@]+"${ARGS[@]}"}" 2>&1 | tee -a "$LOG_FILE"
+echo ""
+echo "==> Done. Log: $LOG_FILE"

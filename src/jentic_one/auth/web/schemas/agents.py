@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-ScopeStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
+from jentic_one.shared.schemas import ServedApiRef
+from jentic_one.shared.web.sensitive import SENSITIVE
+
+PermissionStr = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_:./-]+$")]
 
 
 class AgentResponse(BaseModel):
@@ -45,22 +48,34 @@ class DenyRequest(BaseModel):
 class ClaimRequest(BaseModel):
     """Request body for claiming ownership of a self-registered agent."""
 
-    token: str = Field(min_length=1, max_length=512)
+    # The single-use claim capability, presented once to take ownership. Marked
+    # sensitive so the CLI's Layer-1 redactor masks it in output.
+    token: str = Field(min_length=1, max_length=512, json_schema_extra=SENSITIVE)
 
 
-class ToolkitBindingResponse(BaseModel):
-    """Toolkit binding representation in API responses."""
+class CredentialBindingResponse(BaseModel):
+    """Direct agent↔credential binding representation in API responses."""
 
     id: str
     agent_id: str
-    toolkit_id: str
+    credential_id: str
+    # Human-readable credential name (control DB); None when unresolvable.
+    name: str | None = None
     bound_at: datetime
+    suspended: bool
+    # Why the binding is suspended: null for a manual suspension (the default
+    # unbind), ``api_deleted`` when the API the credential serves was deleted.
+    # Cleared when the binding is resumed.
+    suspended_reason: str | None = None
+    # Shared permission rule set the binding points at (None = inline rules).
+    rule_set_id: str | None = None
+    serves: list[ServedApiRef] = []
 
 
-class ToolkitBindingListResponse(BaseModel):
-    """List of toolkit bindings."""
+class CredentialBindingListResponse(BaseModel):
+    """List of direct credential bindings."""
 
-    data: list[ToolkitBindingResponse]
+    data: list[CredentialBindingResponse]
 
 
 class AgentPatchRequest(BaseModel):
@@ -74,21 +89,28 @@ class AgentPatchRequest(BaseModel):
 class AgentCreateRequest(BaseModel):
     """Request body for creating an agent manually."""
 
+    # Unknown keys are a 422: a body that spells the grant list ``scopes`` would
+    # otherwise be ignored, leave ``permissions`` unset, and grant the full
+    # default baseline.
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1024)
-    scopes: list[ScopeStr] | None = Field(default=None, max_length=100)
+    permissions: list[PermissionStr] | None = Field(default=None, max_length=100)
 
 
-class AgentScopesRequest(BaseModel):
-    """Request body for replacing an agent's scopes."""
+class AgentPermissionsRequest(BaseModel):
+    """Request body for replacing an agent's permissions."""
 
-    scopes: list[ScopeStr] = Field(max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+    permissions: list[PermissionStr] = Field(max_length=100)
 
 
-class AgentScopesResponse(BaseModel):
-    """Response containing an agent's current scopes."""
+class AgentPermissionsResponse(BaseModel):
+    """Response containing an agent's current permissions."""
 
-    scopes: list[str]
+    permissions: list[str]
 
 
 class ApiKeyResponse(BaseModel):
@@ -123,7 +145,17 @@ class ApiKeyHistoryResponse(BaseModel):
     data: list[ApiKeyHistoryEntryResponse]
 
 
-class ToolkitBindRequest(BaseModel):
-    """Request body for binding a toolkit."""
+class CredentialBindRequest(BaseModel):
+    """Request body for directly binding a credential to an agent."""
 
-    toolkit_id: str = Field(min_length=1, max_length=255)
+    credential_id: str = Field(min_length=1, max_length=255)
+
+
+class JwksUpdateRequest(BaseModel):
+    """Request body for updating an agent's JWKS (public keys).
+
+    The JWKS must contain at least one Ed25519 public key and must not
+    contain any private key material.
+    """
+
+    jwks: dict[str, Any] = Field(description="JWKS containing public keys")

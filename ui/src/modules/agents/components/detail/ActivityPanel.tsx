@@ -1,5 +1,5 @@
 /**
- * ActivityPanel — the detail page's Activity tab: the shared console chart
+ * ActivityPanel — the body of the dock's Activity sheet: the shared chart
  * pair (stacked execution volume + success-rate trend, `ExecutionVolumeCharts`)
  * plus the shared recent-executions feed (`RecentExecutionsCard`), both
  * scoped by `actor_id`. Monitor owns the full history (cursor paging, trace
@@ -13,20 +13,20 @@
 import { Activity } from 'lucide-react';
 import { EmptyState, ExecutionVolumeCharts, LoadingState, RecentExecutionsCard } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
+import { formatOperation } from '@/shared/lib';
 import { useActorExecutions, useActorUsageDetail } from '@/modules/agents/api';
 
 interface ActivityPanelProps {
 	actorId: string;
-	actorType: 'agent' | 'service_account';
 }
 
-export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
+export function ActivityPanel({ actorId }: ActivityPanelProps) {
 	const usage = useActorUsageDetail(actorId);
 	const executions = useActorExecutions(actorId);
 
-	// Monitor's Executions lens, pre-filtered to this actor — built by the
+	// Monitor's Executions lens, pre-filtered to this agent — built by the
 	// shared route helper so the param vocabulary can't drift across modules.
-	const monitorLink = ROUTE_PATHS.monitorExecutions({ actorId, actorType });
+	const monitorLink = ROUTE_PATHS.monitorExecutions({ actorId, actorType: 'agent' });
 
 	if (usage.isPending || executions.isPending) {
 		return <LoadingState size="sm" message="Loading activity…" />;
@@ -73,17 +73,26 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 					monitorHref={monitorLink}
 					emptyMessage="No executions recorded for this actor yet."
 					hasMore={executions.data.hasMore}
-					items={items.map((row) => ({
-						id: row.id,
-						status: row.status,
-						httpStatus: row.httpStatus,
-						label: `${row.toolkitName ?? row.toolkitId}${
-							row.operationId ? `.${row.operationId}` : ''
-						}`,
-						error: row.error,
-						durationMs: row.durationMs,
-						startedAt: row.startedAt,
-					}))}
+					items={items.map((row) => {
+						// Human-readable operation only (method + path
+						// template); the opaque op_… id never renders, so
+						// legacy rows show just the credential attribution.
+						const operation = formatOperation({
+							operation_path: row.operationPath,
+							operation_method: row.operationMethod,
+						});
+						return {
+							id: row.id,
+							status: row.status,
+							httpStatus: row.httpStatus,
+							label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
+								operation ? ` · ${operation}` : ''
+							}`,
+							error: row.error,
+							durationMs: row.durationMs,
+							startedAt: row.startedAt,
+						};
+					})}
 				/>
 			)}
 		</div>

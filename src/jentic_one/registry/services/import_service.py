@@ -60,6 +60,18 @@ _IDENTITY_RACE_MESSAGE = (
     "a colliding catalog entry will then be refused as a catalog identity conflict"
 )
 
+# The job-error wrapper an all-sources-failed import rides (``IngestJobError``):
+# ``ALL_SOURCES_FAILED_PREFIX_TEMPLATE`` heads the whole message and
+# ``SOURCE_FAILURE_PREFIX_TEMPLATE`` heads each per-source entry. Named (rather
+# than inline f-strings) because the rendering is a cross-module contract: the
+# /mcp mount's duplicate-content detection (``jentic_one.mcp.tools``) keys on
+# the single-source rendering surviving the worker's 128-char ``job.error``
+# truncation, and its tests build fixtures from these exact templates. Keep the
+# rendering byte-identical when touching them — a wrapper that grows can push
+# the duplicate fragment past the truncation point in production.
+SOURCE_FAILURE_PREFIX_TEMPLATE = "source[{index}]: "
+ALL_SOURCES_FAILED_PREFIX_TEMPLATE = "all {count} import source(s) failed: "
+
 
 def _readable_source_error(exc: Exception) -> str:
     """Map a source-level ingest failure to a message safe to show a user.
@@ -101,7 +113,10 @@ class ImportHandler:
             sources = payload.get("sources", [])
             overlay_id = payload.get("overlay_id")
             supersede_overlay_id = payload.get("supersede_overlay_id")
-            resolved_actor_type = ActorType(actor_type) if actor_type else ActorType.USER
+            # Opaque string, not ``ActorType(...)``: a job enqueued on 0.40 by a
+            # since-retired service account carries ``actor_type='service_account'``
+            # and must still import (the audit row keeps the historical label).
+            resolved_actor_type: str = actor_type or ActorType.USER.value
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
             recovered_overlay_link = False
@@ -129,6 +144,11 @@ class ImportHandler:
                             "state": result.state,
                         }
                     )
+                    held = result.held_host_change
+                    if held is not None:
+                        # Server-host change guard: kept as a draft for operator review.
+                        revisions[-1]["held_for_review"] = True
+                        revisions[-1]["host_change"] = held.model_dump()
                     await record_audit_best_effort(
                         self._ctx,
                         action=AuditAction.CREATE,
@@ -142,12 +162,17 @@ class ImportHandler:
                             "name": result.api_name,
                             "version": result.api_version,
                             "state": result.state,
+                            **({"host_change": held.model_dump()} if held is not None else {}),
                         },
+                        reason="server_host_change_held" if held is not None else None,
                         origin=None,
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
-                    failures.append(f"source[{idx}]: {_readable_source_error(exc)}")
+                    failures.append(
+                        SOURCE_FAILURE_PREFIX_TEMPLATE.format(index=idx)
+                        + _readable_source_error(exc)
+                    )
 
             logger.info(
                 "import_handler_complete",
@@ -162,7 +187,10 @@ class ImportHandler:
             # resolved — settle it best-effort so the action-inbox item clears. Keyed on
             # the event payload's ``api_id``; a manual import that was never catalog-
             # tracked simply has no matching event. Never fails the import.
-            for rev in revisions:
+            # A revision held for review did not adopt the upstream spec, so its prompt
+            # stays open until an operator promotes the draft.
+            adopted = [rev for rev in revisions if not rev.get("held_for_review")]
+            for rev in adopted:
                 await self._settle_update_available(job_id, created_by, rev["api"], session)
 
             # A4b worker step: an authorized catalog re-import that supersedes a live
@@ -180,7 +208,15 @@ class ImportHandler:
             #     as success and (idempotently, CAS on CONFIRMED) deprecate + settle.
             recovered_supersede = False
             if supersede_overlay_id:
-                if revisions and not failures:
+                if any(rev.get("held_for_review") for rev in revisions):
+                    # The upstream revision was held for review, so nothing was archived
+                    # and the overlay is still served: leave it confirmed.
+                    logger.info(
+                        "overlay_supersede_skipped_host_change_held",
+                        job_id=job_id,
+                        overlay_id=supersede_overlay_id,
+                    )
+                elif revisions and not failures:
                     await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),
@@ -258,7 +294,8 @@ class ImportHandler:
                 and not recovered_supersede
             ):
                 raise IngestJobError(
-                    f"all {len(sources)} import source(s) failed: " + "; ".join(failures)
+                    ALL_SOURCES_FAILED_PREFIX_TEMPLATE.format(count=len(sources))
+                    + "; ".join(failures)
                 )
 
             return JobResultPayload(
@@ -466,7 +503,7 @@ class ImportHandler:
         if overlay is None:
             # Could not safely re-resolve (no backing overlay, or an ambiguous lazy-link
             # set). Do NOT silently trust the enqueue-time id — a concurrent confirm may have
-            # made it stale. Fall back to it (no worse than pre-#940), but warn so the
+            # made it stale. Fall back to it (#940), but warn so the
             # wrong-overlay risk in this narrow window is observable rather than silent.
             logger.warning(
                 "overlay_supersede_target_unresolved",

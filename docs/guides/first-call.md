@@ -1,0 +1,128 @@
+# Your first brokered call
+
+Six steps from a running instance to a real API response, with the agent never
+seeing your credentials. This page is the route map — each step is short and
+links to the guide that owns the detail.
+
+**No instance yet?** Install one first and come back — the
+[installation guide](../installation/README.md) covers every path (Docker,
+systemd, Helm, AWS Marketplace); the [README quickstart](../../README.md#quickstart)
+is the fastest local trial. Everything below assumes the app
+(`http://127.0.0.1:8000` on a local install) and the broker are running.
+
+> **Run the agent on a different machine from Jentic One.** An agent running as
+> the same OS user can read the credential database and encryption key off disk,
+> whatever the API-level controls allow. Read the
+> [security hardening guide](../security/README.md) before pointing an instance
+> at a real credential — or use [`jentic run`](local-agent.md) to isolate a local
+> coding agent behind its own Unix user.
+
+## 1. Create your admin account *(operator, one-time)*
+
+Open `/app/setup` in the web UI and create the first administrator; the page
+redirects to login once the account exists. This account is the operator: it
+imports APIs, stores credentials, and approves agents. Already created your
+admin via the README quickstart's `create-admin`? Skip to step 2.
+
+From the terminal instead: `jenticctl setup` creates the account;
+`jenticctl wizard` sequences this whole page into one guided flow.
+
+## 2. Register the agent *(agent machine)*
+
+Nearly every step from here runs the `jentic` CLI — the exceptions are steps 4
+and 5, which are human steps in the dashboard or browser — and every `jentic` command (even
+browsing the catalog) needs a registered agent. From the machine that will
+run the agent:
+
+```bash
+jentic register
+```
+
+On a local install, confirm the prompted `http://127.0.0.1:8000`; the broker
+URL is seeded automatically. A remote install needs `--url` and `--broker-url`
+([CLI README](../../cli/README.md#usage)). `register` generates a keypair,
+files a dynamic client registration, then **waits for an operator to approve
+the agent** — approve it in the UI at `/app`. Re-running is idempotent.
+
+Setting up a local *coding* agent (Claude Code, Cursor, …)? `jentic setup` does
+identity + skills + isolation in one flow — see
+[Local coding agents](local-agent.md). All the ways an agent can connect
+(CLI + skill, MCP over stdio or HTTP, raw HTTP):
+[Connecting an agent](connecting-agents.md).
+
+## 3. Import an API
+
+Pull an API description into your local registry from the public
+[Jentic API Directory](https://github.com/jentic/jentic-public-apis):
+
+```bash
+jentic catalog search httpbin               # find the API used in step 6
+jentic catalog import httpbin.org/httpbin   # import it (auto-promotes to live)
+```
+
+`jentic catalog` run bare opens an interactive browser; `jentic apis` manages
+what you've imported. You can also register your own OpenAPI description for a
+private service — same custody, permissions, and audit trail. To correct an
+imported description without editing the original, use [Overlays](overlays.md).
+
+## 4. Store a credential *(authenticated APIs only)*
+
+httpbin takes no secret — its no-auth credential is created in step 5. For an API that does authenticate, the
+operator stores what it needs (API key, bearer, basic, or an OAuth2 flow) in
+the UI. It is encrypted at rest and never returned to a caller — it is
+decrypted only inside the broker, at execution time. How a stored credential
+covers an API and how the broker picks one at execution time:
+[How credential resolution works](credentials-and-toolkits.md).
+
+## 5. Grant access
+
+Access is **default-deny**: an approved agent is bound to nothing until a
+human grants it, and granting is always a human decision — never something
+the agent does to itself. Two paths:
+
+- **Operator bind (works for every API).** In the dashboard, open the agent
+  and bind it to the stored credential, adding the `allow` rules that
+  describe what it may call — a rule-less binding still blocks everything.
+  For a no-auth API like httpbin, store a no-auth credential for
+  `httpbin.org/httpbin` first, then bind it the same way.
+- **Agent-driven connect flow (OAuth vendors).** When the deployment's vendor
+  registry covers the API, the agent starts the flow itself —
+  `jentic connect <vendor>`, over `POST /integrations:connect` — and relays
+  the printed approval link; you approve it and consent inside the OAuth
+  flow. The API is imported automatically, and the
+  credential, the agent binding, and its permissions land together; the
+  secret still never reaches the agent.
+
+Either way, an agent denied at execution gets a typed directive naming which
+of the two paths recovers it.
+
+Once a grant lands, the agent re-checks what it can call with `jentic whoami`.
+
+## 6. Make the call
+
+```bash
+jentic search get             # find an imported operation
+jentic inspect <operation>    # its method, params, and schemas
+jentic execute GET:https://httpbin.org/get --json
+```
+
+`execute` takes a search hit's `target` — the operation's method plus full
+upstream URL (`METHOD:url`) — the broker is a forward proxy, not a path
+router. It checks the agent's permissions, attaches the stored credential
+after the check, forwards the request, and writes an execution record —
+visible under **Monitor → Executions** in the dashboard (the audit trail is
+for control-plane mutations, so your call appears in Executions, not Audit).
+
+## Where to go next
+
+- **Have a coding agent do this for you.** The
+  [agent runbooks](../agent/README.md) cover install through the
+  discover → access → execute loop as directly executable steps.
+- **Full CLI reference.** Every `jenticctl` and `jentic` command:
+  [`cli/README.md`](../../cli/README.md).
+- **In-app API reference.** A running deployment serves its own interactive
+  API reference at `/docs`, generated from code.
+- **Endpoint & permission reference.** Every HTTP route and the permission it requires:
+  [endpoint reference](../reference/endpoints.md).
+- **Run it somewhere real.** The [installation guides](../installation/README.md),
+  then the [security hardening guide](../security/README.md).

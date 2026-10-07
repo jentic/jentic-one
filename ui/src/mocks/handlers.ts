@@ -1,12 +1,11 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers, toolkitsE2eHooks } from '@/modules/toolkits/mocks/handlers';
-import { agentsHandlers } from '@/modules/agents/mocks/handlers';
+import { agentsHandlers, agentsE2eHooks } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
-import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { settingsHandlers } from '@/modules/settings/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -46,11 +45,27 @@ const mockUser = {
 
 /**
  * Seed for the actor directory (`GET /actors`). Ids mirror the actor_id values
- * other module fixtures emit (the dashboard access-request fixtures + the
- * agents store) so `<ActorLabel>` resolves to a name on those surfaces in
+ * other module fixtures emit (the agents store, rail and monitor
+ * fixtures) so `<ActorLabel>` resolves to a name on those surfaces in
  * mocked dev/e2e. Covers all three actor types.
  */
 const actorDirectorySeed = [
+	// The agents store's pending agents — the Activity rail's agent scope
+	// labels its options from this directory.
+	{
+		id: 'agnt_pending_1',
+		actor_type: 'agent',
+		name: 'inbox-triage-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
+		id: 'agnt_pending_2',
+		actor_type: 'agent',
+		name: 'release-notes-bot',
+		active: false,
+		created_at: '2026-01-01T00:00:00Z',
+	},
 	{
 		id: 'invoice-bot',
 		actor_type: 'agent',
@@ -63,6 +78,16 @@ const actorDirectorySeed = [
 		actor_type: 'agent',
 		name: 'Support Triage',
 		active: true,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
+		// The DISABLED agent behind the settings store's dormant grant
+		// (#1345) — resolves so the grant row reads "Nightly Reporter ·
+		// Agent disabled", not a raw id next to the dormancy chip.
+		id: 'nightly-reporter',
+		actor_type: 'agent',
+		name: 'Nightly Reporter',
+		active: false,
 		created_at: '2026-01-01T00:00:00Z',
 	},
 	{
@@ -81,18 +106,11 @@ const actorDirectorySeed = [
 	},
 	{
 		// The admin id the agents-module fixtures stamp on approvals / audit
-		// rows (approved_by, audit actor_id) — must resolve or the detail
-		// consoles' "Approved by" and "Recent changes" show a raw id.
+		// rows (approved_by, audit actor_id) — must resolve or the Settings
+		// sheet's "Approved by" and "Recent changes" show a raw id.
 		id: 'usr_000000000000000000000admin',
 		actor_type: 'user',
 		name: 'Admin User',
-		active: true,
-		created_at: '2026-01-01T00:00:00Z',
-	},
-	{
-		id: 'sva_active_1',
-		actor_type: 'service_account',
-		name: 'metrics-exporter',
 		active: true,
 		created_at: '2026-01-01T00:00:00Z',
 	},
@@ -126,8 +144,8 @@ export const handlers = [
 	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
-	// other module stores emit (agents store + the access-request fixtures) so
-	// names resolve across the dashboard, access-request, and agent surfaces.
+	// other module stores emit (agents store, rail + monitor fixtures) so
+	// names resolve across the rail, monitor, and agent surfaces.
 	http.get('/actors', () =>
 		HttpResponse.json({
 			data: actorDirectorySeed,
@@ -135,30 +153,52 @@ export const handlers = [
 			next_cursor: null,
 		}),
 	),
+	// By-id lookup (GET /actors/lookup?id=…) over the same seed — the directory's
+	// path for callers without `users:read`.
+	http.get('/actors/lookup', ({ request }) => {
+		const ids = new Set(new URL(request.url).searchParams.getAll('id'));
+		return HttpResponse.json({
+			data: actorDirectorySeed
+				.filter((a) => ids.has(a.id))
+				.map(({ id, actor_type, name, active }) => ({ id, actor_type, name, active })),
+		});
+	}),
 	// Running/latest app version (GET /system/version) — cross-cutting shell
 	// endpoint powering the update banner + UserMenu version line. Default: no
 	// newer release (banner hidden); tests override via worker.use(...).
 	http.get('/system/version', () =>
 		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
 	),
+	// Backend self-identity (GET /instance, unauthenticated) — the per-agent
+	// MCP config card shows which instance a pasted snippet registers against
+	// (local-MCP 2-E2). Canonical base URL configured, local install.
+	http.get('/instance', () =>
+		HttpResponse.json({
+			backend: 'local',
+			canonical_base_url: 'https://jentic.example.test',
+			host: 'jentic.example.test',
+			instance_id: 'inst_digest_1',
+		}),
+	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,
-	...toolkitsHandlers,
 	...agentsHandlers,
 	// Credentials registers before Discover so its guided-picker `/catalog`
 	// handler (which falls through when its store is empty) gets a chance to
-	// respond before Discover's static `/catalog` fixtures. Only `/catalog`
-	// ordering is load-bearing — Discover defines no `/apis` handler, so the
-	// `/apis` fallback comes from `dashboardHandlers` further down regardless.
+	// respond before Discover's static `/catalog` fixtures. Its `/apis` handler falls
+	// through the same way, so `GET /apis` is answered by the workspace registry
+	// below — the one fixture whose list agrees with the endpoints behind it.
 	...credentialsHandlers,
 	...discoverHandlers,
-	...dashboardHandlers,
 	...workspaceHandlers,
 	...railEventsHandlers,
+	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
+	// including the DCR approval queue.
+	...settingsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
-	// + SSE, /audit). Several of these paths are ALSO mocked by the dashboard
-	// and the ambient Agent Rail for their own shell widgets; those modules
+	// + SSE, /audit). Several of these paths are ALSO mocked by the agents
+	// module and the ambient Activity rail for their own widgets; those
 	// register earlier, so in the running app their lighter fixtures answer
 	// first. Monitor's own tests can't rely on global ordering, so they install
 	// `monitorHandlers` at runtime via `worker.use(...)` (which takes
@@ -191,6 +231,6 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
-		...toolkitsE2eHooks,
+		...agentsE2eHooks,
 	};
 }

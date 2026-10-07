@@ -148,9 +148,8 @@ async def test_list_all_with_filters(admin_db: DatabaseSession, clean_events: No
 async def test_list_after_cursor(admin_db: DatabaseSession, clean_events: None) -> None:
     """The stream's paging query returns strictly-after rows in cursor order.
 
-    Replaces the old ``list_since`` test — that strict ``created_at >`` method
-    was removed with the overlap-window stream fix (its exclusive semantics
-    were the root of the lost-event race; keeping it invited re-adoption).
+    A strict ``created_at >`` repository method is deliberately absent: its
+    exclusive semantics were the root of the lost-event race.
     """
     async with admin_db.session() as session:
         await EventRepository.create(

@@ -11,7 +11,9 @@ import pytest
 
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.services.search_service import (
+    _parse_api_identifier,
     _resolve_operation_url,
+    build_execute_target,
     compute_relevance_score,
 )
 from jentic_one.shared.pagination import (
@@ -114,3 +116,52 @@ def test_resolve_url_preserves_server_base_path() -> None:
 def test_resolve_url_falls_back_to_path_without_servers() -> None:
     op = _operation(server_url=None, path="/v4/x")
     assert _resolve_operation_url(op) == "/v4/x"
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "expected"),
+    [
+        ("GET", "https://api.example.com/v1/things", "GET:https://api.example.com/v1/things"),
+        ("post", "http://localhost:8080/x", "POST:http://localhost:8080/x"),
+        # Host-relative url (no servers, or only a relative one) — would be
+        # misread as a broker-relative METHOD:/path; the target is the id.
+        ("GET", "/pets", "op_pets"),
+        ("GET", "/api/v3/pets", "op_pets"),
+    ],
+)
+def test_build_execute_target(method: str, url: str, expected: str) -> None:
+    assert build_execute_target(method, url, "op_pets") == expected
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        # Canonical slash slug — what the CLI documents and sends (#1080).
+        ("github-com/api-github-com/1.1.4", ("github-com", "api-github-com", "1.1.4")),
+        ("github-com/api-github-com", ("github-com", "api-github-com", None)),
+        ("github-com", ("github-com", None, None)),
+        # Legacy colon form stays supported.
+        ("stripe:payments:2023-10-16", ("stripe", "payments", "2023-10-16")),
+        ("stripe:payments", ("stripe", "payments", None)),
+        # First separator wins, so a verbatim version keeps the other separator:
+        # colon form with a slash-bearing version, and slash form with a
+        # colon-bearing version (versions are stored verbatim, never slugified).
+        ("vendor:name:heads/main", ("vendor", "name", "heads/main")),
+        ("vendor/name/2024-01:rc1", ("vendor", "name", "2024-01:rc1")),
+        # maxsplit: anything past the second separator belongs to the version —
+        # including further colons, which the old parser silently truncated.
+        ("vendor/name/1.0.0/extra", ("vendor", "name", "1.0.0/extra")),
+        ("a:b:c:d", ("a", "b", "c:d")),
+        # Vendor/name are slugified like ingest does, so raw spellings resolve
+        # (the CLI's own `--api stripe.com/api/v1` example is this shape).
+        ("stripe.com/api/v1", ("stripe-com", "api", "v1")),
+        ("GitHub.com/API", ("github-com", "api", None)),
+        # Empty segments degrade to an unfiltered axis, not an '' exact match;
+        # the version is trimmed but never slugified.
+        ("vendor/", ("vendor", None, None)),
+        ("vendor/name/ 1.1.4 ", ("vendor", "name", "1.1.4")),
+    ],
+)
+def test_parse_api_identifier(entry: str, expected: tuple[str, str | None, str | None]) -> None:
+    """Both the canonical slash slug and the legacy colon form parse to the same tuple."""
+    assert _parse_api_identifier(entry) == expected

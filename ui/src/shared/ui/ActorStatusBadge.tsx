@@ -1,8 +1,8 @@
 /**
- * Actor (agent / service account) lifecycle status — the SINGLE source of truth
- * for the status vocabulary and its visual mapping, shared across every module
- * that renders an actor's status (agents roster/detail, the toolkit detail
- * "Bound Agents" card, the link-agent picker, …).
+ * Actor (agent) lifecycle status — the SINGLE source of truth for the status
+ * vocabulary and its visual mapping, shared across every module that renders
+ * an actor's status (agents roster/detail, the credential "Bound Agents" card,
+ * the link-agent picker, …).
  *
  * Lives in `shared/` so sibling modules can render an actor status identically
  * without importing each other (module-boundary rule). Never re-derive
@@ -12,6 +12,8 @@
  * The values mirror the backend's `ActorStatus` enum (`shared/models/actors.py`).
  */
 import type { HTMLAttributes } from 'react';
+import { Archive, CircleCheck, Clock, PowerOff, XCircle } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Badge } from '@/shared/ui/Badge';
 import type { Variant as BadgeVariant } from '@/shared/ui/Badge';
 
@@ -46,11 +48,37 @@ export const STATUS_BADGE_VARIANT: Record<ActorStatus, BadgeVariant> = {
 
 /** Status indicator dot colour (Tailwind bg-*) per status. */
 export const STATUS_DOT: Record<ActorStatus, string> = {
-	pending: 'bg-accent-orange',
+	pending: 'bg-warning',
 	active: 'bg-success',
 	rejected: 'bg-danger',
-	disabled: 'bg-warning',
+	disabled: 'bg-caution',
 	archived: 'bg-muted-foreground/40',
+};
+
+/**
+ * The same hues in foreground form (Tailwind text-*), for surfaces that colour a
+ * `STATUS_ICON` glyph rather than a dot. Shared so they don't pick their own:
+ * `pending` and `disabled` are adjacent warm hues, easily collapsed into one.
+ */
+export const STATUS_TINT: Record<ActorStatus, string> = {
+	pending: 'text-warning',
+	active: 'text-success',
+	rejected: 'text-danger',
+	disabled: 'text-caution',
+	archived: 'text-foreground-faint',
+};
+
+/**
+ * Glyph per status, for places where a coloured dot is too little to tell the
+ * states apart — a tab in a rail, a notice's icon chip. Colour alone fails anyone
+ * who can't see it, so the shape carries the meaning.
+ */
+export const STATUS_ICON: Record<ActorStatus, LucideIcon> = {
+	pending: Clock,
+	active: CircleCheck,
+	rejected: XCircle,
+	disabled: PowerOff,
+	archived: Archive,
 };
 
 /**
@@ -62,18 +90,36 @@ export function toActorStatus(status: string): ActorStatus {
 	return (ACTOR_STATUSES as string[]).includes(status) ? (status as ActorStatus) : 'archived';
 }
 
-/** Status pill for an actor (agent / service account) using its lifecycle status. */
+/**
+ * Badge dot per status, where the variant's own dot isn't enough: `disabled`
+ * shares a warm hue with `pending`, so it draws a hollow ring (switched off,
+ * idle) against pending's filled dot (waiting on a person).
+ */
+const STATUS_BADGE_DOT: Partial<Record<ActorStatus, string>> = {
+	disabled: 'bg-transparent border border-caution',
+};
+
+/** Status pill for an actor (agent) using its lifecycle status. */
 export function ActorStatusBadge({
 	status,
+	dot,
 	className,
 	...props
 }: {
 	status: ActorStatus | string;
+	/** Lead with a status dot — for a card header, where the pill stands alone. */
+	dot?: boolean;
 	className?: string;
 } & HTMLAttributes<HTMLSpanElement>) {
 	const s = toActorStatus(status);
 	return (
-		<Badge variant={STATUS_BADGE_VARIANT[s]} className={className} {...props}>
+		<Badge
+			variant={STATUS_BADGE_VARIANT[s]}
+			dot={dot}
+			dotClassName={STATUS_BADGE_DOT[s]}
+			className={className}
+			{...props}
+		>
 			{STATUS_LABELS[s]}
 		</Badge>
 	);

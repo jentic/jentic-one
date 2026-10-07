@@ -1,4 +1,4 @@
-"""Shared egress safety: connection-time DNS-rebinding guard + pin (§08 E2).
+"""Shared egress safety: connection-time DNS-rebinding guard + pin.
 
 ``validate_upstream_url`` (the pre-request check in ``shared/url_validation``)
 resolves the host and rejects a name that resolves into a blocked range. But that
@@ -22,6 +22,7 @@ on server-initiated schedules and are equally exposed to a rebind. ``build_clien
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 
@@ -60,10 +61,11 @@ def resolve_and_validate(host: str, egress: EgressConfig | None) -> _IpAddress:
 class DnsPinningTransport(httpx.AsyncBaseTransport):
     """Wraps a transport to resolve+validate+pin the host IP per request.
 
-    An IP-literal host is passed through unchanged (nothing to rebind). For a DNS
-    name the request URL host is rewritten to the validated IP, the original host
-    is preserved as the ``Host`` header, and ``sni_hostname`` is set so TLS still
-    validates against the real certificate name.
+    An IP-literal host is validated against the policy and otherwise passed
+    through unchanged (nothing to rebind). For a DNS name the request URL host is
+    rewritten to the validated IP, the original host is preserved as the ``Host``
+    header, and ``sni_hostname`` is set so TLS still validates against the real
+    certificate name. A name that does not resolve fails closed.
     """
 
     def __init__(self, inner: httpx.AsyncBaseTransport, egress: EgressConfig | None) -> None:
@@ -73,11 +75,16 @@ class DnsPinningTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
         try:
-            ipaddress.ip_address(host)
+            literal = ipaddress.ip_address(host)
         except ValueError:
-            # A DNS name: resolve, validate (rebind guard), and pin.
-            pinned = resolve_and_validate(host, self._egress)
+            # A DNS name: resolve, validate (rebind guard), and pin. getaddrinfo
+            # blocks, so run it off the event loop.
+            pinned = await asyncio.to_thread(resolve_and_validate, host, self._egress)
             request = self._pin(request, host, pinned)
+        else:
+            # An IP literal: nothing to resolve, but still apply the policy so a
+            # caller that skipped pre-flight validation can't reach a blocked IP.
+            assert_ip_allowed(literal, self._egress, hostname=None)
         return await self._inner.handle_async_request(request)
 
     @staticmethod
@@ -107,3 +114,14 @@ def build_pinned_transport(egress: EgressConfig | None) -> httpx.AsyncBaseTransp
     if egress is None or not egress.dns_pinning_enabled:
         return None
     return DnsPinningTransport(httpx.AsyncHTTPTransport(), egress)
+
+
+def build_strict_pinned_transport() -> httpx.AsyncBaseTransport:
+    """Build a DNS-pinning transport under the strict default egress policy.
+
+    For outbound calls that have no operator-configurable egress policy (the
+    control plane's OAuth token / device-authorization / identity-probe calls):
+    every private, loopback, and non-global target is refused at connect time,
+    and a host that does not resolve fails closed.
+    """
+    return DnsPinningTransport(httpx.AsyncHTTPTransport(), None)

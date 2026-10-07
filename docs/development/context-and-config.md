@@ -1,0 +1,266 @@
+# Context and configuration
+
+How a deployment's configuration is loaded and how it reaches code: the
+`jentic_one.shared` package owns both the config model and the `Context`
+object every surface consumes.
+
+## Configuration
+
+Configuration is loaded via `load_config()` which merges two sources in priority order:
+
+1. **YAML file** — resolved as: explicit `path` argument > `JENTIC_CONFIG_FILE` env var > `./jentic-one.yaml`
+2. **Environment variables** — convention: `JENTIC__SECTION__KEY=value` (double-underscore separated, uppercased)
+
+Environment variables override file values. Types are coerced automatically by pydantic (booleans, ints, floats).
+
+The full key-by-key reference — every section, type, default, and env var — is
+generated at [docs/reference/config.md](../reference/config.md)
+(`make config-reference`, drift-guarded in CI).
+
+### Minimal config file
+
+```yaml
+databases:
+  registry:
+    name: registry_db
+  admin:
+    name: admin_db
+  control:
+    name: control_db
+```
+
+All other fields default to a local single-host shape (`localhost:5432`, pool
+sizes, etc.) — the generated [config reference](../reference/config.md) lists
+every default.
+
+### Secret handling
+
+Database passwords use `pydantic.SecretStr` — they are automatically redacted in logs, repr, and serialization. Access the raw value only via `.get_secret_value()`.
+
+## Context
+
+`Context` is the central object that holds the resolved config and manages database engines/sessions.
+
+```python
+from sqlalchemy import text
+
+from jentic_one.shared import Context, load_config
+
+config = load_config(Path("jentic-one.yaml"))
+
+async with Context(config) as ctx:
+    async with ctx.registry_db.session() as session:
+        result = await session.execute(text("SELECT 1"))
+```
+
+### Database properties
+
+- `ctx.registry_db` — SQLAlchemy session manager for the registry schema
+- `ctx.admin_db` — SQLAlchemy session manager for the admin schema
+- `ctx.control_db` — SQLAlchemy session manager for the control schema
+
+Each property returns a `DatabaseSession` instance with:
+- `.engine` — the underlying `AsyncEngine`
+- `.session_factory` — the `async_sessionmaker` bound to the engine
+- `.session()` — async context manager yielding an `AsyncSession`
+
+### Lifecycle
+
+- `await ctx.startup()` — creates engines and session factories
+- `await ctx.shutdown()` — disposes all engines gracefully
+- Or use `async with Context(config) as ctx:` which handles both
+
+## Database Layer
+
+The database layer uses **SQLAlchemy async**, with a pluggable backend per
+database: PostgreSQL via `asyncpg` or SQLite via `aiosqlite` (selected by each
+database's `backend` config key):
+
+- `RegistryBase` / `ControlBase` / `AdminBase` — per-database declarative base classes for ORM models (import from `jentic_one.shared.db`)
+- `DatabaseSession` — manages an async engine and session factory per database
+- `get_database_url(config)` — builds the async `sqlalchemy.engine.URL` for the configured backend from a `DatabaseConfig`
+
+### ORM Models
+
+Define models by subclassing the base for the target database (`RegistryBase`, `ControlBase`, or `AdminBase`):
+
+```python
+from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from jentic_one.shared.db.base import RegistryBase  # or ControlBase, AdminBase
+
+
+class MyModel(RegistryBase):
+    __tablename__ = "my_table"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+```
+
+See the ORM model definitions under `src/jentic_one/*/repos/` for full conventions and the per-database entity breakdown.
+
+## Migrations (Alembic)
+
+Alembic is configured for async multi-database migrations. Each database has its own named section.
+
+### Running migrations
+
+```bash
+uv run python -m jentic_one.migrations.run
+```
+
+This is the full runner the Helm migrate Job, compose, and the installer use:
+it upgrades every database in order and runs the cross-database upgrade steps.
+Per-database `uv run alembic -n <db> upgrade head` still works for schema-only
+work, but skips those steps — the admin service-account drop
+(`e2f3a4b5c6d7`) refuses until the runner has retired the service accounts.
+
+### Creating a new migration
+
+```bash
+uv run alembic -n <db_name> revision --autogenerate -m "description of change"
+```
+
+Autogenerate compares the target database's base metadata (e.g. `RegistryBase.metadata`) against the live schema. All ORM models must be imported before Alembic runs — place models in packages imported by the migration env.
+
+### Configuration
+
+- `alembic.ini` — multi-database config with `[registry]`, `[control]`, `[admin]` sections
+- [`src/jentic_one/migrations/env.py`](../../src/jentic_one/migrations/env.py) — shared async env that resolves the active section to the correct database URL and metadata
+- `src/jentic_one/migrations/{registry,control,admin}/versions/` — per-database migration scripts
+
+## Runtime configuration
+
+`AppConfig.runtime` holds hot-reloadable flags (debug, log_level, maintenance_mode). Use `config.runtime.reload(overrides)` to produce an updated `RuntimeConfig` from a dict of new values.
+
+## Local / remote coexistence: which backend am I talking to?
+
+A `jentic-one` install declares its own locality via `server.backend`: `local`
+for a self-hosted install on your own machine/network, or `remote` for a hosted
+install run elsewhere (e.g. Jentic Cloud). It defaults to `local`; the hosted
+platform sets `remote` in its own config. A client — the `jentic` CLI, an agent,
+or an MCP server — is pointed at *one* backend via its own configuration. When a
+local install and a remote one are both reachable it is easy for two clients to
+disagree: e.g. an MCP server still bound to a remote backend while the CLI talks
+to a fresh local install. The two backends have independent registries and
+credentials, so a tool call answered by the *other* backend looks like data loss
+("APIs disappeared", "credentials vanished", ID-format mismatches) when nothing
+was lost — the two clients are talking to different backends.
+
+### The deployment's public origin (`server.public_base_url`)
+
+Several externally-visible URLs must point at the origin clients actually use
+to reach the deployment: the OAuth connect `redirect_uri`, the OIDC issuer and
+JWT-Bearer audience, the DCR `registration_client_uri`, the SPA login
+callback, and access-request approval links. Set them all at once with a
+single knob:
+
+```yaml
+server:
+  public_base_url: "https://jentic.example.com"   # scheme + host [+ port]
+```
+
+Resolution, per URL:
+
+1. its own specific override if set (`auth.canonical_base_url`,
+   `control.access_requests.canonical_base_url`,
+   `credentials.providers.<id>.redirect_uri`), then
+2. `server.public_base_url`, then
+3. for request-scoped URLs (the OAuth connect callback, discovery issuer, SPA
+   links), the **incoming request's origin**; for request-less URLs (the
+   `id_token` issuer, JWT-Bearer assertion audience, DCR
+   `registration_client_uri`, `GET /instance`, the default SPA login
+   callback), the **serving bind** — `http://{server.host}:{server.port}`,
+   with `0.0.0.0` reported as `127.0.0.1`.
+
+So local development on any port works with **zero** configuration: change
+`server.port` and every URL follows, fixing the "connect breaks on any port
+but 8000" trap. Don't pin `public_base_url` to a loopback URL in local
+configs; set it (or an override) only when the app can't infer its public
+origin, i.e. behind a reverse proxy / ingress / port mapping.
+
+At startup, `public_url_origin_mismatch` is logged (the server still starts)
+when:
+
+- an explicitly configured per-surface override disagrees with
+  `public_base_url` (or, when unset, the serving bind); or
+- the server binds a **loopback** host and `public_base_url` or a provider
+  `redirect_uri` names a loopback origin on a *different* port — nothing can
+  forward that port to a loopback-only listener, so the URL is unreachable.
+  All-interfaces binds (containers, clusters) are exempt from this second
+  check, since a port mapping / NodePort legitimately fronts them on another
+  port.
+
+> **Behind a TLS-terminating reverse proxy**, set `public_base_url` explicitly.
+> The request-origin fallback (3) reconstructs the scheme/host from the incoming
+> request, which for a plain-HTTP hop from the proxy yields `http://…` and the
+> proxy's internal host unless forwarded headers are trusted — so a derived
+> `redirect_uri` / issuer would be wrong. `public_base_url` (or the specific
+> override) short-circuits that and is the supported way to pin the public
+> `https://` origin.
+
+> **Security — the request-origin fallback trusts the `Host` header.** The app
+> runs no `TrustedHostMiddleware`, so when a URL is derived from the request an
+> authenticated caller who controls their own `Host` header can make the
+> *authorize* URL carry a `redirect_uri` pointing at an arbitrary origin. This
+> is low-risk because it is the caller's own connect flow, and the real gate is
+> the IdP's **exact-match** on its registered redirect URIs: the callback only
+> works if it matches a URL the operator pre-registered with the IdP. That makes
+> IdP-side exact-match redirect-URI registration a **load-bearing security
+> boundary** of this design — register the exact callback URL shown by
+> `GET /credentials/providers` (`callback_url`), and pin `public_base_url` in
+> any deployment where you don't want the callback origin to follow the request.
+
+### The `GET /instance` identity probe
+
+Every `jentic-one` install exposes an unauthenticated backend-identity endpoint
+so any client can confirm which backend it reached before diagnosing missing
+data:
+
+```bash
+curl -s http://127.0.0.1:8000/instance
+```
+
+```json
+{
+  "backend": "local",
+  "canonical_base_url": "http://127.0.0.1:8000",
+  "host": "127.0.0.1:8000",
+  "instance_id": "…"
+}
+```
+
+- `backend` is the operator-declared locality from `server.backend`: `local` (the
+  default) for a self-hosted install on your own machine/network, `remote` for a
+  hosted install run elsewhere. It is a hint for humans/agents, not an
+  authorization signal.
+- `canonical_base_url` / `host` reflect the deployment's public origin —
+  `server.public_base_url` (or the advanced per-surface override
+  `auth.canonical_base_url` when set), else the serving bind (e.g.
+  `http://127.0.0.1:8000` for [`config/local.yaml`](../../config/local.yaml)).
+  A hosted platform sets its own public URL. This is the instance describing
+  *itself*, so it is the value to trust over any client-side assumption. Any
+  userinfo embedded in the configured URL is stripped before echoing.
+- `instance_id` is an opaque digest *derived from* the telemetry instance id
+  (never the id itself). It only disambiguates two installs sharing a host when
+  both have telemetry enabled — it is `null` whenever telemetry has not
+  resolved an id (e.g. telemetry disabled).
+
+To check which backend a given base URL is bound to, hit `/instance` on that
+URL. If the `backend`/`host` is not the one you expected, the client is pointed
+at the wrong backend.
+
+### Repointing an MCP server (or any client) at a local install
+
+The per-response `backend` field is stamped by the MCP server — the local
+`jentic mcp` server reads it from the `/instance` endpoint above, which is
+the `jentic-one` side of the contract. To move an MCP server (or the CLI) from a remote backend to
+a local install, update *that client's* backend base URL to your local
+`canonical_base_url` (e.g. `http://127.0.0.1:8000`) and re-check with
+`GET /instance`. For `jentic mcp` the backend comes from the context's
+environment (`base_url`/`broker_url`), so repoint the environment (or switch
+the context the MCP entry pins with `--context`). `jentic-one` never silently
+resolves to a remote backend on its own — a client only reaches a remote
+backend because it is configured to.
+

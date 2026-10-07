@@ -167,7 +167,7 @@ async def import_apis(
     # client supplied an explicit `submitted_by` override (e.g. importing on
     # behalf of someone else). The job row's `created_by` records the caller
     # either way; this default carries the same principal through the ingest
-    # pipeline onto ApiRevision.submitted_by, which was previously left null.
+    # pipeline onto ApiRevision.submitted_by.
     sources = [s.model_dump(mode="json") for s in body.sources]
     for source in sources:
         if source.get("submitted_by") is None:
@@ -516,7 +516,14 @@ async def promote_revision(
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Promote a draft revision to published, archiving the current one."""
+    """Promote a draft revision to published, archiving the current one.
+
+    If the draft declares different server hosts than the API's current (or last
+    live) revision, or serves a host over plaintext http that was https-only, and
+    the API has credentials bound to agents, the caller also needs
+    ``credentials:write``; otherwise the promote is refused with 403
+    ``host_change_requires_operator``.
+    """
     svc = RevisionService(ctx)
     view = await svc.promote(vendor, name, version, revision_id, identity=identity)
 

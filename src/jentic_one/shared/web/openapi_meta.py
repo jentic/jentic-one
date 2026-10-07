@@ -24,7 +24,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 
 from jentic_one import __version__
-from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
+from jentic_one.shared.web.endpoint_permissions import build_operation_auth_map
 from jentic_one.shared.web.openapi_responses import PROBLEM_JSON, STATUS_EXAMPLES
 
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
@@ -33,7 +33,7 @@ API_TITLE = "Jentic Control Plane API"
 
 API_SUMMARY = (
     "HTTP surface of the Jentic platform's control plane — Core / Access "
-    "(credentials, toolkits), Registry (registered APIs, operations, search), "
+    "(credentials, direct agent bindings), Registry (registered APIs, operations, search), "
     "and Admin / Audit (execution telemetry, async jobs)."
 )
 
@@ -52,6 +52,21 @@ LICENSE_INFO = {
 
 SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
 
+# The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
+# outside any deployment (API catalogues, client generators), where a relative
+# server is meaningless. It carries placeholder hosts mirroring the Broker spec;
+# the live app serves ``deployment_servers`` (its real origin, else same-origin).
+PUBLISHED_SERVERS = [
+    {
+        "url": "https://control.your-instance.example",
+        "description": "Production (placeholder — set to your deployment's Control Plane host)",
+    },
+    {
+        "url": "https://control-dev.your-instance.example",
+        "description": "Development (placeholder — set to your deployment's Control Plane host)",
+    },
+]
+
 API_DESCRIPTION = """## Overview ##
 The **Jentic Control Plane API** is the unified HTTP surface of the
 Jentic platform's control plane — every administrative and
@@ -66,8 +81,9 @@ which registered APIs*, and *with what telemetry retained*.
 
 ## Components ##
 High-level components for the control plane API.
-- **[Core / Access](#tag/Credentials)** — credentials, toolkits,
-  and PBAC grants and runtime params. Owns *who can call what, with which secret*.
+- **[Core / Access](#tag/Credentials)** — credentials, direct
+  agent↔credential bindings, and PBAC grants and runtime params. Owns *who can
+  call what, with which secret*.
 - **[Registry](#tag/APIs)** — registered APIs, immutable
   revisions, operations, search, lookup. Owns *what APIs are
   registered for this deployment and what they look like at any
@@ -85,16 +101,15 @@ High-level components for the control plane API.
 
 Today the platform ships a local username + password identity
 provider for human users, alongside agent identity (Dynamic Client
-Registration + RFC 7523 JWT-bearer assertions) and service-account
-client credentials — every authenticated operation expects
+Registration + RFC 7523 JWT-bearer assertions) — every authenticated operation expects
 `Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`
 token) except `GET /health`, `POST /auth/login`,
 `POST /users:create-admin`, and `POST /users:redeem-invite`.
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
 TTL and can be re-minted before expiry via `POST /auth/refresh`
 (sliding session, bounded by an absolute window —
-`admin.auth.session_ttl_seconds`, 12 hours by default); agents and
-service accounts obtain tokens from `POST /oauth/token` (see
+`admin.auth.session_ttl_seconds`, 12 hours by default); agents
+obtain tokens from `POST /oauth/token` (see
 `BearerAuth`). The `permissions` claim on a token is a snapshot at
 issue time; permission changes take effect at the next re-issue —
 the next refresh or re-login (≤ 1 hour with the default TTL).
@@ -171,7 +186,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   edit.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
-  from it. To walk all executions under one logical request, use
+  from it. To walk the executions you can see under one logical request, use
   `GET /executions?trace_id=…`.
 - **Event stream.** The dashboard / operator UI consumes the
   `/events` resource (paginated list + SSE stream). Some events
@@ -191,8 +206,8 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
 
   | Prefix | Resource | Notes |
   |---|---|---|
-  | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |
-  | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |
+  | `tk_` | Toolkit ID | Retired (theme-5): the toolkit surface and its tables are gone (Phase 6b). Ids still appear in historical records (execution attribution, audit). |
+  | `ck_` | Toolkit-key record | Retired (theme-5): key records are gone with the toolkit tables (Phase 6b). Ids survive only in audit history. |
   | `cred_` | Credential ID | |
   | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |
   | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |
@@ -201,10 +216,11 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `rev_` | API revision | ULID-shaped. |
   | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
-  | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |
+  | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
   | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |
-  | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |
+  | `jntc_live_` | Plaintext toolkit API key value (retired) | Never issued anymore. A value migrated before Phase 6b keeps authenticating — as its successor agent — until the deprecation window closes (no earlier than 2026-12-01); rotate holders to the successor agent's `jak_` key. |
+  | `sak_` | Plaintext service-account API key value (retired) | Retired in 0.41: refused with `401` (the detail names the retirement). Each service account was migrated to an agent; mint a `jak_` key for that agent. |
 
   Surfaces still being designed (agent identity, OAuth brokers)
   will add their own prefixes when they land.
@@ -227,81 +243,45 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
-        "name": "Toolkits",
+        "name": "Permission Rule Sets",
         "description": (
-            "Part of the **Core / Access** bounded context — a `Toolkit` is a scoped bundle "
-            "of credentials and permissions issued to an agent or service. This tag covers "
-            "**toolkit lifecycle**: list, create, read, update, delete. Sub-resources (keys, "
-            "credential bindings, per-binding permission rules) live under the sibling tags "
-            "`Toolkit Keys`, `Toolkit Credentials`, and `Toolkit Permissions`.\n\n"
-            "Two distinct values are involved: the **toolkit ID** is `tk_…` (public; appears "
-            "in URLs, logs, and `Jentic-Toolkit-Id` headers), and the **toolkit secret** is "
-            "`jntc_live_…` (private; the plaintext API key shown exactly once at toolkit "
-            "creation or when a new key is issued)."
+            "Part of the **Core / Access** bounded context — a `PermissionRuleSet` is a "
+            "named, shareable ordered rule list (first-match-wins, default-deny) that many "
+            "direct agent↔credential bindings can point at via their `rule_set_id`, so a "
+            "policy edit or `permissions:test` stays a single-place operation. A binding "
+            "with no `rule_set_id` uses its own inline rules instead. Rule sets carry "
+            "policy, not secrets; deleting one that bindings still reference is refused "
+            "(409 `rule_set_in_use`)."
         ),
     },
     {
-        "name": "Toolkit Keys",
+        "name": "Vendors",
         "description": (
-            "Sub-resource of **Toolkits** (Core / Access bounded context). A toolkit can hold "
-            "many API keys at once — different agents, machines, or environments typically "
-            "each get their own. Each key record (`ck_…`) carries a label, optional CIDR "
-            "allowlist, and a revoked flag. The plaintext value (`jntc_live_…`) is shown "
-            "exactly once at creation and never returned afterwards (only `key_preview` "
-            "exposes the last few characters).\n\n"
-            "Rotation is do-and-then-revoke: issue a fresh key, switch callers, then `DELETE` "
-            "the old key. There is no in-place rotate operation — multi-key rotation is always "
-            "do-and-then-revoke so live callers never see a window where every key is invalid."
+            "Part of the **Core / Access** bounded context — the platform-curated catalog "
+            "of verified vendors that support agent-initiated OAuth connect flows. Each "
+            "entry describes the OAuth flows available (device_authorization, "
+            "authorization_code) and the scope catalog with read/write classification. "
+            "Vendor entries are seeded from operator config, not user-managed — the API "
+            "surfaces them read-only so the SPA and agents can discover which vendors "
+            "are available and pick a flow at ``:connect`` time."
         ),
     },
     {
-        "name": "Toolkit Credentials",
+        "name": "Integrations",
         "description": (
-            "Sub-resource of **Toolkits** (Core / Access bounded context). A toolkit doesn't "
-            "own credentials directly — it **binds** to credentials that already exist in "
-            "`/credentials`. The binding is the link record that authorises the Broker to "
-            "inject a specific credential on calls made under this toolkit. The same "
-            "credential can be bound to many toolkits.\n\n"
-            "Bindings can carry initial fine-grained permission rules inline via "
-            "`ToolkitCredentialBindRequest.permissions[]`; subsequent changes go through the "
-            "`Toolkit Permissions` sub-resource."
-        ),
-    },
-    {
-        "name": "Toolkit Permissions",
-        "description": (
-            "Sub-resource of **Toolkits** (Core / Access bounded context). The fine-grained "
-            "PBAC tier — per-`(toolkit, credential)` allow / deny / require-approval rules "
-            "evaluated server-side. Rules use a priority model: `deny` > `require-approval` > "
-            "`allow` — the strictest matching rule wins. Absence of a matching rule is an "
-            "implicit deny. System rules (`_system: true`) participate in the same priority "
-            "pool as user rules.\n\n"
-            "Toolkits have no separate scope tier of their own: a toolkit API key is minted "
-            "with the fixed broker-execute scope (`capabilities:execute`), and every gated "
-            "operation is decided by these per-binding rules."
-        ),
-    },
-    {
-        "name": "Access Requests",
-        "description": (
-            "Actor-agnostic, multi-item access-request surface (Core / Access bounded "
-            "context). When an agent's brokered call is rejected by a permission rule — or "
-            "the agent needs access it doesn't yet have — the agent files an `AccessRequest` "
-            "containing one or more line items (`AccessRequestItem`). The request enters "
-            "`pending` state and surfaces an `approve_url` that the agent presents to a human "
-            "reviewer.\n\n"
-            "Reviewers `:decide` individual items (approve or deny each); filers can `:amend` "
-            "pending items (adjust rules or target) or `:withdraw` the entire request. Each "
-            "item transitions independently; the envelope status reflects the aggregate "
-            "(`pending` while any item is pending, `partially_approved` when some items are "
-            "decided but others remain, terminal once all items resolve).\n\n"
-            "Pending requests carry a TTL (default 7 days, configurable). Envelope lifecycle: "
-            "`pending → partially_approved → approved | denied | withdrawn | expired`.\n\n"
-            "**Identity scoping.** List and get operations are identity-scoped: filers see "
-            "their own requests, reviewers see their inbox, `org:admin` sees all. Non-owners "
-            "receive `404` (not `403`) to avoid leaking existence.\n\n"
-            "**Security.** Mutating operations (`POST`, `:decide`, `:amend`, `:withdraw`) "
-            "require `agents:write`; read operations require `agents:read`."
+            "Part of the **Core / Access** bounded context — agent-initiated OAuth "
+            "connect sessions. A caller (agent or UI) begins a session via "
+            "``POST /integrations:connect``, choosing a vendor and requested scope set; "
+            "the platform provisions a pending credential, initiates the vendor's OAuth "
+            "flow (device_authorization or authorization_code depending on the vendor), "
+            "and returns a session id + human-facing challenge (device user_code / "
+            "authorize_url).\n\n"
+            "The initiator polls ``GET /connect-sessions/{id}/status`` until the session "
+            "reaches ``connected`` (tokens vaulted) or a terminal failure. Sessions are "
+            "capped by a TTL; unfinished sessions can be cancelled via "
+            "``POST /connect-sessions/{id}:cancel``. The ``:confirm`` step is a UI-only "
+            "hand-off that binds any pre-declared permission rules to the resulting "
+            "credential."
         ),
     },
     {
@@ -329,6 +309,22 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "Sub-resources of an `Api` live under sibling tags: `API Operations` enumerates "
             "the operations exposed by a registered revision; `API Spec` returns the "
             "underlying OpenAPI document for tooling."
+        ),
+    },
+    {
+        "name": "Governed Hosts",
+        "description": (
+            "The caller's own governed host set — the upstream hosts reachable through its "
+            "credential bindings (admin bindings → credential scopes, suspended or inactive "
+            "included → registered APIs), deduplicated and sorted. **Always self-scoped**: "
+            "the set is derived for the authenticated identity; there is no cross-actor or "
+            "admin variant.\n\n"
+            "The response carries a content-derived SHA-256 `digest` (also emitted as a "
+            "strong `ETag`), so integrators — e.g. a native gate scoping traffic "
+            'interception per agent — poll with `If-None-Match: "<digest>"` and receive '
+            "an empty `304` until the host set actually changes. Deliberately unpaginated: "
+            "the set is bounded by the caller's own bindings and the digest covers it "
+            "atomically."
         ),
     },
     {
@@ -465,7 +461,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not "
             "stored. Records are written by the Broker; this surface is read-only. To walk the "
             "history of a single logical request that fanned out into multiple upstream calls, "
-            "list with `?trace_id={trace_id}`."
+            "list with `?trace_id={trace_id}`. An execution is visible only to the actor "
+            "that ran it, the owner of the agent that ran it, and `org:admin`; to any other "
+            "caller it is indistinguishable from a missing execution (`404`)."
         ),
     },
     {
@@ -476,7 +474,10 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "type-specific result payloads (the imported revisions for `import`, upstream "
             "response body for `execution`) live under `/jobs/{job_id}/result`. Result "
             "availability follows the organisation-level retention policy (one-shot or TTL); "
-            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`."
+            "once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. "
+            "A job is visible only to the actor that created it, the owner of the agent "
+            "that created it, and `org:admin`; to any other caller it is indistinguishable "
+            "from a missing job (`404`), including on `:cancel`."
         ),
     },
     {
@@ -488,7 +489,12 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`execution.repeated_failure`). Events reference the underlying `ExecutionRecord` "
             "or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via "
             "`GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` "
-            "filter."
+            "filter. An event is visible only to the actor it names (`actor_id`), to the "
+            "subject it is about (for example the owner of the credential or the agent "
+            "concerned), to the human owner of either when that is an agent, and to "
+            "`org:admin`; system events with no subject are visible only to `org:admin`. To "
+            "any other caller an event is indistinguishable from a missing one (`404`), "
+            "including on acknowledgement."
         ),
     },
     {
@@ -554,11 +560,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
-            "so the catalogue below covers user assignment. Toolkits have no separate scope tier "
-            "of their own: a toolkit API key is minted with the fixed broker-execute scope, and "
-            "the per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives "
-            "separately under the `Toolkit Permissions` tag."
+            "The same vocabulary is used for `User.permissions` — the coarse set embedded in "
+            "the JWT — "
+            "so the catalogue below covers user assignment. The per-binding fine-grained "
+            "`PermissionRule[]` (the inner PBAC tier) lives separately on the direct "
+            "agent↔credential bindings under the `Credentials` tag."
         ),
     },
     {
@@ -574,9 +580,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "Identity",
         "description": (
-            "Identity introspection for the calling principal (human, agent, or service "
-            "account) — `GET /me` returns the resolved subject, scopes, and permissions behind "
-            "the presented token."
+            "Identity introspection for the calling principal (human or agent) — `GET /me` "
+            "returns the resolved subject and its permissions behind the presented token."
         ),
     },
     {
@@ -584,21 +589,14 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "Agent actors — autonomous principals that call the Broker. Covers the agent "
             "lifecycle (list, read, approve / deny, enable / disable, archive) and the "
-            "toolkits bound to each agent."
-        ),
-    },
-    {
-        "name": "Service Accounts",
-        "description": (
-            "Machine principals for non-interactive integrations — lifecycle (create, list, "
-            "read, approve / deny, enable / disable, archive) mirroring the agent surface."
+            "credentials directly bound to each agent."
         ),
     },
     {
         "name": "OAuth",
         "description": (
             "OAuth 2.0 / OIDC endpoints exposed by the platform authorization server — the "
-            "authorize, token, introspection, revocation, and assertion-mint endpoints plus "
+            "authorize, token, introspection, and revocation endpoints plus "
             "the redirect callback."
         ),
     },
@@ -620,7 +618,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Actors",
         "description": (
             "Unified actor directory — a lightweight read-only view across all actor types "
-            "(users, agents, service accounts). Returns ID-to-name mappings for UI cache "
+            "(users and agents). Returns ID-to-name mappings for UI cache "
             "hydration so dashboards can display friendly names wherever an `actor_id` appears."
         ),
     },
@@ -655,6 +653,26 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "tracked follow-up."
         ),
     },
+    {
+        "name": "OAuth Clients",
+        "description": (
+            "Admin-managed registry of third-party OAuth clients (confidential, secret-bearing). "
+            "Registered clients integrate with Jentic One via the standard Authorization Code + "
+            "PKCE flow. Admins can create, list, update, rotate secrets, and disable clients. "
+            "Disabling a client immediately invalidates all tokens issued through it."
+        ),
+    },
+    {
+        "name": "MCP",
+        "description": (
+            "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio "
+            "server terminates all MCP protocol traffic locally; the control plane only "
+            "sees plain HTTP. This tag covers the small reporting surface behind it — "
+            "today, the config-registration report `jentic setup`/`jentic skill init` "
+            "send after writing an MCP server entry for a detected agent runtime, which "
+            "feeds the config-written → first-session → first-execute adoption funnel."
+        ),
+    },
 ]
 
 # Redoc tag groups (vendor extension). Tags not listed here still render; this
@@ -664,11 +682,9 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "name": "Core / Access",
         "tags": [
             "Credentials",
-            "Toolkits",
-            "Toolkit Keys",
-            "Toolkit Credentials",
-            "Toolkit Permissions",
-            "Access Requests",
+            "Permission Rule Sets",
+            "Vendors",
+            "Integrations",
         ],
     },
     {
@@ -697,6 +713,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Audit",
             "Monitoring",
             "Configuration",
+            "OAuth Clients",
         ],
     },
     {
@@ -704,7 +721,6 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
         "tags": [
             "Identity",
             "Agents",
-            "Service Accounts",
             "OAuth",
             "Agent Registration",
             "Discovery",
@@ -712,7 +728,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
     },
     {
         "name": "Operations",
-        "tags": ["System"],
+        "tags": ["System", "MCP"],
     },
 ]
 
@@ -729,14 +745,10 @@ BEARER_SECURITY_SCHEME = {
             "- **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` "
             "with a JWT assertion signed by the key registered via `POST /register` "
             "(the JWT is the *assertion*, not the resulting access token).\n"
-            "- **Service accounts** — `grant_type=client_credentials` with "
-            "`client_id` + `client_secret`.\n"
             "- **Users** — `grant_type=authorization_code` (interactive) or "
             "`grant_type=password`; refresh either with `grant_type=refresh_token`.\n\n"
-            "Service accounts can also mint short-lived, scope-narrowed task tokens "
-            "for agents via `POST /oauth/mint`.\n\n"
-            "Per-endpoint scope and actor-type requirements are not modelled in this "
-            "document (OpenAPI cannot faithfully express the OR-of-scopes / "
+            "Per-endpoint permission and actor-type requirements are not modelled in "
+            "this document (OpenAPI cannot faithfully express the OR-of-permissions / "
             "`org:admin` bypass / service-layer enforcement); see "
             "`GET /reference/endpoints.json` for the authoritative authorization "
             "reference."
@@ -768,14 +780,50 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "tokenEndpoint",
         "authorizeEndpoint",
         "registerEndpoint",
+        # Anonymous OAuth-client DCR front door: flagship MCP
+        # clients register anonymously; the boundary is admin approval +
+        # consent, not registration. Rate limited and config-gated instead.
+        "registerOauthClientEndpoint",
         # OAuth redirect callbacks (bound by a signed state param, not a session).
         "oauthCallback",
         "authorizeOauthCallback",
+        # Approval-pending status poll: anonymous by design (the polling
+        # browser has no platform token yet), bound by the signed
+        # approval-state blob minted at /authorize — not a session and not a
+        # bare client_id. Returns only the pending/approved/denied tri-state;
+        # rate limited in its own bucket instead.
+        "approvalStatusEndpoint",
+        # OAuth consent screen (presented after IdP login, before issuing the code).
+        "consentPage",
+        "consentSubmit",
+        # Inline first-agent creation on the zero-agents consent page (P4):
+        # same browser-mid-flow caller as the consent submit (no platform
+        # token yet); bound by the consent handle + a signed single-use
+        # agent-create blob, rate limited like the other consent endpoints.
+        "consentAgentCreate",
+        # Pending-agent status poll (P4 hybrid awaiting page): anonymous by
+        # design like approvalStatusEndpoint — the polling browser has no
+        # platform token — and keyed by the signed agent-status blob the
+        # consent flow minted for one specific agent, never a bare agent id.
+        # Returns only the pending/approved/denied tri-state; rate limited in
+        # the approval-status bucket instead.
+        "consentAgentStatus",
+        # Local-account login form on the /authorize flow: the caller is a
+        # browser mid-authorization with no token yet. Config-gated
+        # (auth.local_login.enabled → 404) and rate limited instead.
+        "loginPage",
+        "loginSubmit",
         # Browser-facing OAuth error page (no auth; just renders an error code).
         "errorPage",
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
+        # /mcp-scoped discovery documents: RFC 8414 for the
+        # path-scoped issuer, RFC 9728 protected-resource metadata, and its
+        # root-path alias. Unauthenticated by spec; config-gated (404) instead.
+        "mcpOauthAuthorizationServer",
+        "mcpOauthProtectedResource",
+        "mcpOauthProtectedResourceRootAlias",
         # Public IdP-login capability hint (enabled flag + provider name only;
         # no secrets). The SPA reads this pre-login to render the SSO button.
         "authIdpDescriptor",
@@ -789,7 +837,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
 #: credentials with ``401``, so the documented error responses are kept intact.
 #: Their ``security`` is dropped to ``[]`` (no platform bearer requirement); the
 #: real credential is described in the endpoint reference's ``auth_note`` (see
-#: ``NON_IDENTITY_AUTH`` in ``endpoint_scopes.py``).
+#: ``NON_IDENTITY_AUTH`` in ``endpoint_permissions.py``).
 NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # RFC 7592 registration-status poll: authenticated by the
@@ -797,6 +845,30 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
         # token. It still returns 401 on a missing/invalid/expired RAT
         # (RegistrationAccessDeniedError -> 401), so the 401 response stays.
         "pollStatusEndpoint",
+        # RFC 7009 token revocation (G11): dual-arm client authentication. The
+        # form-encoded arm authenticates by OAuth client_id lineage binding
+        # (public clients, auth method "none" — no platform bearer); the JSON
+        # arm keeps the pre-G11 platform-bearer contract and still 401s on a
+        # bad bearer, so the 401 response stays while the blanket BearerAuth
+        # requirement is dropped.
+        "revokeEndpoint",
+    }
+)
+
+
+#: Operations whose request-validation failures are reshaped at the router into
+#: their governing spec's error dialect, so the FastAPI 422 can never be
+#: returned and the auto-generated 422 response is dropped from the spec:
+#: the DCR door's RFC 7591 §3.2.2 ``400 {"error": "invalid_client_metadata"}``
+#: (``_Rfc7591Route`` in ``auth/web/routers/oauth_client_registration.py``) and
+#: the token endpoint's RFC 6749 §5.2 dialect (``_TokenRoute`` in
+#: ``auth/web/routers/oauth.py`` — body parsing runs entirely inside
+#: ``_parse_token_request``, which answers §5.2 ``invalid_request``). The
+#: route-specific error responses are documented on the route decorators.
+ROUTER_RESHAPED_422_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "registerOauthClientEndpoint",
+        "tokenEndpoint",
     }
 )
 
@@ -812,15 +884,16 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/system/version$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
-    (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),
-    (re.compile(r"^/toolkits/[^/]+/credentials/[^/]+/permissions"), "Toolkit Permissions"),
-    (re.compile(r"^/toolkits/[^/]+/credentials"), "Toolkit Credentials"),
-    (re.compile(r"^/toolkits"), "Toolkits"),
-    (re.compile(r"^/access-requests"), "Access Requests"),
+    (re.compile(r"^/permission-rule-sets"), "Permission Rule Sets"),
+    (re.compile(r"^/integrations"), "Integrations"),
+    (re.compile(r"^/connect-sessions"), "Integrations"),
+    (re.compile(r"^/vendors"), "Vendors"),
     (re.compile(r"^/apis/.+/overlays"), "Overlays"),
     (re.compile(r"^/apis/.+/operations$"), "API Operations"),
     (re.compile(r"^/apis/.+/openapi$"), "API Spec"),
     (re.compile(r"^/apis"), "APIs"),
+    # Identity-scoped host digest for integrators (#1278).
+    (re.compile(r"^/governed-hosts$"), "Governed Hosts"),
     # Catalog (Discover) — browse/preview/import + the :refresh verb. Broad
     # ^/catalog is safe: no other surface shares the prefix.
     (re.compile(r"^/catalog"), "Catalog"),
@@ -832,18 +905,24 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),
+    (re.compile(r"^/mcp"), "MCP"),
     (re.compile(r"^/permissions"), "Permissions"),
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),
     (re.compile(r"^/auth/(login|refresh)"), "Users"),
     (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
+    (re.compile(r"^/admin/oauth-clients"), "OAuth Clients"),
+    # Grant listings/revoke share the OAuth tag with the grant kill switch.
+    (re.compile(r"^/admin/oauth-grants"), "OAuth"),
+    # Anonymous DCR front door — before the broader ^/oauth rule below.
+    (re.compile(r"^/oauth-clients"), "OAuth Clients"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
-    (re.compile(r"^/service-accounts"), "Service Accounts"),
     (re.compile(r"^/oauth"), "OAuth"),
     (re.compile(r"^/authorize"), "OAuth"),
     (re.compile(r"^/error"), "OAuth"),
+    (re.compile(r"^/login$"), "OAuth"),
     (re.compile(r"^/register"), "Agent Registration"),
     (re.compile(r"^/\.well-known"), "Discovery"),
     (re.compile(r"^/me$"), "Identity"),
@@ -878,14 +957,27 @@ def generate_operation_id(route: APIRoute) -> str:
     return _camelize(route.name)
 
 
-def fastapi_metadata_kwargs() -> dict[str, Any]:
+def deployment_servers(public_base_url: str = "") -> list[dict[str, str]]:
+    """The live document's ``servers``: the deployment's public origin, else ``SERVERS``.
+
+    ``server.public_base_url`` names the origin clients reach the control
+    surfaces on, so a spec downloaded from a configured deployment stays
+    callable outside the browser. Unset, the same-origin relative server is the
+    only honest value.
+    """
+    if public_base_url:
+        return [{"url": public_base_url, "description": "This deployment"}]
+    return SERVERS
+
+
+def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     """Keyword arguments to spread into ``FastAPI(...)`` for document metadata."""
     return {
         "title": API_TITLE,
         "summary": API_SUMMARY,
         "description": API_DESCRIPTION,
         "version": API_VERSION,
-        "servers": SERVERS,
+        "servers": deployment_servers(public_base_url),
         "contact": CONTACT,
         "license_info": LICENSE_INFO,
         "openapi_tags": OPENAPI_TAGS,
@@ -916,7 +1008,7 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         content[PROBLEM_JSON] = media
 
 
-def _stamp_scope_metadata(
+def _stamp_permission_metadata(
     method: str,
     path: str,
     operation: dict[str, Any],
@@ -925,11 +1017,12 @@ def _stamp_scope_metadata(
     """Stamp the operation's ``security`` from its recovered identity dependency.
 
     The OpenAPI document models only the real authentication mechanism —
-    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation scope/actor-type join
-    is *not* expressed here: OpenAPI's ``security`` model cannot faithfully carry
-    our OR-of-scopes semantics, the ``org:admin`` superuser bypass, the
-    typical-caller hint, or the fact that many scopes are enforced in the service
-    layer rather than at the gateway. Encoding it as a fabricated OAuth2 flow
+    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation
+    permission/actor-type join is *not* expressed here: OpenAPI's ``security`` model
+    cannot faithfully carry our OR-of-permissions semantics, the ``org:admin``
+    superuser bypass, the typical-caller hint, or the fact that many permissions are
+    enforced in the service layer rather than at the gateway. Encoding it as a
+    fabricated OAuth2 flow
     would misrepresent enforcement, so that richer authorization reference lives
     in the endpoint reference (:mod:`jentic_one.shared.web.endpoint_reference`,
     served at ``GET /reference/endpoints.json``), which the CLI and docs SPA
@@ -1008,12 +1101,17 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # Authenticates by a non-bearer credential (e.g. an RFC 7592
                     # Registration-Access-Token): drop the platform BearerAuth
                     # requirement but keep the 401 it genuinely returns on a bad
-                    # credential. It never reaches the scope/authz layer, so the
+                    # credential. It never reaches the permission/authz layer, so the
                     # 403 (which only the permission gate raises) is dropped.
                     operation["security"] = []
                     operation.get("responses", {}).pop("403", None)
                 else:
-                    _stamp_scope_metadata(method, path, operation, operation_auth)
+                    _stamp_permission_metadata(method, path, operation, operation_auth)
+                if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
+                    # Validation failures are reshaped to the governing spec's
+                    # dialect at the router; the framework 422 can never be
+                    # returned.
+                    operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
 
         app.openapi_schema = schema

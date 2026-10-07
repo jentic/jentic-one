@@ -34,20 +34,29 @@ class AgentCreatePayload(BaseModel):
 
     name: str
     description: str | None = None
-    scopes: list[str] | None = None
+    permissions: list[str] | None = None
 
 
-class ToolkitBindingView(BaseModel):
-    """Read-model for a toolkit binding."""
+class CredentialBindingView(BaseModel):
+    """Read-model for a direct agent↔credential binding (theme 5 phase 1)."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     agent_id: str
-    toolkit_id: str
-    # Human-readable toolkit name resolved from the control DB (issue #686).
-    # None when the toolkit no longer exists or the control DB is unreachable.
+    credential_id: str
+    # Human-readable credential name resolved from the control DB. None when
+    # the credential no longer exists or the control DB is unreachable.
     name: str | None = None
     bound_at: datetime
-    # APIs the bound toolkit serves, derived from its credentials (control DB).
+    # Reversible per-consumer cut-off: excluded from derivation, rules kept.
+    suspended: bool = False
+    # Why the binding is suspended: None for a manual suspension,
+    # ``api_deleted`` when the API its credential serves was deleted.
+    suspended_reason: str | None = None
+    # Shared permission rule set the binding points at (control DB, Q-04).
+    # None means the binding's inline rules apply.
+    rule_set_id: str | None = None
+    # The API the bound credential serves (control DB) — the credential-side
+    # analogue of the toolkit `serves` list (issue #686).
     serves: list[ServedApiRef] = []

@@ -1,0 +1,21 @@
+{{- /*
+Named <release>-postgresql: common.db-env points every surface's
+JENTIC__DATABASES__*__HOST here when global.postgresql.enabled=true, and the
+former Bitnami subchart used the same name — do not rename.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+  selector:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}

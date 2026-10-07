@@ -1,4 +1,4 @@
-"""Agents router — lifecycle CRUD and toolkit bindings."""
+"""Agents router — lifecycle CRUD and credential bindings."""
 
 from __future__ import annotations
 
@@ -10,25 +10,26 @@ from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
-    ToolkitBindingView,
+    CredentialBindingView,
 )
 from jentic_one.auth.web.deps import get_agent_auth_service, get_agent_service
 from jentic_one.auth.web.schemas.agents import (
     AgentCreateRequest,
     AgentListResponse,
     AgentPatchRequest,
+    AgentPermissionsRequest,
+    AgentPermissionsResponse,
     AgentResponse,
-    AgentScopesRequest,
-    AgentScopesResponse,
     ApiKeyHistoryEntryResponse,
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
     ApiKeyResponse,
     ClaimRequest,
+    CredentialBindingListResponse,
+    CredentialBindingResponse,
+    CredentialBindRequest,
     DenyRequest,
-    ToolkitBindingListResponse,
-    ToolkitBindingResponse,
-    ToolkitBindRequest,
+    JwksUpdateRequest,
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
@@ -55,15 +56,6 @@ def _agent_response(view: AgentView) -> AgentResponse:
     )
 
 
-def _toolkit_response(view: ToolkitBindingView) -> ToolkitBindingResponse:
-    return ToolkitBindingResponse(
-        id=view.id,
-        agent_id=view.agent_id,
-        toolkit_id=view.toolkit_id,
-        bound_at=view.bound_at,
-    )
-
-
 @router.post("/agents", status_code=201)
 async def create_agent(
     body: AgentCreateRequest,
@@ -72,7 +64,9 @@ async def create_agent(
 ) -> AgentResponse:
     """Create a new agent manually."""
     view = await agent_svc.create(
-        AgentCreatePayload(name=body.name, description=body.description, scopes=body.scopes),
+        AgentCreatePayload(
+            name=body.name, description=body.description, permissions=body.permissions
+        ),
         owner_id=identity.sub,
         identity=identity,
     )
@@ -131,7 +125,14 @@ async def approve_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
-    """Approve a pending agent."""
+    """Approve a pending agent.
+
+    Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+    (an unclaimed self-registration) can be approved only by an ``org:admin``,
+    who becomes its owner. Any other caller gets a 404, whatever the agent's
+    status, so the response does not reveal agents outside the caller's
+    ownership.
+    """
     view = await agent_svc.approve(agent_id, identity=identity)
     return _agent_response(view)
 
@@ -154,13 +155,13 @@ async def claim_agent(
 
     Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
     only a human can own an agent. The ``require_actor_type`` gate rejects a
-    non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+    non-user actor (an agent) at the boundary with a 403;
     ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
     ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
     claiming is an onboarding step a brand-new user may hit before they have
     rotated a temporary password, so a must-change-password state must not block
-    it. The claim only sets ownership — it grants no scopes and cannot act as the
+    it. The claim only sets ownership — it grants no permissions and cannot act as the
     agent — so allowing it under an expired password is low-risk.
     """
     view = await agent_svc.claim(agent_id, token=body.token, identity=identity)
@@ -174,7 +175,12 @@ async def deny_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
-    """Deny a pending agent."""
+    """Deny a pending agent.
+
+    Same authorization as approve: the agent's owner or an ``org:admin``, and
+    only an ``org:admin`` for an agent with no owner. Any other caller gets a
+    404.
+    """
     view = await agent_svc.deny(agent_id, reason=body.reason, identity=identity)
     return _agent_response(view)
 
@@ -207,70 +213,128 @@ async def archive_agent(
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
-    """Soft-archive an agent — revokes scope grants and toolkit bindings."""
+    """Archive an agent — terminal-but-kept.
+
+    The row is retained for history, but the action is not reversible and
+    the agent's authority is swept: permission grants, credential bindings, and
+    OAuth consent grants are revoked. For the reversible kill switch use
+    ``:disable`` / ``:enable`` instead.
+    """
     await agent_svc.archive(agent_id, identity=identity)
     return Response(status_code=204)
 
 
-@router.get("/agents/{agent_id}/scopes", operation_id="getAgentScopes")
-async def get_agent_scopes(
+@router.get("/agents/{agent_id}/permissions", operation_id="getAgentPermissions")
+async def get_agent_permissions(
     agent_id: str,
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> AgentScopesResponse:
-    """List scopes granted to an agent."""
-    scopes = await agent_svc.get_scopes(agent_id, identity=identity)
-    return AgentScopesResponse(scopes=scopes)
+) -> AgentPermissionsResponse:
+    """List permissions granted to an agent."""
+    permissions = await agent_svc.get_permissions(agent_id, identity=identity)
+    return AgentPermissionsResponse(permissions=permissions)
 
 
-@router.put("/agents/{agent_id}/scopes", operation_id="replaceAgentScopes")
-async def replace_agent_scopes(
+@router.put("/agents/{agent_id}/permissions", operation_id="replaceAgentPermissions")
+async def replace_agent_permissions(
     agent_id: str,
-    body: AgentScopesRequest,
+    body: AgentPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> AgentScopesResponse:
-    """Replace all scopes for an agent."""
-    scopes = await agent_svc.replace_scopes(agent_id, body.scopes, identity=identity)
-    return AgentScopesResponse(scopes=scopes)
+) -> AgentPermissionsResponse:
+    """Replace all permissions for an agent."""
+    permissions = await agent_svc.replace_permissions(agent_id, body.permissions, identity=identity)
+    return AgentPermissionsResponse(permissions=permissions)
 
 
-@router.get("/agents/{agent_id}/toolkits", operation_id="listAgentToolkits")
-async def list_toolkits(
+def _credential_binding_response(view: CredentialBindingView) -> CredentialBindingResponse:
+    return CredentialBindingResponse(
+        id=view.id,
+        agent_id=view.agent_id,
+        credential_id=view.credential_id,
+        name=view.name,
+        bound_at=view.bound_at,
+        suspended=view.suspended,
+        suspended_reason=view.suspended_reason,
+        rule_set_id=view.rule_set_id,
+        serves=view.serves,
+    )
+
+
+@router.get("/agents/{agent_id}/credentials", operation_id="listAgentCredentials")
+async def list_credentials(
     agent_id: str,
     request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> ToolkitBindingListResponse:
-    """List toolkit bindings for an agent — requires agents:read or self."""
+) -> CredentialBindingListResponse:
+    """List direct credential bindings for an agent — requires agents:read or self."""
     view = await agent_svc.get_agent(agent_id, identity=identity)
     _check_read_access(identity, view, request)
-    bindings = await agent_svc.list_toolkits(agent_id, identity=identity)
-    return ToolkitBindingListResponse(data=[_toolkit_response(b) for b in bindings])
+    bindings = await agent_svc.list_credentials(agent_id, identity=identity)
+    return CredentialBindingListResponse(data=[_credential_binding_response(b) for b in bindings])
 
 
-@router.post("/agents/{agent_id}/toolkits", status_code=201)
-async def bind_toolkit(
+@router.post("/agents/{agent_id}/credentials", status_code=201, operation_id="bindAgentCredential")
+async def bind_credential(
     agent_id: str,
-    body: ToolkitBindRequest,
+    body: CredentialBindRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
-) -> ToolkitBindingResponse:
-    """Bind a toolkit to an agent."""
-    binding = await agent_svc.bind_toolkit(agent_id, toolkit_id=body.toolkit_id, identity=identity)
-    return _toolkit_response(binding)
+) -> CredentialBindingResponse:
+    """Directly bind a credential to an agent (theme 5 phase 1).
+
+    The caller must own the target credential (or hold ``org:admin``); a
+    credential that does not exist or that the caller does not own returns 404.
+    """
+    binding = await agent_svc.bind_credential(
+        agent_id, credential_id=body.credential_id, identity=identity
+    )
+    return _credential_binding_response(binding)
 
 
-@router.delete("/agents/{agent_id}/toolkits/{toolkit_id}", status_code=204)
-async def unbind_toolkit(
+@router.delete(
+    "/agents/{agent_id}/credentials/{credential_id}",
+    status_code=204,
+    operation_id="unbindAgentCredential",
+)
+async def unbind_credential(
     agent_id: str,
-    toolkit_id: str,
+    credential_id: str,
+    purge: bool = Query(
+        default=False,
+        description=(
+            "Default false: the binding is suspended (reversible; its permission"
+            " rules survive and :resume restores access). true deletes the"
+            " binding row outright, together with its inline permission rules."
+        ),
+    ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
-    """Unbind a toolkit from an agent."""
-    await agent_svc.unbind_toolkit(agent_id, toolkit_id=toolkit_id, identity=identity)
+    """Unbind a credential from an agent — suspend by default, purge on request."""
+    await agent_svc.unbind_credential(
+        agent_id, credential_id=credential_id, purge=purge, identity=identity
+    )
     return Response(status_code=204)
+
+
+@router.post(
+    "/agents/{agent_id}/credentials/{credential_id}:resume",
+    status_code=200,
+    operation_id="resumeAgentCredentialBinding",
+)
+async def resume_credential_binding(
+    agent_id: str,
+    credential_id: str,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> CredentialBindingResponse:
+    """Lift a suspended credential binding — the reverse of the default unbind."""
+    binding = await agent_svc.resume_credential(
+        agent_id, credential_id=credential_id, identity=identity
+    )
+    return _credential_binding_response(binding)
 
 
 @router.post("/agents/{agent_id}:generate-api-key", status_code=200)
@@ -282,6 +346,23 @@ async def generate_agent_api_key(
     """Generate a new API key for an active agent. Rotates any existing key."""
     key = await auth_svc.register_api_key(agent_id, identity=identity)
     return ApiKeyResponse(key=key)
+
+
+@router.put("/agents/{agent_id}/jwks", status_code=200)
+async def update_agent_jwks(
+    agent_id: str,
+    body: JwksUpdateRequest,
+    identity: Identity = get_current_identity(required_permissions=["agents:write"]),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Update an agent's JWKS (public keys for JWT-bearer authentication).
+
+    The JWKS must contain at least one Ed25519 public key and must not contain
+    any private key material. This enables the agent to authenticate via
+    JWT-bearer assertions signed with the corresponding private key.
+    """
+    view = await agent_svc.update_jwks(agent_id, jwks=body.jwks, identity=identity)
+    return _agent_response(view)
 
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)

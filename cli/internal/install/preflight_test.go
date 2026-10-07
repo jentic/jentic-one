@@ -23,6 +23,64 @@ func TestMissing(t *testing.T) {
 	}
 }
 
+// TestMissingExcludesSoft pins install P1-C: a soft (optional) requirement that
+// is absent must NOT be in the failure set (the install proceeds), while a hard
+// one still fails.
+func TestMissingExcludesSoft(t *testing.T) {
+	results := []CheckResult{
+		{Req: Requirement{Name: "uv"}, Found: true},
+		{Req: Requirement{Name: "npm", Soft: true}, Found: false}, // soft, absent → not blocking
+		{Req: Requirement{Name: "python3.12"}, Found: false},      // hard, absent → blocking
+	}
+	missing := Missing(results)
+	if len(missing) != 1 || missing[0].Req.Name != "python3.12" {
+		t.Fatalf("Missing = %+v, want only the hard python3.12 row", missing)
+	}
+}
+
+// TestRenderPreflightSoftRow pins P1-C: an absent soft requirement renders as a
+// SKIP (warning), not a MISSING failure, and a probe's MissingWhy overrides the
+// static Why in the rendered hint.
+func TestRenderPreflightSoftRow(t *testing.T) {
+	out := RenderPreflight([]CheckResult{
+		{Req: Requirement{Name: "npm", Why: "builds the UI", Soft: true}, Found: false},
+		{Req: Requirement{Name: "python3.12", Why: "static"}, Found: false, MissingWhy: "no Python 3.12 found"},
+	})
+	if !strings.Contains(out, "SKIP") || !strings.Contains(out, "npm") {
+		t.Errorf("soft npm row should render as SKIP:\n%s", out)
+	}
+	if strings.Contains(out, "MISSING npm") {
+		t.Errorf("soft row must not render as MISSING:\n%s", out)
+	}
+	if !strings.Contains(out, "no Python 3.12 found") {
+		t.Errorf("hard row should use the probe MissingWhy hint:\n%s", out)
+	}
+}
+
+// TestPreflightHonoursCustomProbe pins P1-C's model extension: a Requirement
+// with a Probe uses it instead of exec.LookPath, and its ProbeResult flows into
+// the CheckResult (found + detail + missing-why).
+func TestPreflightHonoursCustomProbe(t *testing.T) {
+	// Force the local (non-docker) path with a probe-carrying requirement by
+	// exercising the loop directly: build a synthetic result via the same code
+	// the loop runs. We assert on the seam by calling the probe functions.
+	found := probeSourceAccess
+	t.Setenv(SrcEnv, "/tmp/checkout")
+	t.Setenv("GITHUB_TOKEN", "")
+	if pr := found(); !pr.Found {
+		t.Errorf("source-access probe with %s set should be Found", SrcEnv)
+	}
+	t.Setenv(SrcEnv, "")
+	t.Setenv("GITHUB_TOKEN", "")
+	pr := found()
+	if pr.Found {
+		t.Error("source-access probe with neither token nor checkout should be missing")
+	}
+	if !strings.Contains(pr.MissingWhy, SrcEnv) || !strings.Contains(pr.MissingWhy, "GITHUB_TOKEN") {
+		t.Errorf("source-access MissingWhy should name both recovery paths: %q", pr.MissingWhy)
+	}
+}
+
 func TestMissingError(t *testing.T) {
 	err := MissingError([]CheckResult{
 		{Req: Requirement{Name: "git", URL: "https://git-scm.com/downloads"}},

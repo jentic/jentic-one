@@ -21,7 +21,7 @@ from jentic_one.registry.services.errors import (
     SearchUnavailableError,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import ApiRevisionState
+from jentic_one.shared.models import ApiRevisionState, slugify_api_field
 from jentic_one.shared.pagination import (
     Page,
     decode_search_cursor,
@@ -52,6 +52,7 @@ class OperationResult:
     relevance_score: float
     api: ApiRef
     inspect_link: str
+    target: str
 
 
 def compute_relevance_score(distance: float) -> float:
@@ -77,20 +78,71 @@ def _resolve_operation_url(operation: Operation) -> str:
     return merge_paths(base, operation.path)
 
 
-def _build_inspect_link(method: str, url: str) -> str:
-    """Build the canonical /inspect link in ?id=METHOD%20URL form."""
+def _is_absolute_url(url: str) -> bool:
+    return url.startswith(("http://", "https://"))
+
+
+def build_execute_target(method: str, url: str, operation_id: str) -> str:
+    """The ready-to-pass inspect/execute target for a search hit.
+
+    ``METHOD:url`` when the hit's url is absolute — the canonical target form.
+    A host-relative url (``/pets`` — the spec declares no servers, or only a
+    relative one such as ``/api/v3``) does not resolve as ``METHOD:url``
+    (clients read ``METHOD:/path`` as a broker-relative path), so such a hit's
+    target is its registry ``operation_id`` instead. That target is
+    inspect-only: with no upstream host, the broker has nothing to proxy to, so
+    execute refuses it. Computing it here keeps the rule in one place rather
+    than in every agent that joins ``method`` + ``url``.
+    """
+    if _is_absolute_url(url):
+        return f"{method.upper()}:{url}"
+    return operation_id
+
+
+def _build_inspect_link(method: str, url: str, operation_id: str) -> str:
+    """Build the canonical /inspect link for a search hit.
+
+    ``?id=METHOD%20URL`` when the url is absolute; ``?operation_id=…`` for a
+    host-relative url, which the METHOD-URL lookup can't resolve — the same
+    rule :func:`build_execute_target` applies, so the link and the ``target``
+    always agree.
+    """
+    if not _is_absolute_url(url):
+        return f"/inspect?operation_id={quote(operation_id, safe='')}"
     encoded_id = quote(f"{method.upper()} {url}", safe="")
     return f"/inspect?id={encoded_id}"
 
 
+def _parse_api_identifier(entry: str) -> tuple[str, str | None, str | None]:
+    """Parse an API filter entry into a ``(vendor, name, version)`` tuple.
+
+    Accepts the canonical ``vendor[/name[/version]]`` slug used everywhere else
+    (CLI ``--api`` flags, catalog references) as well as the
+    legacy colon-separated form (#1080). The first
+    separator present decides the form, so a slash slug whose verbatim version
+    embeds a colon still parses correctly (and vice versa).
+
+    Vendor and name are normalized with ``slugify_api_field`` — the same
+    canonicalization ingest applies before storing them — so raw spellings like
+    ``stripe.com/api`` resolve instead of 422ing on exact string comparison.
+    The version is only trimmed, never slugified (that would corrupt it, e.g.
+    ``1.1.4`` → ``1-1-4``). Empty segments (``'vendor/'``) degrade to ``None``
+    (an unfiltered axis) rather than exact-matching the empty string.
+    """
+    colon, slash = entry.find(":"), entry.find("/")
+    sep = ":" if colon != -1 and (slash == -1 or colon < slash) else "/"
+    parts = entry.split(sep, 2)
+    vendor = slugify_api_field(parts[0])
+    name = slugify_api_field(parts[1]) if len(parts) > 1 else ""
+    version = parts[2].strip() if len(parts) > 2 else ""
+    return vendor, name or None, version or None
+
+
 async def _resolve_api_filters(session: Any, apis: list[str]) -> list[uuid.UUID]:
-    """Parse colon-encoded api identifiers and resolve to api_ids."""
+    """Resolve ``vendor[/name[/version]]`` api identifiers to api_ids."""
     all_ids: list[uuid.UUID] = []
     for entry in apis:
-        parts = entry.split(":")
-        vendor = parts[0]
-        name = parts[1] if len(parts) > 1 else None
-        version = parts[2] if len(parts) > 2 else None
+        vendor, name, version = _parse_api_identifier(entry)
         resolved = await ApiRepository.resolve_ids(
             session, vendor=vendor, name=name, version=version
         )
@@ -106,10 +158,12 @@ async def _resolve_revision_pins(
     """Resolve revision_pins from api identifier -> revision_id strings to uuid mapping."""
     resolved: dict[uuid.UUID, uuid.UUID] = {}
     for api_key, rev_id_str in revision_pins.items():
-        parts = api_key.split(":")
-        if len(parts) != 3:
-            raise InvalidApiFilterError(api_key)
-        vendor, name, version = parts[0], parts[1], parts[2]
+        vendor, name, version = _parse_api_identifier(api_key)
+        if name is None or version is None:
+            raise InvalidApiFilterError(
+                api_key,
+                hint="revision_pins keys need the full 'vendor/name/version' of an imported API",
+            )
         api = await ApiRepository.get_by_identifier(session, vendor, name, version)
         if api is None:
             raise InvalidApiFilterError(api_key)
@@ -232,7 +286,8 @@ class SearchService:
                     description=op.description,
                     relevance_score=compute_relevance_score(hit.distance),
                     api=api_ref,
-                    inspect_link=_build_inspect_link(method, url),
+                    inspect_link=_build_inspect_link(method, url, hit.operation_id),
+                    target=build_execute_target(method, url, hit.operation_id),
                 )
             )
 

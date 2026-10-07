@@ -1,0 +1,791 @@
+"""Integration tests for the theme-5 Phase 6a toolkit-flattening job.
+
+Runs ``ToolkitFlatteningService`` against real control + admin databases,
+seeded with the plan's R-01 awkward shapes: the same ``(agent, credential)``
+pair reachable via two toolkits with divergent rules, same-vendor pooled
+rules whose per-pair replay differs, an inactive toolkit with bound agents,
+dangling ids on both sides of the cross-DB join, a live ``jntc_live_`` key
+row, a converted identity whose scopes exceed ``capabilities:execute``, and
+two same-named same-API credentials. The same suite runs on SQLite (via
+``JENTIC_TEST_BACKEND=sqlite``) and Postgres — the dual-dialect invariance
+check.
+
+The legacy toolkit tables were dropped at migration head (theme-5 Phase 6b),
+so the module downgrades the two drop migrations first — the exact state the
+job runs against in the field (pre-upgrade, or post-rollback before a
+re-import). All seeding is raw SQL: the ORM models are gone, which is the
+point of the job's migration-independent repository.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import AsyncGenerator, Iterator
+from typing import Any
+
+import pytest
+import structlog
+from alembic import command
+from sqlalchemy import delete, select, text
+
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
+from jentic_one.control.core.schema.toolkit_flattening_acks import ToolkitFlatteningAck
+from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
+from jentic_one.shared.config import AppConfig
+from jentic_one.shared.context import Context
+from jentic_one.shared.db.session import DatabaseSession
+from tests.integration.conftest import _alembic_config_for
+from tests.integration.service_account_schema import restore_pre_sa_drop_admin
+
+pytestmark = pytest.mark.integration
+
+#: Revisions just below the theme-5 Phase 6b drop migrations.
+_CONTROL_PRE_DROP = "f2b3c4d5e6a7"  # pragma: allowlist secret
+_ADMIN_PRE_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
+
+_OWNER = "usr_fltest_owner"
+_AGENT_A = "agnt_fltest_a"
+_AGENT_B = "agnt_fltest_b"
+_GHOST_AGENT = "agnt_fltest_ghost"
+_MIGRATED_SVA = "sva_fltest_migr"
+
+_TK_A = "tk_fltest_a"
+_TK_B = "tk_fltest_b"
+_TK_INACTIVE = "tk_fltest_inact"
+_TK_GHOST = "tk_fltest_ghost"
+
+_CRED_ONE = "cred_fltest_one"
+_CRED_TWO = "cred_fltest_two"
+_CRED_DUP1 = "cred_fltest_dup1"
+_CRED_DUP2 = "cred_fltest_dup2"
+
+_ATB_BOUND_AT = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)
+_TCB_BOUND_AT = dt.datetime(2026, 2, 1, 12, 0, tzinfo=dt.UTC)
+
+#: Every (agent, credential) pair the seed graph derives.
+_EXPECTED_PAIRS = {
+    (_AGENT_A, _CRED_ONE),  # via tk_a AND tk_b, divergent rules → conflict
+    (_AGENT_A, _CRED_TWO),  # via tk_a only, rule-less pair with pooled drift
+    (_AGENT_A, _CRED_DUP1),  # same-named same-API twins (multi-account)
+    (_AGENT_A, _CRED_DUP2),
+    (_AGENT_B, _CRED_TWO),  # via the INACTIVE toolkit — migrated + loud
+}
+
+
+@pytest.fixture(scope="module")
+def legacy_tables(integration_config: AppConfig) -> Iterator[None]:
+    """Downgrade the 6b drop migrations so the legacy tables exist, then re-drop.
+
+    This doubles as a live rollback drill: the drop migrations' ``downgrade()``
+    recreates the five tables **empty** (the documented rollback shape), and
+    the teardown re-upgrade passes the drop gates because the suite leaves the
+    tables empty again — the fresh-install path of the guard.
+    """
+    control_cfg = _alembic_config_for("control", integration_config.databases.control)
+    admin_cfg = _alembic_config_for("admin", integration_config.databases.admin)
+    command.downgrade(control_cfg, _CONTROL_PRE_DROP)
+    # The theme-8 Phase-4 drop above the 6b one is irreversible (its
+    # downgrade raises): model the pre-upgrade admin snapshot, then walk on.
+    restore_pre_sa_drop_admin(integration_config)
+    command.downgrade(admin_cfg, _ADMIN_PRE_DROP)
+    yield
+    command.upgrade(control_cfg, "head")
+    command.upgrade(admin_cfg, "head")
+
+
+@pytest.fixture()
+async def clean_tables(
+    control_db: DatabaseSession, admin_db: DatabaseSession, legacy_tables: None
+) -> AsyncGenerator[None, None]:
+    """Remove every row this module seeds or the job creates, before and after.
+
+    The job scans the whole toolkit graph and the whole binding table, so the
+    legacy control tables and ``agent_toolkit_bindings`` are wiped outright;
+    everything else is cleaned by this module's prefixes. Raw SQL throughout —
+    the legacy tables have no ORM models any more.
+    """
+
+    async def _cleanup() -> None:
+        async with control_db.session() as session:
+            await session.execute(text("DELETE FROM toolkit_permission_rules"))
+            await session.execute(text("DELETE FROM toolkit_keys"))
+            await session.execute(text("DELETE FROM toolkit_credential_bindings"))
+            await session.execute(text("DELETE FROM toolkits"))
+            await session.execute(delete(ToolkitFlatteningAck))
+            await session.execute(
+                text("DELETE FROM permission_rule_sets WHERE name LIKE 'theme5-flattening:%'")
+            )
+            await session.execute(text("DELETE FROM credentials WHERE id LIKE 'cred_fltest%'"))
+            await session.commit()
+        async with admin_db.session() as session:
+            await session.execute(text("DELETE FROM agent_toolkit_bindings"))
+            await session.execute(
+                text(
+                    "DELETE FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_fltest%'"
+                    " OR created_by = 'system:theme5-flattening'"
+                )
+            )
+            await session.execute(
+                text("DELETE FROM actor_scope_grants WHERE actor_id LIKE 'sva_fltest%'")
+            )
+            await session.execute(
+                text("DELETE FROM audit_entries WHERE actor_id = 'system:theme5-flattening'")
+            )
+            await session.execute(text("DELETE FROM service_accounts WHERE id LIKE 'sva_fltest%'"))
+            await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_fltest%'"))
+            await session.execute(text("DELETE FROM users WHERE id = :owner"), {"owner": _OWNER})
+            await session.commit()
+
+    await _cleanup()
+    yield
+    await _cleanup()
+
+
+async def _seed_graph(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
+    """Seed the full R-01 awkward-shape fixture (see module docstring).
+
+    Legacy-table writes are raw SQL with explicit ids and timestamps — the ORM
+    models are deleted and SQLite has no server-side KSUID default (the same
+    constraint the export/import tool works under).
+    """
+    sqlite = control_db.backend.dialect_name == "sqlite"
+    tcb_bound_at = (
+        _TCB_BOUND_AT.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f")
+        if sqlite
+        else _TCB_BOUND_AT
+    )
+    async with control_db.session() as session:
+        for tk_id, tk_name, active in (
+            (_TK_A, "fl-toolkit-a", True),
+            (_TK_B, "fl-toolkit-b", True),
+            (_TK_INACTIVE, "fl-toolkit-inact", False),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO toolkits (id, name, active, created_by)"
+                    " VALUES (:id, :name, :active, :owner)"
+                ),
+                {"id": tk_id, "name": tk_name, "active": active, "owner": _OWNER},
+            )
+        for cred_id, name in (
+            (_CRED_ONE, "fl-cred-one"),
+            (_CRED_TWO, "fl-cred-two"),
+            # Two same-named same-API credentials (multi-account twins).
+            (_CRED_DUP1, "fl-dup"),
+            (_CRED_DUP2, "fl-dup"),
+        ):
+            session.add(
+                Credential(
+                    id=cred_id,
+                    type="token_value",
+                    name=name,
+                    api_vendor="fltest.local",
+                    api_name="fl-api",
+                    created_by=_OWNER,
+                )
+            )
+        await session.flush()
+        for i, (toolkit_id, cred_id) in enumerate(
+            (
+                (_TK_A, _CRED_ONE),
+                (_TK_A, _CRED_TWO),
+                (_TK_B, _CRED_ONE),
+                (_TK_B, _CRED_DUP1),
+                (_TK_B, _CRED_DUP2),
+                (_TK_INACTIVE, _CRED_TWO),
+            )
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO toolkit_credential_bindings"
+                    " (id, toolkit_id, credential_id, bound_at, created_by)"
+                    " VALUES (:id, :toolkit, :credential, :bound_at, :owner)"
+                ),
+                {
+                    "id": f"tcb_fltest_{i}",
+                    "toolkit": toolkit_id,
+                    "credential": cred_id,
+                    "bound_at": tcb_bound_at,
+                    "owner": _OWNER,
+                },
+            )
+        # Divergent per-pair rules for (agent_a, cred_one)'s two paths, and
+        # the same-vendor pooled shape: (tk_a, cred_one) has rules while
+        # (tk_a, cred_two) has none, so cred_two's legacy pooled list
+        # borrowed cred_one's rules — per-pair replay differs.
+        rules = [
+            (_TK_A, _CRED_ONE, "allow", "/repos/.*", 0),
+            (_TK_A, _CRED_ONE, "deny", "/admin/.*", 1),
+            (_TK_B, _CRED_ONE, "deny", "/repos/.*", 0),
+            (_TK_INACTIVE, _CRED_TWO, "allow", "/inactive/.*", 0),
+        ]
+        for i, (toolkit_id, cred_id, effect, path, sequence) in enumerate(rules):
+            await session.execute(
+                text(
+                    "INSERT INTO toolkit_permission_rules"
+                    " (id, toolkit_id, credential_id, effect, path, match_mode,"
+                    "  is_system, sequence, created_by)"
+                    " VALUES (:id, :toolkit, :credential, :effect, :path, 'regex',"
+                    "  :is_system, :sequence, :owner)"
+                ),
+                {
+                    "id": f"tpr_fltest_{i}",
+                    "toolkit": toolkit_id,
+                    "credential": cred_id,
+                    "effect": effect,
+                    "path": path,
+                    "is_system": False,
+                    "sequence": sequence,
+                    "owner": _OWNER,
+                },
+            )
+        # A live (unrevoked, unmigrated) jntc_live_ key, and a migrated one
+        # whose successor actor carries scopes beyond capabilities:execute.
+        for key_id, hashed, preview, lookup, label, revoked, migrated in (
+            (
+                "ck_fltest_live",
+                "argon2-fltest",
+                "jntc_live_fl...",
+                "fltest-lookup-live",
+                "fl-live-key",
+                False,
+                None,
+            ),
+            (
+                "ck_fltest_migr",
+                "argon2-fltest-2",
+                "jntc_live_fm...",
+                "fltest-lookup-migr",
+                "fl-migrated-key",
+                True,
+                _MIGRATED_SVA,
+            ),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO toolkit_keys"
+                    " (id, toolkit_id, hashed_key, key_preview, lookup_hash, label,"
+                    "  revoked, migrated_actor_id, created_by)"
+                    " VALUES (:id, :toolkit, :hashed, :preview, :lookup, :label,"
+                    "  :revoked, :migrated, :owner)"
+                ),
+                {
+                    "id": key_id,
+                    "toolkit": _TK_A,
+                    "hashed": hashed,
+                    "preview": preview,
+                    "lookup": lookup,
+                    "label": label,
+                    "revoked": revoked,
+                    "migrated": migrated,
+                    "owner": _OWNER,
+                },
+            )
+        await session.commit()
+
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, email, first_name, last_name)"
+                " VALUES (:id, 'fltest-owner@test.local', 'Fl', 'Owner')"
+            ),
+            {"id": _OWNER},
+        )
+        for agent_id, name in ((_AGENT_A, "fl-agent-a"), (_AGENT_B, "fl-agent-b")):
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, name, registered_by, status)"
+                    " VALUES (:id, :name, :owner, 'approved')"
+                ),
+                {"id": agent_id, "name": name, "owner": _OWNER},
+            )
+        await session.execute(
+            text(
+                "INSERT INTO service_accounts"
+                " (id, name, description, owner_id, registered_by, status, created_by)"
+                " VALUES (:id, 'toolkit-key:ck_fltest_migr', 'fl', :owner, :owner, 'active',"
+                " :owner)"
+            ),
+            {"id": _MIGRATED_SVA, "owner": _OWNER},
+        )
+        for i, scope in enumerate(("capabilities:execute", "agents:read")):
+            await session.execute(
+                text(
+                    "INSERT INTO actor_scope_grants"
+                    " (id, actor_id, actor_type, scope, granted_by, created_by)"
+                    " VALUES (:id, :actor, 'service_account', :scope, :owner, :owner)"
+                ),
+                {"id": f"asg_fltest_{i}", "actor": _MIGRATED_SVA, "scope": scope, "owner": _OWNER},
+            )
+        bindings = [
+            ("atb_fltest_1", _AGENT_A, _TK_A),
+            ("atb_fltest_2", _AGENT_A, _TK_B),
+            ("atb_fltest_3", _AGENT_B, _TK_INACTIVE),
+            # Dangling on both axes of the cross-DB join.
+            ("atb_fltest_4", _AGENT_A, _TK_GHOST),
+            ("atb_fltest_5", _GHOST_AGENT, _TK_A),
+        ]
+        for atb_id, agent_id, toolkit_id in bindings:
+            await session.execute(
+                text(
+                    "INSERT INTO agent_toolkit_bindings"
+                    " (id, agent_id, toolkit_id, bound_at, created_by)"
+                    " VALUES (:id, :agent, :toolkit, :bound_at, :owner)"
+                ),
+                {
+                    "id": atb_id,
+                    "agent": agent_id,
+                    "toolkit": toolkit_id,
+                    "bound_at": _ATB_BOUND_AT.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f")
+                    if admin_db.backend.dialect_name == "sqlite"
+                    else _ATB_BOUND_AT,
+                    "owner": _OWNER,
+                },
+            )
+        await session.commit()
+
+
+def _by_category(findings: list[Finding]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for finding in findings:
+        grouped.setdefault(finding.category, []).append(finding.detail)
+    return grouped
+
+
+async def _direct_bindings(admin_db: DatabaseSession) -> dict[tuple[str, str], Any]:
+    async with admin_db.session() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT agent_id, credential_id, rule_set_id, bound_at, created_by, suspended"
+                    " FROM agent_credential_bindings WHERE agent_id LIKE 'agnt_fltest%'"
+                )
+            )
+        ).all()
+    return {(row.agent_id, row.credential_id): row for row in rows}
+
+
+def _as_dt(value: Any) -> dt.datetime:
+    """Normalize a raw-SQL timestamp (str on SQLite, datetime on Postgres)."""
+    parsed: dt.datetime = dt.datetime.fromisoformat(value) if isinstance(value, str) else value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
+
+
+async def test_flattening_creates_all_pairs_with_expected_semantics(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """One run migrates every reachable pair — conflicts default-deny, the
+    inactive-toolkit pair included, provenance stamped — and reports every
+    R-01 shape in its category."""
+    await _seed_graph(control_db, admin_db)
+
+    result = await ToolkitFlatteningService(integration_context).run()
+
+    assert result.pairs_total == len(_EXPECTED_PAIRS)
+    assert result.created == len(_EXPECTED_PAIRS)
+    assert result.already_present == 0
+
+    bindings = await _direct_bindings(admin_db)
+    assert set(bindings) == _EXPECTED_PAIRS
+    for row in bindings.values():
+        assert row.created_by == "system:theme5-flattening"
+        assert not row.suspended
+        # max(source rows' timestamps): the tcb stamp (2026-02) beats the atb (2026-01).
+        assert _as_dt(row.bound_at) == _TCB_BOUND_AT
+
+    # The conflicting pair and the rule-less pairs bind default-deny (no set).
+    for pair in _EXPECTED_PAIRS - {(_AGENT_B, _CRED_TWO)}:
+        assert bindings[pair].rule_set_id is None, pair
+    # The inactive-toolkit pair carries its copied rule set.
+    inactive_set_id = bindings[(_AGENT_B, _CRED_TWO)].rule_set_id
+    assert inactive_set_id is not None
+    async with control_db.session() as session:
+        # Column-scoped: the control schema here predates ``curated``.
+        rule_set_name = (
+            await session.execute(
+                select(PermissionRuleSet.name).where(PermissionRuleSet.id == inactive_set_id)
+            )
+        ).scalar_one_or_none()
+        assert rule_set_name == f"theme5-flattening:{_TK_INACTIVE}:{_CRED_TWO}"
+        copied = (
+            (
+                await session.execute(
+                    select(PermissionRuleSetRule)
+                    .where(PermissionRuleSetRule.rule_set_id == inactive_set_id)
+                    .order_by(PermissionRuleSetRule.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [(r.effect, r.path) for r in copied] == [("allow", "/inactive/.*")]
+
+    report = _by_category(result.findings)
+    assert len(report["binding_created"]) == len(_EXPECTED_PAIRS)
+
+    # Same-pair conflict: both contributing lists embedded verbatim.
+    (conflict,) = report["rule_conflict"]
+    assert (conflict["agent_id"], conflict["credential_id"]) == (_AGENT_A, _CRED_ONE)
+    assert conflict["resolution"] == "default_deny"
+    contributing = {c["toolkit_id"]: c["rules"] for c in conflict["contributing"]}
+    assert [(r["effect"], r["path"]) for r in contributing[_TK_A]] == [
+        ("allow", "/repos/.*"),
+        ("deny", "/admin/.*"),
+    ]
+    assert [(r["effect"], r["path"]) for r in contributing[_TK_B]] == [("deny", "/repos/.*")]
+
+    # Pooled-vs-per-pair drift: the rule-less same-vendor siblings that used
+    # to borrow pooled rules (cred_two via tk_a; both dup twins via tk_b).
+    drifted = {
+        (d["agent_id"], d["credential_id"], d["toolkit_id"]) for d in report["pooled_rule_drift"]
+    }
+    assert drifted == {
+        (_AGENT_A, _CRED_TWO, _TK_A),
+        (_AGENT_A, _CRED_DUP1, _TK_B),
+        (_AGENT_A, _CRED_DUP2, _TK_B),
+    }
+    for drift in report["pooled_rule_drift"]:
+        assert drift["per_pair_rules"] == []
+        assert drift["pooled_rules"], "the borrowed pooled list must be embedded"
+
+    (inactive,) = report["inactive_toolkit_binding"]
+    assert (inactive["agent_id"], inactive["toolkit_id"]) == (_AGENT_B, _TK_INACTIVE)
+
+    dangling = {(d["missing"], d["missing_id"]) for d in report["dangling_reference"]}
+    assert dangling == {("toolkit", _TK_GHOST), ("actor", _GHOST_AGENT)}
+    # Dangling rows derive no binding.
+    assert not any(agent == _GHOST_AGENT for agent, _ in bindings)
+
+    (live_key,) = report["active_toolkit_key"]
+    assert live_key["key_id"] == "ck_fltest_live"
+    assert "hashed_key" not in live_key and "lookup_hash" not in live_key
+    assert "retire-toolkit-keys" in live_key["remediation"]
+    assert "revoke the key" in live_key["remediation"]
+
+    (scopes,) = report["scope_exceeds_execute"]
+    assert scopes["actor_id"] == _MIGRATED_SVA
+    assert scopes["excess_scopes"] == ["agents:read"]
+
+    # One audit entry per derived binding, system-actor attributed.
+    async with admin_db.session() as session:
+        audit_rows = (
+            await session.execute(
+                text(
+                    "SELECT target_id, target_parent_id FROM audit_entries"
+                    " WHERE actor_id = 'system:theme5-flattening'"
+                    " AND target_type = 'credential_binding' AND action = 'grant'"
+                )
+            )
+        ).all()
+    assert len(audit_rows) == len(_EXPECTED_PAIRS)
+
+
+async def test_second_run_and_diff_only_create_nothing(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """Double-run-and-diff: a second run (and a diff-only pass) report zero
+    creations and duplicate no rows."""
+    await _seed_graph(control_db, admin_db)
+    service = ToolkitFlatteningService(integration_context)
+
+    first = await service.run()
+    second = await service.run()
+    diff = await service.run(diff_only=True)
+
+    assert first.created == len(_EXPECTED_PAIRS)
+    assert second.created == 0
+    assert second.already_present == len(_EXPECTED_PAIRS)
+    assert diff.created == 0
+    assert not any(f.category == "binding_created" for f in second.findings)
+    assert not any(f.category == "binding_would_create" for f in diff.findings)
+    assert len(await _direct_bindings(admin_db)) == len(_EXPECTED_PAIRS)
+    async with control_db.session() as session:
+        rule_sets = (
+            (
+                await session.execute(
+                    select(PermissionRuleSet.id).where(
+                        PermissionRuleSet.name.like("theme5-flattening:%")
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rule_sets) == 1  # only the inactive-toolkit pair has rules
+
+
+async def test_diff_only_previews_without_writing(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """--diff-only reports what a run WOULD create and touches neither DB."""
+    await _seed_graph(control_db, admin_db)
+
+    result = await ToolkitFlatteningService(integration_context).run(diff_only=True)
+
+    assert result.diff_only
+    assert result.created == len(_EXPECTED_PAIRS)
+    report = _by_category(result.findings)
+    assert len(report["binding_would_create"]) == len(_EXPECTED_PAIRS)
+    assert "binding_created" not in report
+    assert await _direct_bindings(admin_db) == {}
+    async with control_db.session() as session:
+        rule_sets = (
+            (
+                await session.execute(
+                    select(PermissionRuleSet.id).where(
+                        PermissionRuleSet.name.like("theme5-flattening:%")
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert rule_sets == []
+
+
+async def _ack_rows(control_db: DatabaseSession) -> list[ToolkitFlatteningAck]:
+    async with control_db.session() as session:
+        return list((await session.execute(select(ToolkitFlatteningAck))).scalars().all())
+
+
+async def _update_live_key(control_db: DatabaseSession, *, column: str, value: object) -> None:
+    """Resolve the seeded live key (revoke it, or stamp a successor actor)."""
+    async with control_db.session() as session:
+        await session.execute(
+            text(f"UPDATE toolkit_keys SET {column} = :value WHERE id = 'ck_fltest_live'"),
+            {"value": value},
+        )
+        await session.commit()
+
+
+async def test_verify_gates_acknowledgement_on_coverage(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """--verify fails (and --acknowledge is refused, writing no sentinel)
+    until the flatten has run; afterwards it passes and the acknowledgement
+    records the counts 6b will cite."""
+    await _seed_graph(control_db, admin_db)
+    service = ToolkitFlatteningService(integration_context)
+
+    before = await service.verify(acknowledge=True)
+    assert not before.passed
+    assert before.missing_pair_count == len(_EXPECTED_PAIRS)
+    assert not before.acknowledged
+    assert await _ack_rows(control_db) == []
+    missing = {
+        (d.detail["agent_id"], d.detail["credential_id"])
+        for d in before.findings
+        if d.category == "verify_missing_binding"
+    }
+    assert missing == _EXPECTED_PAIRS
+
+    await service.run()
+
+    # Full coverage, but the seeded jntc_live_ key is neither revoked nor
+    # migrated: it would stop authenticating at the drop, so verify fails
+    # closed and the acknowledgement is refused.
+    blocked = await service.verify(acknowledge=True)
+    assert not blocked.passed
+    assert blocked.missing_pair_count == 0
+    assert blocked.live_unmigrated_key_count == 1
+    assert not blocked.acknowledged
+    assert await _ack_rows(control_db) == []
+    (live,) = [f.detail for f in blocked.findings if f.category == "verify_live_toolkit_keys"]
+    assert live["key_ids"] == ["ck_fltest_live"]
+    assert "retire-toolkit-keys" in live["remediation"]
+
+    await _update_live_key(control_db, column="revoked", value=True)
+
+    after = await service.verify(acknowledge=True)
+    assert after.passed
+    assert after.live_unmigrated_key_count == 0
+    assert after.legacy_pair_count == len(_EXPECTED_PAIRS)
+    assert after.missing_pair_count == 0
+    assert after.acknowledged
+    (ack,) = await _ack_rows(control_db)
+    assert ack.legacy_pair_count == len(_EXPECTED_PAIRS)
+    assert ack.direct_binding_count >= len(_EXPECTED_PAIRS)
+    assert ack.report_finding_count == len(after.findings)
+    assert ack.tool_version
+    assert ack.created_by == "system:theme5-flattening"
+    # The drop gates' evidence: this release's verify checked the name
+    # backfill, and the digests pin exactly the legacy rows it covered.
+    assert ack.execution_names_backfilled is True
+    assert ack.control_state_digest and len(ack.control_state_digest) == 64
+    assert ack.admin_state_digest and len(ack.admin_state_digest) == 64
+    assert ack.control_state_digest != ack.admin_state_digest
+
+
+async def test_verify_passes_once_the_live_key_is_migrated(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """A key still unrevoked but migrated to a successor actor does not block:
+    it keeps authenticating via its digest after the drop."""
+    await _seed_graph(control_db, admin_db)
+    service = ToolkitFlatteningService(integration_context)
+    await service.run()
+    await _update_live_key(control_db, column="migrated_actor_id", value=_AGENT_A)
+
+    result = await service.verify(acknowledge=True)
+
+    assert result.passed
+    assert result.live_unmigrated_key_count == 0
+    assert result.acknowledged
+    assert not [f for f in result.findings if f.category == "verify_live_toolkit_keys"]
+
+
+async def test_verify_reports_rule_mismatch_without_failing(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """Per-pair rule-list divergence is a report entry, not a verify failure."""
+    await _seed_graph(control_db, admin_db)
+    service = ToolkitFlatteningService(integration_context)
+    await service.run()
+
+    # An operator empties the flattened rule set post-run.
+    async with control_db.session() as session:
+        await session.execute(
+            delete(PermissionRuleSetRule).where(
+                PermissionRuleSetRule.rule_set_id.in_(
+                    select(PermissionRuleSet.id).where(
+                        PermissionRuleSet.name.like("theme5-flattening:%")
+                    )
+                )
+            )
+        )
+        await session.commit()
+    await _update_live_key(control_db, column="revoked", value=True)
+
+    result = await service.verify()
+
+    assert result.passed
+    mismatches = [f.detail for f in result.findings if f.category == "verify_rule_mismatch"]
+    assert [(m["agent_id"], m["credential_id"]) for m in mismatches] == [(_AGENT_B, _CRED_TWO)]
+    assert [(r["effect"], r["path"]) for r in mismatches[0]["expected_rules"]] == [
+        ("allow", "/inactive/.*")
+    ]
+    assert mismatches[0]["actual_rules"] == []
+
+
+async def test_cross_owner_pair_is_bound_and_reported_for_review(
+    integration_context: Context,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_tables: None,
+) -> None:
+    """A toolkit that reached a credential the agent's owner did not create
+    still flattens to a direct binding (nothing dropped), and the job reports
+    it: a ``cross_owner_binding`` finding, a WARNING log line, and the same
+    finding on verify — informational, never a verify failure.
+
+    Ported from the (deleted) upgrade-step suite: the 6b ledger no longer
+    runs the flatten step, so the job itself is exercised here.
+    """
+    own_cred, foreign_cred, other_user = "cred_fltest_own", "cred_fltest_foreign", "usr_fl_other"
+    async with control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, active, created_by)"
+                " VALUES (:id, 'fl-toolkit-xo', :active, :owner)"
+            ),
+            {"id": _TK_A, "active": True, "owner": _OWNER},
+        )
+        for cred_id, vendor, creator in (
+            (own_cred, "fltest.local", _OWNER),
+            # Another vendor, so the pair adds no pooled-rule drift line.
+            (foreign_cred, "fltest-foreign.local", other_user),
+        ):
+            session.add(
+                Credential(
+                    id=cred_id,
+                    type="token_value",
+                    name=cred_id,
+                    api_vendor=vendor,
+                    created_by=creator,
+                )
+            )
+        await session.flush()
+        for i, (cred_id, creator) in enumerate(((own_cred, _OWNER), (foreign_cred, other_user))):
+            await session.execute(
+                text(
+                    "INSERT INTO toolkit_credential_bindings"
+                    " (id, toolkit_id, credential_id, created_by)"
+                    " VALUES (:id, :toolkit, :credential, :by)"
+                ),
+                {"id": f"tcb_fltest_xo{i}", "toolkit": _TK_A, "credential": cred_id, "by": creator},
+            )
+        await session.commit()
+    async with admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, email, first_name, last_name)"
+                " VALUES (:id, 'fltest-owner@test.local', 'Fl', 'Owner')"
+            ),
+            {"id": _OWNER},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agents (id, name, owner_id, registered_by, status)"
+                " VALUES (:id, 'fl-agent-xo', :owner, :owner, 'approved')"
+            ),
+            {"id": _AGENT_A, "owner": _OWNER},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO agent_toolkit_bindings (id, agent_id, toolkit_id, created_by)"
+                " VALUES ('atb_fltest_xo', :agent, :toolkit, :owner)"
+            ),
+            {"agent": _AGENT_A, "toolkit": _TK_A, "owner": _OWNER},
+        )
+        await session.commit()
+
+    service = ToolkitFlatteningService(integration_context)
+    with structlog.testing.capture_logs() as logs:
+        result = await service.run()
+
+    assert result.created == 2
+    assert set(await _direct_bindings(admin_db)) == {
+        (_AGENT_A, own_cred),
+        (_AGENT_A, foreign_cred),
+    }  # nothing stripped
+    cross_owner = _by_category(result.findings).get("cross_owner_binding", [])
+    assert [d["credential_id"] for d in cross_owner] == [foreign_cred]
+
+    (warning,) = [e for e in logs if e["event"] == "toolkit_flattening_cross_owner_binding"]
+    assert warning["log_level"] == "warning"
+    assert warning["agent_id"] == _AGENT_A
+    assert warning["agent_owner_id"] == _OWNER
+    assert warning["cred_id"] == foreign_cred
+    assert warning["cred_created_by"] == other_user
+
+    verify = await service.verify()
+    assert verify.passed
+    (finding,) = [f for f in verify.findings if f.category == "cross_owner_binding"]
+    assert finding.detail["credential_id"] == foreign_cred
+    assert finding.detail["credential_created_by"] == other_user
+    assert finding.detail["agent_owner_id"] == _OWNER
+    assert finding.detail["via_toolkit_ids"] == [_TK_A]

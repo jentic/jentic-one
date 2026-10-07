@@ -15,6 +15,9 @@ from jentic_one.shared.db.types import json_variant
 if TYPE_CHECKING:
     from jentic_one.control.core.schema.basic_credentials import BasicCredential
     from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
+    from jentic_one.control.core.schema.device_authorization_credentials import (
+        DeviceAuthorizationCredential,
+    )
     from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
     from jentic_one.control.core.schema.oauth_tokens import OAuthToken
     from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
@@ -56,6 +59,14 @@ class Credential(AuditableMixin, ControlBase):
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
+    # Lifecycle state — introduced by the agent-driven integration flow.
+    # `pending` = credential row created upfront by /integrations:connect,
+    # awaiting device-flow (or other) completion. `connected` = live, usable
+    # by the broker. `failed` = terminal failure of the connect session.
+    # Broker credential resolution must skip non-`connected` rows.
+    state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="connected", server_default=text("'connected'")
+    )
     server_variables: Mapped[dict[str, str] | None] = mapped_column(
         json_variant(), nullable=True, default=None
     )
@@ -91,6 +102,12 @@ class Credential(AuditableMixin, ControlBase):
         lazy="selectin",
     )
     sigv4_credential: Mapped[Sigv4Credential | None] = relationship(
+        back_populates="credential",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+    device_authorization_credential: Mapped[DeviceAuthorizationCredential | None] = relationship(
         back_populates="credential",
         cascade="all, delete-orphan",
         uselist=False,

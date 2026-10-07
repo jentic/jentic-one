@@ -7,16 +7,25 @@ from typing import Any
 
 import jwt
 
-from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth import resolve_agent_key
+from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorStatus, ActorType
 
 _INVALID = "Assertion is invalid"
+
+# Returned only after the assertion's signature has verified, so the caller has
+# proven possession of the registered private key. A distinct detail is what
+# lets the CLI's register/setup/wizard flows tell "wait for the operator to
+# approve" apart from a genuinely rejected assertion (audience/signature) —
+# with the ambiguous _INVALID for both, the approval wait aborted on first
+# contact on self-hosted backends, which mint no claim tokens by default.
+_PENDING = "Agent is not active yet (pending approval)"
 
 _DEFAULT_MAX_TTL = 300
 
@@ -61,8 +70,23 @@ class AssertionService:
         self._ctx = ctx
         self._jti_cache = _get_jti_cache(ctx.config.auth.assertion_max_ttl_seconds)
 
-    async def verify_and_exchange(self, assertion: str) -> tuple[str, str]:
-        """Verify a JWT assertion and return (access_token, refresh_token)."""
+    async def verify_and_exchange(
+        self, assertion: str, *, request_base_url: str | None = None
+    ) -> tuple[str, str, list[str]]:
+        """Verify a JWT assertion and return (access_token, refresh_token, scopes).
+
+        ``scopes`` is the agent's live ``actor_permission_grants`` set stamped on
+        the minted pair, returned so the token endpoint can report the
+        effective scope per RFC 6749 §5.1.
+
+        ``request_base_url`` is the request-scoped base URL the discovery
+        document advertises (``deployment_base_url``). Its ``/oauth/token`` is
+        accepted as an audience alongside the request-less
+        ``resolved_auth_base_url`` one, so a zero-config deployment reached on
+        an origin other than its bind (port mapping, LAN address) accepts the
+        ``token_endpoint`` it advertised. With a public base URL configured
+        both resolve to the same value.
+        """
         try:
             unverified_header = jwt.get_unverified_header(assertion)
         except jwt.exceptions.DecodeError:
@@ -89,7 +113,7 @@ class AssertionService:
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.get_by_id_for_update(session, issuer)
 
-            if agent is None or agent.status != ActorStatus.ACTIVE or not agent.jwks:
+            if agent is None or not agent.jwks:
                 raise InvalidGrantError(_INVALID)
 
             public_key = resolve_agent_key(agent.jwks, unverified_header.get("kid"))
@@ -101,7 +125,7 @@ class AssertionService:
                     assertion,
                     public_key,
                     algorithms=["EdDSA"],
-                    audience=self._expected_audience,
+                    audience=self._expected_audiences(request_base_url),
                     options={"require": ["exp", "iss", "aud", "jti"]},
                 )
             except jwt.exceptions.InvalidTokenError:
@@ -109,14 +133,35 @@ class AssertionService:
 
             self._validate_timing(payload)
 
+            # Status gate AFTER signature verification, deliberately:
+            # 1. The distinct PENDING detail is only revealed to a caller who
+            #    holds the registered private key, so it leaks nothing an
+            #    unauthenticated prober could use (a bad signature still gets
+            #    the generic _INVALID regardless of status).
+            # 2. It is what makes the CLI's approval wait possible on backends
+            #    without a claim-token minter: register/setup/wizard poll the
+            #    token exchange until the operator approves, and need pending
+            #    to be distinguishable from a hard assertion failure.
+            # Other non-active statuses (rejected/disabled/archived) stay
+            # deliberately generic: they are terminal, not waitable, and get
+            # no dedicated probe signal.
+            #
+            # Checked BEFORE the jti replay cache so approval polling (a fresh
+            # jti per attempt) never populates the cache for exchanges that
+            # cannot succeed.
+            if agent.status == ActorStatus.PENDING:
+                raise InvalidGrantError(_PENDING)
+            if agent.status != ActorStatus.ACTIVE:
+                raise InvalidGrantError(_INVALID)
+
             jti = payload.get("jti")
             if not jti or not self._jti_cache.check_and_insert(jti):
                 raise InvalidGrantError(_INVALID)
 
-            grants = await ActorScopeGrantRepository.list_for_actor(
+            grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent.id, actor_type=ActorType.AGENT
             )
-            scopes = [g.scope for g in grants]
+            scopes = [g.permission for g in grants]
 
             await record_audit(
                 session,
@@ -134,14 +179,15 @@ class AssertionService:
         token_svc = TokenService(self._ctx)
         access_token, refresh_token = await token_svc.issue_pair(agent.id, ActorType.AGENT, scopes)
 
-        return access_token, refresh_token
+        return access_token, refresh_token, scopes
 
-    @property
-    def _expected_audience(self) -> str:
-        # Normalized like deployment_base_url so a trailing slash in the
-        # configured canonical_base_url can't break assertion validation.
-        base = self._ctx.config.auth.canonical_base_url.rstrip("/")
-        return f"{base}/oauth/token"
+    def _expected_audiences(self, request_base_url: str | None) -> list[str]:
+        # Normalized like deployment_base_url so a trailing slash in a
+        # configured base URL can't break assertion validation.
+        bases = [resolved_auth_base_url(self._ctx.config).rstrip("/")]
+        if request_base_url and request_base_url.rstrip("/") not in bases:
+            bases.append(request_base_url.rstrip("/"))
+        return [f"{base}/oauth/token" for base in bases]
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:
         now = time.time()

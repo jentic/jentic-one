@@ -1,19 +1,23 @@
 /**
  * OverviewStrip — the top "overview" ribbon on the API detail surface.
  *
- * Faithful to jentic-mini's `OverviewStrip`: a bordered, muted strip with an
+ * A tonal strip with an
  * optional server-URL header followed by a single flex-wrap row of labelled
  * stats (icon + UPPERCASE label + value) and a right-aligned "Imported X ago".
- * Adapted to jentic-one's revision model — credentials / toolkits / workflows
+ * Scoped to jentic-one's revision model — credentials / agents
  * live in other modules, so the stats here are the API-owned facts: operations,
  * revisions, security schemes, and live-revision state.
  */
 import { useState } from 'react';
 import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
-import { Badge, Button } from '@/shared/ui';
-import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
-import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
+import { Badge, Button, ConfirmDialog } from '@/shared/ui';
+import {
+	useApiAuthRequirement,
+	useReimportFromCatalog,
+	useSnoozeCatalogUpdate,
+} from '@/modules/workspace/api';
 import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
+import { schemeTypeLabel } from '@/shared/credentials/lib/schemes';
 
 function relativeTime(iso: string): string | null {
 	const ts = Date.parse(iso);
@@ -43,7 +47,7 @@ function MetaItem({
 }) {
 	return (
 		<span className="inline-flex items-baseline gap-2">
-			<span className="text-muted-foreground/70 inline-flex items-center gap-1.5 self-center">
+			<span className="text-muted-foreground inline-flex items-center gap-1.5 self-center">
 				{icon}
 				<span className="text-[10px] tracking-wider uppercase">{label}</span>
 			</span>
@@ -58,6 +62,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	const key: ApiKey = api.api;
 	const { reimport, isReimporting } = useReimportFromCatalog(key);
 	const { snooze, isSnoozing } = useSnoozeCatalogUpdate(key);
+	const auth = useApiAuthRequirement(api);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	// Re-import adopts the upstream spec. For a catalog-origin API it's a plain
@@ -81,20 +86,17 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	};
 
 	return (
-		<section
-			className="border-border/60 bg-muted/20 rounded-xl border"
-			data-testid="workspace-overview-strip"
-		>
+		<section className="bg-surface-1 rounded-lg" data-testid="workspace-overview-strip">
 			{api.updateAvailable ? (
 				<div
-					className="border-border/30 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+					className="border-hairline flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
 					data-testid="workspace-update-available"
 				>
 					<div className="flex items-center gap-2">
 						<Badge variant="warning" dot>
 							Update available
 						</Badge>
-						<span className="text-muted-foreground text-xs">
+						<span className="text-foreground-sub text-xs">
 							The upstream spec has changed since this API was imported.
 						</span>
 					</div>
@@ -123,7 +125,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				</div>
 			) : null}
 			{api.api.host ? (
-				<div className="border-border/30 border-b px-4 py-3">
+				<div className="border-hairline border-b px-4 py-3">
 					<p className="text-muted-foreground mb-1.5 text-[11px] font-medium tracking-wide uppercase">
 						Host
 					</p>
@@ -146,7 +148,21 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				<MetaItem
 					icon={<ShieldCheck size={13} aria-hidden="true" />}
 					label="Security"
-					value={api.securitySchemes.length > 0 ? api.securitySchemes.join(', ') : 'None'}
+					// A draft declares no schemes until a revision is promoted, so an
+					// empty list there means "not known yet", not "none". Known
+					// schemes read as friendly names ("Bearer Token"), not raw ids,
+					// marked optional when no operation requires one (the hub's
+					// reading). An empty live list says what the spec declares —
+					// "None declared" — rather than ruling out a credential.
+					value={
+						api.securitySchemes.length > 0
+							? `${api.securitySchemes.map(schemeTypeLabel).join(', ')}${
+									auth.requirement === 'optional' ? ' (optional)' : ''
+								}`
+							: hasLive
+								? 'None declared'
+								: 'Known once live'
+					}
 				/>
 				<MetaItem
 					icon={<Activity size={13} aria-hidden="true" />}
@@ -161,7 +177,7 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 				) : null}
 			</div>
 			{api.description ? (
-				<div className="border-border/30 border-t px-4 py-3">
+				<div className="border-hairline border-t px-4 py-3">
 					<p className="text-muted-foreground text-sm">{api.description}</p>
 				</div>
 			) : null}

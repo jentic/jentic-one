@@ -16,6 +16,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from alembic.script import ScriptDirectory
 
 from jentic_one.migrations import run as run_mod
 from jentic_one.migrations.run import (
@@ -30,17 +31,23 @@ from jentic_one.migrations.run import (
 # per-database loop is exercised by the CLI-facing --check tests below.
 _DB = "admin"
 
+# The sqlite_stack fixture (fresh per-database SQLite files via
+# JENTIC_CONFIG_FILE) lives in tests/unit/conftest.py — shared with the
+# per-migration up/down tests.
 
-@pytest.fixture
-def sqlite_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point config at fresh, empty per-database SQLite files."""
-    cfg = tmp_path / "jentic-one.yaml"
-    lines = ["databases:"]
-    for name in ("admin", "control", "registry"):
-        lines += [f"  {name}:", "    backend: sqlite", f"    path: {tmp_path / f'{name}.db'}"]
-    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    monkeypatch.setenv("JENTIC_CONFIG_FILE", str(cfg))
-    return tmp_path
+
+def _upgrade_to_one_behind_head(db_name: str) -> None:
+    """Leave ``db_name`` one revision behind head without downgrading.
+
+    Upgrading to the head's parent rather than stepping back keeps these
+    tests independent of whether the newest revision is reversible (admin's
+    theme-8 Phase-4 drop, for one, is not).
+    """
+    script = ScriptDirectory.from_config(run_mod._build_config(db_name))
+    (head,) = script.get_heads()
+    parent = script.get_revision(head).down_revision
+    assert isinstance(parent, str), f"{db_name} head {head} must have a single parent"
+    run_mod.upgrade(db_name, parent)
 
 
 def _tables(db_path: Path) -> set[str]:
@@ -86,8 +93,7 @@ def test_status_reports_pending_when_behind_head(sqlite_stack: Path) -> None:
     This is the state where forward-only migrations would rewrite existing data,
     so it must be distinguishable from both other states.
     """
-    run_mod.upgrade(_DB)
-    run_mod.downgrade(_DB, "-1")
+    _upgrade_to_one_behind_head(_DB)
 
     state, current, heads = status(_DB)
     assert state == STATE_PENDING
@@ -131,8 +137,10 @@ def test_check_reports_pending_when_any_database_is_behind(
     sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """One lagging database is enough to make the whole stack unsafe to start."""
-    run_mod.main([])
-    run_mod.downgrade(_DB, "-1")
+    for name in run_mod._valid_dbs():
+        if name != _DB:
+            run_mod.upgrade(name)
+    _upgrade_to_one_behind_head(_DB)
     capsys.readouterr()
 
     code = run_mod.main(["--check"])
@@ -164,8 +172,10 @@ def test_check_reports_pending_when_one_database_is_behind_and_another_is_wiped(
     """
     order = list(run_mod._valid_dbs())
     behind, wiped_db = order[0], order[-1]
-    run_mod.main([])
-    run_mod.downgrade(behind, "-1")
+    for name in order:
+        if name != behind:
+            run_mod.upgrade(name)
+    _upgrade_to_one_behind_head(behind)
     (sqlite_stack / f"{wiped_db}.db").unlink()
     capsys.readouterr()
 

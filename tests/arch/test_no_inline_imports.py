@@ -32,6 +32,10 @@ ALLOWED_LAZY_IMPORTS: set[tuple[str, str]] = {
         "shared/state/factory.py",
         "jentic_one.shared.state.redis",
     ),
+    (
+        "shared/config.py",
+        "jentic_one.shared.crypto.signing",
+    ),
 }
 """(file suffix, module) pairs where lazy imports are intentionally allowed.
 

@@ -23,7 +23,7 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from jentic_one.shared.aws.sigv4 import SigV4Material
-from jentic_one.shared.schemas import APIReference
+from jentic_one.shared.schemas import APIReference, OperationInfo
 
 
 class ErrorOrigin(StrEnum):
@@ -85,7 +85,7 @@ class ExecutionContext:
 
     execution_id: str
     toolkit_id: str | None
-    operation_id: str | None
+    operation: OperationInfo | None
     api: APIReference | None
     trace_id: str
 
@@ -125,7 +125,7 @@ class UpstreamRunner(Protocol):
 
 @runtime_checkable
 class StreamingUpstreamRunner(UpstreamRunner, Protocol):
-    """An ``UpstreamRunner`` that can also stream the body without buffering (§08 E2.4).
+    """An ``UpstreamRunner`` that can also stream the body without buffering.
 
     ``stream`` is an **async context manager**: it dispatches the request, yields
     a :class:`StreamingResult` once the status/headers are in, and — critically —

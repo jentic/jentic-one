@@ -74,6 +74,31 @@ async def admin_user_id(web_context: Context) -> AsyncGenerator[str, None]:
 
 
 @pytest.fixture()
+async def managed_user_id(web_context: Context) -> AsyncGenerator[str, None]:
+    """A second, unprivileged user for tests that act on someone other than the caller."""
+    ctx = web_context
+    async with ctx.admin_db.session() as session:
+        user = await UserRepository.create(
+            session,
+            email="web-managed@test.local",
+            first_name="Web",
+            last_name="Managed",
+            invite_state=InviteState.REDEEMED,
+            created_by="usr_test",
+        )
+        await session.commit()
+    yield user.id
+
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(InviteToken).where(InviteToken.user_id == user.id))
+        await session.execute(
+            delete(UserPermissionGrant).where(UserPermissionGrant.user_id == user.id)
+        )
+        await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()
+
+
+@pytest.fixture()
 def auth_token(web_context: Context, admin_user_id: str) -> str:
     """Issue a valid JWT for the admin user."""
     config = web_context.config.admin.auth

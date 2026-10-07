@@ -1,6 +1,6 @@
 """Background scanner that drives the Flow-3 catalog update-notify sweep.
 
-Phase 2 shipped the sweep as a fire-and-forget piggyback on the lazy manifest
+The sweep also piggybacks, fire-and-forget, on the lazy manifest
 refresh (``CatalogService.trigger_update_notify_sweep``) — cheap, but its cadence is
 whatever read traffic happens to be, so a quiet install could go arbitrarily long
 without a check. This scanner gives the sweep an owned cadence: a long-lived task

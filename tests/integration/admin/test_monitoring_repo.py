@@ -215,6 +215,37 @@ async def test_grouped_top_and_trend_by_toolkit(
     assert sum(trends["tk_test000000000000000000"]) == 3
 
 
+async def test_grouped_top_and_trend_by_credential(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    """Credential grouping (theme-5 Phase 5b) mirrors the toolkit axis.
+
+    Executions key on ``credential_id`` (the direct-binding attribution
+    column, Phase 2); rows without one pool under "unknown" exactly like the
+    toolkit branch does for direct-binding rows without a ``toolkit_id``.
+    """
+    now = datetime.now(UTC)
+    for _ in range(3):
+        await _seed(admin_db, now, "completed", credential_id="cred_test0000000000000000")
+    await _seed(admin_db, now, "failed")  # no credential_id → pooled as "unknown"
+
+    async with admin_db.session() as session:
+        top = await MonitoringRepository.grouped_top(
+            session, now - timedelta(days=7), now + timedelta(minutes=1), "credential", 10
+        )
+        keys = [r.key for r in top]
+        trends = await MonitoringRepository.grouped_trend(
+            session, now - timedelta(days=7), now + timedelta(minutes=1), "credential", keys
+        )
+
+    by_key = {r.key: r for r in top}
+    assert set(by_key) == {"cred_test0000000000000000", "unknown"}
+    assert top[0].key == "cred_test0000000000000000"
+    assert top[0].total == 3
+    assert by_key["unknown"].failed == 1
+    assert sum(trends["cred_test0000000000000000"]) == 3
+
+
 async def test_grouped_top_by_agent_concat_key(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:

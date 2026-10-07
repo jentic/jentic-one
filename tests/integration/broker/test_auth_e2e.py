@@ -10,30 +10,35 @@ end-to-end through the real ``InProcessTokenResolver``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
+from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.oauth_clients import OAuthClient
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
-from jentic_one.admin.repos.actor_scope_grant_repo import ActorScopeGrantRepository
+from jentic_one.admin.repos.actor_permission_grant_repo import ActorPermissionGrantRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.shared.auth.errors import TokenValidationError
+from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
 pytestmark = pytest.mark.integration
 
 _JWT_SECRET = "integration-test-secret-key-32-bytes!!"  # pragma: allowlist secret
+_SEED_MARKER = "usr_broker_e2e_seed"
 
 
 @pytest.fixture()
@@ -42,7 +47,10 @@ async def clean_access_tokens(admin_db: DatabaseSession) -> AsyncGenerator[None,
         async with admin_db.session() as session:
             await session.execute(delete(AccessToken))
             await session.execute(delete(RefreshToken))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
+            await session.execute(delete(Agent).where(Agent.created_by == _SEED_MARKER))
+            await session.execute(delete(User).where(User.created_by == _SEED_MARKER))
+            await session.execute(delete(OAuthClient).where(OAuthClient.created_by == _SEED_MARKER))
             await session.commit()
 
     await _truncate()
@@ -58,19 +66,63 @@ def _dual(admin_db: DatabaseSession, *, with_jwt: bool = True) -> DualTokenValid
     return DualTokenValidator(opaque=opaque, jwt=jwt_validator)
 
 
-async def _seed_opaque_token(admin_db: DatabaseSession, *, plaintext: str) -> None:
+async def _seed_agent(admin_db: DatabaseSession, agent_id: str, *, status: str = "active") -> None:
+    """Seed the actor row that token resolution re-checks on every resolve (#1136)."""
+    async with admin_db.session() as session:
+        session.add(
+            Agent(
+                id=agent_id,
+                name=f"e2e-{agent_id}",
+                registered_by=_SEED_MARKER,
+                created_by=_SEED_MARKER,
+                status=status,
+            )
+        )
+        await session.commit()
+
+
+async def _set_agent_status(admin_db: DatabaseSession, agent_id: str, status: str) -> None:
+    async with admin_db.session() as session:
+        await session.execute(update(Agent).where(Agent.id == agent_id).values(status=status))
+        await session.commit()
+
+
+async def _seed_user_row(admin_db: DatabaseSession, user_id: str, *, active: bool = True) -> None:
+    async with admin_db.session() as session:
+        session.add(
+            User(
+                id=user_id,
+                email=f"{user_id}@e2e.test",
+                first_name="Broker",
+                last_name="E2E",
+                active=active,
+                created_by=_SEED_MARKER,
+            )
+        )
+        await session.commit()
+
+
+async def _seed_opaque_token(
+    admin_db: DatabaseSession,
+    *,
+    plaintext: str,
+    actor_id: str = "agnt_opaque",
+    actor_type: str = "agent",
+    oauth_client_id: str | None = None,
+) -> None:
     token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
     async with admin_db.session() as session:
         await AccessTokenRepository.create(
             session,
             token_hash=token_hash,
-            actor_id="agnt_opaque",
-            actor_type="agent",
-            scopes=[BROKER_EXECUTE_SCOPE],
+            actor_id=actor_id,
+            actor_type=actor_type,
+            scopes=[BROKER_EXECUTE_PERMISSION],
             token_family_id="fam_test",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
-            created_by="agnt_opaque",
+            created_by=actor_id,
             is_ephemeral=True,
+            oauth_client_id=oauth_client_id,
         )
         await session.commit()
 
@@ -78,12 +130,13 @@ async def _seed_opaque_token(admin_db: DatabaseSession, *, plaintext: str) -> No
 async def test_opaque_token_resolves_via_db(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
+    await _seed_agent(admin_db, "agnt_opaque")
     await _seed_opaque_token(admin_db, plaintext="at_live_opaque")
 
     resolved = await _dual(admin_db).validate("at_live_opaque")
 
     assert resolved.sub == "agnt_opaque"
-    assert BROKER_EXECUTE_SCOPE in resolved.permissions
+    assert BROKER_EXECUTE_PERMISSION in resolved.permissions
 
 
 async def test_signed_jwt_validates_without_db_lookup(
@@ -96,7 +149,7 @@ async def test_signed_jwt_validates_without_db_lookup(
             "sub": "agnt_jwt",
             "exp": exp,
             "actor_type": "agent",
-            "scopes": [BROKER_EXECUTE_SCOPE],
+            "scopes": [BROKER_EXECUTE_PERMISSION],
         },
         _JWT_SECRET,
         algorithm="HS256",
@@ -105,7 +158,7 @@ async def test_signed_jwt_validates_without_db_lookup(
     resolved = await _dual(admin_db).validate(token)
 
     assert resolved.sub == "agnt_jwt"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
 
 
 async def test_unknown_opaque_token_is_rejected(
@@ -129,7 +182,11 @@ async def test_jwt_without_actor_type_fails_closed(
 async def test_jwt_claiming_toolkit_actor_type_is_rejected(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    """A signed JWT can't mint a toolkit identity with zero DB backing (#868)."""
+    """A signed JWT can't mint a toolkit identity with zero DB backing (#868).
+
+    ``toolkit`` is retired from the actor-type enum (theme-5 Phase 4), so the
+    claim is refused as an unknown actor type — still a typed 401.
+    """
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     token = jwt.encode(
         {"sub": "tk_x", "exp": exp, "actor_type": "toolkit"},
@@ -137,7 +194,7 @@ async def test_jwt_claiming_toolkit_actor_type_is_rejected(
         algorithm="HS256",
     )
 
-    with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
+    with pytest.raises(TokenValidationError, match="jwt_actor_type_unknown"):
         await _dual(admin_db).validate(token)
 
 
@@ -175,11 +232,11 @@ async def _seed_pair_and_grants(
             created_by=actor_id,
         )
         for scope in grants:
-            await ActorScopeGrantRepository.grant(
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id=actor_id,
                 actor_type="agent",
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -191,6 +248,7 @@ async def test_long_lived_token_resolves_live_grants(
 ) -> None:
     """A long-lived agent token (is_ephemeral=False) resolves the actor's
     current grants, not the frozen snapshot — the broker sees scope edits."""
+    await _seed_agent(admin_db, "agnt_ll")
     await _seed_pair_and_grants(
         admin_db,
         plaintext="at_longlived",
@@ -211,6 +269,7 @@ async def test_ephemeral_minted_token_keeps_downscoped_snapshot(
 ) -> None:
     """An ephemeral minted token (is_ephemeral=True) must NOT be re-broadened to
     the actor's full grants — its downscoped snapshot is a security guarantee."""
+    await _seed_agent(admin_db, "agnt_eph")
     now = datetime.now(UTC)
     async with admin_db.session() as session:
         await AccessTokenRepository.create(
@@ -218,19 +277,19 @@ async def test_ephemeral_minted_token_keeps_downscoped_snapshot(
             token_hash=hashlib.sha256(b"at_minted_ephemeral").hexdigest(),
             actor_id="agnt_eph",
             actor_type="agent",
-            scopes=[BROKER_EXECUTE_SCOPE],
+            scopes=[BROKER_EXECUTE_PERMISSION],
             token_family_id="fam_eph",
             expires_at=now + timedelta(minutes=5),
             created_by="agnt_eph",
             is_ephemeral=True,
         )
         # Broader live grants exist, but the token is flagged ephemeral.
-        for scope in (BROKER_EXECUTE_SCOPE, "apis:write"):
-            await ActorScopeGrantRepository.grant(
+        for scope in (BROKER_EXECUTE_PERMISSION, "apis:write"):
+            await ActorPermissionGrantRepository.grant(
                 session,
                 actor_id="agnt_eph",
                 actor_type="agent",
-                scope=scope,
+                permission=scope,
                 granted_by="usr_owner",
                 created_by="usr_owner",
             )
@@ -239,4 +298,192 @@ async def test_ephemeral_minted_token_keeps_downscoped_snapshot(
     resolved = await _dual(admin_db).validate("at_minted_ephemeral")
 
     assert resolved.sub == "agnt_eph"
-    assert resolved.permissions == [BROKER_EXECUTE_SCOPE]
+    assert resolved.permissions == [BROKER_EXECUTE_PERMISSION]
+
+
+# --- actor-status kill switch on the execute path (#1136) ------------------
+
+
+async def test_disabled_agent_token_rejected_by_broker(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A disabled agent's unexpired, unrevoked token must not validate — the
+    broker resolver re-checks the agent row, not just revocation + expiry."""
+    await _seed_agent(admin_db, "agnt_opaque", status="disabled")
+    await _seed_opaque_token(admin_db, plaintext="at_disabled_agent")
+
+    with pytest.raises(TokenValidationError, match="token_inactive"):
+        await _dual(admin_db).validate("at_disabled_agent")
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected", "archived"])
+async def test_non_active_agent_token_rejected_by_broker(
+    admin_db: DatabaseSession, clean_access_tokens: None, status: str
+) -> None:
+    await _seed_agent(admin_db, "agnt_opaque", status=status)
+    await _seed_opaque_token(admin_db, plaintext="at_non_active_agent")
+
+    with pytest.raises(TokenValidationError):
+        await _dual(admin_db).validate("at_non_active_agent")
+
+
+async def test_token_with_missing_agent_row_rejected_by_broker(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """No agent row at all fails closed (hard-deleted actor, orphaned token)."""
+    await _seed_opaque_token(admin_db, plaintext="at_orphan_agent")
+
+    with pytest.raises(TokenValidationError):
+        await _dual(admin_db).validate("at_orphan_agent")
+
+
+@pytest.mark.parametrize("user_active,should_pass", [(True, True), (False, False)])
+async def test_user_token_follows_user_active_flag(
+    admin_db: DatabaseSession, clean_access_tokens: None, user_active: bool, should_pass: bool
+) -> None:
+    """The SQL's `user` CASE branch: the boolean `users.active` column is
+    normalised to the shared status string — dialect-sensitive, so pinned on
+    both backends via the parametrized backend fixtures."""
+    await _seed_user_row(admin_db, "usr_broker", active=user_active)
+    await _seed_opaque_token(
+        admin_db, plaintext="at_user_token", actor_id="usr_broker", actor_type="user"
+    )
+
+    if should_pass:
+        resolved = await _dual(admin_db).validate("at_user_token")
+        assert resolved.sub == "usr_broker"
+    else:
+        with pytest.raises(TokenValidationError, match="token_inactive"):
+            await _dual(admin_db).validate("at_user_token")
+
+
+async def test_residual_service_account_token_is_refused(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """The SQL's `service_account` CASE branch fails closed: a residual SA
+    session row (theme-8 Phase 4 dropped the SA tables, not the tokens) never
+    resolves to a live identity: the resolver drops the row (the actor type is
+    no longer a member of ``ActorType``) and the broker sees an unknown token."""
+    await _seed_opaque_token(
+        admin_db, plaintext="at_sa_token", actor_id="sva_broker", actor_type="service_account"
+    )
+
+    with pytest.raises(TokenValidationError, match="unknown_token"):
+        await _dual(admin_db).validate("at_sa_token")
+
+
+async def test_disable_mid_life_kills_token_after_cache_ttl(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """The issue's regression pin: disable an agent while its token is in use;
+    the broker keeps honouring the *cached* verdict only until the verdict-cache
+    TTL lapses, then rejects — disable alone kills within ~the cache TTL."""
+    await _seed_agent(admin_db, "agnt_opaque", status="active")
+    await _seed_opaque_token(admin_db, plaintext="at_kill_me")
+
+    validator = CachedTokenValidator(
+        resolver=InProcessTokenResolver(admin_db), cache_ttl_seconds=0.05
+    )
+
+    resolved = await validator.validate("at_kill_me")
+    assert resolved.sub == "agnt_opaque"
+
+    await _set_agent_status(admin_db, "agnt_opaque", "disabled")
+
+    # Within the TTL the stale cached verdict may still pass; after it lapses
+    # the resolver re-checks the actor row and the token dies.
+    await asyncio.sleep(0.06)
+    with pytest.raises(TokenValidationError, match="token_inactive"):
+        await validator.validate("at_kill_me")
+
+    # Re-enable: the same token validates again once the negative verdict ages out.
+    await _set_agent_status(admin_db, "agnt_opaque", "active")
+    await asyncio.sleep(0.06)
+    resolved = await validator.validate("at_kill_me")
+    assert resolved.sub == "agnt_opaque"
+
+
+# --- client approval gate at the broker resolver (PR #1218 MAJOR-1) ---------
+
+
+async def _seed_oauth_client_row(
+    admin_db: DatabaseSession,
+    *,
+    client_id: str,
+    approval_status: str = "approved",
+    active: bool = True,
+) -> None:
+    async with admin_db.session() as session:
+        session.add(
+            OAuthClient(
+                id=f"oac_e2e_{client_id}"[:30],
+                client_id=client_id,
+                client_secret_hash=None,
+                token_endpoint_auth_method="none",
+                name=f"e2e-{client_id}",
+                redirect_uris=["https://client.e2e.test/cb"],
+                active=active,
+                approval_status=approval_status,
+                created_by=_SEED_MARKER,
+            )
+        )
+        await session.commit()
+
+
+async def _set_oauth_client_state(
+    admin_db: DatabaseSession, client_id: str, *, approval_status: str, active: bool
+) -> None:
+    async with admin_db.session() as session:
+        await session.execute(
+            update(OAuthClient)
+            .where(OAuthClient.client_id == client_id)
+            .values(approval_status=approval_status, active=active)
+        )
+        await session.commit()
+
+
+async def test_denied_client_token_rejected_even_if_active(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A token minted while its issuing client was approved must stop resolving
+    once the row is denied — even when ``active`` is somehow force-set true
+    (the deny → PATCH-active pincer from the #1218 review). The broker's raw
+    SQL gate checks approval_status independently of active."""
+    await _seed_agent(admin_db, "agnt_opaque")
+    await _seed_oauth_client_row(admin_db, client_id="oc_e2e_app")
+    await _seed_opaque_token(admin_db, plaintext="at_client_channel", oauth_client_id="oc_e2e_app")
+
+    # Sanity: resolves while the client is approved + active.
+    resolved = await _dual(admin_db).validate("at_client_channel")
+    assert resolved.sub == "agnt_opaque"
+
+    # Deny, but leave the kill switch armed (the invariant-violating state).
+    await _set_oauth_client_state(admin_db, "oc_e2e_app", approval_status="denied", active=True)
+    with pytest.raises(TokenValidationError, match="token_inactive"):
+        await _dual(admin_db).validate("at_client_channel")
+
+
+@pytest.mark.parametrize(
+    ("approval_status", "active"),
+    [
+        ("pending", True),
+        ("pending", False),
+        ("denied", False),
+        ("approved", False),
+    ],
+)
+async def test_client_gate_matrix_rejected_by_broker(
+    admin_db: DatabaseSession,
+    clean_access_tokens: None,
+    approval_status: str,
+    active: bool,
+) -> None:
+    """Every non-(approved+active) client state fails the broker gate closed."""
+    await _seed_agent(admin_db, "agnt_opaque")
+    await _seed_oauth_client_row(
+        admin_db, client_id="oc_e2e_gated", approval_status=approval_status, active=active
+    )
+    await _seed_opaque_token(admin_db, plaintext="at_gated_channel", oauth_client_id="oc_e2e_gated")
+
+    with pytest.raises(TokenValidationError, match="token_inactive"):
+        await _dual(admin_db).validate("at_gated_channel")

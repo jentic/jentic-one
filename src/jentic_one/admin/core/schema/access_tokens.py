@@ -40,7 +40,17 @@ class AccessToken(AuditableMixin, AdminBase):
     # True for short-lived ephemeral mint tokens (issue_access_only), which carry
     # a deliberately downscoped snapshot and must NOT be re-broadened to the
     # actor's live grants at resolution time. False for long-lived access+refresh
-    # pairs, whose scopes are resolved live from actor_scope_grants.
+    # pairs, whose scopes are resolved live from actor_permission_grants.
     is_ephemeral: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
+    # Scoped to third-party delegation only: set when tokens are issued via the
+    # authorization code flow through a registered OAuth client. NULL for platform
+    # client logins (the SPA) and agent JWKS assertions.
+    # Used to invalidate tokens when an admin deactivates the issuing client.
+    oauth_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Grant-channel lineage (D4): set alongside oauth_client_id when the
+    # token was minted through a consent→agent grant. Resolvers re-check the
+    # grant row live (missing/revoked → fail closed) and intersect the verdict
+    # scopes with the grant's scopes; grant :revoke sweeps rows by this column.
+    oauth_grant_id: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)

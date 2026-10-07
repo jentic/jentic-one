@@ -27,7 +27,8 @@ a company name is given, find its public API docs by searching for `<company> AP
 - No local jentic-public-apis checkout needed — the vendor-existence check runs against GitHub
   via `gh`.
 - For the optional local-first step only: a running Jentic control plane and a registered agent
-  profile (`jentic status` shows the control plane reachable).
+  identity (`jentic doctor` confirms a resolvable identity with a usable token; `jentic api GET
+  /me` shows what you can do).
 
 ## Steps
 
@@ -94,36 +95,38 @@ Decide the layout parts (used verbatim as the repo path, deterministically):
 
 If a local jentic-one instance is running, import the spec there **before** contributing
 upstream — the user's agent can execute the API immediately instead of waiting on catalog
-review. Skip this step if `jentic status` reports the control plane unreachable.
+review. Skip this step if `jentic doctor` reports the control plane unreachable.
 
-Local import needs the `apis:write` scope, which is not granted by default — request it once:
+Local import needs the `apis:write` permission, which is not granted by default — ask your operator
+to grant it to this agent in the dashboard. Granted permissions bake into your token at mint time, so
+once they confirm run `jentic logout` (it clears only the cached token, not your identity) and the
+next call mints a fresh token carrying the permission; then continue.
 
-```
-jentic access request --scope apis:write --reason "import a locally generated spec for <vendor>" --wait
-jentic access refresh
-```
-
-There is no CLI upload command; POST the spec inline to the control plane (run
-`jentic access whoami` first so the cached token is fresh):
-
-```
-TOKEN=$(jq -r .access_token ~/.jentic/profiles/<profile>/tokens.json)
-JOB=$(curl -fsS -X POST "$BASE_URL/apis" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d "$(jq -n --rawfile spec <spec>.json \
-    '{sources:[{type:"inline",content:$spec,filename:"openapi.json"}]}')" | jq -r .job_id)
-```
-
-Poll `GET $BASE_URL/jobs/$JOB` until `completed`, read the revision id from
-`GET $BASE_URL/jobs/$JOB/result`, then promote the draft to live (vendor and name are slugified
-by ingest: `firecrawl.dev` → `firecrawl-dev`):
+Import the spec with the CLI's own upload command — it reads the local file and sends it inline
+for you (async; prints a job id). Pass `--vendor`/`--name`/`--version` explicitly so attribution
+does not depend on how ingest slugifies `info`:
 
 ```
-jentic apis promote <vendor-slug/name-slug/version> <revision_id>
+jentic apis import <spec>.json --vendor <vendor> --name <name> --version <version>
+```
+
+If you specifically want the raw POST instead, the auth-attached passthrough builds the same
+inline payload (the CLI attaches the bearer for you; V2 never exposes a token):
+
+```
+jentic api POST /apis -d "$(jq -n --rawfile spec <spec>.json \
+  '{sources:[{type:"inline",content:$spec,filename:"openapi.json"}]}')"
+```
+
+Poll `jentic api GET /jobs/<job_id>` until `completed`, read the revision id from
+`jentic api GET /jobs/<job_id>/result`, then promote the draft to live:
+
+```
+jentic apis promote <vendor/name/version> <revision_id>
 ```
 
 **Verify**: `jentic search "<something the API does>"` returns one of its operations, and a
-known-safe `jentic execute <operation_id>` succeeds (credentials permitting — see the `jentic`
+known-safe `jentic execute <METHOD:URL from the search hit>` succeeds (credentials permitting — see the `jentic`
 skill). The user is now unblocked; the remaining steps contribute the spec to the community.
 
 ### 4. Publish the spec to the reusable `import-openapi-specs` repo

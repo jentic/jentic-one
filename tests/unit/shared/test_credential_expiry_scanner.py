@@ -28,7 +28,7 @@ from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
-from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.models.events import EVENT_TYPE_SEVERITIES, EventSeverity, EventType
 
 
 def _create_tables(sync_conn: Connection, *tables: Table) -> None:
@@ -93,6 +93,7 @@ async def _add_token(
                 name=f"cred-{credential_id}",
                 api_vendor=api_vendor,
                 provider="direct_oauth2",
+                created_by="usr_cred_owner",
             )
         )
         await session.flush()
@@ -134,8 +135,16 @@ async def test_expiring_soon_emits_warning_and_stamps_marker(
     assert len(events) == 1
     assert events[0].severity == EventSeverity.WARNING.value
     assert events[0].requires_action is False
+    assert events[0].summary == "Credential 'cred-cred_soon' is expiring soon"
     assert events[0].data["credential_id"] == "cred_soon"
     assert events[0].data["api_vendor"] == "stripe"
+    # The credential owner is named so owner-scoped event reads surface it.
+    assert events[0].created_by == "usr_cred_owner"
+    # Cross-check against the documented severity matrix (issue #907).
+    assert (
+        EventSeverity(events[0].severity)
+        in EVENT_TYPE_SEVERITIES[EventType.CREDENTIAL_EXPIRING_SOON]
+    )
 
     token = await _marker(control_db, "cred_soon")
     assert token.expiring_soon_event_at is not None
@@ -156,9 +165,34 @@ async def test_expired_emits_error_and_requires_action(
     assert len(events) == 1
     assert events[0].severity == EventSeverity.ERROR.value
     assert events[0].requires_action is True
+    assert events[0].summary == "Credential 'cred-cred_dead' has expired"
+    # Cross-check against the documented severity matrix (issue #907).
+    assert EventSeverity(events[0].severity) in EVENT_TYPE_SEVERITIES[EventType.CREDENTIAL_EXPIRED]
 
     token = await _marker(control_db, "cred_dead")
     assert token.expired_event_at is not None
+
+
+async def test_summary_falls_back_to_the_id_without_a_credential_row(
+    control_db: _MemoryDb, admin_db: _MemoryDb
+) -> None:
+    """A token whose credential row is gone still emits, naming the credential by id."""
+    async with control_db.transaction() as session:
+        session.add(
+            OAuthToken(
+                id="oat_cred_orphan",
+                credential_id="cred_orphan",
+                encrypted_access_token="enc:secret-token-material",
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+                created_by="usr_test",
+            )
+        )
+
+    assert await CredentialExpiryScanner(control_db, admin_db).sweep() == 1
+
+    [event] = await _events(admin_db, EventType.CREDENTIAL_EXPIRED)
+    assert event.summary == "Credential cred_orphan has expired"
+    assert event.data["credential_id"] == "cred_orphan"
 
 
 async def test_second_sweep_is_a_noop(control_db: _MemoryDb, admin_db: _MemoryDb) -> None:

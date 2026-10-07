@@ -49,7 +49,7 @@ jentic catalog import <api_id>`,
 	},
 	{
 		title: 'Bind a credential',
-		body: 'Store a credential and bind it to a toolkit so the Broker can inject it at execution time. Secrets stay in the Control plane — they never reach the agent.',
+		body: 'Store a credential and bind it to your agent so the Broker can inject it at execution time. Secrets stay in the Control plane — they never reach the agent.',
 		code: 'jentic apis operations <vendor/name/version>',
 		prompt: true,
 	},
@@ -57,12 +57,12 @@ jentic catalog import <api_id>`,
 		title: 'Execute through the Broker',
 		body: (
 			<>
-				Send a real request through the Broker by <code>METHOD:/path</code> or
-				<code> operation_id</code>. The Broker injects your bound credential, forwards the
-				call, and records an execution.
+				Send a real request through the Broker by <code>METHOD:URL</code> (the
+				operation&apos;s full upstream URL — a search hit&apos;s <code>target</code>). The
+				Broker injects your bound credential, forwards the call, and records an execution.
 			</>
 		),
-		code: `jentic execute GET:/get --query foo=bar --json`,
+		code: `jentic execute GET:https://httpbin.org/get --query foo=bar --json`,
 		prompt: true,
 	},
 ];

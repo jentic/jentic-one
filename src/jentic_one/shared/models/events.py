@@ -1,6 +1,9 @@
 """Event-related enums shared across modules."""
 
+import platform
 from enum import StrEnum
+
+from jentic_one.shared.models.actors import Origin
 
 
 class EventSeverity(StrEnum):
@@ -30,10 +33,11 @@ class EventType:
     # warning severity; the summary carries a nearest-identity hint when the
     # vendor has other imported APIs.
     CREDENTIAL_UNMATCHED_API = "credential.unmatched_api"
-    ACCESS_REQUEST_FILED = "access_request.filed"
-    ACCESS_REQUEST_APPROVED = "access_request.approved"
-    ACCESS_REQUEST_DENIED = "access_request.denied"
-    ACCESS_REQUEST_WITHDRAWN = "access_request.withdrawn"
+    # The four ``access_request.*`` kinds were retired in theme 7 (the
+    # access-request flow is gone). Stored event rows still carry those kind
+    # strings — the events table is append-only history — so read paths
+    # (``admin/web/routers/events.py``, the UI stream) must tolerate them;
+    # only emission stopped.
     UPSTREAM_CIRCUIT_OPEN = "upstream.circuit_open"
     JOB_FAILED_PERMANENTLY = "job.failed_permanently"
     UNAUTHORIZED_ACCESS_ATTEMPT = "security.unauthorized_access_attempt"
@@ -73,29 +77,60 @@ class EventType:
     CREDENTIAL_REFRESH_FAILED = "credential.refresh_failed"
     CREDENTIAL_NOT_PROVISIONED = "credential.not_provisioned"
     CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
-    CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
-    CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
-    TOOLKIT_CREATED = "toolkit.created"
-    TOOLKIT_KEY_CREATED = "toolkit.key_created"
-    TOOLKIT_PERMISSION_RULE_SET = "toolkit.permission_rule_set"
-    TOOLKIT_BOUND_TO_AGENT = "toolkit.bound_to_agent"
-    TOOLKIT_UNBOUND_FROM_AGENT = "toolkit.unbound_from_agent"
+    # Direct agent↔credential bindings (theme 5). The toolkit-binding twins
+    # (``toolkit.*``, ``credential.*_toolkit``) were deleted with the toolkit
+    # surface in Phase 6b — historical event rows keep their stored string
+    # types (the read surface treats ``type`` as an opaque string).
+    CREDENTIAL_BOUND_TO_AGENT = "credential.bound_to_agent"
+    CREDENTIAL_UNBOUND_FROM_AGENT = "credential.unbound_from_agent"
+    CREDENTIAL_PERMISSION_RULE_SET = "credential.permission_rule_set"
     AGENT_CREATED = "agent.created"
     AGENT_SELF_REGISTERED = "agent.self_registered"
     AGENT_REGISTRATION_APPROVED = "agent.registration_approved"
     AGENT_REGISTRATION_DENIED = "agent.registration_denied"
     PBAC_DENIED = "broker.pbac_denied"
-    # Emitted when the broker denies an execute with 403 ``no_toolkit_binding``
-    # AND no toolkit yet serves the requested API — the caller's next step is
-    # for an operator to provision a credential (which is what makes a toolkit
-    # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
-    # when a bound toolkit's credential is unresolvable at inject time): this
-    # event is the *pre-binding* signal, giving operators visibility into
-    # agent-needed APIs before a doomed access request appears. Despite the
-    # ``broker.`` namespace, the control plane also emits it as a file-time
-    # advisory for the same condition (see
-    # ``AccessRequestService._advise_unserved_bind_references``).
-    TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
+    # Emitted when the broker denies an execute with 403
+    # ``no_credential_binding`` AND no credential yet serves the requested API —
+    # the operator must provision a credential before any binding can be
+    # granted. The *pre-binding* signal, giving operators visibility into
+    # agent-needed APIs. Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424,
+    # fires when a bound credential is unresolvable at inject time).
+    CREDENTIAL_BINDING_UNSERVED = "broker.credential_binding_unserved"
+
+    # --- Local-MCP transport events (issue #1177) -------------------------
+    # Emitted once per MCP session UUID on the first authenticated request
+    # that carries both the X-Jentic-Session-Id header and a `jentic-mcp/`
+    # User-Agent (the UA — not the header — marks the session as MCP: plain
+    # CLI calls carry the header too). The internal event's `data` holds the
+    # full clientInfo name/version, the transport, and the session UUID (the
+    # dedupe key); the telemetry wire carries at most the closed McpClient tag.
+    MCP_SESSION_STARTED = "mcp.session_started"
+    # Emitted when an MCP config entry is written for an agent runtime
+    # (`jentic setup` / `jentic skill init`). Runtime rides as the closed
+    # McpConfigRuntime tag. The emit path is landed separately (see the
+    # lane-D plan): this constant + the tag enum land first.
+    MCP_CONFIG_REGISTERED = "mcp.config_registered"
+
+    # --- Interactive OAuth for MCP clients --------
+    # Emitted by the anonymous DCR front door (POST /oauth-clients) when a new
+    # client row lands in the registry. requires_action=True when the row lands
+    # `pending` (an admin must approve/deny it); auto-approved rows (D9) emit
+    # with requires_action=False. Internal-only: not on the telemetry allowlist.
+    OAUTH_CLIENT_REGISTERED = "oauth_client.registered"
+    # Emitted by the admin `:approve` verb (D7) — including re-approval of a
+    # previously denied client. Internal-only, like OAUTH_CLIENT_REGISTERED.
+    OAUTH_CLIENT_APPROVED = "oauth_client.approved"
+    # Emitted at consent-approve for a `consent_model='agent'` client: a
+    # fresh `oauth_client_grants` row binds the client to one of the
+    # consenting user's agents. Grant creation is deliberately LOUD (the
+    # loud-attachment posture) — it surfaces as a user-visible
+    # notification, not just an audit row. requires_action=False: consent WAS
+    # the decision. Internal-only: not on the telemetry allowlist.
+    OAUTH_GRANT_CREATED = "oauth_grant.created"
+    # Emitted by grant `:revoke` — the per-grant kill switch. The
+    # sweep of `oauth_grant_id`-stamped token rows rides in the same
+    # transaction. Internal-only, like OAUTH_GRANT_CREATED.
+    OAUTH_GRANT_REVOKED = "oauth_grant.revoked"
 
     ALL: frozenset[str] = frozenset(
         {
@@ -108,10 +143,6 @@ class EventType:
             CREDENTIAL_EXPIRED,
             CREDENTIAL_ACCESSED,
             CREDENTIAL_UNMATCHED_API,
-            ACCESS_REQUEST_FILED,
-            ACCESS_REQUEST_APPROVED,
-            ACCESS_REQUEST_DENIED,
-            ACCESS_REQUEST_WITHDRAWN,
             UPSTREAM_CIRCUIT_OPEN,
             JOB_FAILED_PERMANENTLY,
             UNAUTHORIZED_ACCESS_ATTEMPT,
@@ -126,19 +157,21 @@ class EventType:
             CREDENTIAL_REFRESH_FAILED,
             CREDENTIAL_NOT_PROVISIONED,
             CREDENTIAL_UNDECRYPTABLE,
-            CREDENTIAL_BOUND_TO_TOOLKIT,
-            CREDENTIAL_UNBOUND_FROM_TOOLKIT,
-            TOOLKIT_CREATED,
-            TOOLKIT_KEY_CREATED,
-            TOOLKIT_PERMISSION_RULE_SET,
-            TOOLKIT_BOUND_TO_AGENT,
-            TOOLKIT_UNBOUND_FROM_AGENT,
+            CREDENTIAL_BOUND_TO_AGENT,
+            CREDENTIAL_UNBOUND_FROM_AGENT,
+            CREDENTIAL_PERMISSION_RULE_SET,
             AGENT_CREATED,
             AGENT_SELF_REGISTERED,
             AGENT_REGISTRATION_APPROVED,
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
-            TOOLKIT_BINDING_UNSERVED,
+            CREDENTIAL_BINDING_UNSERVED,
+            MCP_SESSION_STARTED,
+            MCP_CONFIG_REGISTERED,
+            OAUTH_CLIENT_REGISTERED,
+            OAUTH_CLIENT_APPROVED,
+            OAUTH_GRANT_CREATED,
+            OAUTH_GRANT_REVOKED,
         }
     )
 
@@ -194,18 +227,201 @@ class ImportFailReason(StrEnum):
     FETCH = "fetch"
 
 
+class HostOs(StrEnum):
+    """Closed-enum tag naming the host OS family, sent once per boot.
+
+    Attached only to ``instance_booted`` — the lifecycle event emitted on every
+    startup — so the OS rides on one request per boot under the same opaque
+    instance id, and on no other event. Per-boot (rather than once-ever)
+    matches how comparable products report environment facts (n8n's "Instance
+    started", GitLab's Service Ping, Grafana's usage report) and lets the
+    dimension self-heal: a lost request or a config moved to another machine
+    is corrected on the next boot.
+
+    Detection order matters because the recommended install runs the backend in
+    Docker, where ``platform.system()`` reports the *container's* kernel
+    (always Linux), not the operator's machine. The onboarding CLI runs on the
+    host, so it stamps ``telemetry.host_os`` (from Go's ``runtime.GOOS``) into
+    the generated config; ``resolve`` prefers that and only falls back to
+    runtime detection for hand-rolled configs. Anything unrecognised collapses
+    to ``OTHER``, so no free-form platform string can reach the wire.
+    """
+
+    LINUX = "linux"
+    DARWIN = "darwin"
+    WINDOWS = "windows"
+    OTHER = "other"
+
+    @classmethod
+    def current(cls) -> "HostOs":
+        """Classify the running platform into the closed set."""
+        system = platform.system().lower()
+        try:
+            return cls(system)
+        except ValueError:
+            return cls.OTHER
+
+    @classmethod
+    def resolve(cls, configured: str | None) -> "HostOs":
+        """Prefer the install-time config value, else detect at runtime.
+
+        ``configured`` is the raw ``telemetry.host_os`` string; surrounding
+        whitespace is forgiven (a quoted hand-edit like ``" darwin "``), but a
+        value outside the closed set degrades to OTHER rather than falling back
+        to runtime detection — a stamped-but-garbled value must not silently
+        become the container's OS.
+        """
+        if configured is None or not configured.strip():
+            return cls.current()
+        try:
+            return cls(configured.strip().lower())
+        except ValueError:
+            return cls.OTHER
+
+
+class McpClient(StrEnum):
+    """Closed-enum tag naming the MCP client runtime behind a session.
+
+    Attached only to ``mcp_session_started``. Classified from the clientInfo
+    name the MCP server relays in its User-Agent
+    (``jentic-mcp/<version> (<client>/<clientversion>)``) — the raw string
+    never reaches the telemetry wire: anything outside the closed set (or an
+    absent clientInfo — it is a SHOULD in the MCP spec) collapses to ``OTHER``.
+    The full name/version still lands in the internal event's ``data`` for the
+    UI (two-plane pattern).
+    """
+
+    CLAUDE = "claude"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+    @classmethod
+    def from_client_name(cls, name: str | None) -> "McpClient":
+        """Classify a raw clientInfo name into the closed set.
+
+        Substring matching (lowercased) so vendor variants ("Claude Desktop",
+        "claude-code", "Cursor IDE") map to their family without an ever-growing
+        alias table; unknowns collapse to ``OTHER``.
+        """
+        if not name:
+            return cls.OTHER
+        lowered = name.strip().lower()
+        for member in (cls.CLAUDE, cls.CURSOR, cls.CODEX):
+            if member.value in lowered:
+                return member
+        return cls.OTHER
+
+
+class McpConfigRuntime(StrEnum):
+    """Closed-enum tag naming the agent runtime an MCP config entry targets.
+
+    Attached only to ``mcp_config_registered`` — one event per runtime whose
+    config file/entry ``jentic setup``/``jentic skill init`` writes. A closed
+    set (never the raw runtime string) so the config-written → first-session →
+    first-execute funnel stays property-free on the wire.
+    """
+
+    CLAUDE_DESKTOP = "claude_desktop"
+    CLAUDE_CODE = "claude_code"
+    CURSOR = "cursor"
+    CODEX = "codex"
+    OTHER = "other"
+
+
 #: Union of every closed-enum tag type. A tag on the wire is always a member of
 #: one of these — there is deliberately no free-form variant.
-EventTag = ErrorSource | SpecSource | ImportFailReason
+EventTag = (
+    ErrorSource | SpecSource | ImportFailReason | HostOs | Origin | McpClient | McpConfigRuntime
+)
 
 
-#: Which closed-enum tag type each event may carry. ``emit_event`` validates
-#: supplied tags against this map: a tag whose type is not allowed for the event
+#: Which closed-enum tag types each event may carry. ``emit_event`` validates
+#: supplied tags against this map: a tag whose type is not in the event's tuple
 #: is dropped (with a logged warning) and the event still emits. An event absent
-#: from this map accepts no tags.
-EVENT_TAGS: dict[str, type[StrEnum]] = {
-    EventType.EXECUTION_FAILED: ErrorSource,
-    EventType.CREDENTIAL_REFRESH_FAILED: ErrorSource,
-    EventType.IMPORT_COMPLETED: SpecSource,
-    EventType.IMPORT_FAILED: ImportFailReason,
+#: from this map accepts no tags. Values are tuples so an event can carry tags
+#: from more than one closed enum (e.g. ``EXECUTION_FAILED`` splits by both
+#: error source and request origin); ``isinstance`` accepts the tuple directly.
+EVENT_TAGS: dict[str, tuple[type[StrEnum], ...]] = {
+    EventType.EXECUTION_COMPLETED: (Origin,),
+    EventType.EXECUTION_FAILED: (ErrorSource, Origin),
+    EventType.CREDENTIAL_REFRESH_FAILED: (ErrorSource,),
+    EventType.IMPORT_COMPLETED: (SpecSource,),
+    EventType.IMPORT_FAILED: (ImportFailReason,),
+    EventType.INSTANCE_BOOTED: (HostOs,),
+    EventType.MCP_SESSION_STARTED: (McpClient,),
+    EventType.MCP_CONFIG_REGISTERED: (McpConfigRuntime,),
+}
+
+
+#: Which :class:`EventSeverity` values are legitimate for each event type — the
+#: single source of truth for "is this classification principled?" (issue #907).
+#: Audited against every ``emit_event``/``emit_event_best_effort`` call site as of
+#: this map's authoring; a rough qualitative read of the four tiers:
+#:
+#: - ``INFO``     — routine/expected: a lifecycle step happened as intended.
+#: - ``WARNING``  — needs attention soon; nothing has failed *yet* (an advisory,
+#:   a denial, a token approaching expiry).
+#: - ``ERROR``    — one thing failed.
+#: - ``CRITICAL`` — a failure *pattern* crossed an operator-configured threshold,
+#:   not a single instance. Deliberately reserved to ``EXECUTION_REPEATED_FAILURE``
+#:   past ``execution_repeated_failure_critical_threshold`` (see
+#:   ``SecurityConfig`` and ``shared/events/repeated_failure.py``) — CRITICAL is
+#:   rare *by design*; an operator filtering on it seeing few/no rows is not a
+#:   sign the classification is broken. See ``docs/operations/monitoring.md``
+#:   for the operator-facing version of this table.
+#:
+#: Most types map to exactly one fixed severity; ``EXECUTION_REPEATED_FAILURE`` is
+#: the only escalating type. A type absent from this map is a bug —
+#: ``test_every_event_type_has_a_severity_entry`` in
+#: ``tests/unit/shared/test_event_type_severities.py`` enforces 1:1 coverage with
+#: ``EventType.ALL``, and ``test_critical_is_reserved_to_repeated_failure`` guards
+#: the CRITICAL boundary specifically, so a future emitter can't silently widen it.
+EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
+    # --- INFO: routine / expected lifecycle notifications -----------------
+    EventType.IMPORT_COMPLETED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_COMPLETED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_ACCESSED: frozenset({EventSeverity.INFO}),
+    EventType.CATALOG_UPDATE_AVAILABLE: frozenset({EventSeverity.INFO}),
+    EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY: frozenset({EventSeverity.INFO}),
+    EventType.OVERLAY_DEPRECATED: frozenset({EventSeverity.INFO}),
+    EventType.INSTANCE_INITIALIZED: frozenset({EventSeverity.INFO}),
+    EventType.INSTANCE_BOOTED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_STORED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_CONNECTED: frozenset({EventSeverity.INFO}),
+    # A product-telemetry funnel event, not an operator alert — INFO tracks a
+    # funnel step here, not incident severity (see connect_service.py).
+    EventType.CREDENTIAL_CONNECTION_FAILED: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_BOUND_TO_AGENT: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_UNBOUND_FROM_AGENT: frozenset({EventSeverity.INFO}),
+    EventType.CREDENTIAL_PERMISSION_RULE_SET: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_SELF_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_REGISTRATION_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.AGENT_REGISTRATION_DENIED: frozenset({EventSeverity.INFO}),
+    EventType.MCP_SESSION_STARTED: frozenset({EventSeverity.INFO}),
+    EventType.MCP_CONFIG_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_CLIENT_REGISTERED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_CLIENT_APPROVED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
+    EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
+    # --- WARNING: needs attention soon; nothing has failed yet ------------
+    EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),
+    EventType.UNAUTHORIZED_ACCESS_ATTEMPT: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),
+    EventType.PBAC_DENIED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_UNDECRYPTABLE: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_NOT_PROVISIONED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_REFRESH_FAILED: frozenset({EventSeverity.WARNING}),
+    EventType.CREDENTIAL_EXPIRING_SOON: frozenset({EventSeverity.WARNING}),
+    # A credential was created whose API scope matched no imported API (#1020) —
+    # advisory, not a failure; see the EventType docstring.
+    EventType.CREDENTIAL_UNMATCHED_API: frozenset({EventSeverity.WARNING}),
+    # --- ERROR: one thing failed -------------------------------------------
+    EventType.EXECUTION_FAILED: frozenset({EventSeverity.ERROR}),
+    EventType.IMPORT_FAILED: frozenset({EventSeverity.ERROR}),
+    EventType.JOB_FAILED_PERMANENTLY: frozenset({EventSeverity.ERROR}),
+    EventType.CREDENTIAL_EXPIRED: frozenset({EventSeverity.ERROR}),
+    # --- ERROR escalating to CRITICAL: a failure PATTERN, not one instance -
+    EventType.EXECUTION_REPEATED_FAILURE: frozenset({EventSeverity.ERROR, EventSeverity.CRITICAL}),
 }

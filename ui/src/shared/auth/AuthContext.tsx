@@ -290,3 +290,18 @@ export function useAuth(): AuthContextValue {
 	}
 	return ctx;
 }
+
+/**
+ * The signed-in user, or `null` when unknown (not yet loaded, or rendered
+ * outside an `AuthProvider`). For UX-only affordances that degrade to "show
+ * everything" — the server stays the source of truth.
+ */
+export function useOptionalCurrentUser(): CurrentUserResponse | null {
+	return useContext(AuthContext)?.user ?? null;
+}
+
+/** The auth context, or `null` outside an `AuthProvider` — for hooks that must
+ * tell "no provider" apart from "provider still loading the user". */
+export function useOptionalAuth(): AuthContextValue | null {
+	return useContext(AuthContext);
+}

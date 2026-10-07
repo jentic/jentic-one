@@ -58,6 +58,14 @@ export class MonitorApiError extends Error {
 	}
 }
 
+/**
+ * A refused read: 401 (no valid session) or 403 (missing permission). Retrying
+ * cannot change the answer, so callers stop and show an access state instead.
+ */
+export function isMonitorAccessDenied(error: unknown): boolean {
+	return error instanceof MonitorApiError && (error.status === 401 || error.status === 403);
+}
+
 function toMonitorError(error: unknown, fallback: string): MonitorApiError {
 	if (error instanceof ApiError) {
 		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
@@ -75,8 +83,11 @@ function toMonitorError(error: unknown, fallback: string): MonitorApiError {
 
 export interface ListExecutionsParams {
 	traceId?: string | null;
-	toolkitId?: string | null;
 	actorId?: string | null;
+	/** Origin surface filter (backend `Origin` wire value, e.g. `mcp`). */
+	origin?: string | null;
+	/** API filter, colon-encoded `vendor[:name[:version]]` (backend `api` param). */
+	api?: string | null;
 	status?: string[] | null;
 	from?: string | null;
 	to?: string | null;
@@ -90,8 +101,9 @@ export async function listExecutions(
 	try {
 		return await ExecutionsService.listExecutions({
 			traceId: params.traceId ?? null,
-			toolkitId: params.toolkitId ?? null,
 			actorId: params.actorId ?? null,
+			origin: params.origin ?? null,
+			api: params.api ?? null,
 			status: params.status ?? null,
 			from: params.from ?? null,
 			to: params.to ?? null,
@@ -112,7 +124,7 @@ export async function getExecution(executionId: string): Promise<ExecutionRespon
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview usage (enriched aggregation, jentic-one-internal#561)      */
+/* Usage (enriched aggregation, jentic-one-internal#561)             */
 /* ------------------------------------------------------------------ */
 
 export interface UsageStatsParams {
@@ -124,7 +136,6 @@ export interface UsageStatsParams {
 	groupBy?: GroupBy | null;
 	/** How many top rows to return (1–50); the endpoint defaults to 10. */
 	topLimit?: number;
-	toolkitId?: string | null;
 	apiId?: string | null;
 	agentId?: string | null;
 	status?: string | null;
@@ -133,7 +144,7 @@ export interface UsageStatsParams {
 /**
  * Full-parity usage aggregation (`GET /monitoring/usage`): overall stats
  * (incl. latency percentiles), time buckets for the volume chart, and top
- * api/toolkit/agent rows with sparkline trends (one point per aggregate
+ * api/credential/agent rows with sparkline trends (one point per aggregate
  * bucket in the window).
  */
 export async function getUsageStats(params: UsageStatsParams = {}): Promise<UsageResponse> {
@@ -143,7 +154,6 @@ export async function getUsageStats(params: UsageStatsParams = {}): Promise<Usag
 			until: params.until ?? null,
 			groupBy: params.groupBy ?? null,
 			topLimit: params.topLimit ?? 10,
-			toolkitId: params.toolkitId ?? null,
 			apiId: params.apiId ?? null,
 			agentId: params.agentId ?? null,
 			status: params.status ?? null,

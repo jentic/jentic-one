@@ -3,8 +3,8 @@ import { Button } from '@/shared/ui/Button';
 import { DetailSection } from '@/shared/ui/DetailSection';
 
 /**
- * DangerZone — the Settings tab's destructive-actions card, shared by the
- * detail consoles (toolkit, agent, service account) so irreversible actions
+ * DangerZone — the destructive-actions card shared by entity settings
+ * surfaces (an agent's Settings sheet, …) so irreversible actions
  * read identically everywhere: the danger-tinted `DetailSection` shell with
  * one row per action.
  *
@@ -42,14 +42,17 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 			title="Danger zone"
 			icon={<TriangleAlert className="h-4 w-4" />}
 			danger
-			bodyClassName="divide-border/60 divide-y space-y-0"
+			bodyClassName="divide-hairline divide-y space-y-0"
 		>
 			{actions.map((action) => (
 				<div
 					key={action.key}
 					className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
 				>
-					<div className="min-w-0">
+					{/* `flex-1 basis-56`: the text column flexes so a long description
+					    wraps WITHIN its column and the verb stays on the same row —
+					    without a basis, flex-wrap dropped the button to its own line. */}
+					<div className="min-w-0 flex-1 basis-56">
 						<p className="text-foreground text-sm font-medium">{action.title}</p>
 						<p className="text-muted-foreground max-w-prose text-xs">
 							{action.description}
@@ -63,7 +66,7 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 						variant={action.emphasis === 'outline' ? 'ghost' : 'danger'}
 						className={
 							action.emphasis === 'outline'
-								? 'border-danger/40 text-danger hover:bg-danger/10 hover:text-danger shrink-0 border'
+								? 'text-danger hover:bg-danger/10 hover:text-danger shrink-0'
 								: 'shrink-0'
 						}
 						disabled={pending}

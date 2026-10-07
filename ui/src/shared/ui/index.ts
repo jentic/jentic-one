@@ -2,6 +2,7 @@ export { Button } from '@/shared/ui/Button';
 export type { ButtonProps } from '@/shared/ui/Button';
 
 export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
+export { CardHeaderIcon } from '@/shared/ui/CardHeaderIcon';
 
 export { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
 export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailSection';
@@ -21,17 +22,14 @@ export type {
 	RecentExecutionsCardProps,
 } from '@/shared/ui/RecentExecutionsCard';
 
-export { KillSwitch } from '@/shared/ui/KillSwitch';
-export type { KillSwitchProps } from '@/shared/ui/KillSwitch';
-
 export { DangerZone } from '@/shared/ui/DangerZone';
 export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 
 export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
 export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
 
-export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
-export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
+export { Badge, MethodBadge, StatusBadge, StatusChip, StatusText, Tag } from '@/shared/ui/Badge';
+export type { Variant as BadgeVariant, StatusTone } from '@/shared/ui/Badge';
 
 export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
 export type { AgentBadgeSize } from '@/shared/ui/AgentBadge';
@@ -52,14 +50,15 @@ export { Checkbox } from '@/shared/ui/Checkbox';
 export { SearchInput } from '@/shared/ui/SearchInput';
 export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
+export { RadioCardGroup } from '@/shared/ui/RadioCardGroup';
+export type { RadioCardGroupProps, RadioCardOption } from '@/shared/ui/RadioCardGroup';
+
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
 export { StatCard } from '@/shared/ui/StatCard';
 export type { StatAccent } from '@/shared/ui/StatCard';
-export { ToolkitGlyph } from '@/shared/ui/ToolkitGlyph';
-export type { ToolkitGlyphProps } from '@/shared/ui/ToolkitGlyph';
 export { TabNav } from '@/shared/ui/TabNav';
-export type { TabNavOption } from '@/shared/ui/TabNav';
+export type { TabNavChangeSource, TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 
@@ -82,6 +81,9 @@ export { ErrorAlert } from '@/shared/ui/ErrorAlert';
 export { Banner } from '@/shared/ui/Banner';
 export type { BannerProps } from '@/shared/ui/Banner';
 
+export { FooterActionBar, FOOTER_ACTION_BAR_PAGE_PADDING } from '@/shared/ui/FooterActionBar';
+export type { FooterActionBarProps } from '@/shared/ui/FooterActionBar';
+
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 export { DataTable } from '@/shared/ui/DataTable';
@@ -91,17 +93,24 @@ export { Pagination } from '@/shared/ui/Pagination';
 
 export { Dialog } from '@/shared/ui/Dialog';
 
+export { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
+export type { ConfirmDialogProps } from '@/shared/ui/ConfirmDialog';
+
 export { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
 export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/CascadeDeleteDialog';
 
-export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
-export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
+export * from '@/shared/ui/SheetPrimitive';
+
+export { useCoversRightEdge, useReportRightDock, useRightEdgeInset } from '@/shared/ui/rightEdge';
 
 export { Toaster } from '@/shared/ui/Toaster';
 export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toastStore';
 export type { ToastEntry, ToastInput, ToastVariant } from '@/shared/ui/toastStore';
 
 export { CopyButton } from '@/shared/ui/CopyButton';
+
+export { CodeSnippet } from '@/shared/ui/CodeSnippet';
+export type { CodeSnippetProps } from '@/shared/ui/CodeSnippet';
 
 export { BackButton } from '@/shared/ui/BackButton';
 
@@ -115,14 +124,22 @@ export type { PageShellProps } from '@/shared/ui/PageShell';
 
 export { PageHeader } from '@/shared/ui/PageHeader';
 
-export { PageHelp } from '@/shared/ui/PageHelp';
-export type { PageHelpProps, PageHelpSection, PageHelpLink } from '@/shared/ui/PageHelp';
+export { AuthCard } from '@/shared/ui/AuthCard';
+export type { AuthCardProps } from '@/shared/ui/AuthCard';
 
-export { KeyboardShortcutsBar } from '@/shared/ui/KeyboardShortcutsBar';
-export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/KeyboardShortcutsBar';
+export { PageHelp } from '@/shared/ui/PageHelp';
+export type {
+	KeyboardShortcut,
+	PageHelpProps,
+	PageHelpSection,
+	PageHelpLink,
+} from '@/shared/ui/PageHelp';
 
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
+
+export { McpIcon } from '@/shared/ui/McpIcon';
+export type { McpIconProps } from '@/shared/ui/McpIcon';
 
 export {
 	useDismissable,
@@ -141,6 +158,8 @@ export type { LazyMountProps } from '@/shared/ui/LazyMount';
 
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
+export { ExpandableText } from '@/shared/ui/ExpandableText';
+
 export { Tooltip } from '@/shared/ui/Tooltip';
 
 export { OperationDetail } from '@/shared/ui/OperationDetail';
@@ -152,7 +171,27 @@ export type {
 } from '@/shared/ui/OperationDetail';
 
 export { VendorIcon } from '@/shared/ui/VendorIcon';
+export {
+	AVATAR_TONES,
+	AVATAR_TONE_COUNT,
+	AVATAR_NEUTRAL,
+	avatarToneIndex,
+	avatarToneStyle,
+	avatarToneColors,
+} from '@/shared/ui/avatarPalette';
+export { GitHubMark } from '@/shared/ui/GitHubMark';
+export { SectionLabel } from '@/shared/ui/SectionLabel';
+export * from '@/shared/ui/MetaLine';
+export * from '@/shared/ui/CountLine';
+export * from '@/shared/ui/Ledger';
+export * from '@/shared/ui/AlphaRail';
+export { ResizeHandle } from '@/shared/ui/ResizeHandle';
+export type { ResizeHandleProps } from '@/shared/ui/ResizeHandle';
 export type { VendorIconProps } from '@/shared/ui/VendorIcon';
+export { VendorMark } from '@/shared/ui/VendorMark';
+export type { VendorMarkProps, VendorMarkSize } from '@/shared/ui/VendorMark';
+export { VENDOR_MARKS, isVendorMarkSlug } from '@/shared/ui/vendorMarks';
+export type { VendorMarkSlug, VendorMarkData } from '@/shared/ui/vendorMarks';
 
 export {
 	ActorStatusBadge,
@@ -160,9 +199,23 @@ export {
 	STATUS_LABELS,
 	STATUS_BADGE_VARIANT,
 	STATUS_DOT,
+	STATUS_ICON,
+	STATUS_TINT,
 	toActorStatus,
 } from '@/shared/ui/ActorStatusBadge';
 export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
+
+export {
+	ApiStateBadge,
+	ApiStateBadges,
+	apiServingState,
+	API_STATE_LABELS,
+	API_STATE_BADGE_VARIANT,
+} from '@/shared/ui/ApiStateBadge';
+export type { ApiServingState, ApiStateBadgeVariant } from '@/shared/ui/ApiStateBadge';
+
+export { GrantAgentStatusChip } from '@/shared/ui/GrantAgentStatusChip';
+export type { GrantAgentStatusChipProps } from '@/shared/ui/GrantAgentStatusChip';
 
 export { ScopePicker } from '@/shared/ui/ScopePicker';
 export type { ScopePickerProps } from '@/shared/ui/ScopePicker';
@@ -173,6 +226,9 @@ export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
 
 export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { ApiUsageSummary } from '@/shared/ui/ApiUsageSummary';
+export { StreamEventRow } from '@/shared/ui/StreamEventRow';
+export type { ApiUsageSummaryProps } from '@/shared/ui/ApiUsageSummary';
 export { TrendLineChart } from '@/shared/ui/charts/TrendLineChart';
 export type { TrendPoint } from '@/shared/ui/charts/TrendLineChart';
 export { StackedBarChart } from '@/shared/ui/charts/StackedBarChart';
@@ -182,8 +238,8 @@ export {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
 	cleanPermissionRule,
-	PERMISSION_EFFECTS,
-	PERMISSION_MATCH_MODES,
+	allowAllRule,
+	grantsEverything,
 } from '@/shared/ui/PermissionRuleEditor';
 export type {
 	PermissionRuleEditorProps,

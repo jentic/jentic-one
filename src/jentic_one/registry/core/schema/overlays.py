@@ -47,7 +47,7 @@ class Overlay(AuditableMixin, RegistryBase):
     #: historical revision. No FK (the base may be pruned); a NULL/stale value falls back to
     #: the API's current revision at confirm. Kept (not dropped) because it is load-bearing at
     #: confirm — the trap the issue calls out is treating it as more than advisory elsewhere,
-    #: which this note forecloses. See ``docs/overlays.md`` (stacking contract).
+    #: which this note forecloses. See ``docs/guides/overlays.md`` (stacking contract).
     target_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
     #: The revision produced by materializing this overlay (set by the ingest job on
     #: a successful confirm). Distinct from ``target_revision_id`` (the base revision

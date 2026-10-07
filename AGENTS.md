@@ -3,6 +3,73 @@
 > **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
 > Otherwise use the guidance below.
 
+## Using Jentic One (not changing it)
+
+If your task is to install Jentic One and connect an agent to it, follow this section. The
+rest of this file is for changing the codebase.
+
+**Install.** Two supported paths:
+
+1. Signed release binary, from https://github.com/jentic/jentic-one/releases/latest. Verify
+   against `checksums.txt` (signature: `checksums.txt.sig`, certificate: `checksums.txt.pem`),
+   then run `jenticctl install`. Prefer this path: it is verifiable before execution, and a
+   sandboxed agent will usually be refused permission to pipe a script to a shell.
+2. Bootstrap script:
+   `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`
+   This downloads a Go toolchain if none is present, clones this repository, builds `jenticctl`
+   and `jentic`, then runs `jenticctl install`. Set `JENTIC_NO_INSTALL=1` to stop after the
+   binaries are installed — do that on the agent machine, which needs only the binaries, not a
+   second deployment.
+
+**Run Jentic One on a different machine from the agent.** An agent running as the same OS user
+can read the credential database and encryption key from disk, whatever the API-level controls
+allow. See `docs/security/README.md` before using real credentials.
+
+**Register and reach a first call:**
+
+1. `jentic setup --url <control-plane URL>` creates the agent identity, waits for an
+   operator to approve it, and installs the agent skill. (`jentic register --url …` is the
+   registration-only path — identity only, no skills; without `--url` both fall back to the
+   configured base URL or
+   `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
+   Report the wait to the user: on a single-operator install they are the operator, and they
+   approve the agent in the UI at `/app`.
+2. If no admin account exists yet, point the user to `/app/setup` (browser) or `jenticctl setup`
+   (terminal). This is a one-time step.
+3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
+   step 6), or register a private OpenAPI description of the user's own service.
+4. The operator stores a credential for that API, once (skip for a registry vendor — step 5's
+   connect flow creates it). It is encrypted at rest and is never returned.
+5. Get access: granting is always a human action. Access is default-deny — the operator binds
+   the agent to a stored credential in the console, and a rule-less binding still blocks
+   everything. For OAuth vendors in the deployment's vendor registry the agent can start the
+   flow itself with `jentic connect <vendor>` (`POST /integrations:connect`) and relay the
+   printed `approval_url`: a human approves it and consents inside the OAuth flow, the API is
+   imported automatically, and the credential, binding, and per-agent permissions land
+   together. For anything else — including a freshly imported API with no credential stored
+   yet — hand off to the operator: they store the credential and bind the agent in the console.
+6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
+   credential injected. Give `execute` the operation's full upstream URL (as returned by
+   `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a
+   path router.
+
+**Constraints to respect:**
+
+- One governed upstream call per execution. Compose multi-step work yourself; the Broker does
+  not orchestrate.
+- A self-hosted deployment serves an HTTP MCP endpoint (`/mcp`) only when its operator enabled
+  it (`server.mcp.enabled`, off by default — see
+  [docs/guides/mcp-http-endpoint.md](docs/guides/mcp-http-endpoint.md)). Otherwise integrate through the
+  `jentic` CLI, the skill it generates, the CLI's local MCP stdio server
+  (`jentic mcp`), or plain HTTP against the deployment's own API.
+- A running instance serves `/llms.txt` and `/.well-known/llms.txt` with that deployment's base
+  URL. Once an instance exists, prefer those over this file for anything at runtime.
+- Never print, log or echo a stored credential. The Broker does not return them.
+
+**If a step is blocked by your own sandbox or by network egress rules, say so and stop.** Do
+not work around a security control. Issue #994 tracks the install paths available to a
+restricted agent.
+
 ## In-repo guidance
 
 This repo's agent guidance lives in **[`CLAUDE.md`](CLAUDE.md)**. Read it first.

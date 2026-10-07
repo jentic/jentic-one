@@ -3,27 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 import structlog
 
+from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.permission_rule_sets import (
+    PermissionRuleSet,
+    PermissionRuleSetRule,
+)
 from jentic_one.control.repos import (
+    AgentPermissionRuleRepository,
     BasicCredentialRepository,
     CredentialRepository,
     CustomerAPIKeyRepository,
     OAuthClientCredentialRepository,
+    PermissionRuleSetRepository,
     Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
-from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.repos.device_authorization_credential_repo import (
+    DeviceAuthorizationCredentialRepository,
+)
+from jentic_one.control.repos.prerequisite_repo import (
+    AgentCredentialBindingRow,
+    AgentVisibility,
+    CredentialBoundAgentRow,
+    PrerequisiteRepository,
+)
 from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
+    AgentBindingNotFoundError,
     CredentialNotFoundError,
     ImmutableFieldError,
     InvalidCredentialInputError,
+    RuleSetAccessDeniedError,
+    RuleSetAttachDeniedError,
+    RuleSetInUseError,
+    RuleSetNameConflictError,
+    RuleSetNotFoundError,
     UnsupportedProviderForTypeError,
 )
 from jentic_one.control.services.credentials.mapping import to_stored, to_wire
@@ -48,17 +70,19 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     Sigv4Full,
     Sigv4Redacted,
 )
+from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
-from jentic_one.shared.scopes import ORG_ADMIN
+from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -83,24 +107,32 @@ class CredentialService:
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
 
-    async def _bound_toolkit_ids(self, identity: Identity) -> list[str]:
-        """Toolkit ids the caller is bound to, widening owner-scoped visibility.
+    async def _bound_credential_ids(self, identity: Identity) -> list[str]:
+        """Credential ids the caller is directly bound to (theme 5 phase 1).
 
-        A credential bound to a toolkit the caller can see must itself be visible
-        to that caller — including an orphaned agent that owns nothing (issues
-        #665/#682). Bindings live in the admin DB, so resolve the ids there and
-        feed them into the control-DB ``build_access_filters``. An ``org:admin``
-        caller is unrestricted already, so skip the lookup.
+        An agent must be able to read a credential it is actively bound to
+        even when it owns nothing (issues #665/#682). Suspended bindings
+        grant no visibility — a cut-off cuts reads of the credential too, while
+        the binding row itself stays visible in ``/me``. ``org:admin`` is
+        unrestricted already, so skip the lookup.
         """
         if ORG_ADMIN in identity.permissions or not identity.sub:
             return []
         async with self._ctx.admin_db.session() as session:
-            return await PrerequisiteRepository.list_toolkit_ids_for_agent(
+            return await PrerequisiteRepository.list_credential_ids_for_agent(
                 session, agent_id=identity.sub
             )
 
-    def list_providers(self) -> list[ProviderDiscoveryEntry]:
-        """Return discovery metadata for all configured providers."""
+    def list_providers(
+        self, *, default_callback_url: str | None = None
+    ) -> list[ProviderDiscoveryEntry]:
+        """Return discovery metadata for all configured providers.
+
+        ``default_callback_url`` is the request-derived OAuth callback URL the
+        web layer would use when a provider has no explicit ``redirect_uri``
+        configured. Passing it keeps the discovery response in lockstep with
+        what ``begin_connect`` actually sends to the IdP.
+        """
         provider_configs = self._ctx.config.credentials.providers
         entries: list[ProviderDiscoveryEntry] = []
         for provider_id, provider in self._ctx.providers.list_all().items():
@@ -108,7 +140,7 @@ class CredentialService:
             callback_url: str | None = None
             pc = provider_configs.get(provider_id)
             if isinstance(pc, DirectOAuth2ProviderConfig):
-                callback_url = pc.redirect_uri
+                callback_url = pc.redirect_uri or default_callback_url
             entries.append(
                 ProviderDiscoveryEntry(
                     id=provider_id,
@@ -231,30 +263,55 @@ class CredentialService:
                         raise InvalidCredentialInputError(f"Invalid authorize_url: {exc}") from exc
                 grant = payload.grant_type or "client_credentials"
 
-                encrypted_secret: str | None = None
-                if payload.client_secret:
-                    encrypted_secret = encryption.encrypt(payload.client_secret)
-
-                if not provider_obj.managed or payload.client_id:
-                    scope = " ".join(payload.scopes) if payload.scopes else None
-                    await OAuthClientCredentialRepository.create(
+                if grant == "device_code":
+                    # RFC 8628 device flow — public client (no secret), the
+                    # ``authorize_url`` field carries the vendor's
+                    # ``device_authorization_endpoint`` (OpenAPI 3.2's
+                    # ``deviceAuthorizationUrl``). Row lives on
+                    # ``device_authorization_credentials`` alongside the credentials
+                    # written by the connect-session flow so refresh /
+                    # redaction / broker resolution are all uniform.
+                    await DeviceAuthorizationCredentialRepository.create(
                         session,
                         credential_id=credential.id,
-                        token_url=validated_token_url or "",
                         client_id=payload.client_id or "",
-                        encrypted_client_secret=encrypted_secret or "",
-                        authorize_url=validated_authorize_url,
-                        scope=scope,
+                        token_url=validated_token_url or "",
+                        authorization_endpoint=validated_authorize_url or "",
+                        requested_scopes=payload.scopes or [],
                         created_by=identity.sub,
                     )
+                    secret = OAuth2Full(
+                        client_id=payload.client_id or "",
+                        client_secret="",
+                        token_url=payload.token_url or "",
+                        grant_type=grant,
+                        scopes=payload.scopes,
+                    )
+                else:
+                    encrypted_secret: str | None = None
+                    if payload.client_secret:
+                        encrypted_secret = encryption.encrypt(payload.client_secret)
 
-                secret = OAuth2Full(
-                    client_id=payload.client_id or "",
-                    client_secret=payload.client_secret or "",
-                    token_url=payload.token_url or "",
-                    grant_type=grant,
-                    scopes=payload.scopes,
-                )
+                    if not provider_obj.managed or payload.client_id:
+                        scope = " ".join(payload.scopes) if payload.scopes else None
+                        await OAuthClientCredentialRepository.create(
+                            session,
+                            credential_id=credential.id,
+                            token_url=validated_token_url or "",
+                            client_id=payload.client_id or "",
+                            encrypted_client_secret=encrypted_secret or "",
+                            authorize_url=validated_authorize_url,
+                            scope=scope,
+                            created_by=identity.sub,
+                        )
+
+                    secret = OAuth2Full(
+                        client_id=payload.client_id or "",
+                        client_secret=payload.client_secret or "",
+                        token_url=payload.token_url or "",
+                        grant_type=grant,
+                        scopes=payload.scopes,
+                    )
             elif payload.type == CredentialType.NO_AUTH:
                 # A no-auth credential is a marker that the API needs no secret
                 # (e.g. open-meteo). No sub-table row and no secret are stored;
@@ -304,6 +361,7 @@ class CredentialService:
                 catalog_api_id=credential.catalog_api_id,
                 provider=credential.provider,
                 active=credential.active,
+                created_by=credential.created_by,
                 created_at=credential.created_at,
                 server_variables=credential.server_variables,
                 secret=secret,
@@ -331,7 +389,8 @@ class CredentialService:
                     session,
                     type=EventType.CREDENTIAL_STORED,
                     severity=EventSeverity.INFO,
-                    summary=f"Credential {view.credential_id} stored",
+                    summary=f"Credential {summary_label(view.name, view.credential_id)} stored",
+                    data={"credential_id": view.credential_id},
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
@@ -373,7 +432,7 @@ class CredentialService:
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -383,6 +442,603 @@ class CredentialService:
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
             return self._to_redacted(credential)
+
+    async def list_agents(
+        self,
+        credential_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+        identity: Identity,
+    ) -> tuple[list[CredentialBoundAgentRow], bool, str | None]:
+        """List agents directly bound to a credential. Returns (data, has_more, next_cursor).
+
+        The reverse lookup for the credential-detail "Agents" view (theme 5
+        phase 1). Visibility is the same gate as ``get``: the caller must be
+        able to see the credential itself before enumerating who is bound to
+        it (hard problem 7/9 owner-gating; existence never leaks past the
+        filters).
+
+        ``org:admin`` and the credential's creator see every bound agent. Any
+        other caller who can see the credential (a bound agent, a delegated
+        agent, a shared-read grant) sees only the agents it can see itself:
+        see :meth:`_bound_agent_visibility`.
+        """
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=await self._bound_credential_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if credential is None:
+                raise CredentialNotFoundError(credential_id)
+
+        decoded_cursor = None
+        if cursor is not None:
+            ts, cid = decode_cursor_str(cursor)
+            decoded_cursor = (ts, cid)
+
+        async with self._ctx.admin_db.session() as session:
+            rows = await PrerequisiteRepository.list_agents_for_credential(
+                session,
+                credential_id=credential_id,
+                cursor=decoded_cursor,
+                limit=limit + 1,
+                visible_to=self._bound_agent_visibility(credential, identity),
+            )
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_cursor(last.bound_at, last.binding_id)
+
+        return rows, has_more, next_cursor
+
+    @staticmethod
+    def _bound_agent_visibility(
+        credential: Credential, identity: Identity
+    ) -> AgentVisibility | None:
+        """Bound agents the caller may enumerate; ``None`` means all of them.
+
+        ``org:admin`` and the credential's creator see every bound agent.
+        Anyone else sees the agents it owns and itself (when the caller is an
+        agent), plus its owner's agents when it holds ``owner:agents:read`` —
+        the same agent visibility the admin surface applies.
+        """
+        if ORG_ADMIN in identity.permissions:
+            return None
+        if credential.created_by is not None and credential.created_by == identity.sub:
+            return None
+        owner_ids = [identity.sub]
+        if OWNER_AGENTS_READ in identity.permissions and identity.parent_actor_id is not None:
+            owner_ids.append(identity.parent_actor_id)
+        return AgentVisibility(self_id=identity.sub, owner_ids=tuple(owner_ids))
+
+    # --- Per-binding permission rules (theme 5 phase 1) ---
+
+    @staticmethod
+    def _may_write_binding_rules(credential: Credential, agent_id: str, identity: Identity) -> bool:
+        """Owner-or-admin write gate for a binding's permission rules.
+
+        The rules bound what an agent may do with the credential, so changing
+        them is the credential owner's call: ``org:admin`` or the identity
+        that created the credential. Read visibility is deliberately not
+        enough — neither being the bound agent itself, nor an owner-delegation
+        read scope, nor an extension's shared-read grant widens this gate.
+
+        The bound agent never edits its own binding's rules, even when it is
+        the credential's ``created_by`` (an agent-initiated connect records
+        the agent as creator): the rules exist to constrain that agent, and
+        the human-approved set is what it runs under.
+        """
+        if ORG_ADMIN in identity.permissions:
+            return True
+        return (
+            credential.created_by is not None
+            and credential.created_by == identity.sub
+            and agent_id != identity.sub
+        )
+
+    async def _require_visible_binding(
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        identity: Identity,
+        for_write: bool = False,
+    ) -> AgentCredentialBindingRow:
+        """Gate the per-binding rules endpoints on both axes (hard problems 7/9).
+
+        The caller must see the credential (same filters as ``get`` — a miss
+        is a uniform 404 that never confirms existence), and the direct
+        ``(agent, credential)`` binding must exist (admin-DB row; the rules
+        themselves live control-side, so this is the cross-DB seam). Returns
+        the binding row so callers can see its attached ``rule_set_id``.
+
+        The bound agent must also be one the caller may see
+        (:meth:`_bound_agent_visibility`, the same rule as ``list_agents``):
+        a binding of an agent outside that set answers the same 404 as a
+        binding that does not exist.
+
+        ``for_write`` additionally requires :meth:`_may_write_binding_rules`;
+        a caller who can see the credential but not write its rules gets the
+        same 404 as one who cannot see it at all. Writes are therefore
+        owner-or-admin only, and both of those callers see every bound agent.
+        """
+        access_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_credential_ids=await self._bound_credential_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(
+                session, credential_id, filters=access_filters
+            )
+            if credential is None or (
+                for_write and not self._may_write_binding_rules(credential, agent_id, identity)
+            ):
+                raise CredentialNotFoundError(credential_id)
+        async with self._ctx.admin_db.session() as session:
+            binding = await PrerequisiteRepository.get_agent_credential_binding(
+                session,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                visible_to=self._bound_agent_visibility(credential, identity),
+            )
+        if binding is None:
+            raise AgentBindingNotFoundError(credential_id, agent_id)
+        return binding._replace(credential_name=credential.name)
+
+    async def _record_rules_change(
+        self,
+        credential_id: str,
+        agent_id: str,
+        binding: AgentCredentialBindingRow,
+        *,
+        identity: Identity,
+        reason: str,
+    ) -> None:
+        """Audit + telemetry for a rules mutation (mirrors the toolkit path).
+
+        ``binding`` is the row :meth:`_require_visible_binding` returned; its
+        agent and credential names label the event summary.
+        """
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.CREDENTIAL_BINDING,
+            target_id=credential_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            target_parent_id=agent_id,
+            reason=reason,
+            origin=identity.origin.value,
+        )
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        "Permission rules set on agent "
+                        f"{summary_label(binding.agent_name, agent_id)} for credential "
+                        f"{summary_label(binding.credential_name, credential_id)}"
+                    ),
+                    data={"agent_id": agent_id, "credential_id": credential_id},
+                    # Subject is the agent, so its owner sees the rules change.
+                    created_by=agent_id,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                )
+        except Exception:
+            logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                exc_info=True,
+            )
+
+    async def list_agent_permissions(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> list[AgentPermissionRule]:
+        """List the ordered PBAC rules for a direct ``(agent, credential)`` binding."""
+        await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            return await AgentPermissionRuleRepository.list_rules(session, agent_id, credential_id)
+
+    async def replace_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        rules: list[dict[str, object]],
+        *,
+        identity: Identity,
+    ) -> list[AgentPermissionRule]:
+        """Replace the full user-rule list for a binding (idempotent PUT)."""
+        binding = await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
+        async with self._ctx.control_db.transaction() as session:
+            result = await AgentPermissionRuleRepository.replace_user_rules(
+                session, agent_id, credential_id, rules, created_by=identity.sub
+            )
+        await self._record_rules_change(
+            credential_id, agent_id, binding, identity=identity, reason="replace permission rules"
+        )
+        return result
+
+    async def patch_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        identity: Identity,
+        add: list[dict[str, object]] | None = None,
+        remove: list[int] | None = None,
+    ) -> list[AgentPermissionRule]:
+        """Additively add and/or remove user rules on a binding."""
+        binding = await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
+        async with self._ctx.control_db.transaction() as session:
+            result = await AgentPermissionRuleRepository.patch_rules(
+                session, agent_id, credential_id, add=add, remove=remove, created_by=identity.sub
+            )
+        await self._record_rules_change(
+            credential_id, agent_id, binding, identity=identity, reason="patch permission rules"
+        )
+        return result
+
+    async def test_agent_permissions(
+        self,
+        credential_id: str,
+        agent_id: str,
+        *,
+        method: str,
+        path: str,
+        operation_id: str | None,
+        identity: Identity,
+    ) -> PermissionTestResult:
+        """Dry-run permission evaluation for a ``(method, path, operation_id)`` triple.
+
+        Unlike the toolkit ``:test`` there is **no vendor pooling**: the direct
+        binding's rules are a single ordered first-match-wins list, which is
+        the point of the per-binding model. When the binding points at a
+        shared ``permission_rule_set`` the set's list is what gets evaluated —
+        inline rules are dormant while a set is attached, and the dry-run must
+        not lie about that. Default-deny when nothing matches. The broker's
+        condition-less-``allow`` skip is honoured so a bare ``allow`` with no
+        constraints doesn't unlock a dry-run any more than it unlocks a real
+        request.
+        """
+        binding = await self._require_visible_binding(credential_id, agent_id, identity=identity)
+        async with self._ctx.control_db.session() as session:
+            if binding.rule_set_id is not None:
+                rules: Sequence[
+                    AgentPermissionRule | PermissionRuleSetRule
+                ] = await PermissionRuleSetRepository.list_rules(session, binding.rule_set_id)
+            else:
+                rules = await AgentPermissionRuleRepository.list_rules(
+                    session, agent_id, credential_id
+                )
+
+        method_upper = method.upper()
+        for idx, rule in enumerate(rules):
+            rule_methods = rule.methods
+            rule_path = rule.path
+            rule_ops = rule.operations
+            is_condition_less = rule_methods is None and rule_path is None and rule_ops is None
+            if is_condition_less and rule.effect.lower() == "allow":
+                continue
+            if rule_methods is not None:
+                methods_set = {m.upper() for m in rule_methods}
+                if method_upper not in methods_set:
+                    continue
+            if rule_path is not None:
+                matcher = compile_matcher(rule_path, str(rule.match_mode or "regex"))
+                if matcher is not None and not matcher.matches(path):
+                    continue
+            if rule_ops is not None and (operation_id is None or operation_id not in rule_ops):
+                continue
+            return PermissionTestResult(
+                allowed=rule.effect.lower() == "allow",
+                matched=True,
+                effect=rule.effect,
+                rule_index=idx,
+                credential_id=credential_id,
+                is_system=rule.is_system,
+            )
+        return PermissionTestResult(
+            allowed=False,
+            matched=False,
+            effect=None,
+            rule_index=None,
+            credential_id=None,
+            is_system=None,
+        )
+
+    # --- Shared permission rule sets (theme 5 phase 1, Q-04) ---
+
+    async def attach_binding_rule_set(
+        self,
+        credential_id: str,
+        agent_id: str,
+        rule_set_id: str,
+        *,
+        identity: Identity,
+    ) -> None:
+        """Point a direct binding at a shared rule set.
+
+        While attached, the set's ordered list is the binding's effective
+        policy and its inline rules are dormant (they survive untouched for
+        when the set is detached). The set must exist — the pointer is FK-less
+        across the DB seam, so this check plus the delete-time
+        ``rule_set_in_use`` refusal are the integrity guard.
+
+        The caller must also be allowed to attach the set
+        (:meth:`_may_attach_rule_set`), because whoever may edit the set then
+        decides what the agent may do. Re-attaching the set a binding already
+        points at is an idempotent no-op that skips that check, so an existing
+        attachment keeps working for the binding's owner.
+        """
+        binding = await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
+        async with self._ctx.control_db.session() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+        if rule_set is None:
+            raise RuleSetNotFoundError(rule_set_id)
+        if binding.rule_set_id == rule_set_id:
+            return
+        if not self._may_attach_rule_set(rule_set, identity):
+            raise RuleSetAttachDeniedError(rule_set_id)
+        async with self._ctx.admin_db.transaction() as session:
+            await PrerequisiteRepository.set_binding_rule_set(
+                session, agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+            )
+        await self._record_rules_change(
+            credential_id,
+            agent_id,
+            binding,
+            identity=identity,
+            reason=f"attach rule set {rule_set_id}",
+        )
+
+    async def detach_binding_rule_set(
+        self, credential_id: str, agent_id: str, *, identity: Identity
+    ) -> None:
+        """Detach the binding's shared rule set — inline rules apply again.
+
+        Idempotent: detaching a binding that already runs on inline rules is
+        a no-op, not an error.
+        """
+        binding = await self._require_visible_binding(
+            credential_id, agent_id, identity=identity, for_write=True
+        )
+        if binding.rule_set_id is None:
+            return
+        async with self._ctx.admin_db.transaction() as session:
+            await PrerequisiteRepository.set_binding_rule_set(
+                session, agent_id=agent_id, credential_id=credential_id, rule_set_id=None
+            )
+        await self._record_rules_change(
+            credential_id,
+            agent_id,
+            binding,
+            identity=identity,
+            reason=f"detach rule set {binding.rule_set_id}",
+        )
+
+    @staticmethod
+    def _may_mutate_rule_set(rule_set: PermissionRuleSet, identity: Identity) -> bool:
+        """Write gate for a shared rule set: ``org:admin``, or the creator of a non-curated set.
+
+        Everyone passing the route's read permission may *see* a shared set —
+        it carries policy, not secrets, and a binding pointing at it makes
+        its contents the binding owner's business. Editing a set changes the
+        policy of every binding attached to it, so a curated set (which any
+        ``credentials:write`` holder may attach) is editable only by
+        ``org:admin``, including after its creator loses that permission.
+        """
+        if ORG_ADMIN in identity.permissions:
+            return True
+        return not rule_set.curated and rule_set.created_by == identity.sub
+
+    @staticmethod
+    def _may_attach_rule_set(rule_set: PermissionRuleSet, identity: Identity) -> bool:
+        """Attach gate for a shared rule set: ``org:admin``, the creator, or any caller if curated.
+
+        The caller already holds ``credentials:write`` (the route requires it)
+        and may write the binding's rules. Attaching another user's
+        non-curated set is refused: its creator could later rewrite the
+        attached agent's policy.
+        """
+        if ORG_ADMIN in identity.permissions or rule_set.curated:
+            return True
+        return rule_set.created_by is not None and rule_set.created_by == identity.sub
+
+    async def create_rule_set(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        rules: list[dict[str, object]],
+        identity: Identity,
+    ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule]]:
+        """Create a named shared rule set, optionally with its initial ordered rules.
+
+        A set an ``org:admin`` creates is recorded as curated (see
+        :meth:`_may_attach_rule_set`).
+        """
+        async with self._ctx.control_db.transaction() as session:
+            if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
+                raise RuleSetNameConflictError(name)
+            rule_set = await PermissionRuleSetRepository.create(
+                session,
+                name=name,
+                description=description,
+                created_by=identity.sub,
+                curated=ORG_ADMIN in identity.permissions,
+            )
+            set_rules = await PermissionRuleSetRepository.replace_user_rules(
+                session, rule_set.id, rules, created_by=identity.sub
+            )
+        await self._record_rule_set_change(rule_set.id, identity=identity, reason="create rule set")
+        return rule_set, set_rules
+
+    async def get_rule_set(
+        self, rule_set_id: str, *, identity: Identity
+    ) -> tuple[PermissionRuleSet, list[PermissionRuleSetRule], int]:
+        """Return a rule set, its ordered rules, and its referencing-binding count."""
+        async with self._ctx.control_db.session() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            rules = await PermissionRuleSetRepository.list_rules(session, rule_set_id)
+        async with self._ctx.admin_db.session() as session:
+            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
+                session, rule_set_id
+            )
+        return rule_set, rules, binding_count
+
+    async def list_rule_sets(
+        self, *, cursor: str | None = None, limit: int = 50, identity: Identity
+    ) -> tuple[list[tuple[PermissionRuleSet, int]], bool, str | None]:
+        """List rule sets with per-set rule counts. Returns (data, has_more, next_cursor)."""
+        decoded_cursor = None
+        if cursor is not None:
+            ts, cid = decode_cursor_str(cursor)
+            decoded_cursor = (ts, cid)
+        async with self._ctx.control_db.session() as session:
+            rows = await PermissionRuleSetRepository.list_page(
+                session, cursor=decoded_cursor, limit=limit + 1
+            )
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            counts = await PermissionRuleSetRepository.rule_counts(session, [r.id for r in rows])
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = encode_cursor(last.created_at, last.id)
+        return [(r, counts.get(r.id, 0)) for r in rows], has_more, next_cursor
+
+    async def update_rule_set(
+        self,
+        rule_set_id: str,
+        *,
+        identity: Identity,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> PermissionRuleSet:
+        """Rename or re-describe a rule set (see :meth:`_may_mutate_rule_set`)."""
+        async with self._ctx.control_db.transaction() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
+            if name is not None and name != rule_set.name:
+                if await PermissionRuleSetRepository.get_by_name(session, name) is not None:
+                    raise RuleSetNameConflictError(name)
+                rule_set.name = name
+            if description is not None:
+                rule_set.description = description
+            await session.flush()
+        await self._record_rule_set_change(rule_set_id, identity=identity, reason="update rule set")
+        return rule_set
+
+    async def replace_rule_set_rules(
+        self,
+        rule_set_id: str,
+        rules: list[dict[str, object]],
+        *,
+        identity: Identity,
+    ) -> list[PermissionRuleSetRule]:
+        """Replace a set's ordered user-rule list (idempotent PUT).
+
+        This is the single-place edit rule grouping exists for: every binding
+        pointing at the set picks the new list up at once.
+        """
+        async with self._ctx.control_db.transaction() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
+            result = await PermissionRuleSetRepository.replace_user_rules(
+                session, rule_set_id, rules, created_by=identity.sub
+            )
+        await self._record_rule_set_change(
+            rule_set_id, identity=identity, reason="replace rule set rules"
+        )
+        return result
+
+    async def delete_rule_set(self, rule_set_id: str, *, identity: Identity) -> None:
+        """Delete a rule set nothing references (409 rule_set_in_use otherwise).
+
+        The binding's ``rule_set_id`` pointer is FK-less across the DB seam,
+        so this application-level check is what keeps a set from vanishing
+        under bindings that still evaluate through it.
+        """
+        async with self._ctx.control_db.session() as session:
+            rule_set = await PermissionRuleSetRepository.get_by_id(session, rule_set_id)
+            if rule_set is None:
+                raise RuleSetNotFoundError(rule_set_id)
+            if not self._may_mutate_rule_set(rule_set, identity):
+                raise RuleSetAccessDeniedError(rule_set_id, curated=rule_set.curated)
+        async with self._ctx.admin_db.session() as session:
+            binding_count = await PrerequisiteRepository.count_bindings_for_rule_set(
+                session, rule_set_id
+            )
+        if binding_count:
+            raise RuleSetInUseError(rule_set_id, binding_count)
+        async with self._ctx.control_db.transaction() as session:
+            deleted = await PermissionRuleSetRepository.delete_by_id(session, rule_set_id)
+        if not deleted:
+            raise RuleSetNotFoundError(rule_set_id)
+        await self._record_rule_set_change(rule_set_id, identity=identity, reason="delete rule set")
+
+    async def _record_rule_set_change(
+        self, rule_set_id: str, *, identity: Identity, reason: str
+    ) -> None:
+        """Audit + telemetry for a rule-set mutation."""
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.PERMISSION_RULE_SET,
+            target_id=rule_set_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            reason=reason,
+            origin=identity.origin.value,
+        )
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                    severity=EventSeverity.INFO,
+                    summary=f"Permission rule set {rule_set_id}: {reason}",
+                    created_by=identity.sub,
+                    actor_id=identity.sub,
+                    actor_type=identity.actor_type.value,
+                )
+        except Exception:
+            logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CREDENTIAL_PERMISSION_RULE_SET,
+                exc_info=True,
+            )
 
     async def list_all(
         self,
@@ -401,7 +1057,7 @@ class CredentialService:
         access_filters = build_access_filters(
             identity,
             Credential,
-            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            bound_credential_ids=await self._bound_credential_ids(identity),
             include_shared=True,
         )
 
@@ -660,10 +1316,17 @@ class CredentialService:
             details = BasicAuthRedacted(username=username)
 
         elif wire_type == CredentialType.OAUTH2:
-            occ = credential.oauth_client_credential
             is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
+            is_device_code = stored_type == StoredCredentialType.OAUTH2_DEVICE_CODE
+            # Device-flow credentials live on ``device_authorization_credentials``;
+            # every other OAuth2 variant lives on ``oauth_client_credentials``.
+            # Read from the right relation so the redacted view doesn't
+            # report an empty client_id / a misleading grant_type
+            # (handover follow-up #5).
+            dfc = credential.device_authorization_credential if is_device_code else None
+            occ = None if is_device_code else credential.oauth_client_credential
             connected: bool | None = None
-            if is_auth_code:
+            if is_auth_code or is_device_code:
                 # Managed providers (e.g. Pipedream) complete connect by
                 # stamping `provider_account_ref` without a local token row —
                 # the ref alone means the sign-in finished.
@@ -682,11 +1345,22 @@ class CredentialService:
                             or token.expires_at is None
                             or token.expires_at > datetime.now(UTC)
                         )
+            grant_type = (
+                "device_code"
+                if is_device_code
+                else "authorization_code"
+                if is_auth_code
+                else "client_credentials"
+            )
             details = OAuth2Redacted(
-                client_id=occ.client_id if occ else "",
-                token_url=occ.token_url if occ else "",
-                grant_type="authorization_code" if is_auth_code else "client_credentials",
-                scopes=occ.scope.split() if occ and occ.scope else None,
+                client_id=(dfc.client_id if dfc else "") or (occ.client_id if occ else ""),
+                token_url=(dfc.token_url if dfc else "") or (occ.token_url if occ else ""),
+                grant_type=grant_type,
+                scopes=(
+                    (dfc.granted_scopes if dfc and dfc.granted_scopes else dfc.requested_scopes)
+                    if dfc
+                    else (occ.scope.split() if occ and occ.scope else None)
+                ),
                 connected=connected,
             )
         elif wire_type == CredentialType.NO_AUTH:
@@ -745,7 +1419,8 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'token_url' is required for oauth2")
             if not payload.client_id:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
-            if not payload.client_secret:
+            # Device flow (RFC 8628) is a public-client flow — no secret.
+            if payload.grant_type != "device_code" and not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
         elif payload.type == CredentialType.SIGV4:
             if not payload.access_key_id:

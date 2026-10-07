@@ -1,16 +1,18 @@
 /**
- * UsageBubbleChart — ported from jentic-mini's `ApiBubbleChart`.
+ * UsageBubbleChart.
  *
- * One bubble per api / toolkit / agent: bubble area encodes execution volume,
+ * One bubble per API / agent: bubble area encodes execution volume,
  * the partial ring around it encodes success rate, and hovering surfaces a
  * calls / success / latency tooltip. The segmented toggle flips between the
- * three lenses without refetching (the Overview pre-fetches all three
+ * two lenses without refetching (the Overview pre-fetches both
  * groupings).
  *
  * Differences from the mini original: no vendor-icon registry in jentic-one,
- * so every bubble renders an initials tile from a stable index palette, and
- * the tooltip drops the cross-entity "Used by" / "Top APIs" sections (the
- * usage endpoint doesn't expose per-toolkit top-API relations).
+ * so every bubble is the entity's pastel avatar — its avatar hue in the
+ * deeper chart tone ({@link assignChartTones}), dark same-hue initials, a
+ * tile-tone success ring — and the tooltip drops the cross-entity "Used by" /
+ * "Top APIs" sections (the usage endpoint doesn't expose per-credential
+ * top-API relations).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -18,17 +20,17 @@ import { cn } from '@/shared/lib/utils';
 import { SegmentedToggle } from '@/shared/ui';
 import { formatLatency, formatPercent } from '@/modules/monitor/lib/format';
 import {
-	getInitials,
-	lensPalette,
-	ringColor,
-	textColor,
+	assignChartTones,
+	entityInitials,
+	toneFor,
+	type EntityTone,
 	type UsageLens,
 } from '@/modules/monitor/lib/palette';
+import { EntityMark } from '@/modules/monitor/components/EntityMark';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBubbleChartProps {
 	apis: EntityUsageRow[];
-	toolkits: EntityUsageRow[];
 	agents: EntityUsageRow[];
 	className?: string;
 }
@@ -38,24 +40,21 @@ interface BubbleNode {
 	x: number;
 	y: number;
 	radius: number;
-	color: string;
-	ringColor: string;
+	tone: EntityTone;
 }
 
 const LENS_TITLES: Record<UsageLens, string> = {
 	apis: 'API Usage',
-	toolkits: 'Toolkit Activity',
 	agents: 'Agent Activity',
 };
 
 const LENS_NOUNS: Record<UsageLens, string> = {
 	apis: 'API',
-	toolkits: 'toolkit',
 	agents: 'agent',
 };
 
 /**
- * Greedy circle packing (verbatim from jentic-mini): place biggest first at
+ * Greedy circle packing: place biggest first at
  * the centre, then spiral each next bubble outward to the closest free spot.
  */
 function packCircles(
@@ -124,7 +123,7 @@ function packCircles(
 	return placed;
 }
 
-export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBubbleChartProps) {
+export function UsageBubbleChart({ apis, agents, className }: UsageBubbleChartProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 600, height: 420 });
 	// Store only the hovered entity id, not the node: background refetches
@@ -157,26 +156,21 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 		setHoveredId(null);
 	}, [lens]);
 
-	const items = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
+	const items = lens === 'apis' ? apis : agents;
 
 	const bubbles = useMemo(() => {
 		if (items.length === 0) return [];
 
-		const palette = lensPalette(lens);
+		const tones = assignChartTones(lens, items);
 		const maxExec = Math.max(1, ...items.map((a) => a.totalExecutions));
 		const minRadius = 28;
 		const maxRadius = Math.min(dimensions.width, dimensions.height) * 0.18;
 
-		const nodes = items.map((item, i) => {
-			const color = palette[i % palette.length];
-			return {
-				item,
-				radius:
-					minRadius + (item.totalExecutions / maxExec) ** 0.6 * (maxRadius - minRadius),
-				color,
-				ringColor: ringColor(color),
-			};
-		});
+		const nodes = items.map((item) => ({
+			item,
+			radius: minRadius + (item.totalExecutions / maxExec) ** 0.6 * (maxRadius - minRadius),
+			tone: toneFor(tones, item.id),
+		}));
 
 		return packCircles(nodes, dimensions.width, dimensions.height);
 	}, [items, dimensions, lens]);
@@ -192,13 +186,15 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 		<div
 			ref={containerRef}
 			className={cn(
-				'border-border bg-card relative min-w-0 overflow-hidden rounded-xl border',
+				'bg-surface-1 relative min-w-0 overflow-hidden rounded-lg [--field-bg:var(--surface-field)]',
 				className,
 			)}
 		>
 			<div className="flex items-start justify-between gap-2 px-4 pt-3 pb-0">
 				<div>
-					<h2 className="text-foreground text-sm font-semibold">{LENS_TITLES[lens]}</h2>
+					<h2 className="font-heading text-foreground text-sm font-semibold">
+						{LENS_TITLES[lens]}
+					</h2>
 					<p className="text-muted-foreground text-xs">
 						Bubble size = execution volume, ring = success rate
 					</p>
@@ -207,7 +203,6 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 				<SegmentedToggle
 					options={[
 						{ value: 'apis', label: 'APIs' },
-						{ value: 'toolkits', label: 'Toolkits' },
 						{ value: 'agents', label: 'Agents' },
 					]}
 					value={lens}
@@ -268,10 +263,6 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 										floodOpacity="0.3"
 									/>
 								</filter>
-								<radialGradient id="bubble-shine" cx="35%" cy="35%" r="65%">
-									<stop offset="0%" stopColor="white" stopOpacity="0.4" />
-									<stop offset="100%" stopColor="white" stopOpacity="0" />
-								</radialGradient>
 							</defs>
 
 							{bubbles.map((bubble) => {
@@ -321,7 +312,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 												cy={bubble.y}
 												r={ringRadius}
 												fill="none"
-												stroke={bubble.ringColor}
+												stroke={bubble.tone.tile}
 												strokeWidth={2.5}
 												strokeDasharray={`${successStroke} ${failStroke}`}
 												strokeDashoffset={circumference * 0.25}
@@ -333,7 +324,8 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 												cx={bubble.x}
 												cy={bubble.y}
 												r={bubble.radius}
-												fill={bubble.color}
+												fill={bubble.tone.fill}
+												data-tone={bubble.tone.tone ?? 'neutral'}
 												filter={
 													isHovered
 														? 'url(#bubble-glow)'
@@ -341,20 +333,13 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 												}
 												className="transition-all duration-200"
 											/>
-											<circle
-												cx={bubble.x}
-												cy={bubble.y}
-												r={bubble.radius}
-												fill="url(#bubble-shine)"
-												opacity={0.15}
-											/>
 
 											<text
 												x={bubble.x}
 												y={bubble.y - (bubble.radius > 40 ? 6 : 0)}
 												textAnchor="middle"
 												dominantBaseline="central"
-												fill={textColor(bubble.color)}
+												fill={bubble.tone.ink}
 												fontSize={
 													bubble.radius > 50
 														? 14
@@ -365,10 +350,10 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 												fontWeight={700}
 												className="pointer-events-none select-none"
 												style={{
-													fontFamily: 'var(--font-sans, system-ui)',
+													fontFamily: 'var(--font-heading, system-ui)',
 												}}
 											>
-												{getInitials(bubble.item.label)}
+												{entityInitials(lens, bubble.item.label)}
 											</text>
 											{bubble.radius > 40 && (
 												<text
@@ -376,9 +361,9 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 													y={bubble.y + (bubble.radius > 50 ? 12 : 8)}
 													textAnchor="middle"
 													dominantBaseline="central"
-													fill={textColor(bubble.color)}
+													fill={bubble.tone.ink}
 													fontSize={bubble.radius > 50 ? 9 : 8}
-													opacity={0.7}
+													opacity={0.8}
 													className="pointer-events-none select-none"
 													style={{
 														fontFamily: 'var(--font-sans, system-ui)',
@@ -399,6 +384,8 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 			{hovered && (
 				<BubbleTooltip
 					item={hovered.item}
+					tone={hovered.tone}
+					lens={lens}
 					x={hovered.x}
 					y={hovered.y}
 					containerWidth={dimensions.width}
@@ -410,11 +397,15 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 
 function BubbleTooltip({
 	item,
+	tone,
+	lens,
 	x,
 	y,
 	containerWidth,
 }: {
 	item: EntityUsageRow;
+	tone: EntityTone;
+	lens: UsageLens;
 	x: number;
 	y: number;
 	containerWidth: number;
@@ -423,10 +414,18 @@ function BubbleTooltip({
 
 	return (
 		<div
-			className="border-border bg-card pointer-events-none absolute z-20 w-56 rounded-lg border p-3 shadow-xl"
+			className="bg-surface-field pointer-events-none absolute z-20 w-56 rounded-lg p-3 shadow-xl"
 			style={{ left: isRight ? x - 240 : x + 20, top: Math.max(8, y - 60) }}
 		>
-			<p className="text-foreground mb-2 text-sm font-medium">{item.label}</p>
+			<p className="text-foreground mb-2 flex items-center gap-2 text-sm font-medium">
+				<EntityMark
+					tone={tone}
+					label={item.label}
+					lens={lens}
+					className="h-5 w-5 text-[8px]"
+				/>
+				<span className="min-w-0 truncate">{item.label}</span>
+			</p>
 
 			<div className="grid grid-cols-3 gap-2 text-center">
 				<div>

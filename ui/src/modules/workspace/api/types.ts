@@ -10,7 +10,7 @@
  * running backend on :8000. The repository tier (`client.ts`) is the single
  * place that casts the generated `any` into these shapes.
  *
- * Scope: APIs only. Workflows, credentials, and toolkits belong to other
+ * Scope: APIs only. Credentials and agents belong to other
  * modules and are intentionally absent here.
  */
 
@@ -172,20 +172,23 @@ export interface Overlay {
 	deprecateHref: string | null;
 }
 
-/** Result of enqueuing an import (`POST /apis` → 202). */
-export interface ImportJob {
-	jobId: string;
-	status: string;
+/**
+ * A note attached to an API (`GET /notes?api=vendor:name:version`) — an
+ * agent- or operator-authored hint (auth quirk, usage hint, correction…).
+ * Mirrors the backend `NoteResponse`; `type`/`confidence`/`source` are the
+ * wire enums serialized as strings (null when unset).
+ */
+export interface ApiNote {
+	id: string;
+	type: string | null;
+	body: string;
+	confidence: string | null;
+	source: string | null;
+	createdBy: string;
+	createdAt: string;
+	updatedAt: string;
 }
 
-/** Terminal/intermediate job state when polling `/jobs/{id}`. */
-export interface JobStatus {
-	jobId: string;
-	status: string;
-	error: string | null;
-}
-
-/** A single import source for the import dialog. */
-export type ImportSource =
-	| { type: 'url'; url: string; vendor?: string; apiName?: string; version?: string }
-	| { type: 'inline'; content: string; filename: string };
+// The spec-import job shape lives in `@/shared/credentials/api` — the import
+// dialog is shared. Re-exported for the re-import client call.
+export type { ImportJob } from '@/shared/credentials/api';

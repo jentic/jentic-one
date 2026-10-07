@@ -11,6 +11,9 @@ from jentic_one.registry.services.errors import (
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
+    GovernedHostsUnavailableError,
+    HostChangeRequiresOperatorError,
+    HostOwnedByOtherVendorError,
     InvalidApiFilterError,
     InvalidNoteResourceError,
     InvalidOverlayDocumentError,
@@ -50,6 +53,7 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # lacks overlays:confirm. 403 (not 409) — it's an authorization decision, and an
     # operator-facing conflict event was re-emitted for someone who can resolve it.
     OverlaySupersedeForbiddenError: (403, "overlay_supersede_forbidden"),
+    HostChangeRequiresOperatorError: (403, "host_change_requires_operator"),
     # Editing a materialized overlay re-materializes it onto the served spec (D1), which
     # is an operator action requiring overlays:confirm. A caller with only apis:write is
     # refused with 403 rather than silently rewriting what the platform serves.
@@ -74,9 +78,16 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     InvalidOverlayDocumentError: (422, "invalid_overlay_document"),
     TooManyCandidatesError: (500, "url_index_overloaded"),
     RevisionStateConflictError: (409, "revision_state_conflict"),
+    # Promoting a revision whose servers declare a host another vendor's live API
+    # already serves — a host is served by one vendor at a time.
+    HostOwnedByOtherVendorError: (409, "host_owned_by_other_vendor"),
     SearchUnavailableError: (501, "search_unsupported"),
     SpecFileMissingError: (500, "spec_file_missing"),
     CatalogUnavailableError: (502, "catalog_unavailable"),
+    # A registry process serving /governed-hosts without the admin or control
+    # DB is misdeployed (SURFACE_DB_DEPS should have granted them) — 503 so
+    # callers retry a healthy replica; never a bare 500, never an empty 200.
+    GovernedHostsUnavailableError: (503, "governed_hosts_unavailable"),
     # Belt-and-braces: an accidental async lazy load (e.g. on a stale, bulk-updated
     # ORM instance) raises sqlalchemy MissingGreenlet, which the DB transaction
     # wrapper maps to DatabaseConsistencyError. Map it to a known 500 with a

@@ -1,6 +1,6 @@
-"""Resilience envelope (§05): per-caller rate limiting + per-upstream circuit.
+"""Resilience envelope: per-caller rate limiting + per-upstream circuit.
 
-These are thin **policy** layers over the shared-state backend (§06): the rate
+These are thin **policy** layers over the shared-state backend: the rate
 limiter wraps a ``RateLimitStore`` token bucket and the circuit breaker wraps an
 ``AtomicStore`` counter + latch. Selecting ``memory`` vs ``redis`` at the backend
 (``shared/state``) is what makes the same policy per-instance or cluster-wide —

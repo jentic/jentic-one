@@ -4,21 +4,21 @@ import { modelAnchorId, operationAnchorId } from '@/modules/docs/lib/anchor';
 import type { ReferencePayload } from '@/modules/docs/api/types';
 
 const reference: ReferencePayload = {
-	schema: 'jentic.endpoint-scope-tree/v1',
+	schema: 'jentic.endpoint-permission-tree/v1',
 	total: 1,
 	groups: ['g'],
 	endpoints: [
 		{
 			method: 'POST',
-			path: '/toolkits',
+			path: '/gadgets',
 			surface: 'admin',
-			summary: 'Create toolkit',
-			operation_id: 'createToolkit',
+			summary: 'Create gadget',
+			operation_id: 'createGadget',
 			authenticated: true,
 			public: false,
 			actor_types: [],
-			required_scopes: ['x'],
-			implied_scopes: {},
+			required_permissions: ['x'],
+			implied_permissions: {},
 			auth_note: null,
 			typical_caller: null,
 			group: 'g',
@@ -29,15 +29,15 @@ const reference: ReferencePayload = {
 describe('buildSearchIndex', () => {
 	it('points endpoint hits at the exact operation anchor', () => {
 		const index = buildSearchIndex(reference, undefined);
-		const hit = searchIndex(index, 'POST /toolkits').find((i) => i.kind === 'endpoint');
-		expect(hit?.anchor).toBe(operationAnchorId('POST', '/toolkits'));
+		const hit = searchIndex(index, 'POST /gadgets').find((i) => i.kind === 'endpoint');
+		expect(hit?.anchor).toBe(operationAnchorId('POST', '/gadgets'));
 	});
 
 	it('indexes models and points them at the model anchor', () => {
-		const index = buildSearchIndex(reference, undefined, ['ToolkitCreateResponse']);
-		const hit = searchIndex(index, 'ToolkitCreate').find((i) => i.kind === 'model');
-		expect(hit?.title).toBe('ToolkitCreateResponse');
-		expect(hit?.anchor).toBe(modelAnchorId('ToolkitCreateResponse'));
+		const index = buildSearchIndex(reference, undefined, ['GadgetCreateResponse']);
+		const hit = searchIndex(index, 'GadgetCreate').find((i) => i.kind === 'model');
+		expect(hit?.title).toBe('GadgetCreateResponse');
+		expect(hit?.anchor).toBe(modelAnchorId('GadgetCreateResponse'));
 	});
 
 	it('omits models when none are supplied', () => {

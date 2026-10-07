@@ -1,0 +1,679 @@
+"""Shared-golden contract tests: the mount's execute envelope vs the frozen CLI bytes.
+
+The phase-1 pre-work contract (phase-3 plan §pre-work): golden tool-call
+transcripts replayed against both implementations. The Go side pins these in
+``cli/internal/cli/api/mcp_golden_test.go``; this is the Python replay against
+the same frozen files (``cli/tests/golden/testdata/golden/v2`` — one source of
+truth, never a re-pin: drift on either side fails against the identical bytes).
+
+Only the cases where the tool result IS the envelope are shareable (success,
+upstream-4xx passthrough); denials deliberately diverge into the soft-error
+taxonomy (§3.7) and are asserted field-wise below, mirroring the Go
+``mcp_execute_test.go`` coverage of the same golden fixtures.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator, Callable
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
+
+import jentic_one.mcp.execute as ex
+import jentic_one.mcp.tools as tools_mod
+from jentic_one.mcp.tools import CallEnv, dispatch_tool_call
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import AuthConfig, ServerConfig
+from jentic_one.shared.models import ActorType
+
+_GOLDEN_DIR = (
+    Path(__file__).resolve().parents[3] / "cli" / "tests" / "golden" / "testdata" / "golden" / "v2"
+)
+
+
+def shared_golden_stdout(name: str) -> str:
+    """The stdout section of one frozen CLI golden (Go: ``sharedGoldenStdout``)."""
+    raw = (_GOLDEN_DIR / f"{name}.txt").read_text("utf-8")
+    _, _, after = raw.partition("--- stdout ---\n")
+    stdout, marker, _ = after.partition("--- stderr ---\n")
+    assert marker, f"golden {name} has no stderr marker"
+    return stdout
+
+
+def envelope_without_stamp(payload: dict[str, Any]) -> str:
+    """Re-serialize a decoded tool payload minus ``instance`` the way the CLI
+    goldens were recorded (Go ``cmdcore.WriteJSON``: 2-space indent, sorted
+    keys, trailing newline) so the comparison is byte-exact like for like."""
+    assert "instance" in payload, "tool payload carries no instance stamp to strip"
+    del payload["instance"]
+    return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def make_env(broker_url: str) -> CallEnv:
+    ctx = MagicMock()
+    ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
+    server = ServerConfig()
+    server.mcp.enabled = True
+    server.mcp.broker_url = broker_url
+    ctx.config.server = server
+    ctx.instance_id = None
+    return CallEnv(
+        ctx=ctx,
+        identity=Identity(sub="agnt_1", permissions=["apis:read"], actor_type=ActorType.AGENT),
+        credential="jak_test",
+        base_url="https://auth.example.com",
+        session_id=None,
+    )
+
+
+@pytest.fixture()
+def broker(monkeypatch: pytest.MonkeyPatch):
+    """Route the execute path's broker leg into an in-process mock transport.
+
+    Returns a setter taking the httpx.MockTransport handler; requests the
+    handler answers carry exactly the headers it sets (plus Content-Length),
+    matching the Go httptest mocks the goldens were recorded from.
+    """
+    state: dict[str, Any] = {}
+
+    def set_handler(handler: Callable[[httpx.Request], httpx.Response]) -> None:
+        state["transport"] = httpx.MockTransport(handler)
+
+    def client_factory() -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=state["transport"], follow_redirects=False)
+
+    monkeypatch.setattr(ex, "_broker_client", client_factory)
+    return set_handler
+
+
+def decode_tool_json(result: Any) -> dict[str, Any]:
+    (content,) = result.content
+    decoded = json.loads(content.text)
+    assert isinstance(decoded, dict)
+    return decoded
+
+
+async def test_execute_ok_envelope_matches_the_shared_golden(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same mock responses TestGolden_ExecuteContract recorded
+    execute_ok_json from; resolution is stubbed to the golden's inspect answer
+    (the golden pins the ENVELOPE — resolution has its own tests)."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        assert target == "listPets"
+        return {"method": "GET", "url": "https://upstream.example/v1/pets"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer jak_test"
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json", "Jentic-Execution-Id": "exec-123"},
+            content=b'[{"id":1,"name":"Fido"}]',
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "listPets"})
+    assert not result.is_error, result.content
+
+    got = envelope_without_stamp(decode_tool_json(result))
+    assert got == shared_golden_stdout("execute_ok_json")
+
+
+async def test_execute_upstream_4xx_passthrough_matches_the_shared_golden(broker) -> None:
+    """An upstream 4xx relayed by the broker is a normal envelope on both
+    surfaces (§3.7 row 1) — Jentic-Error-Origin: upstream means the denial is
+    the caller's data, never a soft error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"Content-Type": "application/json", "Jentic-Error-Origin": "upstream"},
+            content=b'{"error":"upstream said no"}',
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error, result.content
+
+    got = envelope_without_stamp(decode_tool_json(result))
+    assert got == shared_golden_stdout("execute_upstream_4xx_passthrough_json")
+
+
+async def test_execute_payload_is_envelope_plus_stamp_only(broker) -> None:
+    """The superset shape itself (§3.7.4): exactly the golden envelope's keys
+    plus ``instance``, nothing else — a new sibling key is a contract change
+    that must consciously touch both the CLI golden and this pin."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json", "Jentic-Execution-Id": "exec-123"},
+            content=b'[{"id":1,"name":"Fido"}]',
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    payload = decode_tool_json(result)
+
+    golden_env = json.loads(shared_golden_stdout("execute_ok_json"))
+    want = set(golden_env) | {"instance"}
+    assert set(payload) == want
+
+
+async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> None:
+    """Denials diverge from the CLI rendering into the §3.7 soft-error
+    taxonomy; the broker's verbatim agent_directive rides the payload (the
+    same fixture the execute_broker_denial_directive_json golden froze)."""
+    directive = {
+        "instruction": "Run `jentic connect acme` and relay the approval_url, then retry.",
+        "parameters": {"suggested_command": "jentic connect acme"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(
+                {"type": "no_credential_binding", "detail": "denied", "agent_directive": directive}
+            ).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["schema_version"] == "1"
+    assert payload["agent_directive"] == directive
+    assert payload["actionable_step"] == directive["instruction"]
+    assert payload["details"] == {"http_status": 403}
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == "request_connection"
+    assert "instance" in payload
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (403, {"type": "no_credential_binding", "detail": "denied"}, "whoami"),
+        (403, {"type": "no_toolkit_binding", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_not_provisioned", "detail": "denied"}, "whoami"),
+        (
+            403,
+            {
+                "type": "no_credential_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect acme`.",
+                    "parameters": {"suggested_command": "jentic connect acme"},
+                },
+            },
+            "request_connection",
+        ),
+        (
+            424,
+            {
+                "type": "credential_not_provisioned",
+                "agent_directive": {
+                    "instruction": "Ask your operator to connect a credential.",
+                    "parameters": {"vendor": "acme.com"},
+                },
+            },
+            "whoami",
+        ),
+        (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
+        (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
+        (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
+        (403, {"detail": "denied"}, "whoami"),
+    ],
+)
+async def test_denial_next_tool_keys_on_problem_type(
+    broker, status: int, body: dict[str, Any], want_tool: str
+) -> None:
+    """The type→next_tool mapping (Phase 1b review M1): request_connection
+    ONLY for the provisioning-shaped problem types, and only when the
+    directive names a registry vendor (``parameters.suggested_command``) —
+    off the registry the tool would fail as an unknown vendor.
+    action_denied / identity-mismatch / unknown denials keep whoami — a
+    status-keyed fork would teach the model to file connect sessions to
+    route around permission rules. A non-provisioning hint never teaches
+    request_connection."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"Content-Type": "application/problem+json"},
+            content=json.dumps(body).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "BROKER_DENIED"
+    assert payload["next_tool"] == want_tool
+    step = payload["actionable_step"]
+    if body.get("type") not in {
+        "no_credential_binding",
+        "no_toolkit_binding",
+        "credential_not_provisioned",
+    }:
+        assert "request_connection" not in step
+
+
+async def test_insecure_broker_refusal_is_the_coded_transport_error(broker) -> None:
+    """SEC-1: a bearer never rides plaintext to a non-loopback broker — the
+    same refusal the execute_transport_insecure_broker golden pinned CLI-side."""
+    env = make_env("http://broker.internal:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "plaintext" in payload["error"]
+
+
+async def test_held_202_envelope_passes_through_untouched(broker) -> None:
+    """§3.4: a held execute (202 + job envelope) is a NORMAL tool result — the
+    model reads the directive and polls get_execution_result, never re-sends."""
+    held_body = {
+        "status": "held",
+        "job_id": "job_123",
+        "agent_directive": {
+            "instruction": "The call is held for operator approval. Poll get_execution_result.",
+            "next_action": "poll",
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            202,
+            headers={"Content-Type": "application/json", "Jentic-Execution-Id": "exec-held"},
+            content=json.dumps(held_body).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
+    assert not result.is_error, result.content
+
+    payload = decode_tool_json(result)
+    assert payload["status"] == 202
+    assert payload["body"] == held_body
+    assert payload["execution_id"] == "exec-held"
+
+
+# --- broker-leg transport posture (Go: mcp_execute_test.go's twin coverage) ---
+
+
+async def test_oversized_streamed_broker_body_fails_closed_at_the_cap(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MAJOR-2 regression: the broker leg STREAMS the response and stops
+    reading at ``_MAX_BODY_BYTES`` (Go: ``ReadAllBounded`` — fail closed,
+    never buffer-then-truncate). The chunk counter proves the read stopped at
+    the cap rather than draining the multi-'GiB' body first."""
+    monkeypatch.setattr(ex, "_MAX_BODY_BYTES", 1 << 10)
+    pulled = {"chunks": 0}
+
+    async def chunk_stream() -> AsyncIterator[bytes]:
+        for _ in range(1000):
+            pulled["chunks"] += 1
+            yield b"x" * 256
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"Content-Type": "application/octet-stream"}, content=chunk_stream()
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "response body exceeds maximum allowed size" in payload["error"]
+    assert pulled["chunks"] < 100, "the read must stop at the cap, not drain the body"
+
+
+async def test_model_supplied_headers_cannot_override_protected_headers(broker) -> None:
+    """MINOR-5 regression: ``Authorization``/``User-Agent`` merge AFTER the
+    tool-arg headers — the caller's bearer and the ``jentic-mcp/`` UA (the
+    broker's ``Origin.MCP`` signal) always win, in exactly one spelling."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get_list("Authorization")
+        seen["user_agent"] = request.headers.get_list("User-Agent")
+        seen["x_custom"] = request.headers.get("X-Custom")
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"{}")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(
+        env,
+        "execute",
+        {
+            "operation_id": "GET:/v1/pets",
+            "headers": {
+                "Authorization": "Bearer stolen",
+                "authorization": "Bearer stolen-too",
+                "User-Agent": "curl/8",
+                "X-Custom": "rides",
+            },
+        },
+    )
+    assert not result.is_error, result.content
+    assert seen["authorization"] == ["Bearer jak_test"]
+    (user_agent,) = seen["user_agent"]
+    assert user_agent.startswith("jentic-mcp/")
+    assert seen["x_custom"] == "rides"
+
+
+async def test_loopback_prefixed_broker_hostname_is_refused(broker) -> None:
+    """MINOR-1 regression: ``127.0.0.1.evil.example`` is a resolvable public
+    DNS name — SEC-1 parses the host as an IP (Go ``net.ParseIP`` semantics),
+    so a plaintext bearer never rides to it."""
+    env = make_env("http://127.0.0.1.evil.example:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert "plaintext" in payload["error"]
+
+
+async def test_ipv6_loopback_broker_stays_allowed(broker) -> None:
+    """The parsed-IP check keeps admitting every literal loopback form."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=b"[]")
+
+    broker(handler)
+    env = make_env("http://[::1]:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error, result.content
+
+
+async def test_unreachable_broker_envelope_carries_no_dangling_pointer(broker) -> None:
+    """#1254: with the broker down, the TRANSPORT_ERROR envelope must not
+    point at ``get_started`` — that tool is absent from this lane's
+    tools/list, so the pointer was an undiscoverable dead end exactly when
+    the model was looking for recovery. The retryable hint still rides."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["retryable"] is True
+    assert "next_tool" not in payload
+
+
+@pytest.mark.parametrize(
+    ("target", "inspected"),
+    [
+        # Broker-relative short-circuit: parsed as TRACE, never an opaque id.
+        ("TRACE:/v1/debug", None),
+        # Inspected form: the registry resolves the target to a TRACE operation.
+        ("TRACE:https://api.example.com/v1/debug", "TRACE"),
+    ],
+)
+async def test_trace_targets_are_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch, target: str, inspected: str | None
+) -> None:
+    """Pins the mount's parity with the Go ``ensureExecutableMethod`` gate: TRACE
+    echoes the request back (reflecting the credentials the broker injects), so
+    execute refuses it with a coded RESOLVE_FAILED and never sends it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": inspected, "url": "https://api.example.com/v1/debug"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a TRACE target must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": target})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "search_apis"
+
+
+async def test_host_relative_operation_is_refused_before_the_broker_is_dialed(
+    broker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with the Go ``ensureAbsoluteUpstream`` gate: an operation whose
+    spec declares no absolute server (a search hit whose target is the registry
+    operation_id) has no upstream host to proxy to, so execute refuses it."""
+
+    async def fake_inspect(env: CallEnv, target: str, revision: str) -> dict[str, Any]:
+        return {"method": "GET", "url": "/pets"}
+
+    monkeypatch.setattr(tools_mod, "_inspect_document", fake_inspect)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a host-relative operation must never reach the broker")
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "op_pets"})
+
+    assert result.is_error
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "no upstream host" in str(payload)
+
+
+async def test_transport_error_envelope_carries_exception_class_not_message(broker) -> None:
+    """The transport exception text can quote request material verbatim (an
+    illegal-header message carries the header value), so the agent sees only
+    the exception class — never the message."""
+    marker = "Illegal header value b'Bearer jak_test\\r\\nX-Injected: 1'"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.LocalProtocolError(marker)
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "POST:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    rendered = json.dumps(payload)
+    assert payload["error_code"] == "TRANSPORT_ERROR"
+    assert payload["error"].startswith("transport error (LocalProtocolError)")
+    assert "jak_test" not in rendered
+    assert "Illegal header value" not in rendered
+    assert payload["retryable"] is False
+
+
+def _broker_problem(status: int, problem: dict[str, Any]) -> httpx.Response:
+    """A problem response in the broker's real ``problem_body`` shape (message in
+    ``title``, no ``detail``, ``Jentic-Error-Origin: broker``)."""
+    return httpx.Response(
+        status,
+        headers={"Content-Type": "application/problem+json", "Jentic-Error-Origin": "broker"},
+        content=json.dumps({"status": status, "error_origin": "broker", **problem}).encode(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "want_tool"),
+    [
+        (
+            400,
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+            },
+            "whoami",
+        ),
+        (400, {"type": "credential_name_not_found", "title": "No credential named zzz"}, "whoami"),
+        (
+            404,
+            {
+                "type": "operation_not_found",
+                "title": "Operation not found — unregistered upstream URL.",
+            },
+            "search_apis",
+        ),
+        # A contract/payload error (413/422/428) is neither a discovery nor a
+        # binding problem — it points at the operation contract, not whoami.
+        (
+            413,
+            {"type": "payload_too_large", "title": "Request body exceeds the cap."},
+            "inspect_operation",
+        ),
+        # Exact type match: a type that merely mentions "credential" is not routed
+        # to whoami.
+        (400, {"type": "credential_header_malformed", "title": "bad header"}, "inspect_operation"),
+    ],
+)
+async def test_broker_resolve_failure_is_a_coded_soft_error(
+    broker, status, body, want_tool
+) -> None:
+    """#1429 (Go: TestMCPExecute_BrokerResolveFailureIsError): a broker-origin
+    4xx that is not a denial never reached the upstream, so it is an isError
+    RESOLVE_FAILED result, never a normal tool result."""
+    broker(lambda request: _broker_problem(status, body))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["details"]["http_status"] == status
+    assert payload["details"]["problem_type"] == body["type"]
+    assert body["title"] in payload["error"]
+    assert payload["retryable"] is False
+    assert payload["next_tool"] == want_tool
+
+
+async def test_broker_resolve_failure_surfaces_validation_errors(broker) -> None:
+    """The broker's validation 422 (broker/web/errors.handle_validation) carries
+    its field errors in ``errors`` under a generic title; the reason must name
+    WHICH field was wrong (Go: ``TestBrokerErrorSurfacesValidationErrors``)."""
+    broker(
+        lambda request: _broker_problem(
+            422,
+            {
+                "type": "about:blank#validation",
+                "title": "Request validation failed",
+                "errors": [
+                    {
+                        "type": "missing",
+                        "loc": ["header", "jentic-credential-id"],
+                        "msg": "field required",
+                    }
+                ],
+            },
+        )
+    )
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert "Request validation failed" in payload["error"]
+    assert "header.jentic-credential-id: field required" in payload["error"]
+    assert payload["next_tool"] == "inspect_operation"
+
+
+async def test_broker_resolve_failure_falls_back_to_status_phrase(broker) -> None:
+    """With no detail and no title the reason is the standard status phrase, the
+    same text Go's ``http.StatusText`` yields."""
+    broker(lambda request: _broker_problem(405, {}))
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+
+    payload = decode_tool_json(result)
+    assert payload["error"].endswith("(HTTP 405): Method Not Allowed")
+
+
+async def test_broker_resolve_failure_relays_candidates(broker) -> None:
+    """#1429 candidate relay: the broker embeds the caller's own covering
+    credentials on an unknown id, so they ride details["candidates"] rather than
+    forcing a follow-up whoami to learn which ids exist."""
+    candidates = [
+        {"id": "cred_real", "name": "prod", "last4": "real", "created_at": None},
+        {"id": "cred_other", "name": "staging", "last4": "ther", "created_at": None},
+    ]
+    broker(
+        lambda request: _broker_problem(
+            400,
+            {
+                "type": "credential_id_not_found",
+                "title": "Credential id cred_nope is not among your credentials",
+                "candidates": candidates,
+            },
+        )
+    )
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert result.is_error
+
+    payload = decode_tool_json(result)
+    assert payload["details"]["candidates"] == candidates
+
+
+async def test_broker_rate_limit_is_not_a_resolve_failure(broker) -> None:
+    """A broker 429 is retryable after Retry-After, so it must not become a
+    RESOLVE_FAILED carrying retryable=false / "do not retry" advice."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _broker_problem(
+            429,
+            {
+                "type": "rate_limit_exceeded",
+                "title": "Rate limit exceeded; slow down and retry after the indicated delay.",
+            },
+        )
+        response.headers["Retry-After"] = "1"
+        return response
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert decode_tool_json(result).get("error_code") != "RESOLVE_FAILED"
+
+
+@pytest.mark.parametrize("origin", ["upstream", None])
+async def test_non_broker_4xx_still_passes_through(broker, origin) -> None:
+    """The other side of #1429: an upstream 4xx, or one with no origin header,
+    is the caller's data and stays a normal result."""
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Jentic-Error-Origin"] = origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, headers=headers, content=b'{"error": "no such pet"}')
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+    assert not result.is_error

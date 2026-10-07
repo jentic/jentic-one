@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import delete
 
 from jentic_one.admin.core.permissions import (
+    CREDENTIALS_READ,
+    CREDENTIALS_WRITE,
     EVENTS_WRITE,
     ORG_ADMIN,
-    TOOLKITS_READ,
-    TOOLKITS_WRITE,
     USERS_READ,
     USERS_WRITE,
 )
@@ -30,6 +30,7 @@ from jentic_one.admin.services.errors import (
 )
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import DEFAULT_AGENT_PERMISSIONS, RETIRED_PERMISSIONS
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import InviteState
 
@@ -104,7 +105,7 @@ async def test_get_effective_expands_implications(
     assert ORG_ADMIN in view.effective
     assert USERS_WRITE in view.effective
     assert USERS_READ in view.effective
-    assert TOOLKITS_WRITE in view.effective
+    assert CREDENTIALS_WRITE in view.effective
 
 
 async def test_get_assigned_for_user(integration_context: Context, admin_user: str) -> None:
@@ -132,6 +133,39 @@ async def test_list_catalogue_includes_org_admin_for_admin(
     assert ORG_ADMIN in names
 
 
+async def test_list_catalogue_grantable_follows_agent_permission_ceiling(
+    integration_context: Context, regular_user: str, admin_user: str
+) -> None:
+    """``grantable_by_caller`` mirrors what ``POST /agents`` accepts from the caller.
+
+    The regular user holds ``users:write`` (+ implied ``users:read``); add
+    ``agents:write`` so the admin-only exclusion is exercised on a held scope.
+    """
+    async with integration_context.admin_db.session() as session:
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            regular_user,
+            permissions={USERS_WRITE, "agents:write"},
+            granted_by=None,
+            created_by="usr_test",
+        )
+        await session.commit()
+    service = PermissionService(integration_context)
+
+    grantable = {e.name: e.grantable_by_caller for e in await service.list_catalogue(regular_user)}
+    assert grantable["agents:write"] is False
+    assert grantable[USERS_WRITE] is True
+    assert grantable[USERS_READ] is True
+    assert grantable["agents:read"] is True
+    for scope in DEFAULT_AGENT_PERMISSIONS:
+        assert grantable[scope] is True, scope
+    assert grantable[EVENTS_WRITE] is False
+    assert grantable[CREDENTIALS_WRITE] is False
+
+    admin_view = await service.list_catalogue(admin_user)
+    assert all(e.grantable_by_caller for e in admin_view)
+
+
 async def test_validate_grants_unknown_permission(
     integration_context: Context, admin_user: str
 ) -> None:
@@ -156,6 +190,19 @@ async def test_validate_grants_org_admin_forbidden_for_non_admin(
         await service.validate_grants(regular_user, [ORG_ADMIN])
 
 
+async def test_validate_grants_tolerates_retired_scopes(
+    integration_context: Context, admin_user: str
+) -> None:
+    """Every ``RETIRED_PERMISSIONS`` member is accepted and skipped (never a 422).
+
+    A stored grant set written before a scope retirement (theme-5 toolkit
+    scopes, theme-7 ``owner:access-requests:read``) must re-submit unchanged;
+    the retired string is stored as-is and grants nothing.
+    """
+    service = PermissionService(integration_context)
+    await service.validate_grants(admin_user, sorted(RETIRED_PERMISSIONS))  # must not raise
+
+
 async def test_set_assigned(integration_context: Context, admin_user: str) -> None:
     ctx = integration_context
     # Create a target user
@@ -174,15 +221,15 @@ async def test_set_assigned(integration_context: Context, admin_user: str) -> No
     service = PermissionService(ctx)
     result = await service.set_assigned(
         target_id,
-        [TOOLKITS_WRITE, USERS_READ],
+        [CREDENTIALS_WRITE, USERS_READ],
         identity=Identity(sub=admin_user, email="test@local"),
     )
-    assert TOOLKITS_WRITE in result
+    assert CREDENTIALS_WRITE in result
     assert USERS_READ in result
 
     # Verify effective includes implied
     view = await service.get_effective_for_user(target_id)
-    assert TOOLKITS_READ in view.effective
+    assert CREDENTIALS_READ in view.effective
 
     # Cleanup
     async with ctx.admin_db.session() as session:

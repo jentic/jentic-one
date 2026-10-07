@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.repos import ExecutionRecordRepository
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services.errors import ExecutionNotFoundError
 from jentic_one.admin.services.schemas.executions import (
@@ -12,12 +14,17 @@ from jentic_one.admin.services.schemas.executions import (
     ExecutionFilter,
     ExecutionView,
 )
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.lookups import resolve_toolkit_names
 
 
 class ExecutionService:
-    """Manages execution record queries."""
+    """Manages execution record queries.
+
+    Every read is scoped to the caller (``build_access_filters``): an execution
+    is visible to the actor that ran it, to the human owner of the agent that
+    ran it, and to ``org:admin``. Anything else reads as not found.
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -25,9 +32,12 @@ class ExecutionService:
     async def list_all(
         self,
         filter: ExecutionFilter,
+        *,
+        identity: Identity,
         cursor: str | None = None,
         limit: int = 25,
     ) -> Page[ExecutionView]:
+        access_filters = build_access_filters(identity, ExecutionRecord)
         cursor_ts: Any = None
         cursor_id: str | None = None
         if cursor is not None:
@@ -49,38 +59,33 @@ class ExecutionService:
                 api_version=filter.api_version,
                 actor_id=filter.actor_id,
                 origin=filter.origin,
+                filters=access_filters,
             )
 
         has_more = len(records) > limit
         if has_more:
             records = records[:limit]
 
-        toolkit_ids = list({r.toolkit_id for r in records})
-        names_map: dict[str, str] = {}
-        if toolkit_ids:
-            async with self._ctx.control_db.session() as session:
-                names_map = await resolve_toolkit_names(session, toolkit_ids)
-
-        views = [self._to_view(r, names_map=names_map) for r in records]
+        views = [self._to_view(r) for r in records]
         next_cursor = None
         if has_more and records:
             next_cursor = encode_cursor(records[-1].started_at, records[-1].id)
 
         return Page(data=views, has_more=has_more, next_cursor=next_cursor)
 
-    async def get_by_id(self, execution_id: str) -> ExecutionView:
+    async def get_by_id(self, execution_id: str, *, identity: Identity) -> ExecutionView:
+        access_filters = build_access_filters(identity, ExecutionRecord)
         async with self._ctx.admin_db.session() as session:
-            record = await ExecutionRecordRepository.get_by_id(session, execution_id)
+            record = await ExecutionRecordRepository.get_by_id(
+                session, execution_id, filters=access_filters
+            )
         if record is None:
             raise ExecutionNotFoundError(execution_id)
 
-        async with self._ctx.control_db.session() as session:
-            names_map = await resolve_toolkit_names(session, [record.toolkit_id])
-
-        return self._to_view(record, names_map=names_map)
+        return self._to_view(record)
 
     @staticmethod
-    def _to_view(record: Any, *, names_map: dict[str, str] | None = None) -> ExecutionView:
+    def _to_view(record: Any) -> ExecutionView:
         api = None
         if record.api_vendor and record.api_name and record.api_version:
             api = ApiInfo(
@@ -90,17 +95,21 @@ class ExecutionService:
                 host=getattr(record, "api_host", None),
             )
 
-        toolkit_name = (names_map or {}).get(record.toolkit_id)
-
         return ExecutionView(
             id=record.id,
             toolkit_id=record.toolkit_id,
-            toolkit_name=toolkit_name,
+            # Denormalized at flattening time (theme-5 Phase 6b) — the
+            # control ``toolkits`` table this used to be resolved from is
+            # gone. NULL for rows whose toolkit was already deleted, exactly
+            # as the old read-time resolver reported them.
+            toolkit_name=record.toolkit_name,
             trace_id=record.trace_id,
             started_at=record.started_at,
             duration_ms=record.duration_ms,
             status=record.status,
             operation_id=record.operation_id,
+            operation_path=record.operation_path,
+            operation_method=record.operation_method,
             api=api,
             pinned_revisions=record.pinned_revisions,
             http_status=record.http_status,

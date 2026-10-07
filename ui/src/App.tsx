@@ -12,14 +12,12 @@ import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
 import { PlaceholderPage } from '@/shared/app/placeholders';
 import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
-// [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
-import { dashboardIndexRoute } from '@/modules/dashboard/routes';
 import { publicDocsRoutes } from '@/modules/docs/routes';
 
 /**
  * Route tree. All paths are relative to the router `basename` (`/app`, set in
  * `main.tsx` from Vite's `base`), so a path like `/login` resolves to
- * `/app/login` in the browser and `/credentials` to `/app/credentials`. The
+ * `/app/login` in the browser and `/agents` to `/app/agents`. The
  * SPA owns the entire `/app` namespace; nothing here is served outside it.
  *
  *   /login, /setup                   → SetupGate steers by setup_required
@@ -129,7 +127,9 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 					// without editing the registry. Order is load-bearing —
 					// placeholders stay last so a real module route wins.
 					children: [
-						dashboardIndexRoute,
+						// `/app` has no page of its own: the fleet is home, so the
+						// index lands on Agents (old `/app` bookmarks included).
+						{ index: true, element: <Navigate to={ROUTES.agents} replace /> },
 						...moduleRoutes,
 						...extraRoutes,
 						...placeholderRoutes,
@@ -146,7 +146,7 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 /**
  * A nav item's `to` is a root-relative client path (e.g. `/credentials`). The
  * module route registry mounts pages relative to the basename index, so strip
- * the leading slash to get the route `path` (`credentials`). The dashboard
+ * the leading slash to get the route `path` (`credentials`). The basename
  * index (`ROUTES.app` === `/`) is filtered out before this is called.
  */
 function relativeToApp(path: string): string {

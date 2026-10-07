@@ -9,18 +9,25 @@ from jentic_one.admin.core.permissions import (
     ORG_ADMIN,
     compute_effective,
 )
-from jentic_one.admin.repos import UserPermissionGrantRepository
+from jentic_one.admin.repos import UserPermissionGrantRepository, UserRepository
+from jentic_one.admin.services._support.user_management import (
+    ensure_can_manage,
+    ensure_not_last_active_admin,
+)
 from jentic_one.admin.services.errors import (
     OrgAdminGrantForbiddenError,
     PermissionNotGrantableError,
     UnknownPermissionError,
+    UserNotFoundError,
 )
 from jentic_one.admin.services.schemas.permissions import (
     PermissionCatalogueEntry,
     PermissionsView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.auth.agent_permission_ceiling import is_agent_permission_grantable
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import RETIRED_PERMISSIONS
 from jentic_one.shared.context import Context
 
 
@@ -31,6 +38,13 @@ class PermissionService:
         self._ctx = ctx
 
     async def list_catalogue(self, caller_user_id: str) -> list[PermissionCatalogueEntry]:
+        """The permission catalogue as seen by the caller.
+
+        ``grantable_by_caller`` follows the agent permission ceiling
+        (``is_agent_permission_grantable``) — the only UI consumer is the agent
+        permission picker, and the flag must never offer a permission that
+        ``POST /agents`` / ``PUT /agents/{id}/permissions`` would reject.
+        """
         caller_effective = await self.get_effective_for_user(caller_user_id)
         caller_effective_set = set(caller_effective.effective)
 
@@ -38,7 +52,7 @@ class PermissionService:
         for perm in ALL_PERMISSIONS.values():
             if perm.name == ORG_ADMIN and ORG_ADMIN not in caller_effective_set:
                 continue
-            grantable = perm.name in caller_effective_set
+            grantable = is_agent_permission_grantable(perm.name, caller_effective_set)
             entries.append(
                 PermissionCatalogueEntry(
                     name=perm.name,
@@ -59,14 +73,6 @@ class PermissionService:
         effective = compute_effective(set(assigned))
         return PermissionsView(assigned=assigned, effective=sorted(effective))
 
-    async def get_effective_for_service_account(self, service_account_id: str) -> PermissionsView:
-        # Right now, ServiceAccounts might be using ActorScopeGrantRepository
-        # or a similar mechanism, but for Phase 1 they don't have explicit grants
-        # configured through this service yet. We return an empty view.
-        # In the future, we will fetch directly from a ServiceAccountPermissionGrant table
-        # or use ActorScopeGrant as permissions for SAs.
-        return PermissionsView(assigned=[], effective=[])
-
     async def project_for_users(self, user_ids: Sequence[str]) -> dict[str, list[str]]:
         """Batch-fetch assigned permissions for multiple users."""
         if not user_ids:
@@ -85,13 +91,27 @@ class PermissionService:
         *,
         identity: Identity,
     ) -> list[str]:
-        """Validate and set permissions for a user."""
+        """Validate and set permissions for a user.
+
+        The caller may only grant permissions they hold (``validate_grants``),
+        and may only change the permissions of a user whose current
+        permissions they already hold (``org:admin`` and self exempt).
+        Removing ``org:admin`` from the last active holder is refused.
+        """
         granted_by = identity.sub
         await self.validate_grants(granted_by, permissions)
 
-        previous = await self.get_assigned_for_user(user_id)
-
         async with self._ctx.admin_db.transaction() as session:
+            if await UserRepository.get_by_id(session, user_id) is None:
+                raise UserNotFoundError(user_id)
+            permission_sets = await UserPermissionGrantRepository.get_permission_sets(
+                session, [user_id, granted_by]
+            )
+            ensure_can_manage(user_id, identity, permission_sets)
+            previous = sorted(permission_sets[user_id])
+            if ORG_ADMIN in permission_sets[user_id] and ORG_ADMIN not in permissions:
+                await ensure_not_last_active_admin(session, user_id)
+
             grants = await UserPermissionGrantRepository.set_permissions(
                 session,
                 user_id,
@@ -132,11 +152,19 @@ class PermissionService:
         return [g.permission for g in grants]
 
     async def validate_grants(self, granter_user_id: str, permissions: list[str]) -> None:
-        """Validate that all permissions exist and the granter can grant them."""
+        """Validate that all permissions exist and the granter can grant them.
+
+        ``RETIRED_PERMISSIONS`` members are accepted and skipped: a stored grant
+        set written before a permission retirement (theme-5 Phase 5b) must
+        re-submit unchanged without a 422. The retired string is stored
+        as-is and grants nothing — Phase 6b sweeps it.
+        """
         granter_effective = await self.get_effective_for_user(granter_user_id)
         granter_set = set(granter_effective.effective)
 
         for perm in permissions:
+            if perm in RETIRED_PERMISSIONS:
+                continue
             if perm not in ALL_PERMISSIONS:
                 raise UnknownPermissionError(perm)
             if perm == ORG_ADMIN and ORG_ADMIN not in granter_set:

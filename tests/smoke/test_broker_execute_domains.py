@@ -7,8 +7,8 @@ drift, transport edge cases, parameter serialization, query-array limits,
 lifecycle headers, and server-URL resolution.
 
 All ops use the ``executable_harness`` fixture: the broker resolves a credential
-for *every* proxied op (424 otherwise), so a bound toolkit + active credential is
-the minimum wiring even for unsecured ops.
+for *every* proxied op, so a directly bound, allow-all credential is the
+minimum wiring even for unsecured ops.
 
 Open items resolved in-code:
 - broker retry-on-503: none in the proxy path (see resilience module).
@@ -224,6 +224,56 @@ def test_edge_binary_uncorrupted(
     assert status == 200, f"{status}: {raw!r}"
     body = json.loads(raw)
     assert body["bytes"] == len(blob)
+
+
+@pytest.mark.smoke
+def test_edge_multipart_forwarded_intact(
+    broker_url: str,
+    executable_harness: ExecutableHarness,
+    upstream_incluster_url: str,
+) -> None:
+    """POST /edge/multipart → the broker forwards a real multipart body intact.
+
+    Guards the CLI ``--form``/``--form-file`` feature (#1316): the whole design
+    rests on the broker relaying the multipart body **and its generated boundary
+    Content-Type** byte-transparently. Here we build a body with Python's stdlib
+    ``multipart.encode`` equivalent (a hand-assembled boundary payload) exactly as
+    the Go ``mime/multipart.Writer`` would, send it with the boundary-carrying
+    ``Content-Type``, and assert the harness parsed both a text field and a file
+    part — proving the boundary survived the round trip through the broker.
+    """
+    _skip_if_no_admin_surface()
+
+    boundary = f"smoke{uuid.uuid4().hex}"
+    field_name, field_value = "caption", "reverse image search"
+    file_field, filename = "images", "face.jpg"
+    file_bytes = bytes(range(256)) * 4  # 1024 bytes spanning every byte value
+
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'
+            f"{field_value}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+
+    raw, status, _ = broker_call(
+        broker_url,
+        f"{upstream_incluster_url}/edge/multipart",
+        method="POST",
+        token=executable_harness.agent_token,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        body=body,
+    )
+    assert status == 200, f"{status}: {raw!r}"
+    parsed = json.loads(raw)
+    assert parsed["fields"] == {field_name: field_value}
+    assert parsed["files"] == [{"field": file_field, "filename": filename, "size": len(file_bytes)}]
 
 
 @pytest.mark.smoke

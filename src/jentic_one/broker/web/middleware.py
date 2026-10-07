@@ -1,14 +1,14 @@
-"""Broker admission-control middleware (§04 R1, PR-B).
+"""Broker admission-control middleware.
 
 Pure-ASGI middleware (**not** ``BaseHTTPMiddleware``): Starlette's
-``BaseHTTPMiddleware`` wraps the request in a way that has historically broken
-downstream ``request.stream()`` / ``request.body()`` consumption — and the §04
+``BaseHTTPMiddleware`` wraps the request in a way that is known to break
+downstream ``request.stream()`` / ``request.body()`` consumption — and the
 body cap reads ``request.stream()`` in the handler. A plain ASGI middleware
-avoids that interaction (and is where the §05 rate limiter will key off the
+avoids that interaction (and is where the rate limiter will key off the
 validated token).
 
 The cap is **per-instance** — it governs this event loop and is never
-coordinated across instances (that is rate limiting, §05). Acquire is
+coordinated across instances (that is rate limiting). Acquire is
 **non-blocking**: past ``max_in_flight`` the request is shed immediately with a
 ``503`` + ``Retry-After`` rather than queued (the whole point is to fail fast).
 ``/health`` and ``/metrics`` are excluded so infra routes answer even while
@@ -35,13 +35,13 @@ class _AdmissionGate:
 
     A plain object the middleware calls — it never raises an HTTP/web error
     (that is the edge's concern). ``in_flight`` is tracked for the readiness
-    probe (§05 R5.2) and the saturation metric (§05 R5.3).
+    probe and the saturation metric.
     """
 
     def __init__(self, *, max_in_flight: int) -> None:
         self._max = max_in_flight
         self.in_flight = 0
-        # Flipped on SIGTERM drain (§09 E4.3): readiness reports unready so the
+        # Flipped on SIGTERM drain: readiness reports unready so the
         # LB deregisters this instance, and the middleware stamps Connection:
         # close on responses so keep-alive clients re-resolve to a healthy pod.
         self.draining = False
@@ -81,7 +81,7 @@ class AdmissionControlMiddleware:
     ) -> None:
         self._app = app
         # The gate may be supplied by the app factory so the readiness probe
-        # (§05 R5.2) can observe ``in_flight`` on the very same counter.
+        # can observe ``in_flight`` on the very same counter.
         self._gate = gate if gate is not None else _AdmissionGate(max_in_flight=max_in_flight)
         self._retry_after = str(retry_after_s)
 
@@ -97,7 +97,7 @@ class AdmissionControlMiddleware:
         # During drain, stamp ``Connection: close`` so a keep-alive LB/client
         # tears the connection down after this in-flight request and re-resolves
         # to a healthy pod for the next one (readiness alone doesn't close an
-        # already-open keep-alive connection) — §09 E4.3.
+        # already-open keep-alive connection).
         out_send = _drain_close_send(send) if self._gate.draining else send
         try:
             await self._app(scope, receive, out_send)

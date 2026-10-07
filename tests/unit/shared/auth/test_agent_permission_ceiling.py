@@ -1,0 +1,32 @@
+"""Unit tests for the shared agent permission-ceiling predicate (pure, no I/O)."""
+
+from __future__ import annotations
+
+import pytest
+
+from jentic_one.shared.auth.agent_permission_ceiling import is_agent_permission_grantable
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    DEFAULT_AGENT_PERMISSIONS,
+    compute_effective,
+)
+
+
+@pytest.mark.parametrize("permission", sorted(ALL_PERMISSIONS))
+def test_org_admin_may_grant_every_catalogue_permission(permission: str) -> None:
+    assert is_agent_permission_grantable(permission, compute_effective({"org:admin"}))
+
+
+@pytest.mark.parametrize("permission", ["org:admin", "agents:write"])
+def test_admin_only_permissions_never_grantable_by_non_admin_even_if_held(permission: str) -> None:
+    held = compute_effective({"agents:write", "users:write"})
+    assert permission == "org:admin" or permission in held
+    assert not is_agent_permission_grantable(permission, held)
+
+
+def test_non_admin_may_grant_held_implied_and_default_permissions_only() -> None:
+    held = compute_effective({"agents:write", "users:write"})
+    for permission in ("users:write", "users:read", "agents:read", *DEFAULT_AGENT_PERMISSIONS):
+        assert is_agent_permission_grantable(permission, held), permission
+    for permission in ("credentials:write", "audit:read", "config:write"):
+        assert not is_agent_permission_grantable(permission, held), permission

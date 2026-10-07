@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
 	apiIdentityTuple,
 	apiRefDisplayName,
+	formatOperation,
 	humanizeDomainSlug,
 	humanizeName,
 	titleFromApiId,
-	toolkitCredDisplayName,
+	vendorIconPropsFor,
+	workspaceApiTitle,
 } from '../api-display';
 
 /**
@@ -116,6 +118,13 @@ describe('titleFromApiId', () => {
 		expect(titleFromApiId('slack.com')).toBe('slack.com');
 	});
 
+	it('reads a sub-API that is just a host of the same domain as the bare domain', () => {
+		expect(titleFromApiId('github.com/api.github.com')).toBe('github.com');
+		expect(titleFromApiId('github.com/github.com')).toBe('github.com');
+		// A host of ANOTHER domain is still a distinguishing segment.
+		expect(titleFromApiId('example.com/api.other.com')).toBe('Api.Other.Com');
+	});
+
 	it('title-cases hyphen/underscore mixes in the sub-segment', () => {
 		expect(titleFromApiId('foo.com/bar-baz_qux')).toBe('Bar Baz Qux');
 	});
@@ -134,80 +143,6 @@ describe('titleFromApiId', () => {
 	it('leaves a non-allowlist trailing token in the sub-segment space-joined', () => {
 		// `biz` is not on the TLD allowlist, so no dot-rejoin — stays a space.
 		expect(titleFromApiId('acme.com/foo-biz')).toBe('Foo Biz');
-	});
-});
-
-describe('toolkitCredDisplayName', () => {
-	it('titles from the persisted catalog slug when the binding carries one', () => {
-		// Binding rows expose `catalog_api_id` (#910); it wins over the stored
-		// vendor/name tuple so the row reads exactly like Discover.
-		expect(
-			toolkitCredDisplayName({
-				catalog_api_id: 'nytimes.com/article_search',
-				api_vendor: 'nytimes-com',
-				api_name: 'nytimes-com-article-search',
-			}),
-		).toBe('Article Search');
-		expect(
-			toolkitCredDisplayName({ catalog_api_id: 'stripe.com', api_vendor: 'stripe-com' }),
-		).toBe('stripe.com');
-	});
-
-	it('strips a repeated vendor prefix from the sub-API segment', () => {
-		// Real-world umbrella-vendor payload — the sub-API name mirrors the
-		// vendor. Stripping the prefix yields the Discover-style result
-		// (`Posthog Api`) instead of `Posthog Com Posthog Api`.
-		expect(
-			toolkitCredDisplayName({
-				api_vendor: 'posthog-com',
-				api_name: 'posthog-com/posthog-com-posthog-api',
-			}),
-		).toBe('Posthog Api');
-	});
-
-	it('renders the sub-API name humanised when the vendor prefix does not match', () => {
-		expect(
-			toolkitCredDisplayName({
-				api_vendor: 'nytimes-com',
-				api_name: 'nytimes-com/nytimes-com-article-search',
-			}),
-		).toBe('Article Search');
-	});
-
-	it('falls back to a humanised vendor when the name is a generic placeholder', () => {
-		expect(toolkitCredDisplayName({ api_vendor: 'stripe-com', api_name: 'main' })).toBe(
-			'Stripe.Com',
-		);
-		expect(toolkitCredDisplayName({ api_vendor: 'posthog-com', api_name: '' })).toBe(
-			'Posthog.Com',
-		);
-	});
-
-	it('humanises a bare api_name when api_vendor is null', () => {
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'article_search' })).toBe(
-			'Article Search',
-		);
-	});
-
-	it('returns an empty string when both fields are absent', () => {
-		expect(toolkitCredDisplayName({})).toBe('');
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: null })).toBe('');
-	});
-
-	it('renders one consistent string when api_name equals api_vendor', () => {
-		// When the sub-API name is exactly the vendor there's no distinguishing
-		// segment, so both fields collapse to the SAME single vendor
-		// humanisation rather than `Github Com` (name path) vs `Github.Com`
-		// (vendor path).
-		expect(toolkitCredDisplayName({ api_vendor: 'github-com', api_name: 'github-com' })).toBe(
-			'Github.Com',
-		);
-		expect(toolkitCredDisplayName({ api_vendor: 'stripe', api_name: 'stripe' })).toBe('Stripe');
-	});
-
-	it('does not surface a generic api_name as the title when api_vendor is null', () => {
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'main' })).toBe('');
-		expect(toolkitCredDisplayName({ api_vendor: null, api_name: 'default' })).toBe('');
 	});
 });
 
@@ -370,7 +305,7 @@ describe('apiRefDisplayName', () => {
 		).toBe(vendorOnly);
 	});
 
-	it('agrees with toolkitCredDisplayName and titleFromApiId on one identity', () => {
+	it('agrees with titleFromApiId on one identity', () => {
 		// Cross-helper consistency pin: the same umbrella sub-API must render
 		// identically whichever DTO shape a surface happens to hold.
 		const fromRef = apiRefDisplayName({
@@ -378,13 +313,8 @@ describe('apiRefDisplayName', () => {
 			vendor: 'nytimes-com',
 			name: 'nytimes-com-article-search',
 		});
-		const fromBinding = toolkitCredDisplayName({
-			api_vendor: 'nytimes-com',
-			api_name: 'nytimes-com/nytimes-com-article-search',
-		});
 		const fromApiId = titleFromApiId('nytimes.com/article-search');
 		expect(fromRef).toBe('Article Search');
-		expect(fromBinding).toBe(fromRef);
 		expect(fromApiId).toBe(fromRef);
 	});
 
@@ -433,6 +363,42 @@ describe('apiRefDisplayName', () => {
 	});
 });
 
+describe('formatOperation', () => {
+	it('renders method + path template when both are present', () => {
+		expect(
+			formatOperation({
+				operation_path: '/repos/{owner}/{repo}',
+				operation_method: 'GET',
+			}),
+		).toBe('GET /repos/{owner}/{repo}');
+	});
+
+	it('renders the path template alone when the method is missing', () => {
+		expect(
+			formatOperation({
+				operation_path: '/v1/charges',
+				operation_method: null,
+			}),
+		).toBe('/v1/charges');
+	});
+
+	it('returns null on legacy path-less rows — the opaque op_… id never renders', () => {
+		// Deliberate product rule: the machine hash is meaningless to humans,
+		// so a row predating the path/method columns shows the caller's empty
+		// placeholder, not the id.
+		expect(
+			formatOperation({
+				operation_path: null,
+				operation_method: null,
+			}),
+		).toBeNull();
+	});
+
+	it('returns null when the row has no operation identity at all', () => {
+		expect(formatOperation({})).toBeNull();
+	});
+});
+
 describe('apiIdentityTuple', () => {
 	it('returns the persisted catalog slug verbatim when present', () => {
 		// The slug IS the machine identity the user picked — the subtitle shows
@@ -454,7 +420,7 @@ describe('apiIdentityTuple', () => {
 
 	it('does not double the vendor when name is itself a vendor/name tuple', () => {
 		// Real binding rows carry `api_name='posthog-com/posthog-com-posthog-api'`
-		// — the same shape toolkitCredDisplayName peels for its title. The
+		// — the same vendor/name tuple shape the display-name helpers peel. The
 		// subtitle must peel it too, or the vendor renders twice.
 		expect(
 			apiIdentityTuple({
@@ -477,3 +443,44 @@ describe('apiIdentityTuple', () => {
 function capitalize(s: string): string {
 	return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+describe('workspaceApiTitle', () => {
+	const ref = { vendor: 'stripe', name: 'stripe-api', version: '1' };
+
+	it('follows apiRefDisplayName first (display name → catalog slug → tuple)', () => {
+		expect(workspaceApiTitle({ ...ref, displayName: '  Payments  ' })).toBe('Payments');
+		expect(workspaceApiTitle({ ...ref, catalogApiId: 'nytimes.com/books' })).toBe('Books');
+		expect(workspaceApiTitle({ ...ref, catalogApiId: 'github.com/api.github.com' })).toBe(
+			'github.com',
+		);
+		expect(workspaceApiTitle(ref)).toBe('Api');
+	});
+
+	it('is never empty, even for generic identity fields', () => {
+		expect(workspaceApiTitle({ vendor: '', name: 'main', version: '1' })).toBe('main');
+		expect(workspaceApiTitle({ vendor: '', name: '', version: '1' })).toBe('1');
+		expect(workspaceApiTitle({ vendor: '', name: '', version: '' })).toBe('Untitled API');
+	});
+});
+
+describe('vendorIconPropsFor', () => {
+	it('seeds the avatar on the host, else the registry vendor', () => {
+		expect(
+			vendorIconPropsFor({ title: 'GitHub', host: 'api.github.com', vendor: 'github.com' }),
+		).toEqual({ name: 'GitHub', vendor: 'api.github.com', iconUrl: null });
+		expect(vendorIconPropsFor({ title: 'Stripe', host: null, vendor: 'stripe.com' })).toEqual({
+			name: 'Stripe',
+			vendor: 'stripe.com',
+			iconUrl: null,
+		});
+		// A blank host is no key — fall back rather than seed every such API alike.
+		expect(vendorIconPropsFor({ title: 'X', host: '', vendor: 'x.com' }).vendor).toBe('x.com');
+	});
+
+	it('passes the logo through', () => {
+		expect(
+			vendorIconPropsFor({ title: 'S', vendor: 's', iconUrl: 'https://e.test/s.png' })
+				.iconUrl,
+		).toBe('https://e.test/s.png');
+	});
+});

@@ -64,26 +64,26 @@ const NO_HARDCODED_APP_PATH = [
 // TanStack Query keys are namespaced arrays whose FIRST segment is a module's
 // root (e.g. `['workspace', …]`). A module owns its own root, but the
 // sibling-import boundary means it can't reference another module's key
-// factory — historically it reached in with a raw `['otherModule', …]`
-// literal that silently rotted. Those cross-cutting roots now live once in
+// factory — a raw `['otherModule', …]` literal would silently rot. Those
+// cross-cutting roots live once in
 // `@/shared/api` → `sharedQueryKeys`; this map lets us forbid a module from
 // hand-writing a SIBLING's root as an array literal, steering it to the
 // registry. Keyed by module dir → the query-key root(s) that module owns.
 //
 // Unlike the import boundary (auto-derived from `readdirSync`), this map can't
-// be inferred — a key root needn't equal its dir name (e.g. `agents` also owns
-// `service-accounts`). So `assertModuleRootsCoverDirs()` below fails the lint
+// be inferred — a key root needn't equal its dir name (e.g. `settings` also
+// owns `oauth-clients`). So `assertModuleRootsCoverDirs()` below fails the lint
 // run if a module dir is missing here, forcing a new module to declare its
 // roots rather than silently escaping the rule.
 const MODULE_QUERY_KEY_ROOTS = {
 	workspace: ['workspace'],
 	discover: ['discover'],
-	toolkits: ['toolkits'],
 	credentials: ['credentials'],
 	dashboard: ['dashboard'],
-	agents: ['agents', 'service-accounts'],
+	agents: ['agents'],
 	monitor: ['monitor'],
 	docs: ['docs'],
+	settings: ['settings', 'oauth-clients'],
 };
 
 // Guard: every module dir under src/modules MUST appear in the map above, so a

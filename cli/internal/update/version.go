@@ -89,6 +89,13 @@ func NewerAvailable(installed, latest string) bool {
 	return compareSemver(lv, iv) > 0
 }
 
+// IsReleaseTag reports whether ref is a canonical published-release tag
+// (vMAJOR.MINOR.PATCH). The download-and-swap updater only engages for these —
+// a branch/SHA/dev ref has no published assets and must build from source.
+func IsReleaseTag(ref string) bool {
+	return releaseTag.MatchString(ref)
+}
+
 // LatestReleaseTag resolves the highest canonical release tag (vMAJOR.MINOR.PATCH)
 // in repo via `git ls-remote --tags`, returning it with its `v` prefix (e.g.
 // "v0.15.3"). A token (GitHub PAT) authenticates against private repositories,
