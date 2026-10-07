@@ -1505,12 +1505,17 @@ type CredentialBindingResponse struct {
 }
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
+//
+// Examples: {"credential":{"active":true,"api":{"name":"stripe","vendor":"stripe-com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","name":"Stripe live key","provider":"static","type":"api_key"},"secret":{"key":"sk_live_…"}}, {"credential":{"active":true,"api":{"name":"posthog-api","vendor":"posthog-com"},"created_at":"2026-01-15T09:31:00Z","credential_id":"cred_01HZXA...","name":"PostHog personal key","provider":"static","type":"bearer_token"},"secret":{"token":"phx_…"},"warnings":["API scope 'posthog-com/posthog-api/*' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"]}
 type CredentialCreateResponse struct {
 	// Credential Redacted credential response (for read/list/patch).
 	//
 	// Examples: {"active":true,"api":{"name":"stripe","vendor":"stripe.com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","details":{"field_name":"Authorization","hint":"…live_abcd","location":"header"},"name":"Stripe live key","provider":"static","type":"api_key"}
 	Credential CredentialRedactedResponse `json:"credential"`
 	Secret     map[string]interface{}     `json:"secret"`
+
+	// Warnings Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // CredentialListResponse Paginated list of credentials.
