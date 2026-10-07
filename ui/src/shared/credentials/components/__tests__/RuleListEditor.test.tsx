@@ -21,7 +21,7 @@ describe('RuleListEditor (connect flow)', () => {
 		const user = userEvent.setup();
 		render(<Harness />);
 		await user.click(screen.getByRole('button', { name: /add rule/i }));
-		await user.click(screen.getByRole('button', { name: 'require approval' }));
+		await user.click(screen.getByRole('button', { name: 'ask' }));
 		await user.click(screen.getByRole('button', { name: 'POST' }));
 		await user.click(screen.getByRole('button', { name: 'Add' }));
 		expect(state()).toEqual([
@@ -33,9 +33,9 @@ describe('RuleListEditor (connect flow)', () => {
 		const user = userEvent.setup();
 		render(<Harness />);
 		await user.click(screen.getByRole('button', { name: /add rule/i }));
-		await user.click(screen.getByRole('button', { name: 'require approval' }));
+		await user.click(screen.getByRole('button', { name: 'ask' }));
 		await user.click(screen.getByRole('button', { name: 'Add' }));
-		expect(screen.getByText(/"require approval" rule must constrain/)).toBeInTheDocument();
+		expect(screen.getByText(/"ask" rule must constrain/)).toBeInTheDocument();
 		expect(state()).toEqual([]);
 	});
 

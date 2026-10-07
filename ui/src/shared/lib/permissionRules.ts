@@ -73,14 +73,14 @@ export function ruleSummary(rules: PermissionRule[]): string {
 		// instead of the bland "Allows all requests".
 		if (isUnrestrictedAllow(rule)) {
 			return rule.effect === 'require-approval'
-				? 'Holds ANY request for approval (unrestricted)'
+				? 'Asks before ANY request (unrestricted)'
 				: 'Allows ANY request (unrestricted)';
 		}
 		const verb =
 			rule.effect === 'allow'
 				? 'Allows'
 				: rule.effect === 'require-approval'
-					? 'Holds for approval'
+					? 'Asks before'
 					: 'Blocks';
 		const bits: string[] = [];
 		if (rule.methods?.length) bits.push(rule.methods.join(', '));

@@ -42,7 +42,7 @@ const EFFECT_STYLES: Record<
 		Icon: ShieldBan,
 	},
 	'require-approval': {
-		label: 'Require approval',
+		label: 'Ask',
 		chip: 'bg-warning/10 text-warning',
 		Icon: ShieldCheck,
 	},

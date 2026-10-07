@@ -71,7 +71,7 @@ function headerBucket(coverage: OpCoverage): HeaderBucket {
 	}
 }
 
-/** Leaf sort rank: allowed → partial → needs approval → denied. */
+/** Leaf sort rank: allowed → partial → ask → denied. */
 const VERDICT_RANK: Record<OpCoverage['verdict'], number> = {
 	allow: 3,
 	partial: 2,
@@ -82,14 +82,14 @@ const VERDICT_RANK: Record<OpCoverage['verdict'], number> = {
 const VERDICT_PILL: Record<OpCoverage['verdict'], string> = {
 	allow: 'bg-success/10 text-success border-success/40',
 	partial: 'bg-warning/10 text-warning border-warning/40',
-	'require-approval': 'bg-accent-blue/10 text-accent-blue border-accent-blue/40',
+	'require-approval': 'bg-warning/10 text-warning border-warning/40',
 	deny: 'bg-danger/10 text-danger border-danger/40',
 };
 
 const VERDICT_LABEL: Record<OpCoverage['verdict'], string> = {
 	allow: 'allow',
 	partial: 'partial',
-	'require-approval': 'needs approval',
+	'require-approval': 'ask',
 	deny: 'deny',
 };
 
@@ -198,9 +198,9 @@ export function OperationImpactPreview({
 
 /**
  * One top-level path-prefix group. Starts collapsed — the aggregate
- * ``X allowed / Y need approval / Z denied`` counts on the header let
+ * ``X allowed / Y ask / Z denied`` counts on the header let
  * the user skim without expanding. Ops inside are sorted allowed →
- * partial → needs approval → denied.
+ * partial → ask → denied.
  */
 function OperationImpactGroup({ group }: { group: OpGroup }) {
 	const [open, setOpen] = useState(false);
@@ -230,8 +230,7 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 						<span
 							className={`rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${VERDICT_PILL['require-approval']}`}
 						>
-							{group.approvalCount}{' '}
-							{group.approvalCount === 1 ? 'needs approval' : 'need approval'}
+							{group.approvalCount} ask
 						</span>
 					)}
 					{group.deniedCount > 0 && (
@@ -254,7 +253,7 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 
 /**
  * Leaf op row rendered inside a group's expanded body. Verdict pill is
- * one of ``allow`` / ``partial`` / ``needs approval`` / ``deny``.
+ * one of ``allow`` / ``partial`` / ``ask`` / ``deny``.
  *
  * ``partial`` rows carry a caret and start COLLAPSED — clicking the row
  * expands follow-up lines with one concrete sample per outcome:
@@ -319,7 +318,7 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 							<span
 								className={`rounded border px-1 py-0 text-[9px] uppercase ${VERDICT_PILL['require-approval']}`}
 							>
-								needs approval
+								ask
 							</span>
 							<span className="text-muted-foreground">e.g.</span>
 							<span className="text-foreground/80 truncate">{approvalExample}</span>

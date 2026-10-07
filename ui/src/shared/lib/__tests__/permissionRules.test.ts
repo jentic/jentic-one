@@ -43,14 +43,14 @@ describe('require-approval rules', () => {
 			operations: null,
 		};
 		expect(isUnrestrictedAllow(holdAll)).toBe(true);
-		expect(ruleSummary([holdAll])).toContain('Holds ANY request for approval');
+		expect(ruleSummary([holdAll])).toContain('Asks before ANY request');
 	});
 
 	it('summarises a constrained require-approval as a hold', () => {
 		const summary = ruleSummary([
 			{ effect: 'require-approval', methods: ['POST'], path: null, operations: null },
 		]);
-		expect(summary).toContain('Holds for approval');
+		expect(summary).toContain('Asks before');
 		expect(summary).toContain('POST');
 	});
 });

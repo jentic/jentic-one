@@ -228,7 +228,7 @@ export function PermissionRuleEditor({
 											{effect === 'allow'
 												? 'Allow'
 												: effect === 'require-approval'
-													? 'Require approval'
+													? 'Ask'
 													: 'Deny'}
 										</option>
 									))}
@@ -335,7 +335,7 @@ export function PermissionRuleEditor({
 									<AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
 									<span>
 										{rule.effect === 'require-approval'
-											? 'A Require approval rule'
+											? 'An Ask rule'
 											: 'An Allow rule'}{' '}
 										must constrain at least one method, path, or operation.
 									</span>

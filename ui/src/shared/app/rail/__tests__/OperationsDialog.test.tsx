@@ -67,8 +67,8 @@ describe('OperationsDialog', () => {
 		// The legend spells out what each effect does at call time.
 		expect(within(dialog).getByText(/Block overrides everything else/i)).toBeInTheDocument();
 		expect(within(dialog).getByText(/no human in the loop/i)).toBeInTheDocument();
-		// Nothing advertises a human-approval tier — the broker has none.
-		expect(within(dialog).queryByText(/Needs approval/i)).not.toBeInTheDocument();
+		// A grant without Ask rules lists no Ask legend entry.
+		expect(within(dialog).queryByText(/held until a human reviewer/i)).not.toBeInTheDocument();
 	});
 
 	it('hides the filter for small grants', () => {

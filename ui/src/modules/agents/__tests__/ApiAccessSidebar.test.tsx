@@ -276,7 +276,7 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		await user.click(inDialog.getByRole('button', { name: 'Test' }));
 
 		const verdict = await inDialog.findByTestId('rule-verdict');
-		expect(verdict).toHaveTextContent('Needs approval');
+		expect(verdict).toHaveTextContent('Ask');
 		expect(verdict).not.toHaveTextContent('Denied');
 	});
 

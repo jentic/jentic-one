@@ -94,7 +94,7 @@ export default function ApprovalsPage() {
 		<PageShell>
 			<PageHeader
 				title="Approvals"
-				subtitle="Agent calls held by a require-approval rule, waiting for a reviewer."
+				subtitle="Agent calls held by an Ask rule, waiting for a reviewer."
 				actions={
 					<>
 						<Button variant="ghost" size="sm" onClick={() => navigate(ROUTES.agents)}>

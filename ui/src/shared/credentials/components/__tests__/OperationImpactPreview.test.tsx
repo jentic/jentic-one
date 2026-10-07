@@ -55,13 +55,13 @@ describe('OperationImpactPreview', () => {
 		const header = await screen.findByRole('button', { name: /\/repos\// });
 		expect(within(header).getByText('1 allowed')).toBeInTheDocument();
 		// POST is held outright; PATCH is held for one owner and denied otherwise.
-		expect(within(header).getByText('2 need approval')).toBeInTheDocument();
+		expect(within(header).getByText('2 ask')).toBeInTheDocument();
 		expect(within(header).getByText('1 denied')).toBeInTheDocument();
 
 		await user.click(header);
 		expect(within(leaf('GET', '/repos/{owner}/{repo}')).getByLabelText('allow')).toBeVisible();
 		expect(
-			within(leaf('POST', '/repos/{owner}/{repo}/issues')).getByLabelText('needs approval'),
+			within(leaf('POST', '/repos/{owner}/{repo}/issues')).getByLabelText('ask'),
 		).toBeVisible();
 		expect(
 			within(leaf('DELETE', '/repos/{owner}/{repo}')).getByLabelText('deny'),
@@ -72,17 +72,17 @@ describe('OperationImpactPreview', () => {
 		await user.click(patch);
 		expect(within(patch).getByText('/repos/jentic/example-repo')).toBeVisible();
 		expect(within(patch).getByText('/repos/example-owner/example-repo')).toBeVisible();
-		expect(within(patch).getByText('needs approval')).toBeVisible();
+		expect(within(patch).getByText('ask')).toBeVisible();
 
 		await checkA11y(container);
 	});
 
-	it('sorts leaf rows allowed, partial, needs approval, then denied', async () => {
+	it('sorts leaf rows allowed, partial, ask, then denied', async () => {
 		serveOps();
 		const user = userEvent.setup();
 		renderWithProviders(<OperationImpactPreview api={API} rules={RULES} />);
 		await user.click(await screen.findByRole('button', { name: /\/repos\// }));
-		const pills = ['allow', 'partial', 'needs approval', 'deny'].map((label) =>
+		const pills = ['allow', 'partial', 'ask', 'deny'].map((label) =>
 			screen.getByLabelText(label),
 		);
 		for (let i = 1; i < pills.length; i++) {

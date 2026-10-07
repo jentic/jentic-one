@@ -7,9 +7,9 @@ export function ApprovalsHelp() {
 			title="About execution approvals"
 			intro={
 				<p>
-					A permission rule with the <code>require-approval</code> effect holds an
-					agent&apos;s call instead of running it. The call waits here until a reviewer
-					approves or denies it, or the approval expires.
+					A permission rule with the <strong>Ask</strong> effect holds an agent&apos;s
+					call instead of running it. The call waits here until a reviewer approves or
+					denies it, or the approval expires.
 				</p>
 			}
 			sections={[

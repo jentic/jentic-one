@@ -141,7 +141,7 @@ export default function AgentsPage() {
 							<Wallet className="h-4 w-4" />
 							Credentials
 						</Button>
-						{/* Calls an agent made that a require-approval rule holds for its
+						{/* Calls an agent made that an Ask rule holds for its
 						    owner's (or an org admin's) decision. */}
 						<Button
 							variant="outline"
@@ -178,9 +178,9 @@ export default function AgentsPage() {
 									heading: 'Held calls',
 									body: (
 										<p>
-											A call that matches a <strong>require-approval</strong>{' '}
-											rule is held until the agent's owner or an org admin
-											approves or denies it under <strong>Approvals</strong>.
+											A call that matches an <strong>Ask</strong> rule is held
+											until the agent's owner or an org admin approves or
+											denies it under <strong>Approvals</strong>.
 										</p>
 									),
 								},

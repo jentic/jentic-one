@@ -73,7 +73,7 @@ describe('PermissionRuleEditor', () => {
 
 		const rules = JSON.parse(screen.getByTestId('state').textContent ?? '[]');
 		expect(rules[0]).toMatchObject({ effect: 'require-approval', methods: ['POST'] });
-		expect(screen.getByRole('option', { name: 'Require approval' })).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Ask' })).toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 

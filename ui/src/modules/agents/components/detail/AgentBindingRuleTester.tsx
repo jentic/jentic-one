@@ -68,7 +68,7 @@ type VerdictOutcome = 'allowed' | 'approval' | 'denied';
 
 const VERDICT_CHIP: Record<VerdictOutcome, { label: string; className: string }> = {
 	allowed: { label: 'Allowed', className: 'bg-success/15 text-success' },
-	approval: { label: 'Needs approval', className: 'bg-accent-blue/15 text-accent-blue' },
+	approval: { label: 'Ask', className: 'bg-warning/15 text-warning' },
 	denied: { label: 'Denied', className: 'bg-danger/15 text-danger' },
 };
 

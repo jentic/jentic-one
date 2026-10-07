@@ -43,7 +43,7 @@ const EFFECT_STYLES: Record<
 		desc: 'These operations are always refused — Block overrides everything else.',
 	},
 	'require-approval': {
-		label: 'Require approval',
+		label: 'Ask',
 		chip: 'bg-warning/10 text-warning',
 		Icon: ShieldCheck,
 		desc: 'These operations are held until a human reviewer approves or denies them.',

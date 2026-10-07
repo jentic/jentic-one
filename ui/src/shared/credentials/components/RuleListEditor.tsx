@@ -364,7 +364,7 @@ const RULE_EFFECTS: readonly PermissionRule['effect'][] = ['allow', 'require-app
 
 const EFFECT_LABEL: Record<PermissionRule['effect'], string> = {
 	allow: 'allow',
-	'require-approval': 'require approval',
+	'require-approval': 'ask',
 	deny: 'deny',
 };
 
