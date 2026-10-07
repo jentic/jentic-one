@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import unicodedata
 from typing import Any
 
 import structlog
@@ -29,11 +30,19 @@ def summary_label(name: str | None, fallback_id: str) -> str:
     """Name an entity in an event ``summary``: its quoted display name, else its id.
 
     The UI renders ``summary`` as-is, so a human-readable name beats an opaque
-    id. Whitespace runs collapse to one space and the name is bounded by
+    id. Whitespace runs collapse to one space, control and format characters
+    (Unicode ``Cc``/``Cf``, e.g. bidi overrides and zero-width marks) are
+    dropped, and a single quote becomes a typographic one so a name cannot close
+    the quoting and read as part of the sentence. The name is bounded by
     :data:`MAX_EVENT_SUMMARY_FIELD_LEN`, so a summary naming two entities stays
     inside the column. Callers keep the id in the event's ``data``.
     """
-    clean = " ".join((name or "").split())
+    visible = "".join(
+        " " if ch.isspace() else ch
+        for ch in (name or "")
+        if ch.isspace() or unicodedata.category(ch) not in {"Cc", "Cf"}
+    )
+    clean = " ".join(visible.replace("'", "\u2019").split())
     if not clean:
         return fallback_id
     if len(clean) > MAX_EVENT_SUMMARY_FIELD_LEN:

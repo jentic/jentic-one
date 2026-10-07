@@ -238,7 +238,10 @@ class CredentialService:
             # auth but never makes the upstream call.
             await self._emit_credential_failure(
                 type=EventType.CREDENTIAL_REFRESH_FAILED,
-                summary=f"Credential refresh failed for '{api.vendor}'",
+                summary=(
+                    f"Credential {summary_label(resolved.name, resolved.credential_id)} "
+                    f"refresh failed for '{api.vendor}'"
+                ),
                 identity=identity,
                 credential_owner=resolved.created_by,
                 tags={ErrorSource.AUTH_JENTIC},

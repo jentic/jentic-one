@@ -1222,6 +1222,9 @@ const NAV = {
 		ev.tokens.job_id
 			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
+	// The credential inventory sheet on the Agents page — the shape of the
+	// retired `/credentials` redirect, inlined like `agent` below.
+	credentials: () => '/agents?credentials=1',
 	// Agent events open the agent as selected on the Agents page — the shape of
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
@@ -1356,9 +1359,9 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'import':
 			return NAV.job(ev) ?? NAV.trace(ev);
 		case 'credential':
-			return ev.tokens.credential_id
-				? `/credentials/${ev.tokens.credential_id}`
-				: NAV.trace(ev);
+			// The agent the event is about when it names one (binding events);
+			// otherwise the credential inventory, which has no per-credential URL.
+			return NAV.agent(ev) ?? (ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev));
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':

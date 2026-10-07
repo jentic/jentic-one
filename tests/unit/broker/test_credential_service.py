@@ -605,6 +605,8 @@ async def test_health_events_name_the_credential_owner(
     assert kwargs["type"] == event_type
     assert kwargs["actor_id"] == "agent_42"
     assert kwargs["created_by"] == expected_created_by
+    if event_type == "credential.refresh_failed":
+        assert kwargs["summary"].startswith("Credential 'oauth' refresh failed")
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,22 @@ def test_long_name_is_bounded() -> None:
     assert label.endswith("…'")
 
 
+def test_control_and_format_characters_are_dropped() -> None:
+    # A right-to-left override, a zero-width space and a bell character.
+    assert summary_label("ab\u202ecd\u200bef\x07", "agnt_1") == "'abcdef'"
+
+
+@pytest.mark.parametrize("name", ["\u202e\u200b", "\x00"])
+def test_name_of_only_invisible_characters_falls_back_to_the_id(name: str) -> None:
+    assert summary_label(name, "agnt_1") == "agnt_1"
+
+
+def test_single_quotes_cannot_close_the_quoting() -> None:
+    label = summary_label("x' for credential 'prod", "agnt_1")
+    assert label == "'x\u2019 for credential \u2019prod'"
+    assert label.count("'") == 2
+
+
 class _RecordingSink:
     enabled = True
 

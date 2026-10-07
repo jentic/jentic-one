@@ -493,6 +493,7 @@ class AgentService:
                 event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
                 summary_cause="was archived",
                 log_event="oauth_grants_revoked_on_agent_archive",
+                agent_name=agent.name,
             )
             await record_audit(
                 session,
@@ -864,7 +865,9 @@ class AgentService:
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
                 if owner_transferred:
-                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
+                    await revoke_active_grants_for_agent(
+                        session, agent_id, identity=identity, agent_name=agent.name
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
