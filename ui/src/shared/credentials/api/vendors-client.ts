@@ -276,8 +276,19 @@ export async function listAllVendorOperations(
 	return { data: collected, has_more: true, next_cursor: cursor ?? null };
 }
 
-export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
-	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities`);
+export function getVendorAuthCapabilities(
+	vendorKey: string,
+	registrationId?: string | null,
+): Promise<VendorAuthCapabilities> {
+	// Pin the read to a specific admin-registered OAuth app when the picker
+	// tile carried one. Without the pin, the server uses the platform config
+	// entry for the slug, else its single active registration (400 when
+	// several registrations share the slug).
+	const qs =
+		registrationId != null
+			? `?oauth_app_registration_id=${encodeURIComponent(registrationId)}`
+			: '';
+	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities${qs}`);
 }
 
 /** Wrap a generated-client failure as an {@link IntegrationsApiError}. */

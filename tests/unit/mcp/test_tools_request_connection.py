@@ -25,6 +25,7 @@ import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.integrations.connect_session_service import CreatedSession
 from jentic_one.control.services.integrations.errors import NoOpForFlowError
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -270,6 +271,22 @@ async def test_unusable_default_flow_is_resolve_failed_like_the_go_mount(
     payload = _payload(result)
     assert payload["error_code"] == "RESOLVE_FAILED"
     assert payload["next_tool"] == "search_catalog"
+    assert "operator" in payload["actionable_step"]
+
+
+async def test_ambiguous_vendor_routes_to_operator() -> None:
+    """The tool carries no registration pin, so several shared OAuth apps for
+    one vendor can only be disambiguated by the human in the dashboard."""
+    _FakeConnectSessionService.error = AmbiguousVendorError(
+        "googleapis-com", None, ["oar_a", "oar_b"]
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "googleapis-com"}
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
     assert "operator" in payload["actionable_step"]
 
 

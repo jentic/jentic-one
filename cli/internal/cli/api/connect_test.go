@@ -223,6 +223,30 @@ func TestConnect_UnknownVendor404IsResolveFailed(t *testing.T) {
 	}
 }
 
+// Several shared OAuth apps for one vendor answer 400 ambiguous_vendor; the
+// advice must route to the operator, not suggest another registry key.
+func TestConnect_AmbiguousVendorRoutesToOperator(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'github' is ambiguous"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "github")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeResolveFailed)
+	}
+	if coded.Actionable != ambiguousVendorActionable {
+		t.Errorf("actionable = %q, want the ask-your-operator advice", coded.Actionable)
+	}
+}
+
 func TestConnect_403IsOperatorScopeGrant(t *testing.T) {
 	withXDG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
