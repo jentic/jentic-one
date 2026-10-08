@@ -719,7 +719,7 @@ describe('CredentialInventorySheet — whose agents "used by" counts', () => {
 
 /**
  * The inventory sheet offers only what the viewer's permissions allow, and
- * sends no read the server would refuse — pins #1543 item 5.
+ * sends no read the server would refuse — pins #1543 items 5 and 4.
  */
 describe('CredentialInventorySheet — what a reader may see and send', () => {
 	const VIEWER = 'usr_viewer_1';
@@ -816,5 +816,29 @@ describe('CredentialInventorySheet — what a reader may see and send', () => {
 		const usedBy = within(sheet.getByRole('group', { name: 'Filter by agent usage' }));
 		expect(usedBy.queryByRole('button', { name: /Unbound/ })).not.toBeInTheDocument();
 		expect(usedBy.getByRole('button', { name: 'Any agent' })).toBeInTheDocument();
+	});
+
+	/**
+	 * Item 4. "Connect" runs the provider sign-in and WRITES the resulting
+	 * tokens onto the credential, so it needs `credentials:write`. A reader used
+	 * to be shown the button and got an error on click.
+	 */
+	it('offers no Connect and no Add credential to a viewer without credentials:write', async () => {
+		seedViewer(['agents:read', 'credentials:read']);
+		const sheet = within(await openSheet());
+
+		expect(sheet.queryByRole('button', { name: /^Connect/ })).not.toBeInTheDocument();
+		expect(sheet.queryByRole('button', { name: 'Add credential' })).not.toBeInTheDocument();
+		// Nor the other credential writes, for the same reason.
+		expect(sheet.queryByRole('button', { name: /^Edit credential/ })).not.toBeInTheDocument();
+		expect(sheet.queryByRole('button', { name: /^Delete credential/ })).not.toBeInTheDocument();
+	});
+
+	it('offers Connect and Add credential once the viewer holds credentials:write', async () => {
+		seedViewer(['agents:read', 'credentials:read', 'credentials:write']);
+		const sheet = within(await openSheet());
+
+		expect(sheet.getByRole('button', { name: 'Add credential' })).toBeInTheDocument();
+		expect(await sheet.findByRole('button', { name: /^Connect/ })).toBeInTheDocument();
 	});
 });

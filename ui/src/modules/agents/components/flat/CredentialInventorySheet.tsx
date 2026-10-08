@@ -22,7 +22,12 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
-import { AGENTS_READ, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
+import {
+	AGENTS_READ,
+	CREDENTIALS_WRITE,
+	useCanAccess,
+	useOptionalCurrentUser,
+} from '@/shared/auth';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -241,10 +246,13 @@ export function CredentialInventorySheet({
 	);
 
 	// The list includes credentials shared with the viewer; only the owner or an
-	// admin can change those, so their cards offer no edit or delete.
+	// admin can change those, so their cards offer no edit or delete. Everything
+	// that writes a credential — Connect, Add credential, Edit, Delete — also
+	// needs `credentials:write`, so a reader's cards carry none of them.
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const readOnlyFor = useCallback(
-		(cred: Credential) => !credentialEditableBy(cred, viewer),
-		[viewer],
+		(cred: Credential) => !canWriteCredentials || !credentialEditableBy(cred, viewer),
+		[canWriteCredentials, viewer],
 	);
 
 	// The nested sheets each have a document-level Escape handler firing on the same
@@ -300,10 +308,12 @@ export function CredentialInventorySheet({
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
-							<Button size="sm" onClick={(): void => setCreateOpen(true)}>
-								<Plus className="h-4 w-4" />
-								Add credential
-							</Button>
+							{canWriteCredentials && (
+								<Button size="sm" onClick={(): void => setCreateOpen(true)}>
+									<Plus className="h-4 w-4" />
+									Add credential
+								</Button>
+							)}
 							{/* The help the retired Credentials page carried. It takes `⌘ /`
 							    over from the Agents page while the sheet is open. */}
 							<PageHelp
@@ -402,11 +412,21 @@ export function CredentialInventorySheet({
 								credentials={filtered}
 								isLoading={credentialsSource.isPending}
 								error={credentialsSource.error}
-								onAdd={(): void => setCreateOpen(true)}
+								onAdd={
+									canWriteCredentials
+										? (): void => setCreateOpen(true)
+										: undefined
+								}
 								onEdit={openEdit}
 								onDelete={setDeleteTarget}
-								onConnect={(cred): void =>
-									void connectExisting(cred.credential_id, cred.name)
+								// Connect runs the provider sign-in and writes the
+								// resulting tokens: without `credentials:write` the
+								// server refuses it, so the button isn't offered.
+								onConnect={
+									canWriteCredentials
+										? (cred): void =>
+												void connectExisting(cred.credential_id, cred.name)
+										: undefined
 								}
 								// A drawer is not a page: three columns inside it are
 								// what clip a credential's name mid-word.
