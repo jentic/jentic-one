@@ -171,9 +171,16 @@ Discovery rebuilds that path from the matched operation
 `permissions:test` dry-run and enforcement all judge the same path; the
 evaluation loop itself is shared
 ([`shared/permissions/evaluation.py`](../../src/jentic_one/shared/permissions/evaluation.py)).
+Normalization never decodes an encoded separator (`%2F`, `%5C`) — the raw URL
+is forwarded, so rules must not see a different segment structure than the
+upstream gets — and a path that spells a dot segment with escapes is denied
+(`ambiguous_path`)
+([`shared/url_path.py`](../../src/jentic_one/shared/url_path.py)).
 Rules written with the base path baked in can be fixed with
 `jentic_one rewrite-rule-base-paths` (see
-[upgrades](../operations/upgrades.md#binding-rules-written-against-the-full-upstream-path)).
+[upgrades](../operations/upgrades.md#binding-rules-written-against-the-full-upstream-path));
+until then the broker logs `rule_written_with_server_base_path` whenever such
+a rule changes a verdict, in either direction.
 Authorization is direct-only: the retired toolkit path and its
 `broker.direct_bindings_enabled` fallback were removed with the phase-6b
 table drops (setting the flag to `false` now fails config validation).

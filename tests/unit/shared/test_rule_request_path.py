@@ -19,12 +19,16 @@ from jentic_one.registry.core.url_index import (
     resolve_server_variable_groups,
 )
 from jentic_one.shared.permissions.evaluation import (
+    DivergenceKind,
+    PathDivergence,
     PermissionRule,
+    base_path_divergence,
     evaluate_rules,
     first_matching_rule,
     rule_request_path,
 )
 from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.url_path import has_ambiguous_traversal
 
 # ---------------------------------------------------------------------------
 # expand_path_template
@@ -149,3 +153,87 @@ def test_first_matching_rule_reports_the_deciding_index() -> None:
 def test_first_matching_rule_skips_condition_less_allow() -> None:
     rules = [PermissionRule(effect="allow", methods=None, path=None, operations=None)]
     assert first_matching_rule(rules, method="GET", path="/x", operation_id=None) is None
+
+
+# ---------------------------------------------------------------------------
+# Normalization never decodes path separators (check-one-path-forward-another)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        ("/v1/%61dmin", "/v1/admin"),
+        ("/widgets/%7E", "/widgets/~"),
+        # An encoded slash is data inside one segment — never a separator.
+        ("/admin%2F..%2Fwidgets/1", "/admin%2F..%2Fwidgets/1"),
+        ("/repos/jentic%2fcore", "/repos/jentic%2Fcore"),
+        ("/a%5Cb", "/a%5Cb"),
+        # Single pass: ``%2561`` is a literal ``%61``, not ``a``.
+        ("/x/%2561dmin", "/x/%2561dmin"),
+        ("/a/./b/../c/", "/a/c"),
+    ],
+)
+def test_normalize_path_keeps_separators_encoded(raw: str, normalized: str) -> None:
+    assert normalize_path(raw) == normalized
+
+
+@pytest.mark.parametrize(
+    ("path", "ambiguous"),
+    [
+        ("/admin%2F..%2Fwidgets", True),
+        ("/admin%5C..%5Cwidgets", True),
+        ("/admin/%2e%2e/widgets", True),
+        ("/admin/%2E/widgets", True),
+        ("/repos/jentic%2Fcore", False),
+        ("/widgets/a..b", False),
+        ("/a/../b", False),  # plain dot segment — resolved identically everywhere
+        ("/plain", False),
+    ],
+)
+def test_has_ambiguous_traversal(path: str, ambiguous: bool) -> None:
+    assert has_ambiguous_traversal(path) is ambiguous
+
+
+# ---------------------------------------------------------------------------
+# base_path_divergence — both directions, no false positives
+# ---------------------------------------------------------------------------
+
+
+def _divergence(rules: list[PermissionRule]) -> PathDivergence | None:
+    return base_path_divergence(
+        rules,
+        method="GET",
+        relative_path="/admin/users",
+        upstream_path="/api/v3/admin/users",
+        operation_id=None,
+    )
+
+
+def test_divergence_flags_a_base_path_allow() -> None:
+    d = _divergence([_rule("allow", "/api/v3/admin")])
+    assert d is not None
+    assert d.kind is DivergenceKind.LEGACY_ALLOW_NO_LONGER_MATCHES
+
+
+def test_divergence_flags_a_base_path_deny_that_now_lets_requests_through() -> None:
+    d = _divergence([_rule("deny", "/api/v3/admin"), _rule("allow", "/")])
+    assert d is not None
+    assert d.kind is DivergenceKind.LEGACY_DENY_NO_LONGER_MATCHES
+    assert d.rule_index == 0
+    assert d.rule_path == "/api/v3/admin"
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        # Correct spec-relative rules: verdicts differ only because the
+        # upstream string differs — the deciding rule also matches the
+        # relative path, so nothing is base-qualified.
+        [_rule("deny", "/admin"), _rule("allow", "/")],
+        [_rule("allow", "/")],
+        [_rule("allow", "/gadgets")],
+    ],
+)
+def test_divergence_is_quiet_for_spec_relative_rules(rules: list[PermissionRule]) -> None:
+    assert _divergence(rules) is None

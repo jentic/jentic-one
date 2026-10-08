@@ -26,6 +26,8 @@ class RuleRow(NamedTuple):
     owner_key: str  # "agent_id:credential_id" for a binding rule, the rule_set_id otherwise
     path: str
     match_mode: str
+    agent_id: str | None = None  # binding rules only
+    credential_id: str | None = None  # binding rules only
 
 
 class ApiIdentity(NamedTuple):
@@ -53,7 +55,15 @@ class RewriteRuleControlRepository:
         )
         for rule_id, agent_id, credential_id, path, mode in inline.all():
             rows.append(
-                RuleRow(rule_id, "binding", f"{agent_id}:{credential_id}", path, mode or "regex")
+                RuleRow(
+                    rule_id,
+                    "binding",
+                    f"{agent_id}:{credential_id}",
+                    path,
+                    mode or "regex",
+                    agent_id=agent_id,
+                    credential_id=credential_id,
+                )
             )
         shared = await session.execute(
             select(
@@ -70,18 +80,17 @@ class RewriteRuleControlRepository:
         return rows
 
     @staticmethod
-    async def credential_api(session: AsyncSession, credential_id: str) -> ApiIdentity | None:
-        """The API a credential targets, or ``None`` when it names no single API."""
-        row = (
-            await session.execute(
-                select(Credential.api_vendor, Credential.api_name, Credential.api_version).where(
-                    Credential.id == credential_id
-                )
+    async def credential_apis(session: AsyncSession) -> dict[str, ApiIdentity | None]:
+        """Every credential's target API (``None`` = names no single API), in one read."""
+        rows = await session.execute(
+            select(
+                Credential.id, Credential.api_vendor, Credential.api_name, Credential.api_version
             )
-        ).first()
-        if row is None or not row[0] or not row[1] or not row[2]:
-            return None
-        return ApiIdentity(row[0], row[1], row[2])
+        )
+        return {
+            cid: ApiIdentity(vendor, name, version) if vendor and name and version else None
+            for cid, vendor, name, version in rows.all()
+        }
 
     @staticmethod
     async def set_rule_path(
@@ -95,8 +104,15 @@ class RewriteRuleControlRepository:
         return bool(getattr(result, "rowcount", 0))
 
 
-_RULE_SET_BINDINGS_SQL = text(
-    "SELECT credential_id FROM agent_credential_bindings WHERE rule_set_id = :rule_set_id"
+class BindingRow(NamedTuple):
+    binding_id: str
+    agent_id: str
+    credential_id: str
+    rule_set_id: str | None
+
+
+_BINDINGS_SQL = text(
+    "SELECT id, agent_id, credential_id, rule_set_id FROM agent_credential_bindings"
 )
 
 
@@ -104,6 +120,6 @@ class RewriteRuleAdminRepository:
     """Admin-DB reads for the rewrite (raw SQL — no admin ORM import)."""
 
     @staticmethod
-    async def rule_set_credential_ids(session: AsyncSession, rule_set_id: str) -> list[str]:
-        rows = await session.execute(_RULE_SET_BINDINGS_SQL, {"rule_set_id": rule_set_id})
-        return sorted({row[0] for row in rows.all()})
+    async def bindings(session: AsyncSession) -> list[BindingRow]:
+        rows = await session.execute(_BINDINGS_SQL)
+        return [BindingRow(*row) for row in rows.all()]

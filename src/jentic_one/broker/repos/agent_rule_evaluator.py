@@ -39,6 +39,7 @@ from jentic_one.shared.broker.protocols import RuleEvaluation
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.permissions.evaluation import (
     PermissionRule,
+    base_path_divergence,
     evaluate_rules,
     normalize_methods,
 )
@@ -163,13 +164,17 @@ class AgentRuleEvaluator:
         method: str,
         path: str,
         operation_id: str | None,
+        upstream_path: str | None = None,
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
 
         Returns a :class:`RuleEvaluation` — ``allowed`` plus the rule count so
         the router can distinguish "no rules configured for this binding"
         (rules_loaded == 0) from "loaded but nothing matched" in the deny
-        problem detail (#578 twin).
+        problem detail (#578 twin). With ``upstream_path`` (the normalized
+        full upstream path) it also reports a verdict change caused by a rule
+        still written with the server base path; that never alters
+        ``allowed``.
         """
         rules = await self._get_rules(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
@@ -185,7 +190,18 @@ class AgentRuleEvaluator:
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
             ),
         )
-        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules))
+        divergence = (
+            base_path_divergence(
+                rules,
+                method=method,
+                relative_path=path,
+                upstream_path=upstream_path,
+                operation_id=operation_id,
+            )
+            if upstream_path is not None
+            else None
+        )
+        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules), divergence=divergence)
 
     async def _get_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None

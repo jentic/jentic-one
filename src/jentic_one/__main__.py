@@ -499,7 +499,9 @@ async def _rewrite_rule_base_paths(*, diff_only: bool, report_path: str | None) 
         file=sys.stderr,
         flush=True,
     )
-    return 0
+    # Non-zero while anything needs a human, so automation can't mistake a
+    # partial run for done.
+    return 1 if run.skipped else 0
 
 
 async def _export_toolkits(*, out_path: str | None, import_path: str | None) -> int:
@@ -616,7 +618,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Rewrite binding permission rules written against the full upstream "
             "path (server base included) to their spec-relative form "
-            "(idempotent, operator-invoked)."
+            "(idempotent, operator-invoked). Exits 1 when any rule needs manual review."
         ),
     )
     rewrite_rules.add_argument(

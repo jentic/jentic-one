@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import delete, select, update
 
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.permission_rule_sets import (
@@ -41,6 +42,9 @@ async def clean_tables(integration_context: Context) -> AsyncGenerator[None, Non
     async def _truncate() -> None:
         async with ctx.admin_db.session() as session:
             await session.execute(delete(AgentCredentialBinding))
+            await session.execute(
+                delete(AuditEntry).where(AuditEntry.reason == "rule_base_path_rewrite")
+            )
             await session.commit()
         async with ctx.control_db.session() as session:
             await session.execute(delete(AgentPermissionRule))
@@ -126,6 +130,23 @@ async def _seed_rule(
         return rule.id
 
 
+async def _bind(
+    ctx: Context, agent_id: str, credential_id: str, rule_set_id: str | None = None
+) -> str:
+    binding_id = generate_ksuid("acb")
+    async with ctx.admin_db.session() as session:
+        session.add(
+            AgentCredentialBinding(
+                id=binding_id,
+                agent_id=agent_id,
+                credential_id=credential_id,
+                rule_set_id=rule_set_id,
+            )
+        )
+        await session.commit()
+    return binding_id
+
+
 async def _rule_paths(ctx: Context) -> dict[str, str | None]:
     async with ctx.control_db.session() as session:
         inline = (
@@ -164,6 +185,8 @@ async def test_rewrites_base_path_rules_and_reports_the_rest(
     )
     widgets_cred = await _seed_credential(ctx, "widgets-example-com")
     pet_cred = await _seed_credential(ctx, "petstore-example-com")
+    await _bind(ctx, "agt_a", widgets_cred)
+    pet_binding = await _bind(ctx, "agt_a", pet_cred)
 
     templated = await _seed_rule(
         ctx, widgets_cred, path="/eu/widgets", mode="prefix", sequence=0, agent_id="agt_a"
@@ -194,42 +217,112 @@ async def test_rewrites_base_path_rules_and_reports_the_rest(
         session.add(shared_rule)
         await session.commit()
         rule_set_id, shared_rule_id = rule_set.id, shared_rule.id
-    async with ctx.admin_db.session() as session:
-        for agent_id, cred in (("agt_b", widgets_cred), ("agt_c", pet_cred)):
-            session.add(
-                AgentCredentialBinding(
-                    id=generate_ksuid("acb"),
-                    agent_id=agent_id,
-                    credential_id=cred,
-                    rule_set_id=rule_set_id,
-                )
-            )
+    for agent_id, cred in (("agt_b", widgets_cred), ("agt_c", pet_cred)):
+        await _bind(ctx, agent_id, cred, rule_set_id)
+    # A rule set attached to nothing, and an inline rule whose binding is gone.
+    async with ctx.control_db.session() as session:
+        unattached = PermissionRuleSet(name="unattached")
+        session.add(unattached)
+        await session.flush()
+        unattached_rule = PermissionRuleSetRule(
+            rule_set_id=unattached.id,
+            effect="allow",
+            methods=["GET"],
+            path="/api/v3/pet",
+            match_mode="prefix",
+            sequence=0,
+        )
+        session.add(unattached_rule)
         await session.commit()
+        unattached_rule_id = unattached_rule.id
+    orphan = await _seed_rule(
+        ctx, pet_cred, path="/api/v3/pet", mode="prefix", sequence=0, agent_id="agt_gone"
+    )
 
     preview = await _svc(ctx).run(diff_only=True)
-    assert preview.rewritten == 2
+    assert preview.rewritten == 1
     assert await _rule_paths(ctx) == {
         templated: "/eu/widgets",
         relative: "/widgets",
         static: "/api/v3/pet/9",
         regex: "/api/v3/pet/.*",
         shared_rule_id: "/api/v3/pet",
+        unattached_rule_id: "/api/v3/pet",
+        orphan: "/api/v3/pet",
     }, "--diff-only must not write"
 
     run = await _svc(ctx).run(diff_only=False)
 
-    assert run.rewritten == 2
+    assert run.rewritten == 1
     assert await _rule_paths(ctx) == {
-        templated: "/widgets",
+        # A server-variable base is never auto-stripped: ``/widgets`` would
+        # allow every region where ``/eu/widgets`` allowed only ``eu``.
+        templated: "/eu/widgets",
         relative: "/widgets",
         static: "/pet/9",
         regex: "/api/v3/pet/.*",
         shared_rule_id: "/api/v3/pet",
+        unattached_rule_id: "/api/v3/pet",
+        orphan: "/api/v3/pet",
     }
     skipped = {
         f.detail["rule_id"]: f.detail["reason"] for f in run.findings if f.category == "skipped"
     }
-    assert skipped == {regex: "regex_not_rewritable", shared_rule_id: "rule_set_mixed_apis"}
+    assert skipped == {
+        templated: "server_variable_base",
+        regex: "regex_not_rewritable",
+        shared_rule_id: "rule_set_mixed_apis",
+        unattached_rule_id: "rule_set_not_attached",
+        orphan: "binding_not_found",
+    }
+    assert run.skipped == len(skipped)
+
+    # The rewrite is audited against the binding id, not an agent:credential pair.
+    async with ctx.admin_db.session() as session:
+        audits = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(AuditEntry.reason == "rule_base_path_rewrite")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [(a.target_id, a.target_parent_id) for a in audits] == [(pet_binding, "agt_a")]
+    assert audits[0].before == {"rule_id": static, "path": "/api/v3/pet/9"}
+    assert audits[0].after == {"rule_id": static, "path": "/pet/9"}
 
     again = await _svc(ctx).run(diff_only=False)
     assert again.rewritten == 0
+
+
+async def test_failed_audit_rolls_back_the_rewrite(
+    integration_context: Context, clean_tables: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No policy change without its audit record: the audit write gates the update."""
+    ctx = integration_context
+    await _seed_api(
+        ctx,
+        vendor="petstore-example-com",
+        server_url="https://petstore.example.com/api/v3",
+        variables=None,
+        templates=["/pet/{petId}"],
+    )
+    cred = await _seed_credential(ctx, "petstore-example-com")
+    await _bind(ctx, "agt_a", cred)
+    rule = await _seed_rule(
+        ctx, cred, path="/api/v3/pet", mode="prefix", sequence=0, agent_id="agt_a"
+    )
+
+    async def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("audit store down")
+
+    monkeypatch.setattr("jentic_one.control.services.rule_base_path_rewrite.record_audit", _boom)
+
+    run = await _svc(ctx).run(diff_only=False)
+
+    assert run.rewritten == 0
+    assert [(f.category, f.detail["reason"]) for f in run.findings] == [
+        ("conflict", "write_failed")
+    ]
+    assert (await _rule_paths(ctx))[rule] == "/api/v3/pet"

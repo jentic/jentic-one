@@ -9,8 +9,14 @@ rewritten to its spec-relative form, and refuses whenever the answer is not
 unambiguous:
 
 * ``regex`` rules are never rewritten (no mechanical transform is sound).
+* Only a **static** base path (``/api/v3``) is stripped automatically. A base
+  with a server variable (``/{region}``) is reported instead: ``/eu/widgets``
+  allowed only the ``eu`` region, and its spec-relative form ``/widgets``
+  would allow every region — rules cannot express a server-variable value,
+  so narrowing has to move to the credential's server-variable scoping.
 * A rule whose path already applies to one of the API's operations is left
-  alone — it is spec-relative already.
+  alone — unless it *also* reads as base-qualified under a concrete base
+  (static or enum), in which case it is reported as ambiguous.
 * A rewrite is only proposed when stripping a server base yields a path that
   applies to at least one operation; two bases yielding different paths, or
   APIs (for a shared rule set) that disagree, are reported instead.
@@ -33,18 +39,37 @@ _PLACEHOLDER_SEGMENT_RE = re.compile(r"^\{[^}]+\}$")
 _TEMPLATE_TOKEN_RE = re.compile(r"(\{[^}]+\})")
 
 
+class BasePathKind(StrEnum):
+    #: No server variable in the base path (``/api/v3``).
+    STATIC = "static"
+    #: A server variable with a declared enum (``/{region}`` ∈ {eu, us}).
+    ENUM = "enum"
+    #: A free-form server variable (any single segment).
+    FREEFORM = "freeform"
+
+
+@dataclass(frozen=True, slots=True)
+class BasePath:
+    """One server's base path: a regex source full-matching it, and its kind.
+
+    A server variable becomes its enum alternation (``ENUM``) or a
+    single-segment wildcard (``FREEFORM``).
+    """
+
+    pattern: str
+    kind: BasePathKind
+
+
 @dataclass(frozen=True, slots=True)
 class ApiPathShape:
     """What a rewrite needs to know about one API's live revision.
 
-    ``base_path_patterns`` are regex sources, one per distinct server URL,
-    that full-match that server's base path (a templated segment becomes its
-    enum alternation or a single-segment wildcard). Servers with no base
-    path contribute none. ``operation_templates`` are the spec's
+    ``base_paths`` has one entry per distinct server base (servers with no
+    base path contribute none). ``operation_templates`` are the spec's
     (server-relative) operation path templates.
     """
 
-    base_path_patterns: tuple[str, ...]
+    base_paths: tuple[BasePath, ...]
     operation_templates: tuple[str, ...]
 
 
@@ -68,6 +93,13 @@ class SkipReason(StrEnum):
     AMBIGUOUS_BASE = "ambiguous_base"
     MATCHES_NO_OPERATION = "matches_no_operation"
     RULE_SET_MIXED_APIS = "rule_set_mixed_apis"
+    SERVER_VARIABLE_BASE = "server_variable_base"
+    SPEC_PATH_OR_BASE_QUALIFIED = "spec_path_or_base_qualified"
+    # Decided by the service before the shapes are consulted:
+    CREDENTIAL_NOT_FOUND = "credential_not_found"
+    CREDENTIAL_NOT_API_SCOPED = "credential_not_api_scoped"
+    BINDING_NOT_FOUND = "binding_not_found"
+    RULE_SET_NOT_ATTACHED = "rule_set_not_attached"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,27 +154,36 @@ def path_applies_to_template(path: str, mode: str, template: str) -> bool:
     raise ValueError(f"unsupported match mode for template check: {mode!r}")
 
 
+def _applies(path: str, mode: str, shape: ApiPathShape) -> bool:
+    return any(path_applies_to_template(path, mode, t) for t in shape.operation_templates)
+
+
 def _decide_for_shape(path: str, mode: str, shape: ApiPathShape) -> RewriteDecision:
-    if any(path_applies_to_template(path, mode, t) for t in shape.operation_templates):
+    # Every (stripped path, base kind) a server base yields for this rule.
+    stripped: list[tuple[str, BasePathKind]] = []
+    for base in shape.base_paths:
+        match = re.match(f"(?:{base.pattern})(?=/|$)", path)
+        if match is not None:
+            stripped.append((path[match.end() :] or "/", base.kind))
+    applicable = [(c, kind) for c, kind in stripped if _applies(c, mode, shape)]
+
+    if _applies(path, mode, shape):
+        # Already fits an operation. A free-form base (``/{tenant}``) strips
+        # any first segment, so it proves nothing; a concrete base that also
+        # yields a fitting path means the rule might be base-qualified.
+        if any(kind is not BasePathKind.FREEFORM for _, kind in applicable):
+            return RewriteDecision.skipped(SkipReason.SPEC_PATH_OR_BASE_QUALIFIED)
         return RewriteDecision.unchanged()
-    stripped: set[str] = set()
-    for pattern in shape.base_path_patterns:
-        match = re.match(f"(?:{pattern})(?=/|$)", path)
-        if match is None:
-            continue
-        stripped.add(path[match.end() :] or "/")
     if not stripped:
         return RewriteDecision.unchanged()
-    applicable = {
-        candidate
-        for candidate in stripped
-        if any(path_applies_to_template(candidate, mode, t) for t in shape.operation_templates)
-    }
     if not applicable:
         return RewriteDecision.skipped(SkipReason.MATCHES_NO_OPERATION)
-    if len(applicable) > 1:
+    if any(kind is not BasePathKind.STATIC for _, kind in applicable):
+        return RewriteDecision.skipped(SkipReason.SERVER_VARIABLE_BASE)
+    candidates = {c for c, _ in applicable}
+    if len(candidates) > 1:
         return RewriteDecision.skipped(SkipReason.AMBIGUOUS_BASE)
-    return RewriteDecision(RewriteOutcome.REWRITE, new_path=applicable.pop())
+    return RewriteDecision(RewriteOutcome.REWRITE, new_path=candidates.pop())
 
 
 def decide_rewrite(
