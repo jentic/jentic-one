@@ -13,6 +13,7 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.services.search_service import (
     _parse_api_identifier,
     _resolve_operation_url,
+    build_execute_target,
     compute_relevance_score,
 )
 from jentic_one.shared.pagination import (
@@ -115,6 +116,21 @@ def test_resolve_url_preserves_server_base_path() -> None:
 def test_resolve_url_falls_back_to_path_without_servers() -> None:
     op = _operation(server_url=None, path="/v4/x")
     assert _resolve_operation_url(op) == "/v4/x"
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "expected"),
+    [
+        ("GET", "https://api.example.com/v1/things", "GET:https://api.example.com/v1/things"),
+        ("post", "http://localhost:8080/x", "POST:http://localhost:8080/x"),
+        # Host-relative url (no servers, or only a relative one) — would be
+        # misread as a broker-relative METHOD:/path; the target is the id.
+        ("GET", "/pets", "op_pets"),
+        ("GET", "/api/v3/pets", "op_pets"),
+    ],
+)
+def test_build_execute_target(method: str, url: str, expected: str) -> None:
+    assert build_execute_target(method, url, "op_pets") == expected
 
 
 @pytest.mark.parametrize(

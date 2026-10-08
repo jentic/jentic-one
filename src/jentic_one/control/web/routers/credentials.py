@@ -206,12 +206,14 @@ async def create_credential(
         catalog_api_id=result.catalog_api_id,
         provider=result.provider,
         active=result.active,
+        created_by=result.created_by,
         created_at=result.created_at,
         server_variables=result.server_variables,
     )
     return CredentialCreateResponse(
         credential=redacted,
         secret=result.secret.model_dump(),
+        warnings=result.warnings,
     )
 
 
@@ -590,7 +592,11 @@ async def attach_agent_rule_set(
 
     While attached, the set's ordered list is the binding's effective policy
     and its inline rules are dormant — `permissions:test` evaluates the set.
-    The set must exist (404 `rule_set_not_found`).
+    The set must exist (404 `rule_set_not_found`). The caller must be the
+    set's creator or an org admin, unless the set is curated (created by an
+    org admin), which any caller who may write the binding's rules can
+    attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+    binding already points at is a no-op.
     """
     await svc.attach_binding_rule_set(credential_id, agent_id, body.rule_set_id, identity=identity)
     return Response(status_code=204)
@@ -639,6 +645,7 @@ def _to_rule_set_response(
             for r in rules
         ],
         binding_count=binding_count,
+        curated=rule_set.curated,
         created_by=rule_set.created_by,
         created_at=rule_set.created_at,
     )
@@ -668,6 +675,7 @@ async def list_rule_sets(
                 name=rs.name,
                 description=rs.description,
                 rule_count=count,
+                curated=rs.curated,
                 created_by=rs.created_by,
                 created_at=rs.created_at,
             )
@@ -734,7 +742,11 @@ async def update_rule_set(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> RuleSetResponse:
-    """Rename or re-describe a rule set (creator or org admin)."""
+    """Rename or re-describe a rule set.
+
+    A curated set is editable by an org admin; any other set by its creator
+    or an org admin (403 `rule_set_access_denied` otherwise).
+    """
     await svc.update_rule_set(
         rule_set_id, identity=identity, name=body.name, description=body.description
     )

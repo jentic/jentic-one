@@ -15,20 +15,31 @@
  * overlay covers the destination. So a plain in-tab click asks the host to
  * dismiss itself (`onNavigateAway`); a modified click opens a second tab and
  * leaves this one exactly as it was.
+ *
+ * The list holds only the agents the viewer may see: every bound agent for the
+ * credential's owner or an `org:admin`, but only their own agents for anyone
+ * else it is shared with. For those viewers the copy says "your agents", so it
+ * never claims the credential is unused when other users' agents use it.
  */
 import type { MouseEvent } from 'react';
 import { Bot, PauseCircle } from 'lucide-react';
-import { AppLink, Badge, ErrorAlert, LoadingState } from '@/shared/ui';
+import { AppLink, ErrorAlert, LoadingState, StatusChip } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { timeAgo } from '@/shared/lib/utils';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import { useCredentialAgents } from '@/shared/credentials/api';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
 
 export function BoundAgentsSection({
 	credentialId,
+	createdBy,
 	open,
 	onNavigateAway,
 }: {
 	credentialId: string;
+	/** The credential's creator; with it, a viewer who is neither the creator nor
+	 * an admin reads "your agents" copy. Omitted, the copy is unscoped. */
+	createdBy?: string | null;
 	/** Host sheet visibility — gates the fetch so closed sheets don't poll. */
 	open: boolean;
 	/**
@@ -40,6 +51,9 @@ export function BoundAgentsSection({
 }) {
 	const agents = useCredentialAgents(credentialId, { enabled: open });
 	const rows = agents.data?.data ?? [];
+	const viewer = useOptionalCurrentUser();
+	const yoursOnly =
+		createdBy !== undefined && !credentialEditableBy({ created_by: createdBy }, viewer);
 
 	// Only a plain left click navigates this tab; a modified click is the
 	// browser's own "open elsewhere" and must leave this view untouched.
@@ -50,13 +64,16 @@ export function BoundAgentsSection({
 	};
 
 	return (
-		<div className="border-border space-y-2 rounded-lg border border-dashed p-3">
-			<p className="text-foreground text-sm font-medium">
-				Bound agents{agents.isSuccess ? ` (${rows.length})` : ''}
+		<div className="bg-surface-inset space-y-2 rounded-lg p-3">
+			<p className="text-foreground-name text-sm font-semibold">
+				{yoursOnly ? 'Your bound agents' : 'Bound agents'}
+				{agents.isSuccess ? ` (${rows.length})` : ''}
 			</p>
-			<p className="text-muted-foreground text-xs">
-				Agents allowed to call APIs with this credential. Manage bindings from each
-				agent&apos;s API tiles on the Agents page.
+			<p className="text-foreground-sub text-xs">
+				{yoursOnly
+					? "Your agents allowed to call APIs with this credential. Other users' agents aren't listed."
+					: 'Agents allowed to call APIs with this credential.'}{' '}
+				Manage bindings from each agent&apos;s API tiles on the Agents page.
 			</p>
 
 			{agents.isPending ? (
@@ -68,7 +85,9 @@ export function BoundAgentsSection({
 					className="text-muted-foreground text-xs italic"
 					data-testid="bound-agents-empty"
 				>
-					No agents are bound to this credential.
+					{yoursOnly
+						? 'None of your agents are bound to this credential.'
+						: 'No agents are bound to this credential.'}
 				</p>
 			) : (
 				<ul className="space-y-1">
@@ -76,7 +95,7 @@ export function BoundAgentsSection({
 						<li
 							key={row.agent_id}
 							data-testid="bound-agent-row"
-							className="bg-muted/40 flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
+							className="bg-surface-tonal flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
 						>
 							<span className="flex min-w-0 items-center gap-1.5">
 								<Bot className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
@@ -88,9 +107,13 @@ export function BoundAgentsSection({
 									{row.agent_name}
 								</AppLink>
 								{row.suspended && (
-									<Badge variant="warning" data-testid="bound-agent-suspended">
-										<PauseCircle className="h-3 w-3" /> Suspended
-									</Badge>
+									<StatusChip
+										tone="caution"
+										icon={PauseCircle}
+										data-testid="bound-agent-suspended"
+									>
+										Suspended
+									</StatusChip>
 								)}
 							</span>
 							<span className="text-muted-foreground shrink-0 text-[11px]">

@@ -10,8 +10,8 @@
  *
  *   - The `/mcp` URL, from the instance's canonical base URL with the
  *     browser origin as the fallback (the operator is looking at a working
- *     address of this instance — the same posture as the agent detail
- *     page's McpPanel).
+ *     address of this instance — the same posture as the agent MCP
+ *     sheet's McpPanel).
  *   - Whether the endpoint is actually served (`server.mcp.enabled`),
  *     mirroring McpPanel's gate: advertising the URL unconditionally would
  *     show an endpoint that 404s on default installs, so the disabled arm
@@ -51,7 +51,7 @@ export function McpConnectCard() {
 	return (
 		<Card>
 			<CardBody className="space-y-3">
-				<CardTitle className="flex items-center gap-2">
+				<CardTitle as="h2" className="flex items-center gap-2">
 					<Plug className="text-muted-foreground h-4 w-4" aria-hidden="true" />
 					Connect an MCP client
 				</CardTitle>

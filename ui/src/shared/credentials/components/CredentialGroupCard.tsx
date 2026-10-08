@@ -1,18 +1,23 @@
 import { Layers } from 'lucide-react';
-import { Badge, AgentBadge } from '@/shared/ui';
+import { StatusText, VendorIcon } from '@/shared/ui';
 import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { formatApiReference, type Credential } from '@/shared/credentials/api';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
 	CredentialActions,
 	CredentialMetaLine,
+	SharedWithYouBadge,
 	credentialApiLine,
 	credentialAuthPlacement,
 	credentialIsConnected,
 	credentialIsPendingSignIn,
 } from './CredentialCard';
 
-type Usage = { usedByAgentCount?: number | null; callsLast7d?: number | null };
+type Usage = {
+	usedByAgentCount?: number | null;
+	usedByYoursOnly?: boolean;
+	callsLast7d?: number | null;
+};
 
 interface CredentialGroupCardProps {
 	/** Two or more credentials for one API, in list order. */
@@ -21,6 +26,13 @@ interface CredentialGroupCardProps {
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
 	usageFor: (cred: Credential) => Usage;
+	/** Which rows are shared with the viewer rather than theirs to change. */
+	readOnlyFor?: (cred: Credential) => boolean;
+	/**
+	 * The API's title as the workspace names it (its display name, e.g.
+	 * "GitHub"), when it's imported — the header then matches the API's hub.
+	 */
+	workspaceTitle?: string | null;
 }
 
 /**
@@ -28,7 +40,7 @@ interface CredentialGroupCardProps {
  * and each credential is a row under it, so three keys for `airlabs.co` read as
  * "one API, three credentials" instead of three identical cards.
  *
- *   [vendor badge] [API name] [vendor/name] .................. [N credentials]
+ *   [vendor icon] [API name] [vendor/name] .................. [N credentials]
  *                  [where the secret goes, when every row agrees]
  *   ─ row: [name] [connected] [type] ............ connect · edit · delete
  *          [pinned version, or "any version"]
@@ -40,7 +52,7 @@ interface CredentialGroupCardProps {
  *
  * A row whose name another row shares carries its id tail — then it is the only
  * thing telling the two apart; a unique name needs nothing more. Each row is a
- * click target for edit, the way a single card is.
+ * click target for edit, the way a single card is — unless it is read-only.
  */
 export function CredentialGroupCard({
 	credentials,
@@ -48,6 +60,8 @@ export function CredentialGroupCard({
 	onDelete,
 	onConnect,
 	usageFor,
+	readOnlyFor,
+	workspaceTitle,
 }: CredentialGroupCardProps) {
 	const [first] = credentials;
 	const vendor = first.api.vendor ?? first.name;
@@ -58,11 +72,13 @@ export function CredentialGroupCard({
 	const distinctApis = new Set(credentials.map(apiIdentityKey)).size;
 	const sameApi = distinctApis === 1;
 	const apiTitle = sameApi
-		? apiRefDisplayName({
+		? workspaceTitle ||
+			apiRefDisplayName({
 				catalogApiId: first.catalog_api_id,
 				vendor: first.api.vendor,
 				name: first.api.name,
-			}) || formatApiReference(unversioned(first.api))
+			}) ||
+			formatApiReference(unversioned(first.api))
 		: vendor;
 	const apiLine = sameApi
 		? credentialApiLine({ ...first, api: unversioned(first.api) }, apiTitle)
@@ -79,15 +95,15 @@ export function CredentialGroupCard({
 			data-testid="credential-group"
 			aria-labelledby={headingId}
 			title={sameApi ? formatApiReference(unversioned(first.api)) : vendor}
-			className="border-border/60 bg-card min-w-0 overflow-hidden rounded-xl border"
+			className="bg-surface-1 min-w-0 overflow-hidden rounded-lg [--field-bg:var(--surface-field)]"
 		>
 			<header className="flex items-start gap-3 p-4 pb-3">
-				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
+				<VendorIcon name={vendor} vendor={vendor} size="md" />
 				<div className="min-w-0 flex-1">
 					<div className="flex items-start gap-2">
 						<h3
 							id={headingId}
-							className="font-heading text-foreground min-w-0 flex-1 text-sm leading-snug font-semibold break-words"
+							className="font-heading text-foreground-name min-w-0 flex-1 text-sm leading-snug font-semibold break-words"
 						>
 							{apiTitle}
 						</h3>
@@ -100,7 +116,7 @@ export function CredentialGroupCard({
 						</span>
 					</div>
 					{apiLine && (
-						<p className="text-muted-foreground mt-0.5 truncate text-xs">{apiLine}</p>
+						<p className="text-foreground-sub mt-0.5 truncate text-xs">{apiLine}</p>
 					)}
 					<p className="text-muted-foreground mt-1.5 text-xs leading-snug">
 						{sharedPlacement ? `${sharedPlacement}. ` : ''}
@@ -112,7 +128,7 @@ export function CredentialGroupCard({
 				</div>
 			</header>
 
-			<ul className="divide-border/50 border-border/50 divide-y border-t">
+			<ul className="divide-hairline-row border-hairline divide-y border-t">
 				{credentials.map((cred) => (
 					<CredentialRow
 						key={cred.credential_id}
@@ -124,6 +140,7 @@ export function CredentialGroupCard({
 						onDelete={onDelete}
 						onConnect={onConnect}
 						usage={usageFor(cred)}
+						readOnly={readOnlyFor?.(cred) ?? false}
 					/>
 				))}
 			</ul>
@@ -171,6 +188,7 @@ function CredentialRow({
 	onDelete,
 	onConnect,
 	usage,
+	readOnly,
 }: {
 	cred: Credential;
 	placement: string | null;
@@ -181,32 +199,42 @@ function CredentialRow({
 	onDelete: (cred: Credential) => void;
 	onConnect: (cred: Credential) => void;
 	usage: Usage;
+	readOnly: boolean;
 }) {
 	return (
 		<li
 			data-testid="credential-card"
-			className="hover:bg-muted/30 focus-within:bg-muted/30 relative flex items-center gap-3 px-4 py-2.5 transition-colors"
+			className="hover:bg-tint-2 focus-within:bg-tint-2 relative flex items-center gap-3 px-4 py-2.5 transition-colors"
 		>
 			{/* Full-row click target → edit, hidden from the a11y tree so keyboard and
 			    screen-reader users get the one labelled "Edit" button instead. */}
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-hidden="true"
-				data-testid="credential-card-overlay"
-				onClick={(): void => onEdit(cred)}
-				className="absolute inset-0 z-0 focus:outline-none"
-			/>
+			{!readOnly && (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-hidden="true"
+					data-testid="credential-card-overlay"
+					onClick={(): void => onEdit(cred)}
+					className="absolute inset-0 z-0 focus:outline-none"
+				/>
+			)}
 			<div className="pointer-events-none relative min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-					<h4 className="text-foreground min-w-0 text-sm font-medium break-words">
+					<h4 className="text-foreground-name min-w-0 text-sm font-semibold break-words">
 						{cred.name || formatApiReference(cred.api)}
 					</h4>
-					{credentialIsConnected(cred) && <Badge variant="success">Connected</Badge>}
+					{credentialIsConnected(cred) && (
+						<StatusText tone="success" size="xs">
+							Connected
+						</StatusText>
+					)}
 					{credentialIsPendingSignIn(cred) && (
-						<Badge variant="pending">Pending sign-in</Badge>
+						<StatusText tone="warning" size="xs">
+							Pending sign-in
+						</StatusText>
 					)}
 					<CredentialTypeBadge credential={cred} />
+					{readOnly && <SharedWithYouBadge />}
 				</div>
 				<p
 					className="text-muted-foreground mt-0.5 truncate font-mono text-xs"
@@ -222,6 +250,7 @@ function CredentialRow({
 				<CredentialMetaLine
 					cred={cred}
 					usedByAgentCount={usage.usedByAgentCount}
+					yoursOnly={usage.usedByYoursOnly}
 					callsLast7d={usage.callsLast7d}
 					showIdTail={showIdTail}
 					className="mt-0.5"
@@ -232,6 +261,7 @@ function CredentialRow({
 				onEdit={onEdit}
 				onDelete={onDelete}
 				onConnect={onConnect}
+				readOnly={readOnly}
 			/>
 		</li>
 	);

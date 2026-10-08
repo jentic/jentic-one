@@ -162,8 +162,8 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and
 //     the tool can't pin one: RESOLVE_FAILED routed to the operator.
-//   - 403 — the missing credentials:connect scope (agents hold it by
-//     default): a scope fact for the operator, not a revoked identity —
+//   - 403 — the missing credentials:connect permission (agents hold it by
+//     default): a permission gap for the operator, not a revoked identity —
 //     mirrors the search_catalog/import_api special case.
 //   - 429 — the per-actor connect rate limit: retryable TRANSPORT_ERROR
 //     carrying the route's Retry-After as retry_after_s (Python-mount twin).
@@ -193,10 +193,10 @@ func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, e
 		case http.StatusForbidden:
 			return s.softError(ctx, &ux.CodedError{
 				Code: ux.CodeBrokerDenied,
-				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect scope: %v", err),
-				Actionable: "Ask your human operator to grant this agent the credentials:connect scope " +
+				Msg:  fmt.Sprintf("starting a connect session requires the credentials:connect permission: %v", err),
+				Actionable: "Ask your human operator to grant this agent the credentials:connect permission " +
 					"in the dashboard. Once they confirm, run `jentic logout` (clears only the cached token) " +
-					"so the next call mints a token carrying the scope, then retry request_connection.",
+					"so the next call mints a token carrying the permission, then retry request_connection.",
 			})
 		case http.StatusTooManyRequests:
 			extra := map[string]any{"retryable": true}

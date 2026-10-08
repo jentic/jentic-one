@@ -208,6 +208,7 @@ export function AgentStrip({
 				}}
 				type="button"
 				role="tab"
+				data-agent-id={agent.id}
 				aria-selected={isSelected}
 				tabIndex={agent.id === focusableId ? 0 : -1}
 				onClick={() => onSelect(agent.id)}
@@ -218,8 +219,8 @@ export function AgentStrip({
 					// No background of its own — the sliding marker is the wash and underline.
 					isSelected
 						? 'text-foreground font-semibold'
-						: // Dimmed so the marker registers — `--muted-foreground` is near-white here.
-							'text-muted-foreground/65 hover:text-foreground hover:bg-muted/50',
+						: // The `sub` tier, so the marker registers against the idle tabs.
+							'text-foreground-sub hover:text-foreground hover:bg-tint-2',
 				)}
 			>
 				{/* Every state gets a glyph, active included: the shape tells the five apart. */}
@@ -240,13 +241,15 @@ export function AgentStrip({
 					<span
 						className={cn(
 							'text-xs tabular-nums',
-							isSelected ? 'text-muted-foreground' : 'text-muted-foreground/50',
+							isSelected ? 'text-foreground-sub' : 'text-foreground-faint',
 						)}
 					>
 						{apiCount}
 					</span>
 				)}
-				{gaps > 0 && <span className="text-warning text-xs">· {gaps} to set up</span>}
+				{gaps > 0 && (
+					<span className="text-foreground-sub text-xs">· {gaps} to set up</span>
+				)}
 			</button>
 		);
 	}
@@ -260,11 +263,11 @@ export function AgentStrip({
 			data-testid="agent-strip"
 			// Bleeds to the gutter edges so the backdrop covers the tiles passing under.
 			// The border is transparent until it sticks, so pinning costs no layout shift.
-			className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-border/40 sticky top-0 z-20 border-b border-transparent py-2 backdrop-blur transition-[box-shadow,border-color] data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
+			className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-hairline sticky top-0 z-20 border-b border-transparent py-2 backdrop-blur transition-[box-shadow,border-color] data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
 		>
 			{/* The rail's own surface sits OUTSIDE the scroller, so the fade
 			    thins the tabs at an end without thinning the rail itself. */}
-			<div className="bg-muted/40 relative rounded-lg">
+			<div className="bg-surface-1 relative rounded-lg">
 				{ordered.length > 0 && (
 					<div
 						ref={scrollerRef}
@@ -286,7 +289,7 @@ export function AgentStrip({
 							<span
 								aria-hidden="true"
 								data-testid="strip-selection-marker"
-								className="bg-primary/15 ring-primary/30 pointer-events-none absolute rounded-md ring-1 transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none"
+								className="bg-primary/15 pointer-events-none absolute rounded-md transition-[left,top,width,height] duration-200 ease-out motion-reduce:transition-none"
 								style={{
 									left: marker.left,
 									top: marker.top,
@@ -313,7 +316,7 @@ export function AgentStrip({
 									<span
 										aria-hidden="true"
 										data-testid="strip-pending-divider"
-										className="bg-border mx-1.5 h-5 w-px shrink-0 self-center"
+										className="bg-hairline-field mx-1.5 h-5 w-px shrink-0 self-center"
 									/>
 								)}
 							</>
@@ -324,7 +327,7 @@ export function AgentStrip({
 				{/* Replaces the rail rather than sitting inside it: a tablist owns tabs and
 				    nothing else. `status` announces it when a keystroke empties the rail. */}
 				{ordered.length === 0 && (
-					<p role="status" className="text-muted-foreground px-3 py-2.5 text-sm">
+					<p role="status" className="text-foreground-sub px-3 py-2.5 text-sm">
 						No agents match your filter.
 					</p>
 				)}

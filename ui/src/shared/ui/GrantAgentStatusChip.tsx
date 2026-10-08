@@ -14,6 +14,7 @@
  * status-and-filter rule).
  */
 import { STATUS_LABELS, toActorStatus } from '@/shared/ui/ActorStatusBadge';
+import { Badge } from '@/shared/ui/Badge';
 import { Tooltip } from '@/shared/ui/Tooltip';
 
 export interface GrantAgentStatusChipProps {
@@ -43,9 +44,7 @@ export function GrantAgentStatusChip({ grantStatus, agentStatus }: GrantAgentSta
 				(status === 'disabled' ? ' Enable the agent to restore the connection.' : '')
 			}
 		>
-			<span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-xs">
-				Agent {label}
-			</span>
+			<Badge variant="neutral">Agent {label}</Badge>
 		</Tooltip>
 	);
 }

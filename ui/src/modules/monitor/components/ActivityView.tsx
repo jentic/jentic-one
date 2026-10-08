@@ -161,9 +161,9 @@ export function ActivityView({
 					// Padded for the backdrop, pulled back by the same amount so the
 					// resting layout is unchanged.
 					'-mx-page-gutter px-page-gutter -mt-2 mb-2 py-2',
-					'border-b border-transparent transition-[background-color,border-color,box-shadow] duration-200',
+					'transition-[background-color,box-shadow] duration-200',
 					'lg:sticky lg:top-0 lg:z-30',
-					'lg:data-stuck:bg-background/85 lg:data-stuck:border-border/70 lg:data-stuck:shadow-[0_8px_16px_-12px_rgb(0_0_0/0.5)] lg:data-stuck:backdrop-blur-md',
+					'lg:data-stuck:bg-background/85 lg:data-stuck:shadow-[0_8px_16px_-12px_rgb(0_0_0/0.5)] lg:data-stuck:backdrop-blur-md',
 				)}
 			>
 				{leading && (
@@ -171,7 +171,7 @@ export function ActivityView({
 						{leading}
 						<span
 							aria-hidden="true"
-							className="bg-border mx-1 hidden h-5 w-px sm:block"
+							className="bg-hairline mx-1 hidden h-5 w-px sm:block"
 						/>
 					</>
 				)}

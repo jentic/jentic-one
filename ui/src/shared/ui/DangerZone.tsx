@@ -3,8 +3,8 @@ import { Button } from '@/shared/ui/Button';
 import { DetailSection } from '@/shared/ui/DetailSection';
 
 /**
- * DangerZone — the Settings tab's destructive-actions card, shared by the
- * detail consoles (agent, …) so irreversible actions
+ * DangerZone — the destructive-actions card shared by entity settings
+ * surfaces (an agent's Settings sheet, …) so irreversible actions
  * read identically everywhere: the danger-tinted `DetailSection` shell with
  * one row per action.
  *
@@ -42,7 +42,7 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 			title="Danger zone"
 			icon={<TriangleAlert className="h-4 w-4" />}
 			danger
-			bodyClassName="divide-border/60 divide-y space-y-0"
+			bodyClassName="divide-hairline divide-y space-y-0"
 		>
 			{actions.map((action) => (
 				<div
@@ -66,7 +66,7 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 						variant={action.emphasis === 'outline' ? 'ghost' : 'danger'}
 						className={
 							action.emphasis === 'outline'
-								? 'border-danger/40 text-danger hover:bg-danger/10 hover:text-danger shrink-0 border'
+								? 'text-danger hover:bg-danger/10 hover:text-danger shrink-0'
 								: 'shrink-0'
 						}
 						disabled={pending}

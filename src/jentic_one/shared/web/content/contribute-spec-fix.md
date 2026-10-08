@@ -318,7 +318,7 @@ API. The PR stays open — do not close it; this is not a fork.
 > Two things follow from this:
 > - **Confirm is an operator action** and requires the `overlays:confirm` permission (not
 >   `apis:write`). Contributors *submit* overlays; an operator reviews and *confirms*. Use a
->   token with `overlays:confirm` (an `org:admin` token also works — it implies the scope) for
+>   token with `overlays:confirm` (an `org:admin` token also works — it implies the permission) for
 >   the confirm call below, or ask an operator to confirm.
 > - **Verify locally first.** Because confirm rewrites what the platform serves, treat the local
 >   apply as the real verification of the fix: confirm, then re-download the spec and diff it
@@ -346,7 +346,7 @@ plane (default `http://127.0.0.1:8000`).
 # It targets whatever install your active context points at; use
 # `--context <name>` to pick another. Submit needs apis:write; confirm needs
 # overlays:confirm (an org:admin identity satisfies both) — if your agent
-# identity lacks a scope, ask your operator to grant it (dashboard) or have an
+# identity lacks a permission, ask your operator to grant it (dashboard) or have an
 # operator run the confirm step.
 
 # Resolve the registry identity for the catalog entry you imported. The registry slugifies
@@ -418,19 +418,19 @@ jentic api GET "/apis/$V/$N/$VER" \
 print('origin          :', a.get('origin')); \
 print('update_available:', a.get('update_available'))"
 
-# WHICH class? Look for an actionable conflict event for this API. If this returns a row,
-# it's the operator-decision path; if empty (but update_available is true), it's the
-# routine adopt path. The conflict event's data carries the overlay_id to act on.
+# WHICH class? Events are append-only, so resolved rounds still list: the NEWEST update event
+# for this API (list is newest-first) is the current class while update_available is true —
+# update_conflicts_overlay = operator-decision path (carries overlay_id), else routine adopt.
 # (Events live on the admin/control plane; listing needs events:read — an org:admin/
 # operator identity has it. Use `--context <operator>` if your agent identity lacks it.)
 jentic api GET /events \
+  --query event_type=catalog.update_available \
   --query event_type=catalog.update_conflicts_overlay \
-  --query requires_action=true --query acknowledged=false \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
 mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
-print('conflicts_overlay pending:', bool(mine)); \
-print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
+latest=mine[0] if mine else {}; \
+print('latest:', latest.get('type'), 'overlay_id:', (latest.get('data') or {}).get('overlay_id'))"
 # Match on data.spec_url (the upstream URL) — it is present on BOTH the sweep-emitted conflict
 # event and the refuse-path event (logged when an under-scoped caller attempts the adopt), and
 # it equals the API's source_url you read in step 9. Do NOT filter on data.vendor: the sweep
@@ -440,8 +440,8 @@ print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
 
 **Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the
 change is unrelated and you no longer need the overlay): re-import the catalog entry. A plain
-re-import adopts the upstream spec and **settles the event** automatically. This needs
-`catalog:import` (an `apis:write` scope implies it):
+re-import adopts the upstream spec and flips `update_available` to false. This needs
+`catalog:import` (an `apis:write` permission implies it):
 
 ```
 jentic api POST "/catalog/<api_id>:import" -d '{}'
@@ -457,8 +457,8 @@ is an operator call with two clean options — **never** hand-edit around it:
    catalog entry over a *live confirmed overlay* is doubly gated: the `:import` route itself
    requires **`catalog:import`**, and superseding the overlay additionally requires
    **`overlays:confirm`** (because it discards an operator's fix). So the caller needs **both**
-   scopes — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone* is
-   rejected by the route guard before the supersede is even evaluated. An authorized re-import
+   permissions — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone*
+   is rejected by the route guard before the supersede is even evaluated. An authorized re-import
    auto-deprecates the overlay and serves the fresh upstream in one step; a caller with
    `catalog:import` but **not** `overlays:confirm` is **refused** (403 `overlay_supersede_forbidden`)
    and the conflict is re-surfaced for someone who can decide — the fix is never silently reverted.
@@ -466,7 +466,7 @@ is an operator call with two clean options — **never** hand-edit around it:
 ```
 # Authorized adopt-upstream. Run under a context whose identity holds BOTH catalog:import
 # and overlays:confirm (org:admin implies both) — e.g. `--context <operator>`, or ask an
-# operator to run it if your agent identity lacks the scopes. The platform detects the live
+# operator to run it if your agent identity lacks the permissions. The platform detects the live
 # overlay and supersedes it because you hold overlays:confirm; the same call by a
 # catalog:import-only identity returns 403.
 jentic api POST "/catalog/<api_id>:import" -d '{}'
@@ -481,7 +481,7 @@ jentic api POST "/apis/$V/$N/$VER/overlays/<overlay_id>:rollback" -d '{}'
 ```
 
 The loop is closed when the served spec, the overlay's lifecycle status, and the action inbox all
-agree: either upstream was adopted (overlay `deprecated`, event settled) or the fix is deliberately
+agree: either upstream was adopted (overlay `deprecated`, `update_available` false) or the fix is deliberately
 retained (overlay `confirmed`, divergence flagged but not hidden).
 
 
@@ -499,5 +499,5 @@ retained (overlay `confirmed`, divergence flagged but not hidden).
   `catalog.update_conflicts_overlay`, adopt upstream via a scoped re-import or deliberately keep the
   overlay — never edit the served spec by hand to paper over the divergence. Adopting upstream over
   a live confirmed overlay requires **both** `catalog:import` (route) and `overlays:confirm`
-  (supersede) — i.e. an `org:admin` token or both scopes; the platform refuses with a 403 (not a
+  (supersede) — i.e. an `org:admin` token or both permissions; the platform refuses with a 403 (not a
   silent revert) if you lack `overlays:confirm`.

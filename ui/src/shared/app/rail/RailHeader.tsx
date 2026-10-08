@@ -26,7 +26,7 @@ export type RailHeaderProps = {
 	filter: ReactNode;
 	failuresOnly: boolean;
 	onToggleFailuresOnly: () => void;
-	/** Unacknowledged failures under the current lens. */
+	/** Recent failures (in the loaded feed) under the current lens. */
 	failureCount: number;
 	onLoadOlder: () => void;
 	canLoadOlder?: boolean;
@@ -38,6 +38,7 @@ export type RailHeaderProps = {
 };
 
 function statusDot(status: StreamStatus, paused: boolean): { label: string; tone: LiveDotTone } {
+	if (status === 'forbidden') return { label: 'No access to activity', tone: 'idle' };
 	if (paused) return { label: 'Feed paused', tone: 'warning' };
 	if (status === 'live') return { label: 'Stream live', tone: 'live' };
 	if (status === 'error') return { label: 'Stream offline', tone: 'warning' };
@@ -70,11 +71,13 @@ export function RailHeader({
 	}
 
 	return (
-		<div className="border-border border-b">
+		<div className="border-hairline border-b">
 			<div className="flex items-center gap-2 py-2 pr-2 pl-3">
 				<LiveDot tone={dot.tone} label={dot.label} />
 				<span className="text-foreground text-sm font-semibold">Activity</span>
-				{status === 'error' ? (
+				{status === 'forbidden' ? (
+					<span className="text-muted-foreground truncate text-[11px]">No access</span>
+				) : status === 'error' ? (
 					<span
 						className="text-warning truncate text-[11px]"
 						title="The live stream dropped. Retrying — showing what's already loaded."
@@ -180,14 +183,14 @@ export function RailHeader({
 						'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors',
 						failuresOnly
 							? 'border-danger/50 bg-danger/10 text-danger'
-							: 'border-border text-muted-foreground hover:text-foreground',
+							: 'border-hairline-field bg-surface-field text-muted-foreground hover:bg-surface-tonal hover:text-foreground',
 					)}
 				>
 					Failures only
 					{failureCount > 0 && (
 						<span
 							className="bg-danger/20 text-danger rounded-full px-1.5 text-[10px] leading-4 font-semibold tabular-nums"
-							aria-label={`${failureCount} unacknowledged`}
+							aria-label={`${failureCount} recent`}
 						>
 							{failureCount > 99 ? '99+' : failureCount}
 						</span>

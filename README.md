@@ -88,6 +88,10 @@ docker run --rm -it --env-file quickstart.env -v jentic-data:/data \
 curl -fsS http://127.0.0.1:8000/health   # verify the control plane is up
 ```
 
+`quickstart.env` turns on anonymous product telemetry
+(`JENTIC__TELEMETRY__ENABLED=true`). To opt out, set it to `false` in the
+file. [what is sent](docs/reference/config.md#telemetry)).
+
 Something failed? [Troubleshooting](docs/operations/troubleshooting.md)
 indexes recoveries by symptom.
 
@@ -191,8 +195,10 @@ The full index is at [docs/README.md](docs/README.md).
 - [Endpoint & scope reference](docs/reference/endpoints.md) — every HTTP route and who may call it
 - [Local development](docs/development/local-setup.md) — running from a source checkout
 
-Telemetry is **opt-in and off by default** — a hand-rolled config sends
-nothing ([details](docs/reference/config.md#telemetry)). Vulnerability
+Anonymous telemetry is **on in the shipped install examples** and pre-selected
+in the interactive installer; set `telemetry.enabled: false` to opt out. A
+config that omits the `telemetry` block sends nothing
+([details](docs/reference/config.md#telemetry)). Vulnerability
 reports: [SECURITY.md](SECURITY.md). Support channels and what's covered:
 [SUPPORT.md](SUPPORT.md).
 

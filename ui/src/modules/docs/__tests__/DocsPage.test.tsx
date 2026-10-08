@@ -2,7 +2,7 @@
  * DocsPage — page-level test (renders in isolation under the app providers).
  *
  * The docs portal is a public, standalone route that fetches four same-origin
- * sources — the OpenAPI document, the canonical scope reference, the build-time
+ * sources — the OpenAPI document, the canonical permission reference, the build-time
  * CLI reference, and the standalone Broker OpenAPI document — and renders them
  * as one narrative document (Overview → … → API reference → Broker API). MSW
  * isn't seeded with these by default (they live only on the real instance), so
@@ -10,9 +10,10 @@
  *
  * Coverage:
  *  - the narrative hero + section headings render once data resolves;
- *  - the native API reference renders an operation with its scope panel,
+ *  - the native API reference renders an operation with its permission panel,
  *    enriched from the reference payload (the join the portal exists to show);
  *  - the Broker reference renders as its own section from its own spec;
+ *  - the Broker base URL is the one `/instance` advertises, else the spec's own;
  *  - a missing reference endpoint degrades to a graceful, retryable notice
  *    instead of a blank route;
  *  - no critical/serious a11y violations on the assembled page.
@@ -64,7 +65,7 @@ const SPEC = {
 };
 
 const REFERENCE: ReferencePayload = {
-	schema: 'jentic.endpoint-scope-tree/v1',
+	schema: 'jentic.endpoint-permission-tree/v1',
 	total: 1,
 	groups: ['Agents'],
 	endpoints: [
@@ -77,8 +78,8 @@ const REFERENCE: ReferencePayload = {
 			authenticated: true,
 			public: false,
 			actor_types: ['user'],
-			required_scopes: ['agents:read'],
-			implied_scopes: {},
+			required_permissions: ['agents:read'],
+			implied_permissions: {},
 			auth_note: null,
 			typical_caller: 'operator',
 			group: 'Agents',
@@ -174,7 +175,7 @@ describe('DocsPage', () => {
 		expect(screen.getByRole('heading', { name: 'API reference' })).toBeInTheDocument();
 	});
 
-	it('renders an API operation enriched with its required scope', async () => {
+	it('renders an API operation enriched with its required permission', async () => {
 		renderWithProviders(<DocsPage />);
 		// The reference's operation path appears in the left index once parsed.
 		await screen.findByText('Secure third-party API execution for AI agents.');
@@ -186,10 +187,10 @@ describe('DocsPage', () => {
 		});
 
 		expect(await screen.findByText('List agents', {}, { timeout: 3000 })).toBeInTheDocument();
-		// The scope reference is the join the portal exists to surface — it shows
-		// in both the operation's auth chip and its scope panel.
-		const scopeTokens = await screen.findAllByText('agents:read');
-		expect(scopeTokens.length).toBeGreaterThan(0);
+		// The permission reference is the join the portal exists to surface — it shows
+		// in both the operation's auth chip and its permission panel.
+		const permissionTokens = await screen.findAllByText('agents:read');
+		expect(permissionTokens.length).toBeGreaterThan(0);
 	});
 
 	it('renders the Broker reference as its own section from its own spec', async () => {
@@ -222,6 +223,34 @@ describe('DocsPage', () => {
 		).toBeInTheDocument();
 	});
 
+	it('shows the broker URL advertised by /instance as the Broker base URL', async () => {
+		worker.use(
+			http.get('/instance', () =>
+				HttpResponse.json({
+					backend: 'local',
+					canonical_base_url: 'https://jentic.example.test',
+					host: 'jentic.example.test',
+					instance_id: 'inst_digest_1',
+					broker_url: 'https://broker.acme.test',
+				}),
+			),
+		);
+		renderWithProviders(<DocsPage />);
+
+		expect(
+			await screen.findByText('https://broker.acme.test', {}, { timeout: 3000 }),
+		).toBeInTheDocument();
+		expect(screen.queryByText('https://broker.example.com')).not.toBeInTheDocument();
+	});
+
+	it("keeps the Broker spec's own servers when /instance withholds a broker URL", async () => {
+		renderWithProviders(<DocsPage />);
+
+		expect(
+			await screen.findByText('https://broker.example.com', {}, { timeout: 3000 }),
+		).toBeInTheDocument();
+	});
+
 	it('degrades gracefully when the reference endpoint is missing', async () => {
 		worker.use(createErrorHandler('get', '/reference/endpoints.json', { status: 404 }));
 		renderWithProviders(<DocsPage />);
@@ -232,11 +261,11 @@ describe('DocsPage', () => {
 	});
 
 	it('does not crash on a malformed-but-200 reference payload', async () => {
-		// required_scopes / implied_scopes omitted: the renderer must normalize
+		// required_permissions / implied_permissions omitted: the renderer must normalize
 		// these to empty rather than throwing and blanking the route.
 		seedDocsHandlers({
 			reference: {
-				schema: 'jentic.endpoint-scope-tree/v1',
+				schema: 'jentic.endpoint-permission-tree/v1',
 				total: 1,
 				groups: ['Agents'],
 				endpoints: [
@@ -260,10 +289,10 @@ describe('DocsPage', () => {
 			document.getElementById(operationAnchorId('GET', '/agents'))?.scrollIntoView();
 		});
 
-		// The page still renders the operation; the scope panel shows the
-		// "no specific scope" fallback instead of crashing.
+		// The page still renders the operation; the permission panel shows the
+		// "no specific permission" fallback instead of crashing.
 		expect(await screen.findByText('List agents', {}, { timeout: 3000 })).toBeInTheDocument();
-		expect(await screen.findByText(/no specific scope/i)).toBeInTheDocument();
+		expect(await screen.findByText(/no specific permission/i)).toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {

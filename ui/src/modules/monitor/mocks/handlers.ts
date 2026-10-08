@@ -9,7 +9,6 @@
  *   GET   /jobs/{job_id}             — single job
  *   POST  /jobs/{job_id}:cancel       — cancel a job
  *   GET   /events                     — platform events
- *   PATCH /events/{event_id}          — acknowledge an event
  *   GET   /events/stream              — live event SSE (text/event-stream)
  *   GET   /audit                      — audit log (actor lens)
  *
@@ -72,7 +71,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_1',
 		http_status: 200,
-		operation_id: 'POST /v1/charges',
+		operation_id: 'op_charges01',
+		operation_path: '/v1/charges',
+		operation_method: 'POST',
 		origin: 'api',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:00:00Z',
@@ -91,7 +92,9 @@ const EXECUTIONS = rebaseFixture([
 		error: 'Upstream 503 from github.com',
 		execution_id: 'exec_2',
 		http_status: 503,
-		operation_id: 'GET /repos/{owner}/{repo}',
+		operation_id: 'op_getrepo01',
+		operation_path: '/repos/{owner}/{repo}',
+		operation_method: 'GET',
 		origin: 'cli',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:05:00Z',
@@ -110,7 +113,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_3',
 		http_status: 200,
-		operation_id: 'POST /v1/refunds',
+		operation_id: 'op_refunds01',
+		operation_path: '/v1/refunds',
+		operation_method: 'POST',
 		// MCP-origin run (local-MCP #1178) — the origin-filter specs pivot on it.
 		origin: 'mcp',
 		pinned_revisions: null,
@@ -132,7 +137,9 @@ const EXECUTIONS = rebaseFixture([
 		error: null,
 		execution_id: 'exec_4',
 		http_status: 200,
-		operation_id: 'POST /chat.postMessage',
+		// Legacy row: id-only, no operation_path/method — pins that the opaque
+		// id never renders (the cells show the empty placeholder instead).
+		operation_id: 'op_chatpost01',
 		pinned_revisions: null,
 		started_at: '2026-06-19T10:07:00Z',
 		status: 'completed',
@@ -398,9 +405,6 @@ const JOBS = rebaseFixture([
 const EVENTS = rebaseFixture([
 	{
 		_links: { self: '/events/evt_1', execution: '/executions/exec_2', job: null, action: null },
-		acknowledged: false,
-		acknowledged_at: null,
-		acknowledged_by: null,
 		created_at: '2026-06-19T10:05:01Z',
 		data: { http_status: 503 },
 		detail: 'GitHub returned 503 during execution exec_2.',
@@ -413,9 +417,6 @@ const EVENTS = rebaseFixture([
 	},
 	{
 		_links: { self: '/events/evt_2', execution: null, job: '/jobs/job_import_2', action: null },
-		acknowledged: true,
-		acknowledged_at: '2026-06-19T09:46:00Z',
-		acknowledged_by: 'admin@local',
 		created_at: '2026-06-19T09:45:00Z',
 		data: {},
 		detail: 'Catalog import completed for stripe-api.',
@@ -727,7 +728,6 @@ export const monitorHandlers = [
 
 	http.get('/events', ({ request }) => {
 		const url = new URL(request.url);
-		const acknowledged = url.searchParams.get('acknowledged');
 		const requiresAction = url.searchParams.get('requires_action');
 		const eventTypes = url.searchParams.getAll('event_type');
 		const severities = url.searchParams.getAll('severity');
@@ -736,8 +736,6 @@ export const monitorHandlers = [
 		const from = url.searchParams.get('from');
 		const to = url.searchParams.get('to');
 		let rows = EVENTS;
-		if (acknowledged != null)
-			rows = rows.filter((r) => String(r.acknowledged) === acknowledged);
 		if (requiresAction != null)
 			rows = rows.filter((r) => String(r.requires_action) === requiresAction);
 		if (eventTypes.length) rows = rows.filter((r) => eventTypes.includes(r.type));
@@ -747,16 +745,6 @@ export const monitorHandlers = [
 		if (from) rows = rows.filter((r) => r.created_at >= from);
 		if (to) rows = rows.filter((r) => r.created_at <= to);
 		return HttpResponse.json(paginate(rows));
-	}),
-	http.patch('/events/:id', ({ params }) => {
-		const row = EVENTS.find((r) => r.event_id === String(params.id));
-		if (!row) return new HttpResponse(null, { status: 404 });
-		return HttpResponse.json({
-			...row,
-			acknowledged: true,
-			acknowledged_at: '2026-06-19T10:11:00Z',
-			acknowledged_by: 'admin@local',
-		});
 	}),
 	// Live SSE: mirror the backend's `/events/stream` framing — a `heartbeat`
 	// frame (no event payload) interleaved with real `event: <type>` frames that

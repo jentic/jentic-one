@@ -6,6 +6,7 @@ from jentic_one.broker.core.headers import TRACESTATE_HEADER, JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _metadata_headers
 from jentic_one.broker.web.streaming import _metadata_headers as _stream_metadata_headers
+from jentic_one.shared.schemas import OperationInfo
 
 
 def _ctx(**overrides: object) -> ExecuteRequestContext:
@@ -14,7 +15,7 @@ def _ctx(**overrides: object) -> ExecuteRequestContext:
         "method": "POST",
         "trace_id": "trace-1",
         "toolkit_id": "tk_abc123",
-        "operation_id": "op_1",
+        "operation": OperationInfo(id="op_1"),
         "api_vendor": "stripe",
         "api_name": "payments",
         "api_version": "2023-10-16",
@@ -53,6 +54,25 @@ def test_metadata_headers_omit_credential_attribution_when_absent():
     headers = _metadata_headers(_ctx(credential_id=None, credential_name=None), "exec_1")
     assert JenticHeader.CREDENTIAL_ID.value not in headers
     assert JenticHeader.CREDENTIAL_NAME.value not in headers
+
+
+def test_metadata_headers_stamp_the_opaque_operation_id_only():
+    """``Jentic-Operation`` carries the machine key (``operation.id``) — never
+    the human-readable path/method, which ride the execution record instead."""
+    op = OperationInfo(id="op_charge", path="/v1/charges", method="POST")
+    for headers in (
+        _metadata_headers(_ctx(operation=op), "exec_1"),
+        _stream_metadata_headers(_ctx(operation=op), "exec_1", 200),
+    ):
+        assert headers[JenticHeader.OPERATION.value] == "op_charge"
+
+
+def test_metadata_headers_omit_operation_when_discovery_resolved_none():
+    """No resolved operation → no ``Jentic-Operation`` header on either path."""
+    assert JenticHeader.OPERATION.value not in _metadata_headers(_ctx(operation=None), "exec_1")
+    assert JenticHeader.OPERATION.value not in _stream_metadata_headers(
+        _ctx(operation=None), "exec_1", 200
+    )
 
 
 def test_stream_metadata_headers_stamp_credential_attribution():

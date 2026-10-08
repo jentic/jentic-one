@@ -42,10 +42,31 @@ func ParseMethodPath(target string) (method, path string) {
 	m := strings.ToUpper(target[:idx])
 	switch m {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
-		http.MethodDelete, http.MethodHead, http.MethodOptions:
+		http.MethodDelete, http.MethodHead, http.MethodOptions, http.MethodTrace:
 		return m, target[idx+1:]
 	default:
 		return "", ""
+	}
+}
+
+// ensureExecutableMethod rejects a resolved method the broker's proxy route does
+// not serve. TRACE belongs to the OpenAPI method set the registry ingests, so it
+// is discoverable and `jentic inspect` reads its contract — but the broker must
+// never proxy it: TRACE echoes the request back, which would reflect the
+// credentials the broker injects into the response body. Fail here so the agent
+// gets a coded resolve error locally instead of an opaque 405 from the data plane.
+//
+// recovery is the next step to offer: reading the contract (`jentic inspect`)
+// only works for an inspectable target, so the broker-relative METHOD:/path form
+// points back at discovery instead.
+func ensureExecutableMethod(method, target, recovery string) error {
+	if method != http.MethodTrace {
+		return nil
+	}
+	return &ux.CodedError{
+		Code:       ux.CodeResolveFailed,
+		Msg:        fmt.Sprintf("operation %q is a TRACE operation, which cannot be executed", target),
+		Actionable: recovery,
 	}
 }
 
@@ -56,6 +77,9 @@ func ParseMethodPath(target string) (method, path string) {
 // coded RESOLVE_FAILED so the caller's exit taxonomy maps them to exit 2.
 func ResolveOperation(ctx context.Context, ins Inspector, target, revision string) (*Operation, error) {
 	if method, path := ParseMethodPath(target); method != "" {
+		if err := ensureExecutableMethod(method, target, `jentic search "<what you want to do>"`); err != nil {
+			return nil, err
+		}
 		return &Operation{Method: method, Path: path}, nil
 	}
 
@@ -91,7 +115,33 @@ func ResolveOperation(ctx context.Context, ins Inspector, target, revision strin
 	// execute_read GET/HEAD gate, BuildRequest, logging — assumes the
 	// canonical uppercase form.
 	op.Method = strings.ToUpper(op.Method)
+	if err := ensureExecutableMethod(op.Method, target, fmt.Sprintf("jentic inspect %q", target)); err != nil {
+		return nil, err
+	}
+	if err := ensureAbsoluteUpstream(op.URL, target); err != nil {
+		return nil, err
+	}
 	return &op, nil
+}
+
+// ensureAbsoluteUpstream rejects an inspected operation whose url is
+// host-relative (e.g. "/pets": its spec declares no servers, or only a relative
+// one). The broker proxies to an absolute upstream URL and its URL index holds
+// no host-less entries, so sending it would fail opaquely at the data plane.
+// Such an operation's contract is still readable (`jentic inspect`); only
+// executing it is refused, locally, as a coded RESOLVE_FAILED.
+func ensureAbsoluteUpstream(upstream, target string) error {
+	if strings.HasPrefix(upstream, "http://") || strings.HasPrefix(upstream, "https://") {
+		return nil
+	}
+	return &ux.CodedError{
+		Code: ux.CodeResolveFailed,
+		Msg: fmt.Sprintf(
+			"operation %q has no upstream host (url %q): its spec declares no absolute server, so it cannot be executed",
+			target, upstream,
+		),
+		Actionable: `jentic search "<what you want to do>"`,
+	}
 }
 
 // BuildRequest assembles the outbound broker request from a resolved

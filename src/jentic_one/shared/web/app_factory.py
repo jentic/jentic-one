@@ -526,7 +526,10 @@ def create_surface_app(
                 await _stop_telemetry(telemetry_handle)
                 await ctx.shutdown()
 
-    meta = fastapi_metadata_kwargs()
+    # ``server.public_base_url`` names the control/auth surfaces' origin; a
+    # standalone broker runs on its own, so it keeps the same-origin server.
+    public_base_url = "" if "broker" in enabled_apps else ctx.config.server.public_base_url
+    meta = fastapi_metadata_kwargs(public_base_url)
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
@@ -636,7 +639,7 @@ def create_combined_app(
                 await _stop_telemetry(telemetry_handle)
                 await ctx.shutdown()
 
-    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
+    root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs(ctx.config.server.public_base_url))
     root.state.ctx = ctx
     # Injected Broker (None by default → broker surface builds its default
     # per request). Wire BOTH data-plane paths: the sync router reads

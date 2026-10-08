@@ -18,12 +18,12 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_agent_docs_refs.py`](test_agent_docs_refs.py) — `llms.txt` / `AGENTS.md` links and counts stay true
 - [`test_config_reference_conformance.py`](test_config_reference_conformance.py) — `docs/reference/config.md` is byte-equal to its generator's output
 - [`test_config_schema_conformance.py`](test_config_schema_conformance.py) — the config JSON Schema (and the CLI's vendored copy) hasn't drifted
-- [`test_endpoint_tree.py`](test_endpoint_tree.py) — the endpoint/scope reference matches the live route table
+- [`test_endpoint_tree.py`](test_endpoint_tree.py) — the endpoint/permission reference matches the live route table
 - [`test_openapi_conformance.py`](test_openapi_conformance.py) — OpenAPI specs are well-formed and (control) not drifted
 - [`test_install_docs_conformance.py`](test_install_docs_conformance.py) — documented `brew`/`winget`/`scoop` install commands match `cli/.goreleaser.yaml`
 - [`test_cosign_identity_pins.py`](test_cosign_identity_pins.py) — every `--certificate-identity` (docs, `install.sh`, the Go updater) names a workflow that exists
 - [`test_skill_drift.py`](test_skill_drift.py) — the served skill set stays in lockstep across its copies
-- [`test_scope_catalog.py`](test_scope_catalog.py) — the conceptual scope catalogue covers every scope in use
+- [`test_permission_catalog.py`](test_permission_catalog.py) — the conceptual permission catalogue covers every permission in use
 - [`test_revision_pin_regex_matches_spec.py`](test_revision_pin_regex_matches_spec.py) — the broker revision-pin regex matches the OpenAPI spec
 
 ## Module boundaries and layering

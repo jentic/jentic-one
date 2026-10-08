@@ -39,30 +39,48 @@ export const ROUTES = {
 	// a single shared constant instead of a scattered literal. These MUST stay
 	// in lockstep with `nav.ts` and each module's `routes.tsx`. New surfaces
 	// append here.
-	discover: '/discover',
-	workspace: '/workspace',
+	// The Library is ONE page: the public Catalog with your workspace docked
+	// beside it (`/library`, owned by the discover module), plus each workspace
+	// API's hub under `/library/workspace/…` (owned by the workspace module —
+	// build those with `ROUTE_PATHS.workspaceApiHub`). There is no workspace
+	// list page: `/library/workspace`, and the retired `/discover` and
+	// `/workspace` URLs, redirect to `/library` (see each module's routes.tsx).
+	library: '/library',
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
 } as const;
 
 /**
+ * Path prefix of every workspace API hub (`/library/workspace/:v/:n/:ver`).
+ * Not a page of its own (it redirects to the Library) — never link to it bare.
+ */
+const WORKSPACE_API_HUB_BASE = '/library/workspace';
+
+/**
  * Detail-route path builders for surfaces addressed by an id/sub-path. Kept as
- * functions (not literals) so callers can't forget to encode a segment; mirrors
- * each module's own encoder (e.g. workspace's `encodeApiId`). The `apiPath`
- * arg is already the encoded `:vendor/:name/:version` triple.
+ * functions (not literals) so callers can't forget to encode a segment.
  */
 export const ROUTE_PATHS = {
-	workspaceApi: (apiPath: string) => `${ROUTES.workspace}/${apiPath}`,
-	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	/**
-	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
-	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
-	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
-	 * cross-module deep-links (agents console → Monitor) must agree on it, and
-	 * modules can't import from each other. Monitor's own richer builder is
-	 * `modules/monitor/lib/links`.
+	 * A workspace API's hub from its raw identity triple (each segment
+	 * percent-encoded here), optionally opened on a tab. `tab` is the hub's URL
+	 * vocabulary (`?tab=`).
 	 */
+	workspaceApiHub: (
+		ref: { vendor: string; name: string; version: string },
+		tab?: 'overview' | 'operations' | 'versions' | 'spec',
+		opts?: { addCredential?: boolean },
+	) => {
+		const path = [ref.vendor, ref.name, ref.version].map(encodeURIComponent).join('/');
+		const q = new URLSearchParams();
+		if (tab && tab !== 'overview') q.set('tab', tab);
+		// `credential=new` opens the hub's Add credential flow on this API's
+		// form (read by the workspace module's `ApiHubOverview`).
+		if (opts?.addCredential === true) q.set('credential', 'new');
+		const qs = q.toString();
+		return `${WORKSPACE_API_HUB_BASE}/${path}${qs ? `?${qs}` : ''}`;
+	},
 	/**
 	 * The org-wide credential inventory, which lives in a sheet on the Agents
 	 * page rather than at a route of its own. `credentials` is the Agents
@@ -75,11 +93,18 @@ export const ROUTE_PATHS = {
 	credentialInventory: (opts?: { create?: boolean }) =>
 		`${ROUTES.agents}?credentials=${opts?.create === true ? 'new' : '1'}`,
 	/**
-	 * One agent AS SELECTED on the flat Agents surface — the address of an agent for
-	 * any caller that wants to show one. `ROUTE_PATHS.agent` still addresses the
-	 * per-agent console for a direct URL.
+	 * One agent AS SELECTED on the Agents page — the one address of an agent for
+	 * any caller that wants to show one. `/agents/:agentId` redirects here.
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
+	/**
+	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
+	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
+	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
+	 * cross-module deep-links (Agents → Monitor) must agree on it, and modules
+	 * can't import from each other. Monitor's own richer builder is
+	 * `modules/monitor/lib/links`.
+	 */
 	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
 		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
@@ -97,8 +122,8 @@ export const ROUTE_PATHS = {
  * Nothing else in this file should change, so parallel PRs never collide here.
  *
  * Route `path`s here are RELATIVE to the `/app` shell (no leading slash), e.g.
- * `{ path: 'discover', element: <DiscoverPage/> }` mounts at `/app/discover`.
- * The matching nav entry in `nav.ts` uses the absolute `/app/discover`.
+ * `{ path: 'library', element: <LibraryPage/> }` mounts at `/app/library`.
+ * The matching nav entry in `nav.ts` uses the absolute `/app/library`.
  */
 // <-- feature route imports go here (one import line per module) -->
 import { agentsRoutes } from '@/modules/agents/routes';

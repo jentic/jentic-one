@@ -11,7 +11,7 @@ here is grounded in the module it describes — follow the paths into
 | [Composition and processes](composition-and-processes.md) | How a process boots: `__main__.py` → `wiring.py` → app factories, `JENTIC__APPS`, database gating, lifespan ordering, background workers, deployment topologies. |
 | [Broker execution](broker-execution.md) | What happens to a brokered call: the pipeline, resilience stack, egress controls, and the credential injection point. |
 | [Data model](data-model.md) | The three databases, their headline entities, and why there are no cross-database foreign keys. |
-| [Identity and authorization](identity-and-authorization.md) | Who can call what: actor kinds, token kinds, scopes, and the default-deny access model. |
+| [Identity and authorization](identity-and-authorization.md) | Who can call what: actor kinds, token kinds, permissions (and the OAuth2 scopes they travel as), and the default-deny access model. |
 
 ## The system in one diagram
 

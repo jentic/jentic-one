@@ -12,9 +12,8 @@
  * It's one DOM either way (the meta wrapper is `display: contents` when
  * wide), so nothing is rendered twice for assistive tech or tests.
  *
- * Rows are `role="link"` divs rather than buttons because a row can carry its
- * own control (Everything's Acknowledge); a click that starts on a nested
- * control is left to it. `data-log-row` marks steppable rows for j/k.
+ * Rows are `role="link"` divs rather than buttons so a row can carry its own
+ * control; a click that starts on a nested control is left to it. `data-log-row` marks steppable rows for j/k.
  */
 import {
 	Fragment,
@@ -92,7 +91,7 @@ export interface LogRowProps {
 	actor?: ReactNode;
 	subject?: ReactNode;
 	detail?: ReactNode;
-	/** Inline control (Acknowledge) or affordance (chevron). */
+	/** Inline control or affordance (chevron). */
 	action?: ReactNode;
 	/** Accessible name of the row. */
 	label: string;
@@ -101,8 +100,6 @@ export interface LogRowProps {
 	active?: boolean;
 	/** A row revealed inside an expanded run (indented, not steppable). */
 	nested?: boolean;
-	/** Dealt with already — a failure keeps only a faint accent. */
-	muted?: boolean;
 	/** Exclude from j/k stepping (e.g. a fold/unfold row). */
 	steppable?: boolean;
 }
@@ -127,7 +124,6 @@ export function LogRow({
 	onOpen,
 	active,
 	nested,
-	muted,
 	steppable = true,
 }: LogRowProps) {
 	const failure = tone === 'fail';
@@ -140,23 +136,17 @@ export function LogRow({
 	return (
 		<li
 			className={cn(
-				'border-border/40 relative border-b last:border-b-0',
-				nested && 'bg-muted/25',
-				failure && !muted && 'bg-danger/[0.035]',
+				'border-hairline-row relative border-b last:border-b-0',
+				nested && 'bg-tint',
+				failure && 'bg-danger/[0.035]',
 			)}
 		>
-			{/* Left accent: the open row wins, then an unhandled failure. */}
+			{/* Left accent: the open row wins, then a failure. */}
 			<span
 				aria-hidden="true"
 				className={cn(
 					'absolute inset-y-0 left-0 w-0.5',
-					active
-						? 'bg-primary'
-						: failure
-							? muted
-								? 'bg-danger/35'
-								: 'bg-danger'
-							: 'bg-transparent',
+					active ? 'bg-primary' : failure ? 'bg-danger' : 'bg-transparent',
 				)}
 			/>
 			<div
@@ -178,7 +168,7 @@ export function LogRow({
 					'grid scroll-mt-[calc(var(--log-top,0px)+4rem)] scroll-mb-4 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2.5 sm:px-4',
 					WIDE_COLS,
 					'@3xl:items-center @3xl:gap-x-4',
-					'hover:bg-muted/50 focus-visible:ring-ring cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset',
+					'hover:bg-surface-1-hover focus-visible:ring-ring cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset',
 					active && 'bg-primary/[0.06] hover:bg-primary/[0.08]',
 					nested && 'pl-6 @3xl:pl-4',
 				)}
@@ -196,7 +186,7 @@ export function LogRow({
 							className={cn(
 								'text-foreground truncate',
 								mono ? 'font-mono text-[13px]' : 'text-sm',
-								failure && !muted ? 'font-semibold' : 'font-medium',
+								failure ? 'font-semibold' : 'font-medium',
 							)}
 						>
 							{title}
@@ -280,7 +270,7 @@ export function LogList({
 }: {
 	ariaLabel: string;
 	columns: LogColumns;
-	/** Width of the trailing action column (Everything needs room for Acknowledge). */
+	/** Width of the trailing action column. */
 	actionWidth?: string;
 	/** Above the column header (Everything's live bar). */
 	header?: ReactNode;
@@ -293,7 +283,7 @@ export function LogList({
 		<section
 			aria-label={ariaLabel}
 			className={cn(
-				'border-border bg-card @container overflow-clip rounded-xl border',
+				'bg-surface-1 @container overflow-clip rounded-lg [--field-bg:var(--surface-field)]',
 				className,
 			)}
 			style={{ '--log-action': actionWidth } as CSSProperties}
@@ -303,7 +293,7 @@ export function LogList({
 			<div
 				aria-hidden="true"
 				className={cn(
-					'text-muted-foreground border-border/60 hidden gap-x-4 border-b px-4 py-2 text-[11px] font-medium tracking-wide uppercase @3xl:grid',
+					'text-muted-foreground border-hairline hidden gap-x-4 border-b px-4 py-2 text-[11px] font-medium tracking-wide uppercase @3xl:grid',
 					WIDE_COLS,
 				)}
 			>
@@ -341,7 +331,7 @@ export function groupByDay<T>(
 export function LogDay({ label, children }: { label: string; children: ReactNode }) {
 	return (
 		<Fragment>
-			<h3 className="bg-muted/85 text-muted-foreground border-border/60 sticky top-[var(--log-top,0px)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
+			<h3 className="bg-surface-1/90 text-muted-foreground border-hairline sticky top-[var(--log-top,0px)] z-10 border-b px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase backdrop-blur sm:px-4">
 				{label}
 			</h3>
 			<ul aria-label={label}>{children}</ul>

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
+import { ToastAccentBar, toastSurfaceClass } from '@/shared/ui/Toaster';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	formatStreamTime,
@@ -17,7 +18,6 @@ import {
 	matchesToastScope,
 	primaryDestinationFor,
 	readToastScope,
-	severityStripeClass,
 	STREAM_KIND_LABEL,
 	TOAST_SCOPE_CHANGE_EVENT,
 	TOAST_SCOPE_STORAGE_KEY,
@@ -36,7 +36,7 @@ const KIND_LABEL = STREAM_KIND_LABEL;
 type Toast = StreamEvent & { addedAt: number; assertive: boolean };
 
 export function ToastHost() {
-	const { latest, acknowledge } = useAgentStream();
+	const { latest } = useAgentStream();
 	const navigate = useNavigate();
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
@@ -119,16 +119,9 @@ export function ToastHost() {
 	}
 
 	function handleAction(toast: Toast, action: InlineActionSpec) {
-		if (action.href && !action.acknowledges) {
-			const target = action.href(toast);
-			if (target) navigate(target);
-			dismiss(toast.id);
-			return;
-		}
-		if (action.acknowledges) {
-			void acknowledge(toast.id);
-			dismiss(toast.id);
-		}
+		const target = action.href ? action.href(toast) : null;
+		if (target) navigate(target);
+		dismiss(toast.id);
 	}
 
 	if (toasts.length === 0) return null;
@@ -197,11 +190,18 @@ function ToastCard({
 				}
 			}}
 			className={cn(
-				'bg-muted border-border pointer-events-auto rounded-lg border border-l-4 p-3 shadow-2xl',
-				severityStripeClass(toast.severity),
-				onOpen && 'hover:bg-muted/80 cursor-pointer',
+				// The shared calm toast card: colour lives on the event glyph, and a
+				// failure adds the thin red bar (wider for critical) — no tinted
+				// fill, border or text.
+				toastSurfaceClass,
+				onOpen && 'hover:bg-surface-1 cursor-pointer transition-colors',
 			)}
+			data-testid="stream-toast"
+			data-severity={toast.severity}
 		>
+			{critical && (
+				<ToastAccentBar className={toast.severity === 'critical' ? 'w-1' : undefined} />
+			)}
 			<div className="flex items-start gap-2.5">
 				<StreamEventIcon ev={toast} className="mt-0.5 h-4 w-4" />
 				<div className="min-w-0 flex-1">
@@ -228,10 +228,9 @@ function ToastCard({
 							{actions.map((action) => (
 								<Button
 									key={action.kind}
-									variant={action.kind === 'acknowledge' ? 'primary' : 'ghost'}
-									size="sm"
+									variant="tonal"
+									size="xs"
 									onClick={() => onAction(action)}
-									className="h-7 px-2.5 text-[11px]"
 								>
 									{action.label}
 								</Button>
@@ -239,17 +238,23 @@ function ToastCard({
 						</div>
 					)}
 				</div>
-				<Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss toast">
-					<X className="h-4 w-4" />
+				<Button
+					variant="ghost"
+					size="icon-xs"
+					onClick={onDismiss}
+					aria-label="Dismiss toast"
+					className="-mt-1 -mr-1 h-6 w-6 shrink-0"
+				>
+					<X className="h-3.5 w-3.5" />
 				</Button>
 			</div>
-			<div className="bg-border mt-2 h-0.5 w-full overflow-hidden rounded-full">
+			<div className="bg-surface-tonal mt-2.5 h-0.5 w-full overflow-hidden rounded-full">
 				<div
 					className={cn(
 						'h-full',
-						critical && 'bg-danger',
-						toast.severity === 'warning' && 'bg-warning',
-						toast.severity === 'info' && 'bg-primary',
+						critical && 'bg-danger/60',
+						toast.severity === 'warning' && 'bg-warning/60',
+						toast.severity === 'info' && 'bg-primary/45',
 					)}
 					style={{ width: `${progress}%`, transition: `width ${TOAST_TTL_MS}ms linear` }}
 				/>

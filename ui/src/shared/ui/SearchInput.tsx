@@ -1,9 +1,38 @@
 import React, { useCallback } from 'react';
 import { Search, X } from 'lucide-react';
-import { Input } from '@/shared/ui/Input';
+import { Input, inputEdgelessClasses } from '@/shared/ui/Input';
 import { cn } from '@/shared/lib/utils';
 
 type SearchInputSize = 'sm' | 'md';
+
+/**
+ * Where the field sits, which decides its surface (borderless unless `field`
+ * — the lighter fill marks the field, the icon and placeholder identify it,
+ * and focus draws an inset accent ring, stronger for keyboard focus):
+ *   - `default` — one step lighter than whatever it sits on (`--field-bg`:
+ *                 the page, a card, a sheet or a dialog)
+ *   - `surface` — `surface-1` on the page background (a page toolbar, 36px)
+ *   - `inset`   — one step lighter than a `surface-1` panel (a filter inside
+ *                 a docked panel or a sheet, 34px)
+ */
+export type SearchInputTone = 'default' | 'surface' | 'inset';
+
+const fieldText = 'placeholder:text-foreground-faint py-0';
+
+const toneClasses: Record<SearchInputTone, Record<SearchInputSize, string>> = {
+	default: {
+		sm: cn(fieldText, 'h-8 text-[13px]'),
+		md: cn(fieldText, 'h-9 text-[13.5px]'),
+	},
+	surface: {
+		sm: cn(fieldText, 'bg-surface-1 h-8 text-[13px]'),
+		md: cn(fieldText, 'bg-surface-1 h-9 text-[13.5px]'),
+	},
+	inset: {
+		sm: cn(fieldText, 'bg-surface-field h-[34px] text-[13px]'),
+		md: cn(fieldText, 'bg-surface-field h-[34px] text-[13px]'),
+	},
+};
 
 type SearchInputProps = Omit<React.ComponentProps<'input'>, 'size' | 'type' | 'onChange'> & {
 	value: string;
@@ -12,11 +41,30 @@ type SearchInputProps = Omit<React.ComponentProps<'input'>, 'size' | 'type' | 'o
 	size?: SearchInputSize;
 	loading?: boolean;
 	icon?: React.ReactNode;
+	/** Surface the field sits on (default: one step lighter than its container). */
+	tone?: SearchInputTone;
+	/**
+	 * The field acts as a form field (part of a form the user fills in, not a
+	 * toolbar/panel filter): keeps the inputs' faint resting edge. Default
+	 * `false` — a search/filter is identified by its icon and placeholder.
+	 */
+	field?: boolean;
 };
 
 export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 	function SearchInput(
-		{ value, onValueChange, onClear, size = 'md', loading, icon, className, ...props },
+		{
+			value,
+			onValueChange,
+			onClear,
+			size = 'md',
+			loading,
+			icon,
+			tone = 'default',
+			field = false,
+			className,
+			...props
+		},
 		ref,
 	) {
 		const handleChange = useCallback(
@@ -43,7 +91,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 		);
 
 		return (
-			<div className={cn('relative', className)}>
+			<div className={cn('relative', className)} data-tone={tone}>
 				<Input
 					ref={ref}
 					type="search"
@@ -51,8 +99,14 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
 					size={size}
-					startIcon={icon ?? <Search className="h-3.5 w-3.5" />}
+					startIcon={
+						<span className="text-foreground-faint inline-flex">
+							{icon ?? <Search className="h-3.5 w-3.5" />}
+						</span>
+					}
 					className={cn(
+						!field && inputEdgelessClasses,
+						toneClasses[tone][size],
 						value && 'pr-8',
 						'[&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden',
 					)}
@@ -62,7 +116,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
 					<button
 						type="button"
 						onClick={handleClear}
-						className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-2 flex items-center"
+						className="text-foreground-faint hover:text-foreground absolute inset-y-0 right-2 flex items-center"
 						aria-label="Clear search"
 					>
 						<X className="h-3.5 w-3.5" />

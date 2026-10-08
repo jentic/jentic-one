@@ -13,7 +13,7 @@
  * Columns sort client-side over the returned top rows; rows collapse into a
  * stacked layout on narrow viewports.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import {
@@ -23,9 +23,22 @@ import {
 	healthTier,
 	latencyTier,
 } from '@/shared/lib/usageThresholds';
-import { AppLink, LoadingState, SegmentedToggle, SparklineChart } from '@/shared/ui';
+import {
+	AgentBadge,
+	AppLink,
+	LoadingState,
+	SegmentedToggle,
+	SparklineChart,
+	VendorIcon,
+	avatarToneIndex,
+} from '@/shared/ui';
 import { formatLatency, formatPercent } from '@/modules/monitor/lib/format';
-import { getInitials, lensPalette, type UsageLens } from '@/modules/monitor/lib/palette';
+import {
+	assignChartTones,
+	toneFor,
+	type EntityTone,
+	type UsageLens,
+} from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 export type BreakdownSortKey = 'calls' | 'success' | 'latency';
@@ -140,24 +153,24 @@ export function UsageBreakdown({
 		setSortDir(key === 'success' ? 'asc' : 'desc');
 	};
 
-	const palette = lensPalette(lens);
-	// Colours follow traffic rank, not the current sort, so a row keeps its
-	// colour when the table is re-sorted.
-	const colorById = useMemo(
-		() => new Map(rows.map((r, i) => [r.id, palette[i % palette.length]])),
-		[rows, palette],
-	);
+	// Tones are assigned over the traffic-ranked rows (not the current sort),
+	// exactly as the volume and bubble charts assign them, so a row keeps its
+	// colour when re-sorted and matches its series in the charts above.
+	const tones = useMemo(() => assignChartTones(lens, rows), [lens, rows]);
 	const sorted = useMemo(() => sortRows(rows, sortKey, sortDir), [rows, sortKey, sortDir]);
 	const maxExec = useMemo(() => Math.max(1, ...rows.map((r) => r.totalExecutions)), [rows]);
 
 	return (
 		<section
-			className="border-border bg-card rounded-xl border"
+			className="bg-surface-1 rounded-lg [--field-bg:var(--surface-field)]"
 			aria-labelledby="breakdown-heading"
 		>
-			<div className="border-border flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+			<div className="border-hairline flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
 				<div>
-					<h2 id="breakdown-heading" className="text-foreground text-sm font-semibold">
+					<h2
+						id="breakdown-heading"
+						className="font-heading text-foreground text-sm font-semibold"
+					>
 						Breakdown
 					</h2>
 					<p className="text-muted-foreground text-xs">{LENS_SUBTITLES[lens]}</p>
@@ -175,7 +188,7 @@ export function UsageBreakdown({
 					<div
 						role="row"
 						className={cn(
-							'border-border/50 text-muted-foreground hidden border-b px-4 py-2 text-[10px] font-medium',
+							'border-hairline-row text-muted-foreground hidden border-b px-4 py-2 text-[10px] font-medium',
 							GRID,
 						)}
 					>
@@ -228,7 +241,8 @@ export function UsageBreakdown({
 							<BreakdownRow
 								key={row.id}
 								row={row}
-								color={colorById.get(row.id) ?? palette[0]}
+								tone={toneFor(tones, row.id)}
+								isAgent={lens === 'agents'}
 								maxExec={maxExec}
 								isLast={i === sorted.length - 1}
 								href={rowHref?.(row) ?? null}
@@ -241,19 +255,72 @@ export function UsageBreakdown({
 	);
 }
 
+/**
+ * The row's avatar. Normally the plain `VendorIcon` / `AgentBadge`; when the
+ * chart moved this entity off its own hue (a collision with a busier row),
+ * the tile follows the series by remapping its `--avatar-{n}` tokens to the
+ * assigned tone — the primitive is untouched, and the row still reads as one
+ * colour end to end.
+ */
+function EntityAvatar({
+	tone,
+	label,
+	isAgent,
+}: {
+	tone: EntityTone;
+	label: string;
+	isAgent: boolean;
+}) {
+	const avatar = isAgent ? (
+		<AgentBadge id={tone.seed ?? undefined} name={label} size="sm" />
+	) : (
+		<VendorIcon name={label} vendor={tone.seed ?? label} size="sm" />
+	);
+	// The tone index the primitive will paint with (its own seed hash) …
+	const painted = tone.avatarTone ?? (isAgent ? null : avatarToneIndex(label));
+	// … and what the chart needs instead: the fallback hue after a collision,
+	// or the neutral grey for an unattributed API bucket.
+	const target =
+		tone.tone != null && tone.tone !== tone.avatarTone
+			? `--avatar-${tone.tone}`
+			: tone.seed == null && !isAgent
+				? '--avatar-neutral'
+				: null;
+	const remap =
+		painted != null && target
+			? ({
+					[`--avatar-${painted}-bg`]: `var(${target}-bg)`,
+					[`--avatar-${painted}-fg`]: `var(${target}-fg)`,
+				} as CSSProperties)
+			: undefined;
+	return (
+		<span
+			aria-hidden="true"
+			className="flex shrink-0"
+			style={remap}
+			data-chart-tone={tone.tone ?? 'neutral'}
+		>
+			{avatar}
+		</span>
+	);
+}
+
 function BreakdownRow({
 	row,
-	color,
+	tone,
+	isAgent,
 	maxExec,
 	isLast,
 	href,
 }: {
 	row: EntityUsageRow;
-	color: string;
+	tone: EntityTone;
+	isAgent: boolean;
 	maxExec: number;
 	isLast: boolean;
 	href: string | null;
 }) {
+	const color = tone.fill;
 	const health = healthTier(row.successRate);
 	const ratio = row.totalExecutions / maxExec;
 	const latencyClass = cn(
@@ -265,13 +332,11 @@ function BreakdownRow({
 	const content = (
 		<>
 			<div role="cell" className="flex min-w-0 items-center gap-2.5">
-				<div
-					className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white"
-					style={{ backgroundColor: color }}
-					aria-hidden="true"
-				>
-					{getInitials(row.label)}
-				</div>
+				{/* Identity tile: the shared pastel mark (APIs) / agent badge,
+				    seeded exactly as on the entity's own pages, so a row reads
+				    the same here as everywhere else. The sparkline and volume
+				    bar wear the same hue in its chart tone. */}
+				<EntityAvatar tone={tone} label={row.label} isAgent={isAgent} />
 				<span className="text-foreground min-w-0 flex-1 truncate text-sm font-medium">
 					{row.label}
 				</span>
@@ -343,8 +408,8 @@ function BreakdownRow({
 	const className = cn(
 		'group block px-4 py-2.5 transition-colors',
 		GRID,
-		href && 'hover:bg-muted/30',
-		!isLast && 'border-border/30 border-b',
+		href && 'hover:bg-tint-2',
+		!isLast && 'border-hairline-row border-b',
 	);
 
 	return href ? (

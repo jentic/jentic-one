@@ -24,7 +24,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 
 from jentic_one import __version__
-from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
+from jentic_one.shared.web.endpoint_permissions import build_operation_auth_map
 from jentic_one.shared.web.openapi_responses import PROBLEM_JSON, STATUS_EXAMPLES
 
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
@@ -51,6 +51,21 @@ LICENSE_INFO = {
 }
 
 SERVERS = [{"url": "/", "description": "Same-origin (relative)"}]
+
+# The checked-in artefact (``openapi/control/control.openapi.yaml``) is consumed
+# outside any deployment (API catalogues, client generators), where a relative
+# server is meaningless. It carries placeholder hosts mirroring the Broker spec;
+# the live app serves ``deployment_servers`` (its real origin, else same-origin).
+PUBLISHED_SERVERS = [
+    {
+        "url": "https://control.your-instance.example",
+        "description": "Production (placeholder — set to your deployment's Control Plane host)",
+    },
+    {
+        "url": "https://control-dev.your-instance.example",
+        "description": "Development (placeholder — set to your deployment's Control Plane host)",
+    },
+]
 
 API_DESCRIPTION = """## Overview ##
 The **Jentic Control Plane API** is the unified HTTP surface of the
@@ -171,7 +186,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   edit.
 - **Trace correlation.** Every Broker call records a W3C
   `trace_id` on its `ExecutionRecord` and on any `Event` derived
-  from it. To walk all executions under one logical request, use
+  from it. To walk the executions you can see under one logical request, use
   `GET /executions?trace_id=…`.
 - **Event stream.** The dashboard / operator UI consumes the
   `/events` resource (paginated list + SSE stream). Some events
@@ -199,7 +214,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `evt_` | Event | ULID-shaped. |
   | `op_` | Registered operation | |
   | `rev_` | API revision | ULID-shaped. |
-  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
+  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
@@ -446,7 +461,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not "
             "stored. Records are written by the Broker; this surface is read-only. To walk the "
             "history of a single logical request that fanned out into multiple upstream calls, "
-            "list with `?trace_id={trace_id}`."
+            "list with `?trace_id={trace_id}`. An execution is visible only to the actor "
+            "that ran it, the owner of the agent that ran it, and `org:admin`; to any other "
+            "caller it is indistinguishable from a missing execution (`404`)."
         ),
     },
     {
@@ -472,7 +489,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`execution.repeated_failure`). Events reference the underlying `ExecutionRecord` "
             "or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via "
             "`GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` "
-            "filter."
+            "filter. An event is visible only to the actor it names (`actor_id`), to the "
+            "subject it is about (for example the owner of the credential or the agent "
+            "concerned), to the human owner of either when that is an agent, and to "
+            "`org:admin`; system events with no subject are visible only to `org:admin`. To "
+            "any other caller an event is indistinguishable from a missing one (`404`)."
         ),
     },
     {
@@ -538,7 +559,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
+            "The same vocabulary is used for `User.permissions` — the coarse set embedded in "
+            "the JWT — "
             "so the catalogue below covers user assignment. The per-binding fine-grained "
             "`PermissionRule[]` (the inner PBAC tier) lives separately on the direct "
             "agent↔credential bindings under the `Credentials` tag."
@@ -558,7 +580,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "Identity",
         "description": (
             "Identity introspection for the calling principal (human or agent) — `GET /me` "
-            "returns the resolved subject, scopes, and permissions behind the presented token."
+            "returns the resolved subject and its permissions behind the presented token."
         ),
     },
     {
@@ -735,8 +757,8 @@ BEARER_SECURITY_SCHEME = {
             "(the JWT is the *assertion*, not the resulting access token).\n"
             "- **Users** — `grant_type=authorization_code` (interactive) or "
             "`grant_type=password`; refresh either with `grant_type=refresh_token`.\n\n"
-            "Per-endpoint scope and actor-type requirements are not modelled in this "
-            "document (OpenAPI cannot faithfully express the OR-of-scopes / "
+            "Per-endpoint permission and actor-type requirements are not modelled in "
+            "this document (OpenAPI cannot faithfully express the OR-of-permissions / "
             "`org:admin` bypass / service-layer enforcement); see "
             "`GET /reference/endpoints.json` for the authoritative authorization "
             "reference."
@@ -825,7 +847,7 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
 #: credentials with ``401``, so the documented error responses are kept intact.
 #: Their ``security`` is dropped to ``[]`` (no platform bearer requirement); the
 #: real credential is described in the endpoint reference's ``auth_note`` (see
-#: ``NON_IDENTITY_AUTH`` in ``endpoint_scopes.py``).
+#: ``NON_IDENTITY_AUTH`` in ``endpoint_permissions.py``).
 NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # RFC 7592 registration-status poll: authenticated by the
@@ -947,14 +969,27 @@ def generate_operation_id(route: APIRoute) -> str:
     return _camelize(route.name)
 
 
-def fastapi_metadata_kwargs() -> dict[str, Any]:
+def deployment_servers(public_base_url: str = "") -> list[dict[str, str]]:
+    """The live document's ``servers``: the deployment's public origin, else ``SERVERS``.
+
+    ``server.public_base_url`` names the origin clients reach the control
+    surfaces on, so a spec downloaded from a configured deployment stays
+    callable outside the browser. Unset, the same-origin relative server is the
+    only honest value.
+    """
+    if public_base_url:
+        return [{"url": public_base_url, "description": "This deployment"}]
+    return SERVERS
+
+
+def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     """Keyword arguments to spread into ``FastAPI(...)`` for document metadata."""
     return {
         "title": API_TITLE,
         "summary": API_SUMMARY,
         "description": API_DESCRIPTION,
         "version": API_VERSION,
-        "servers": SERVERS,
+        "servers": deployment_servers(public_base_url),
         "contact": CONTACT,
         "license_info": LICENSE_INFO,
         "openapi_tags": OPENAPI_TAGS,
@@ -985,7 +1020,7 @@ def _normalise_error_responses(responses: dict[str, Any]) -> None:
         content[PROBLEM_JSON] = media
 
 
-def _stamp_scope_metadata(
+def _stamp_permission_metadata(
     method: str,
     path: str,
     operation: dict[str, Any],
@@ -994,11 +1029,12 @@ def _stamp_scope_metadata(
     """Stamp the operation's ``security`` from its recovered identity dependency.
 
     The OpenAPI document models only the real authentication mechanism —
-    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation scope/actor-type join
-    is *not* expressed here: OpenAPI's ``security`` model cannot faithfully carry
-    our OR-of-scopes semantics, the ``org:admin`` superuser bypass, the
-    typical-caller hint, or the fact that many scopes are enforced in the service
-    layer rather than at the gateway. Encoding it as a fabricated OAuth2 flow
+    ``BearerAuth`` (an opaque bearer token, not a JWT). The per-operation
+    permission/actor-type join is *not* expressed here: OpenAPI's ``security`` model
+    cannot faithfully carry our OR-of-permissions semantics, the ``org:admin``
+    superuser bypass, the typical-caller hint, or the fact that many permissions are
+    enforced in the service layer rather than at the gateway. Encoding it as a
+    fabricated OAuth2 flow
     would misrepresent enforcement, so that richer authorization reference lives
     in the endpoint reference (:mod:`jentic_one.shared.web.endpoint_reference`,
     served at ``GET /reference/endpoints.json``), which the CLI and docs SPA
@@ -1077,12 +1113,12 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # Authenticates by a non-bearer credential (e.g. an RFC 7592
                     # Registration-Access-Token): drop the platform BearerAuth
                     # requirement but keep the 401 it genuinely returns on a bad
-                    # credential. It never reaches the scope/authz layer, so the
+                    # credential. It never reaches the permission/authz layer, so the
                     # 403 (which only the permission gate raises) is dropped.
                     operation["security"] = []
                     operation.get("responses", {}).pop("403", None)
                 else:
-                    _stamp_scope_metadata(method, path, operation, operation_auth)
+                    _stamp_permission_metadata(method, path, operation, operation_auth)
                 if op_id in ROUTER_RESHAPED_422_OPERATION_IDS:
                     # Validation failures are reshaped to the governing spec's
                     # dialect at the router; the framework 422 can never be

@@ -466,7 +466,11 @@ export class CredentialsService {
      *
      * While attached, the set's ordered list is the binding's effective policy
      * and its inline rules are dormant — `permissions:test` evaluates the set.
-     * The set must exist (404 `rule_set_not_found`).
+     * The set must exist (404 `rule_set_not_found`). The caller must be the
+     * set's creator or an org admin, unless the set is curated (created by an
+     * org admin), which any caller who may write the binding's rules can
+     * attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+     * binding already points at is a no-op.
      * @returns void
      * @throws ApiError
      */

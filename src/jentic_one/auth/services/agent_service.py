@@ -12,14 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
-    ActorScopeGrantRepository,
+    ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import BindingRuleRepository, CredentialRefRepository
-from jentic_one.auth.services.agent_scope_ceiling import check_agent_scope_grant
+from jentic_one.auth.services.agent_permission_ceiling import check_agent_permission_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
@@ -44,15 +44,22 @@ from jentic_one.auth.services.schemas.agents import (
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS
+from jentic_one.shared.auth.permission_catalog import (
+    ALL_PERMISSIONS,
+    DEFAULT_AGENT_PERMISSIONS,
+    ORG_ADMIN,
+    OWNER_CREDENTIALS_READ,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.events import (
+    emit_event_best_effort,
+    summary_label,
+)
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
-from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES, ORG_ADMIN, OWNER_CREDENTIALS_READ
 
 logger = structlog.get_logger(__name__)
 
@@ -63,11 +70,10 @@ _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.ENABLE: {ActorStatus.DISABLED: ActorStatus.ACTIVE},
 }
 
-# Registration decisions stay open to every approver (any ``agents:write``
-# holder, admins included) — they are the review of a pending registration,
-# not a mutation of an agent the caller owns. Every other by-id mutation is
-# owner-or-``org:admin`` (see ``AgentService._load_owned_agent``).
-_APPROVER_WIDE_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVerb.DENY})
+# Verbs whose decision races ``:claim`` for the row: approving an unowned agent
+# makes the approver its owner, so the owner check and the write must see the
+# same ``owner_id``. ``_check_transition`` locks the row for these.
+_ROW_LOCKED_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVerb.DENY})
 
 
 class AgentService:
@@ -90,22 +96,23 @@ class AgentService:
         security review): a consenting user WITHOUT ``agents:write`` may still
         mint their first agent mid-flow, but it lands in the same
         awaiting-approval posture as the anonymous ``POST /register`` door —
-        status ``pending``, NO scope grants (``approve()`` grants
-        ``DEFAULT_AGENT_SCOPES`` on the PENDING→ACTIVE transition, exactly as
+        status ``pending``, NO permission grants (``approve()`` grants
+        ``DEFAULT_AGENT_PERMISSIONS`` on the PENDING→ACTIVE transition, exactly as
         it does for self-registrations), plus the ``agent.self_registered``
         requires-action event so the registration lands in the admins' approval
-        queue and ``approve()``/``deny()`` settle the alert. Any status other
-        than ACTIVE/PENDING is a programming error.
+        queue. The event is append-only history — a decision is surfaced by its
+        own ``agent.registration_*`` event, which the console reads to mark the
+        row resolved. Any status other than ACTIVE/PENDING is a programming error.
         """
         if status not in (ActorStatus.ACTIVE, ActorStatus.PENDING):
             raise ValueError(f"agents are created active or pending, not {status}")
-        scopes_to_grant: list[str] = []
+        permissions_to_grant: list[str] = []
         if status is ActorStatus.ACTIVE:
-            if payload.scopes:
-                scopes_to_grant = list(dict.fromkeys(payload.scopes))
-                check_agent_scope_grant(scopes_to_grant, identity=identity)
+            if payload.permissions:
+                permissions_to_grant = list(dict.fromkeys(payload.permissions))
+                check_agent_permission_grant(permissions_to_grant, identity=identity)
             else:
-                scopes_to_grant = list(DEFAULT_AGENT_SCOPES)
+                permissions_to_grant = list(DEFAULT_AGENT_PERMISSIONS)
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.create(
                 session,
@@ -116,12 +123,12 @@ class AgentService:
                 created_by=identity.sub,
                 status=status,
             )
-            for scope in scopes_to_grant:
-                await ActorScopeGrantRepository.grant(
+            for permission in permissions_to_grant:
+                await ActorPermissionGrantRepository.grant(
                     session,
                     actor_id=agent.id,
                     actor_type=ActorType.AGENT,
-                    scope=scope,
+                    permission=permission,
                     granted_by=identity.sub,
                     created_by=identity.sub,
                 )
@@ -136,7 +143,7 @@ class AgentService:
                     "name": payload.name,
                     "owner_id": owner_id,
                     "status": status.value,
-                    "scopes": scopes_to_grant,
+                    "permissions": permissions_to_grant,
                 },
                 origin=identity.origin.value,
             )
@@ -144,17 +151,16 @@ class AgentService:
                 session,
                 type=EventType.AGENT_CREATED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent.id} created",
+                summary=f"Agent {summary_label(agent.name, agent.id)} created",
+                data={"agent_id": agent.id},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
             if status is ActorStatus.PENDING:
-                # Same actionable event as the /register door (actor = the
-                # AGENT, so approve()/deny()'s _settle_registration_alerts
-                # finds and acknowledges it) — without this the registration
-                # would never surface in the admins' queue and the awaiting
-                # page would poll forever.
+                # Same actionable event as the /register door — without it the
+                # self-registration never surfaces to admins, so nobody decides
+                # it and the awaiting page polls forever.
                 await emit_event_best_effort(
                     session,
                     type=EventType.AGENT_SELF_REGISTERED,
@@ -221,58 +227,34 @@ class AgentService:
         view.has_api_key = has_key
         return view
 
-    async def _settle_registration_alerts(
-        self, session: AsyncSession, agent_id: str, *, acknowledged_by: str
-    ) -> None:
-        """Acknowledge outstanding ``agent.self_registered`` alerts for the agent.
-
-        Self-registration files a ``requires_action`` event so operators are
-        prompted to review. Approving/denying IS that review, so leaving the
-        alert live would keep a stale "awaits approval" row (with a working
-        Review button) on the rail and dashboard forever. Best-effort like the
-        emit itself: alert bookkeeping must never roll back the decision.
-
-        The body runs inside a SAVEPOINT: on PostgreSQL a statement error
-        aborts the whole transaction, so a bare try/except here would swallow
-        the exception but leave the outer transaction poisoned — the decision's
-        commit would then fail anyway. Rolling back just the nested block keeps
-        the "never roll back the decision" promise for DB-level failures too.
-        """
-        try:
-            async with session.begin_nested():
-                await settle_actionable_events(
-                    session,
-                    event_type=EventType.AGENT_SELF_REGISTERED,
-                    acknowledged_by=acknowledged_by,
-                    acknowledgement_note="registration decided",
-                    actor_id=agent_id,
-                    actor_type=ActorType.AGENT.value,
-                )
-        except Exception:
-            logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
-
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
+        """Activate a pending agent.
+
+        Allowed for the agent's owner or an ``org:admin``; an unowned agent
+        (an unclaimed self-registration) only for an ``org:admin``, who becomes
+        its owner. Anyone else gets ``ActorNotFoundError``.
+        """
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE, identity=identity)
-            existing_grants = await ActorScopeGrantRepository.list_for_actor(
+            existing_grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
-            # Scopes a self-registration requested become live on approval, so
+            # Permissions a self-registration requested become live on approval, so
             # the approver's ceiling applies to them. Requested strings outside
             # the catalogue grant nothing and are left as-is (not a 422: the
             # registrant, not the approver, chose them).
-            check_agent_scope_grant(
-                [g.scope for g in existing_grants if g.scope in ALL_PERMISSIONS],
+            check_agent_permission_grant(
+                [g.permission for g in existing_grants if g.permission in ALL_PERMISSIONS],
                 identity=identity,
             )
             agent = await AgentRepository.set_approval(session, agent_id, approved_by=identity.sub)
             if not existing_grants:
-                for scope in DEFAULT_AGENT_SCOPES:
-                    await ActorScopeGrantRepository.grant(
+                for permission in DEFAULT_AGENT_PERMISSIONS:
+                    await ActorPermissionGrantRepository.grant(
                         session,
                         actor_id=agent_id,
                         actor_type=ActorType.AGENT,
-                        scope=scope,
+                        permission=permission,
                         granted_by=identity.sub,
                         created_by=identity.sub,
                     )
@@ -283,8 +265,10 @@ class AgentService:
                     target_id=agent_id,
                     actor_type=identity.actor_type,
                     actor_id=identity.sub,
-                    after={"scopes": list(DEFAULT_AGENT_SCOPES)},
-                    reason="default_scopes",
+                    # Historical rows written before the permission rename still
+                    # say ``scopes``; new records use the ``permissions`` key.
+                    after={"permissions": list(DEFAULT_AGENT_PERMISSIONS)},
+                    reason="default_permissions",
                     origin=identity.origin.value,
                 )
             await record_audit(
@@ -296,7 +280,8 @@ class AgentService:
                 actor_id=identity.sub,
                 after={
                     "owner_id": agent.owner_id,
-                    "scopes": [g.scope for g in existing_grants] or list(DEFAULT_AGENT_SCOPES),
+                    "permissions": [g.permission for g in existing_grants]
+                    or list(DEFAULT_AGENT_PERMISSIONS),
                 },
                 origin=identity.origin.value,
             )
@@ -312,7 +297,6 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
@@ -322,9 +306,9 @@ class AgentService:
         at ``/register`` (see ``auth/core/claim.py``). Any *authenticated human
         user* may claim — the token is the proof, not a role — so a plain member
         can take ownership of the agent they registered. Once owned, the agent
-        shows under the caller via the normal scoping filter and the existing
-        approve path applies (an admin approving later no longer steals ownership,
-        because ``owner_id`` is already set).
+        shows under the caller via the normal scoping filter, and the owner (or
+        an ``org:admin``) approves or denies it. Approval keeps the claimant as
+        owner because ``owner_id`` is already set.
 
         Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
         so a non-user actor (an agent) is rejected up front
@@ -387,6 +371,7 @@ class AgentService:
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
+        """Reject a pending agent; same authorization as :meth:`approve`."""
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.DENY, identity=identity)
             agent = await AgentRepository.set_denial(
@@ -412,7 +397,6 @@ class AgentService:
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
-            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
@@ -457,7 +441,7 @@ class AgentService:
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "archive")
             await AgentRepository.archive(session, agent_id)
-            await ActorScopeGrantRepository.revoke_all(session, agent_id)
+            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
             await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
             # #1233 (archive arm): archive is terminal — the status enum has
             # no exit — so any consent grant left `active` would misreport
@@ -475,6 +459,7 @@ class AgentService:
                 event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
                 summary_cause="was archived",
                 log_event="oauth_grants_revoked_on_agent_archive",
+                agent_name=agent.name,
             )
             await record_audit(
                 session,
@@ -559,7 +544,7 @@ class AgentService:
         Verifies the caller can see the target credential before writing the
         binding (control-DB lookup).
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         ref = None
         if self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
@@ -588,8 +573,14 @@ class AgentService:
                 session,
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} bound to agent {agent_id}",
-                created_by=identity.sub,
+                summary=(
+                    f"Credential {summary_label(ref.name, credential_id)} bound to agent "
+                    f"{summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
@@ -616,7 +607,7 @@ class AgentService:
         admin-side delete then fails, the surviving binding has no inline
         rules and denies (fail-closed) rather than the other way round.
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         if purge and self._is_own_binding(agent_id, identity):
             # A purge followed by a re-bind would drop a suspension the owner
             # set, so an agent may suspend its own binding but not purge it.
@@ -632,6 +623,7 @@ class AgentService:
                 await BindingRuleRepository.delete_for_binding(
                     session, agent_id=agent_id, credential_id=credential_id
                 )
+        credential_name = await self._credential_name(credential_id)
         async with self._ctx.admin_db.transaction() as session:
             if purge:
                 removed = await AgentCredentialBindingRepository.purge(
@@ -655,15 +647,39 @@ class AgentService:
                 origin=identity.origin.value,
             )
             verb = "unbound (purged) from" if purge else "suspended for"
+            credential = summary_label(credential_name, credential_id)
             await emit_event_best_effort(
                 session,
                 type=EventType.CREDENTIAL_UNBOUND_FROM_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} {verb} agent {agent_id}",
-                created_by=identity.sub,
+                summary=(
+                    f"Credential {credential} {verb} agent {summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+
+    async def _credential_name(self, credential_id: str) -> str | None:
+        """Best-effort display name for a credential, for an event summary.
+
+        ``None`` when this process has no control-DB access, the credential is
+        gone, or the lookup fails; the summary then falls back to the id.
+        """
+        if not self._ctx.is_db_allowed("control"):
+            return None
+        try:
+            async with self._ctx.control_db.session() as session:
+                ref = await CredentialRefRepository.get_by_id(session, credential_id)
+        except Exception:
+            logger.warning(
+                "credential_name_lookup_failed", credential_id=credential_id, exc_info=True
+            )
+            return None
+        return ref.name if ref is not None else None
 
     async def resume_credential(
         self, agent_id: str, *, credential_id: str, identity: Identity
@@ -677,7 +693,7 @@ class AgentService:
         could not bind that credential themselves. The agent itself never
         lifts a suspension on its own binding (``org:admin`` aside).
         """
-        await self.get_agent(agent_id, identity=identity)
+        agent = await self.get_agent(agent_id, identity=identity)
         if self._is_own_binding(agent_id, identity):
             raise CredentialNotVisibleError(credential_id)
         ref = None
@@ -710,49 +726,55 @@ class AgentService:
                 session,
                 type=EventType.CREDENTIAL_BOUND_TO_AGENT,
                 severity=EventSeverity.INFO,
-                summary=f"Credential {credential_id} binding resumed for agent {agent_id}",
-                created_by=identity.sub,
+                summary=(
+                    f"Credential {summary_label(ref.name, credential_id)} binding resumed for "
+                    f"agent {summary_label(agent.name, agent_id)}"
+                ),
+                data={"agent_id": agent_id, "credential_id": credential_id},
+                # The binding's subject is the agent, so its owner sees the
+                # event; ``actor_id`` records who changed the binding.
+                created_by=agent_id,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
         return CredentialBindingView.model_validate(binding)
 
-    async def get_scopes(self, agent_id: str, *, identity: Identity) -> list[str]:
+    async def get_permissions(self, agent_id: str, *, identity: Identity) -> list[str]:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
-            grants = await ActorScopeGrantRepository.list_for_actor(
+            grants = await ActorPermissionGrantRepository.list_for_actor(
                 session, agent_id, actor_type=ActorType.AGENT
             )
-        return [g.scope for g in grants]
+        return [g.permission for g in grants]
 
-    async def replace_scopes(
-        self, agent_id: str, scopes: list[str], *, identity: Identity
+    async def replace_permissions(
+        self, agent_id: str, permissions: list[str], *, identity: Identity
     ) -> list[str]:
-        """Replace the agent's scope grants (owner or ``org:admin`` only).
+        """Replace the agent's permission grants (owner or ``org:admin`` only).
 
-        Newly added scopes are subject to the agent scope ceiling
-        (``check_agent_scope_grant``); scopes the agent already holds may be
+        Newly added permissions are subject to the agent permission ceiling
+        (``check_agent_permission_grant``); permissions the agent already holds may be
         kept, so an owner can narrow a set an admin widened.
         """
-        scopes = list(dict.fromkeys(scopes))
+        permissions = list(dict.fromkeys(permissions))
         async with self._ctx.admin_db.transaction() as session:
             agent = await self._load_owned_agent(session, agent_id, identity=identity)
             if agent.status == ActorStatus.ARCHIVED:
-                raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_scopes")
+                raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "replace_permissions")
             existing = [
-                g.scope
-                for g in await ActorScopeGrantRepository.list_for_actor(
+                g.permission
+                for g in await ActorPermissionGrantRepository.list_for_actor(
                     session, agent_id, actor_type=ActorType.AGENT
                 )
             ]
-            check_agent_scope_grant(scopes, identity=identity, already_held=existing)
-            await ActorScopeGrantRepository.revoke_all(session, agent_id)
-            for scope in scopes:
-                await ActorScopeGrantRepository.grant(
+            check_agent_permission_grant(permissions, identity=identity, already_held=existing)
+            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
+            for permission in permissions:
+                await ActorPermissionGrantRepository.grant(
                     session,
                     actor_id=agent_id,
                     actor_type=ActorType.AGENT,
-                    scope=scope,
+                    permission=permission,
                     granted_by=identity.sub,
                     created_by=identity.sub,
                 )
@@ -763,12 +785,14 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
-                before={"scopes": existing},
-                after={"scopes": scopes},
-                reason="replace_scopes",
+                # Historical rows written before the permission rename still say
+                # ``scopes``; new records use the ``permissions`` key.
+                before={"permissions": existing},
+                after={"permissions": permissions},
+                reason="replace_permissions",
                 origin=identity.origin.value,
             )
-        return scopes
+        return permissions
 
     async def update_agent(
         self,
@@ -807,7 +831,9 @@ class AgentService:
                 agent = await AgentRepository.update_agent(session, agent_id, **update_data)
                 after = {k: getattr(agent, k) for k in update_data}
                 if owner_transferred:
-                    await revoke_active_grants_for_agent(session, agent_id, identity=identity)
+                    await revoke_active_grants_for_agent(
+                        session, agent_id, identity=identity, agent_name=agent.name
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.UPDATE,
@@ -886,12 +912,18 @@ class AgentService:
     async def _check_transition(
         self, session: AsyncSession, agent_id: str, verb: ActorVerb, *, identity: Identity
     ) -> None:
-        if verb in _APPROVER_WIDE_VERBS:
-            agent = await AgentRepository.get_by_id(session, agent_id)
-            if agent is None:
-                raise ActorNotFoundError(agent_id)
-        else:
-            agent = await self._load_owned_agent(session, agent_id, identity=identity)
+        """Authorize ``verb`` on the agent, then validate the state transition.
+
+        Every verb, approve/deny included, is owner-or-``org:admin``: an agent
+        with an owner is decided by that owner or an admin, and an unowned
+        (unclaimed self-registered) agent only by an admin. The ownership check
+        runs before the state check so a caller who may not act on the agent
+        gets the same 404 whatever its status, never a 409 that confirms it
+        exists.
+        """
+        agent = await self._load_owned_agent(
+            session, agent_id, identity=identity, for_update=verb in _ROW_LOCKED_VERBS
+        )
         if agent.status == ActorStatus.ARCHIVED:
             raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, verb)
         allowed_from = _VALID_TRANSITIONS[verb]

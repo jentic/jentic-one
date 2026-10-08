@@ -1,5 +1,11 @@
 import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { extendTailwindMerge } from 'tailwind-merge';
+
+// Teach the merger the custom radius tokens (`rounded-field`, `rounded-panel`)
+// so a call-site `rounded-full` still overrides a primitive's `rounded-field`.
+const twMerge = extendTailwindMerge({
+	extend: { theme: { radius: ['field', 'panel'] } },
+});
 
 export function cn(...inputs: ClassValue[]) {
 	return twMerge(clsx(inputs));

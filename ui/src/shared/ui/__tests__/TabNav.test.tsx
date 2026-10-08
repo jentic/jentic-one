@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { Key, LayoutDashboard } from 'lucide-react';
-import { TabNav } from '@/shared/ui/TabNav';
+import { TabNav, type TabNavChangeSource } from '@/shared/ui/TabNav';
 
 const options = [
 	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -9,16 +9,16 @@ const options = [
 	{ value: 'settings', label: 'Settings' },
 ];
 
-function Harness({ onChange }: { onChange?: (v: string) => void }) {
+function Harness({ onChange }: { onChange?: (v: string, source: TabNavChangeSource) => void }) {
 	const [value, setValue] = useState('overview');
 	return (
 		<>
 			<TabNav
 				options={options}
 				value={value}
-				onChange={(v) => {
+				onChange={(v, source) => {
 					setValue(v);
-					onChange?.(v);
+					onChange?.(v, source);
 				}}
 				ariaLabel="Detail sections"
 				getTabId={(v) => `tab-${v}`}
@@ -53,7 +53,7 @@ describe('TabNav', () => {
 		renderWithProviders(<Harness onChange={onChange} />);
 
 		await user.click(screen.getByRole('tab', { name: /Settings/ }));
-		expect(onChange).toHaveBeenCalledWith('settings');
+		expect(onChange).toHaveBeenCalledWith('settings', 'click');
 		expect(screen.getByRole('tab', { name: /Settings/ })).toHaveAttribute(
 			'aria-selected',
 			'true',
@@ -99,6 +99,50 @@ describe('TabNav', () => {
 		await user.click(screen.getByRole('tab', { name: /Keys/ }));
 		expect(screen.getByRole('tab', { name: /Keys/ })).toHaveAttribute('tabindex', '0');
 		expect(screen.getByRole('tab', { name: /Overview/ })).toHaveAttribute('tabindex', '-1');
+	});
+
+	it('fill: the tabs split the bar in equal shares', () => {
+		renderWithProviders(
+			<div style={{ width: 600 }}>
+				<TabNav
+					options={[
+						{ value: 'a', label: 'A much longer first label' },
+						{ value: 'b', label: 'Short' },
+					]}
+					value="a"
+					onChange={() => {}}
+					ariaLabel="Routes"
+					fill
+				/>
+			</div>,
+		);
+		const [first, second] = screen.getAllByRole('tab');
+		expect(first).toHaveClass('flex-1', 'basis-0', 'justify-center');
+		expect(second).toHaveClass('flex-1', 'basis-0', 'justify-center');
+		const a = first.getBoundingClientRect().width;
+		const b = second.getBoundingClientRect().width;
+		expect(a).toBeGreaterThan(0);
+		expect(Math.abs(a - b)).toBeLessThan(1);
+		expect(a + b).toBeCloseTo(600, 0);
+	});
+
+	it('without fill, each tab is as wide as its label', () => {
+		renderWithProviders(<Harness />);
+		for (const tab of screen.getAllByRole('tab')) {
+			expect(tab).toHaveClass('shrink-0');
+			expect(tab).not.toHaveClass('flex-1');
+		}
+	});
+
+	it('tells the host how a tab was chosen: a click, or an arrow key', async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		renderWithProviders(<Harness onChange={onChange} />);
+
+		await user.click(screen.getByRole('tab', { name: /Keys/ }));
+		expect(onChange).toHaveBeenLastCalledWith('keys', 'click');
+		await user.keyboard('{ArrowRight}');
+		expect(onChange).toHaveBeenLastCalledWith('settings', 'arrow');
 	});
 
 	it('has no critical a11y violations', async () => {

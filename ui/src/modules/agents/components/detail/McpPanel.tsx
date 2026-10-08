@@ -1,9 +1,8 @@
 /**
- * McpPanel — the agent detail console's MCP tab (local-MCP 2-E2, #1188).
+ * McpPanel — the body of the dock's MCP sheet (#1188).
  *
- * MCP is a TRANSPORT of this agent, not a separate entity (master plan §3.10),
- * so the surface lives here inside the agent console rather than behind any
- * new top-level nav. Two cards:
+ * MCP is a TRANSPORT of this agent, not a separate entity, so the surface
+ * lives with the agent rather than behind any top-level nav. Two cards:
  *
  *   - McpConfigCard    → the exact copy-paste wiring for THIS agent
  *     (`jentic mcp --context <name>`, pinned — a bare `jentic mcp` follows the
@@ -42,6 +41,8 @@ import {
 	type McpSessionEntity,
 } from '@/modules/agents/api';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
+import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
+import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
 
 /**
  * The streamable-HTTP variant renders only when the instance reports
@@ -56,11 +57,6 @@ export function showHttpVariant(mcpEnabled: boolean | undefined): boolean {
 interface McpPanelProps {
 	agentName: string;
 	agentId: string;
-}
-
-/** Quote a shell argument when it needs it (agent names may contain spaces). */
-function shellArg(value: string): string {
-	return /^[A-Za-z0-9._-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -83,32 +79,27 @@ function safeHost(url: string): string {
 // Config card
 // ---------------------------------------------------------------------------
 
-export function McpConfigCard({ agentName }: { agentName: string }) {
+function McpConfigCard({ agentName }: { agentName: string }) {
 	const identity = useInstanceIdentity();
-
-	// The operator is looking at a working address of this instance, so the
-	// browser origin is the honest fallback when no canonical base URL is
-	// configured (or `GET /instance` failed).
-	const instanceUrl = identity.data?.baseUrl || window.location.origin;
+	// The instance URL and, on a remote install, the broker (#1249) — the same
+	// target the landing's command uses. When the broker can't be advertised
+	// (older backend, or a loopback-only broker on a remote install) the snippet
+	// keeps an explicit placeholder and the help text sends the operator to
+	// whoever deployed the instance.
+	const target = useRegisterTarget();
+	const instanceUrl = target.url;
 	const instanceHost = identity.data?.host || safeHost(instanceUrl);
-	// On a remote install the broker lives on its own host and is never derived
-	// from the control-plane URL — without --broker-url the environment has no
-	// broker and `jentic execute` fail-closes (register.go). The instance
-	// endpoint reports the operator-configured broker URL when it can honestly
-	// advertise one (#1249); when it can't (older backend, or a loopback-only
-	// broker on a remote install) the snippet keeps an explicit placeholder
-	// and the help text sends the operator to whoever deployed the instance.
-	const isRemote = identity.data?.backend === 'remote';
-	const brokerUrl = identity.data?.brokerUrl ?? null;
+	const isRemote = target.backend === 'remote';
+	const brokerUrl = target.brokerUrl ?? null;
+	// Shown whenever the backend reports one — never a guess.
+	const reportedBrokerUrl = identity.data?.brokerUrl || null;
 
 	// §3.10 one-agent-per-runtime: the context name is whatever binding the
 	// operator created on the agent machine — the agent's name is the
 	// suggested (and `jentic setup`-default) convention, so pre-fill it.
 	const context = shellArg(agentName);
 	const command = `jentic mcp --context ${context}`;
-	const registerCommand = `jentic register --url ${shellArg(instanceUrl)}${
-		isRemote ? ` --broker-url ${brokerUrl ? shellArg(brokerUrl) : '<broker-url>'}` : ''
-	}`;
+	const registerSnippet = registerCommand(target);
 	const jsonConfig = JSON.stringify(
 		{ mcpServers: { jentic: { command: 'jentic', args: ['mcp', '--context', agentName] } } },
 		null,
@@ -136,7 +127,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 			<p className="text-muted-foreground text-sm">
 				Wire an MCP client to this instance as <strong>{agentName}</strong>. Prerequisites:{' '}
 				<code className="font-mono text-xs">jentic</code> CLI installed +{' '}
-				<code className="font-mono text-xs">{registerCommand}</code> on the{' '}
+				<code className="font-mono text-xs">{registerSnippet}</code> on the{' '}
 				<strong>agent machine</strong> — or{' '}
 				<code className="font-mono text-xs">jentic setup</code> for the guided path.
 				{isRemote && !brokerUrl && (
@@ -187,7 +178,7 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				machine (its name is the suggested convention).
 			</p>
 
-			<dl className="border-border/60 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">
+			<dl className="border-hairline grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3">
 				<MetaItem
 					label="Instance"
 					value={<span className="font-mono">{instanceHost}</span>}
@@ -201,10 +192,10 @@ export function McpConfigCard({ agentName }: { agentName: string }) {
 				)}
 				{/* Operator-facing lookup for the data plane address (#1249):
 				    rendered only when the backend reports one — never a guess. */}
-				{brokerUrl && (
+				{reportedBrokerUrl && (
 					<MetaItem
 						label="Broker URL"
-						value={<span className="font-mono">{brokerUrl}</span>}
+						value={<span className="font-mono">{reportedBrokerUrl}</span>}
 					/>
 				)}
 			</dl>
@@ -310,7 +301,7 @@ export function McpSessionsCard({ agentId }: { agentId: string }) {
 	);
 }
 
-/** The MCP tab panel: config card + session history. */
+/** The MCP sheet's body: config card + session history. */
 export function McpPanel({ agentName, agentId }: McpPanelProps) {
 	return (
 		<div className="space-y-4">

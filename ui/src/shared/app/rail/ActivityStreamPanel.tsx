@@ -3,8 +3,9 @@
  * page that hides the docked rail (Monitor's side panel). It IS the rail's feed (`RailFeed`, same rows, grouping and inline
  * verbs), so the stream reads the same wherever it's docked.
  *
- * Reads the shell's one live stream (`useAgentStreamOptional`) org-wide — the
- * rail's per-agent lens is a rail concern. The built-in All / Failures control
+ * Reads the shell's one live stream (`useAgentStreamOptional`) unfiltered — the
+ * server already limits it to events the caller can see, and the rail's
+ * per-agent lens is a rail concern. The built-in All / Failures control
  * is the same shared Failures only choice the rail shows; hosts add their own
  * header actions and footer.
  *
@@ -16,7 +17,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Card, CardBody, CardHeader, CardTitle, SegmentedToggle } from '@/shared/ui';
 import { LiveDot, type LiveDotTone } from '@/shared/app/rail/LiveDot';
-import { RailFeed, type RailFeedProps } from '@/shared/app/rail/RailFeed';
+import { RailFeed, RailForbidden, type RailFeedProps } from '@/shared/app/rail/RailFeed';
 import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
 import { useActorDirectory } from '@/shared/hooks';
 import { useAgentStreamOptional } from '@/shared/lib';
@@ -39,6 +40,7 @@ const STATUS_COPY: Record<Status, { label: string; tone: LiveDotTone }> = {
 	error: { label: 'Reconnecting…', tone: 'warning' },
 	// Not "Paused": that word is the rail's pause, a different thing.
 	idle: { label: 'Offline', tone: 'idle' },
+	forbidden: { label: 'No access', tone: 'idle' },
 };
 
 export interface ActivityStreamPanelProps {
@@ -60,7 +62,8 @@ export function ActivityStreamPanel({
 }: ActivityStreamPanelProps) {
 	const stream = useAgentStreamOptional();
 	const navigate = useNavigate();
-	const directory = useActorDirectory();
+	const events = stream?.events ?? [];
+	const directory = useActorDirectory(events.map((ev) => ev.actorId));
 	// Failures only is the rail's own toggle (shared via the provider), so the
 	// stream keeps the same filter as it morphs between rail and panel.
 	const failuresOnly = stream?.failuresOnly ?? false;
@@ -68,21 +71,15 @@ export function ActivityStreamPanel({
 	const filters = useMemo(() => ({ failuresOnly }), [failuresOnly]);
 
 	const status = STATUS_COPY[stream?.status ?? 'idle'];
-	const events = stream?.events ?? [];
 
 	function resolveActor(ev: StreamEvent): string | undefined {
 		return ev.actorId ? directory.resolve(ev.actorId) : undefined;
 	}
 
 	function handleAction(eventId: string, action: InlineAction) {
-		// Pure navigation actions: navigate, skip the RPC.
-		if (action.href && !action.acknowledges) {
-			const ev = events.find((e) => e.id === eventId);
-			const target = ev ? action.href(ev) : null;
-			if (target) navigate(target);
-			return;
-		}
-		if (action.acknowledges) void stream?.acknowledge(eventId);
+		const ev = events.find((e) => e.id === eventId);
+		const target = ev && action.href ? action.href(ev) : null;
+		if (target) navigate(target);
 	}
 
 	return (
@@ -119,7 +116,9 @@ export function ActivityStreamPanel({
 						aria-relevant="additions"
 						aria-label="Activity feed"
 					>
-						{stream ? (
+						{stream?.status === 'forbidden' ? (
+							<RailForbidden />
+						) : stream ? (
 							<RailFeed
 								events={events}
 								filters={filters}

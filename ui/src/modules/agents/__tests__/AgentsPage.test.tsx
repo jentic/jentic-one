@@ -15,7 +15,14 @@ import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
 import { AuthProvider } from '@/shared/auth';
-import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
+import {
+	clearAgentsStore,
+	resetAgentsStore,
+	seedCredentialBindings,
+	seedExtraAgents,
+	selfRegisterAgent,
+} from '@/modules/agents/mocks/handlers';
+import { dismissFirstRun } from '@/modules/agents/lib/firstRun';
 import {
 	makeMockCredential,
 	resetApisStore,
@@ -70,6 +77,17 @@ function renderPage(route = '/', { withAuth = false }: { withAuth?: boolean } = 
 		</>
 	);
 	return renderWithProviders(withAuth ? <AuthProvider>{ui}</AuthProvider> : ui, { route });
+}
+
+/** Open the New agent panel over the fleet, on its "Create here" tab. */
+async function openCreateHere(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+	await user.click(screen.getByRole('button', { name: 'New agent' }));
+	const sheet = await screen.findByRole('dialog', { name: 'New agent' });
+	expect(within(sheet).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+		'aria-selected',
+		'true',
+	);
+	return sheet;
 }
 
 /** The strip pill (a real tab) for the given agent name. */
@@ -159,6 +177,7 @@ describe('AgentsPage — flat agents surface', () => {
 		// The strip wraps from `sm` up; these specs assert the desktop grammar.
 		await page.viewport(1280, 900);
 		setToken('test-token');
+		window.localStorage.clear();
 		resetAgentsStore();
 		seedComposedStores();
 		resetOrphanPurgeAttemptsForTest();
@@ -245,6 +264,9 @@ describe('AgentsPage — flat agents surface', () => {
 			),
 			http.get('/agents/:id/credentials', () => HttpResponse.json({ data: [] })),
 		);
+		// A lone active agent with no APIs would resume the first-run landing;
+		// this spec is about the fleet view, so that suggestion was dismissed.
+		dismissFirstRun('agnt_active_only');
 		renderPage();
 		await screen.findByRole('tab', { name: /solo-active-bot/ });
 
@@ -288,37 +310,54 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText('1 access rule')).toBeInTheDocument();
 		expect(screen.getByText('GitHub')).toBeInTheDocument();
 		expect(screen.getByText('GitHub PAT')).toBeInTheDocument();
+		// Suspended outranks Blocked in the status, so the rule-less binding keeps
+		// its rules fact on the meta line (the status doesn't say it).
 		expect(await screen.findByText('No rules — all calls blocked')).toBeInTheDocument();
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});
 
-	it('says each identity once — a credential named after its API drops off the tile', async () => {
-		// The mark, the title and the meta line would otherwise print the same word
-		// three times. A credential that names something else keeps its place.
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'Slack',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
-			}),
-			makeMockCredential({
-				credential_id: 'cred_github_1',
-				name: 'GitHub PAT',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
-			}),
-		]);
+	it('labels the credential in the footer, on one line with the rules summary', async () => {
 		renderPage('/?agent=agnt_active_1');
 
-		const slackTile = (await screen.findByText('Slack')).closest(
-			'[data-testid="api-tile"]',
-		) as HTMLElement;
-		expect(within(slackTile).getAllByText('Slack')).toHaveLength(1);
-		const githubTile = screen
-			.getByText('GitHub')
-			.closest('[data-testid="api-tile"]') as HTMLElement;
-		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
+		const tileOf = (title: string) =>
+			screen
+				.getByRole('heading', { name: title })
+				.closest('[data-testid="api-tile"]') as HTMLElement;
+		await screen.findByRole('heading', { name: 'Slack' });
+		const githubTile = tileOf('GitHub');
+
+		// Visible: key icon, a muted "Credential" label, the name. Heard:
+		// "Credential: <name>", with the details as its description.
+		const credential = within(githubTile).getByTestId('tile-credential');
+		expect(credential.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+		expect(credential).toHaveTextContent(/^Credential: GitHub PAT$/);
+		expect(within(githubTile).getByTestId('tile-credential-label')).toHaveTextContent(
+			/^GitHub PAT$/,
+		);
+		const trigger = credential.parentElement as HTMLElement;
+		expect(trigger).toHaveAttribute('tabindex', '0');
+		expect(
+			document.getElementById(trigger.getAttribute('aria-describedby') ?? ''),
+		).toHaveTextContent('Name: GitHub PAT');
+
+		// One footer line: the credential, the separator, then the rules summary.
+		const slot = within(githubTile).getByTestId('tile-detail-slot');
+		const rulesText = await within(githubTile).findByTestId('tile-rules-summary');
+		expect(rulesText).toHaveTextContent(/^No rules — all calls blocked$/);
+		expect(slot).toContainElement(credential);
+		expect(slot.textContent?.indexOf('·')).toBeGreaterThan(
+			slot.textContent?.indexOf('GitHub PAT') ?? Infinity,
+		);
+		const credentialBox = credential.getBoundingClientRect();
+		const rulesBox = rulesText.getBoundingClientRect();
+		expect(Math.abs(credentialBox.top - rulesBox.top)).toBeLessThan(credentialBox.height);
+		expect(rulesBox.left).toBeGreaterThan(credentialBox.right);
+
+		// The header is unchanged: title and identity only, no chip for one credential.
+		expect(within(githubTile).queryByTestId('tile-accounts-badge')).toBeNull();
+		expect(
+			within(githubTile).getByRole('heading', { name: 'GitHub' }).parentElement,
+		).not.toContainElement(credential);
 
 		// Every tile still stands the same height: what the suspension means
 		// rides beside its chip rather than on a row the others reserve empty.
@@ -327,41 +366,6 @@ describe('AgentsPage — flat agents surface', () => {
 			.getAllByTestId('api-tile')
 			.map((tile) => Math.round(tile.getBoundingClientRect().height));
 		expect(new Set(heights).size).toBe(1);
-	});
-
-	it('drops a credential named after the API’s host, not just after its title', async () => {
-		// A generically-named spec keeps the title and the host distinct, so matching
-		// the title alone would let the host through twice.
-		resetCredentialsStore([
-			makeMockCredential({
-				credential_id: 'cred_slack_1',
-				name: 'slack.com',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
-			}),
-			makeMockCredential({
-				credential_id: 'cred_github_1',
-				name: 'GitHub PAT',
-				type: CredentialType.BEARER_TOKEN,
-				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
-			}),
-		]);
-		renderPage('/?agent=agnt_active_1');
-
-		const slackTile = (await screen.findByText('Slack')).closest(
-			'[data-testid="api-tile"]',
-		) as HTMLElement;
-		// The identity line states the host; the detail line does not repeat
-		// it under the guise of a credential name.
-		expect(slackTile).toHaveTextContent('slack.com · v1.0.0');
-		expect(within(slackTile).getByTestId('tile-detail-slot')).not.toHaveTextContent(
-			'slack.com',
-		);
-
-		const githubTile = screen
-			.getByText('GitHub')
-			.closest('[data-testid="api-tile"]') as HTMLElement;
-		expect(within(githubTile).getByText('GitHub PAT')).toBeInTheDocument();
 	});
 
 	it('deep link ?agent= preselects the agent and its grid', async () => {
@@ -520,19 +524,20 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripFigure('operations')).toBeInTheDocument();
 	});
 
-	// --- Stat strip: merged console vitals ----------------------------------
+	// --- Stat strip: vitals + access stats -----------------------------------
 
-	it('merges the console vitals with the access stats in one quiet meta line', async () => {
+	it('merges the vitals with the access stats in one quiet meta line', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
 		// Access clauses — the same tileStats math the grid draws from: 2 usable tiles,
 		// 181 ops (the suspended binding's 912 excluded), 2 bound credentials.
 		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2 configured'));
-		expect(stripFigure('operations')).toHaveTextContent('181 operations');
+		// Held on a skeleton until every tile's rules are read.
+		await waitFor(() => expect(stripFigure('operations')).toHaveTextContent('181 operations'));
 		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 
-		// Monitor clauses — the console header's sources (7-day usage rollup
+		// Monitor clauses — the per-actor sources (7-day usage rollup
 		// + newest execution), rendered from the mocked rollups.
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('1,204'));
 		expect(stripFigure('executions')).toHaveTextContent('7d');
@@ -740,9 +745,10 @@ describe('AgentsPage — flat agents surface', () => {
 		).not.toBeInTheDocument();
 		// …and no status badge duplicates the pill's dot.
 		expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
-		// …and no jump-off to the console: the dock's sheets carry everything
-		// that page holds.
-		expect(within(panel).queryByRole('link', { name: /Open console/ })).not.toBeInTheDocument();
+		// …and no jump-off to another agent page: the dock's sheets carry the rest.
+		for (const link of within(panel).queryAllByRole('link')) {
+			expect(link.getAttribute('href')).not.toMatch(/\/agents\//);
+		}
 	});
 
 	it('renders em-dashes when the monitor has no data and zeros without bindings', async () => {
@@ -916,6 +922,35 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(chips.sort()).toEqual(['Not serving', 'Suspended · not serving']);
 	});
 
+	it("reads Status unavailable (never Ready) when a binding's rules read fails, and Retry recovers", async () => {
+		let failing = true;
+		worker.use(
+			http.get('*/credentials/:cid/agents/:aid/permissions', ({ params }) => {
+				if (failing && params.cid === 'cred_slack_1') {
+					return HttpResponse.json({ detail: 'boom' }, { status: 500 });
+				}
+				return undefined;
+			}),
+		);
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const retry = await screen.findByTestId('tile-status-retry', {}, { timeout: 5000 });
+		const tile = retry.closest<HTMLElement>('[data-testid="api-tile"]');
+		expect(tile).not.toBeNull();
+		expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+			'Status unavailable',
+		);
+		expect(within(tile as HTMLElement).queryByText('Ready')).not.toBeInTheDocument();
+
+		failing = false;
+		await userEvent.click(retry);
+		await waitFor(() =>
+			expect(within(tile as HTMLElement).getByTestId('tile-status-chip')).toHaveTextContent(
+				'Ready',
+			),
+		);
+	});
+
 	it('blocks Add APIs with a reason on a pending agent and approves from the banner', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_pending_1');
@@ -959,6 +994,9 @@ describe('AgentsPage — flat agents surface', () => {
 							approved_at: null,
 							has_api_key: false,
 						},
+						// A fleet beside it: an org of history alone is a fresh workspace
+						// (the zero-agents landing), not a fleet.
+						{ ...agentRow('agnt_disabled_x', 'paused-bot'), status: 'disabled' },
 					],
 					has_more: false,
 					next_cursor: null,
@@ -966,7 +1004,7 @@ describe('AgentsPage — flat agents surface', () => {
 			),
 			http.get('/agents/:id/credentials', () => HttpResponse.json({ data: [] })),
 		);
-		renderPage();
+		renderPage('/?agent=agnt_archived_1');
 		await screen.findByRole('tab', { name: /retired-bot/ });
 
 		expect(
@@ -1067,7 +1105,43 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripTab('support-agent')).toBeInTheDocument();
 	});
 
-	it('shows the setup checklist and DCR quickstart when no agents are registered', async () => {
+	it('the Add-APIs tray holds on a failed bindings read and retries in place', async () => {
+		let bindingsHealthy = false;
+		worker.use(
+			http.get('/agents/:id/credentials', () =>
+				bindingsHealthy
+					? HttpResponse.json({ data: [] })
+					: HttpResponse.json({ detail: 'Server error' }, { status: 500 }),
+			),
+		);
+		const user = userEvent.setup();
+		resetApisStore([{ row: apiRow('stripe.com', 'Stripe', 10), spec: {} }]);
+		renderPage('/?agent=agnt_disabled_1');
+		await screen.findAllByText('inbox-triage-bot');
+
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
+		// Without the bindings every credential the agent holds would look unbound
+		// and be offered again, so nothing continues until the read succeeds.
+		expect(
+			await within(tray).findByText(/Could not read which APIs legacy-scraper already has/),
+		).toBeInTheDocument();
+		await user.click(await within(tray).findByRole('checkbox', { name: /Stripe/ }));
+		expect(within(tray).getByRole('button', { name: 'Continue' })).toBeDisabled();
+
+		bindingsHealthy = true;
+		await user.click(within(tray).getByRole('button', { name: /Try again/ }));
+		await waitFor(() =>
+			expect(
+				within(tray).queryByText(/Could not read which APIs legacy-scraper already has/),
+			).not.toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+	});
+
+	it('shows the zero-agents landing when no agents are registered', async () => {
 		worker.use(
 			http.get('/agents', () =>
 				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
@@ -1077,23 +1151,20 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 
 		// Agents is the app's home, so an empty fleet is a fresh workspace.
-		const setup = await screen.findByRole('region', { name: 'Set up your workspace' });
-		expect(within(setup).getByRole('link', { name: /Discover an API/ })).toHaveAttribute(
-			'href',
-			'/discover',
+		expect(await screen.findByTestId('agents-empty-landing')).toBeInTheDocument();
+		expect(screen.queryByTestId('agents-landing')).toBeNull();
+		expect(screen.queryByTestId('agent-dock')).not.toBeInTheDocument();
+
+		// The header's create button steps back for a fresh org; it opens the panel
+		// on "Create here", as it always does.
+		const create = screen.getByRole('button', { name: 'New agent' });
+		expect(create).toHaveAttribute('data-emphasis', 'secondary');
+		await user.click(create);
+		const panel = await screen.findByRole('dialog', { name: 'New agent' });
+		expect(within(panel).getByRole('tab', { name: 'Create here' })).toHaveAttribute(
+			'aria-selected',
+			'true',
 		);
-		expect(within(setup).getByRole('link', { name: /Add a credential/ })).toHaveAttribute(
-			'href',
-			'/agents?credentials=new',
-		);
-		// Both routes in: self-registration below, manual creation here — manual is
-		// primary, because it ends with a working agent rather than a pending one.
-		await user.click(within(setup).getByRole('button', { name: /Create an agent/ }));
-		expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeInTheDocument();
-		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
-		// Pin the real CLI flag: `jentic register` takes --url, not --base-url (#1204).
-		expect(screen.getByText(/jentic register --url /)).toBeInTheDocument();
-		expect(screen.queryByText(/--base-url/)).not.toBeInTheDocument();
 	});
 
 	// --- Pagination honesty: guarded drain + fully-drained join sources ------
@@ -1479,6 +1550,89 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText('Agent approved')).toBeInTheDocument();
 	});
 
+	it("denies the selected pending agent from its own panel, not only the banner's pick", async () => {
+		const user = userEvent.setup();
+		// The banner pins the longest-waiting agent (inbox-triage-bot); this one is
+		// decided on its own panel.
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+
+		await user.click(within(banner).getByRole('button', { name: 'Deny' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny release-notes-bot' });
+		// A reason is required before anything crosses the wire.
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
+
+		await user.type(within(dialog).getByLabelText('Reason'), 'Unknown publisher');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+		expect(await screen.findByTestId('agent-state-banner-rejected')).toHaveTextContent(
+			'Reason: Unknown publisher',
+		);
+	});
+
+	it('the Waiting for approval banner orders Approve before a tonal Deny and says what Approve grants', async () => {
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+		const buttons = within(banner).getAllByRole('button');
+		expect(buttons.map((b) => b.textContent)).toEqual(['Approve', 'Deny']);
+		expect(buttons[1].className).not.toContain('bg-danger');
+		const copy = await within(banner).findByTestId('approval-grant-note');
+		expect(copy).toHaveTextContent(/^Approving grants /);
+		expect(buttons[0]).toHaveAccessibleDescription(copy.textContent!);
+	});
+
+	it('keeps the deny dialog open and toasts when the panel deny fails', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));
+		renderPage('/?agent=agnt_pending_2');
+		const banner = await screen.findByTestId('agent-state-banner-pending');
+
+		await user.click(within(banner).getByRole('button', { name: 'Deny' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Deny release-notes-bot' });
+		await user.type(within(dialog).getByLabelText('Reason'), 'nope');
+		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
+
+		expect(await screen.findByText('Failed to deny the agent.')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Deny release-notes-bot' })).toBeInTheDocument();
+	});
+
+	it('names the reason and who denied a rejected agent', async () => {
+		renderPage('/?agent=agnt_rejected_1');
+		const banner = await screen.findByTestId('agent-state-banner-rejected');
+		expect(banner).toHaveTextContent('Reason: Unverified publisher.');
+		// The denier resolves through the actor directory, never a raw id.
+		await waitFor(() => expect(banner).toHaveTextContent('Denied by Admin User'));
+		expect(within(banner).queryByRole('button')).not.toBeInTheDocument();
+	});
+
+	it('requests the usage window with a next-minute-ceiled until bound (#913)', async () => {
+		// The aggregate filters `started_at < until` strictly, so the request
+		// must carry an explicit `until` PAST "now" — a floored (or absent →
+		// server-floored) bound excludes the current partial minute, so fresh
+		// executions show in the Activity feed but not in the 7-day figure.
+		let captured: URLSearchParams | null = null;
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('agent_id') !== 'agnt_active_1') return undefined;
+				captured = url.searchParams;
+				return undefined; // fall through to the module's fixture handler
+			}),
+		);
+		const beforeSec = Math.floor(Date.now() / 1000);
+		renderPage('/?agent=agnt_active_1');
+
+		await waitFor(() => expect(captured).not.toBeNull());
+		const params: URLSearchParams = captured!;
+		const since = Number(params.get('since'));
+		const until = Number(params.get('until'));
+		expect(until % 60).toBe(0);
+		expect(until).toBeGreaterThan(beforeSec);
+		// Exact 7-day width: the backend derives its bucket tier from
+		// `until - since`, so the window must not stretch past the tier edge.
+		expect(until - since).toBe(7 * 86_400);
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
@@ -1489,9 +1643,10 @@ describe('AgentsPage — flat agents surface', () => {
 		await checkA11y(container);
 	});
 
-	// --- Create sheet (New agent lives at the strip's end) -------------------
+	// --- Create sheet (New agent lives at the strip's end; carries optional
+	//     initial permissions) ----------------------------------------------
 
-	it('creates an agent with initial scopes included in the POST body', async () => {
+	it('creates an agent with initial permissions included in the POST body', async () => {
 		const user = userEvent.setup();
 		let postBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -1512,24 +1667,26 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
-		await user.type(within(sheet).getByLabelText('Name'), 'scoped-agent');
+		const sheet = await openCreateHere(user);
+		await user.type(within(sheet).getByLabelText('Name'), 'granted-agent');
 
-		// The scopes section is an optional, collapsed disclosure.
-		await user.click(within(sheet).getByRole('button', { name: /Initial scopes/ }));
-		await user.click(await within(sheet).findByRole('button', { name: /Capabilities scopes/ }));
+		// The permissions section is an optional, collapsed disclosure.
+		await user.click(within(sheet).getByRole('button', { name: /Initial permissions/ }));
+		// Expand the Capabilities group, then tick one grantable permission.
+		await user.click(
+			await within(sheet).findByRole('button', { name: /Capabilities permissions/ }),
+		);
 		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
 
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
 		expect(postBody).toMatchObject({
-			name: 'scoped-agent',
-			scopes: ['capabilities:execute'],
+			name: 'granted-agent',
+			permissions: ['capabilities:execute'],
 		});
 	});
 
-	it('omits scopes from the POST body when none are selected', async () => {
+	it('omits permissions from the POST body when none are selected', async () => {
 		const user = userEvent.setup();
 		let postBody: Record<string, unknown> | null = null;
 		worker.use(
@@ -1549,14 +1706,13 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'plain-agent');
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 
 		expect(await screen.findByText('Agent created')).toBeInTheDocument();
-		// The client normalises an empty selection to `scopes: null`.
-		expect(postBody).toMatchObject({ name: 'plain-agent', scopes: null });
+		// The client normalises an empty selection to `permissions: null`.
+		expect(postBody).toMatchObject({ name: 'plain-agent', permissions: null });
 	});
 
 	it('creating an agent flows straight into picking its APIs', async () => {
@@ -1564,8 +1720,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'chained-agent');
 		await user.click(within(sheet).getByRole('button', { name: 'Create and add APIs' }));
 
@@ -1586,8 +1741,7 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		await user.click(screen.getByRole('button', { name: 'New agent' }));
-		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		const sheet = await openCreateHere(user);
 		await user.type(within(sheet).getByLabelText('Name'), 'identity-only');
 		await user.click(within(sheet).getByRole('button', { name: 'Create empty' }));
 
@@ -1606,6 +1760,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
 		setToken('test-token');
+		window.localStorage.clear();
 		resetAgentsStore();
 		// Stripe is covered by an existing credential, so it can be added in one
 		// confirm; the rest need a new credential.
@@ -1706,7 +1861,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		).toBeInTheDocument();
 	});
 
-	it('after closing midway and reloading, only the API actually bound reads Already added', async () => {
+	it('after closing midway and reloading, only the API actually bound reads Added via', async () => {
 		const user = userEvent.setup();
 		const first = renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
@@ -1728,11 +1883,189 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		renderPage('/?agent=agnt_disabled_1');
 		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
 		const stripe = await trayRow('Stripe');
-		expect(within(stripe).getByText('Already added')).toBeInTheDocument();
-		// Queued but never bound: still a plain, pickable row.
+		expect(
+			within(stripe).getByText('Added via Stripe key · add another credential'),
+		).toBeInTheDocument();
+		// Still pickable: another Stripe account can be added.
+		expect(stripe).toBeEnabled();
+		// Queued but never bound: a plain row with no hint.
 		const notion = await trayRow('Notion');
 		expect(notion).toBeEnabled();
-		expect(within(notion).queryByText(/Already added|Added/)).not.toBeInTheDocument();
+		expect(within(notion).queryByText(/Added/)).not.toBeInTheDocument();
+	});
+
+	describe('a second account for an API the agent already reaches', () => {
+		const sandbox = () =>
+			makeMockCredential({
+				credential_id: 'cred_stripe_2',
+				name: 'Stripe sandbox',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+			});
+		const boundStripe = () =>
+			seedCredentialBindings([
+				{
+					agent_id: 'agnt_disabled_1',
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					serves: [{ api_vendor: 'stripe.com', api_name: 'default', api_version: null }],
+				},
+			]);
+
+		async function queueStripe(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+			await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+			await user.click(await trayRow('Stripe'));
+			const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+			await waitFor(() =>
+				expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+			);
+			await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		}
+
+		it('offers only the credential not bound yet, binds it, and explains the choice per call', async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					type: CredentialType.BEARER_TOKEN,
+					api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				}),
+				sandbox(),
+			]);
+			boundStripe();
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_disabled_1');
+			expect(await screen.findAllByTestId('api-tile')).toHaveLength(1);
+			expect(screen.queryByTestId('tile-accounts-badge')).toBeNull();
+
+			await queueStripe(user);
+			const pane = await screen.findByTestId('queue-active-pane');
+			expect(within(pane).getByTestId('queue-existing-accounts')).toHaveTextContent(
+				'Added via Stripe key',
+			);
+			// The bound credential is not a choice: binding it again is a 409.
+			expect(within(pane).queryByRole('radio', { name: /Stripe key/ })).toBeNull();
+			expect(within(pane).getByRole('radio', { name: /Stripe sandbox/ })).toBeChecked();
+
+			await user.click(within(pane).getByRole('button', { name: 'Use this credential' }));
+			await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
+			await user.click(screen.getByRole('button', { name: 'Done' }));
+			await waitFor(
+				() =>
+					expect(document.querySelector('[aria-modal="true"]:not([hidden])')).toBeNull(),
+				{ timeout: 2000 },
+			);
+
+			await waitFor(() => expect(screen.getAllByTestId('api-tile')).toHaveLength(2));
+			const labels = screen
+				.getAllByTestId('tile-credential-label')
+				.map((el) => el.textContent);
+			expect(labels.sort()).toEqual(['Stripe key', 'Stripe sandbox']);
+			// Each footer line labels its credential.
+			const srNames = screen
+				.getAllByTestId('tile-credential')
+				.map((el) => el.textContent)
+				.sort();
+			expect(srNames).toEqual(['Credential: Stripe key', 'Credential: Stripe sandbox']);
+			// No page-level banner: each tile carries a compact badge instead.
+			expect(screen.queryByTestId('multi-account-note')).toBeNull();
+			const badges = screen.getAllByTestId('tile-accounts-badge');
+			expect(badges).toHaveLength(2);
+			expect(badges[0]).toHaveTextContent('2 credentials');
+			expect(badges[0]).not.toHaveTextContent(/account/i);
+			// One API however many credentials: the heading and the stat line count
+			// it once, and the strip still counts its two credentials.
+			expect(screen.getByRole('heading', { name: 'APIs 1' })).toBeInTheDocument();
+			expect(screen.getByTestId('stat-configured')).toHaveTextContent('1 configured');
+
+			// Keyboard: the badge's trigger is focusable and described by the tooltip.
+			const trigger = badges[0].parentElement as HTMLElement;
+			trigger.focus();
+			const tip = await screen.findByRole('tooltip');
+			expect(tip).toHaveTextContent(
+				"This agent has 2 credentials for Stripe. Unless one is scoped more narrowly, each call must name one with the Jentic-Credential-Id header; without it, the call is refused and lists the credentials to choose from. Open a tile to copy its credential's ID.",
+			);
+			expect(trigger).toHaveAttribute('aria-describedby', tip.id);
+			await checkA11y(document.body);
+
+			// The binding's sidebar explains the choice at more length in one quiet line,
+			// beside the full id and the header that names this credential — both copyable.
+			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
+			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
+				"This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header — copy this credential's ID or header below — or it is refused and lists the options. These rules apply only when this credential is the one chosen.",
+			);
+			const sidebar = screen.getByRole('region', { name: 'Credential' });
+			const idRow = within(sidebar).getByTestId('credential-id-row');
+			const credentialId = idRow.querySelector('code')?.textContent ?? '';
+			expect(credentialId).toMatch(/^cred_stripe_[12]$/);
+			await user.click(within(idRow).getByRole('button', { name: 'Copy the credential ID' }));
+			expect(await navigator.clipboard.readText()).toBe(credentialId);
+			expect(
+				within(sidebar).getByText(`Jentic-Credential-Id: ${credentialId}`),
+			).toBeVisible();
+			await user.click(
+				within(sidebar).getByRole('button', {
+					name: 'Copy the Jentic-Credential-Id header',
+				}),
+			);
+			expect(await navigator.clipboard.readText()).toBe(
+				`Jentic-Credential-Id: ${credentialId}`,
+			);
+		});
+
+		it('the mock binds a second credential for one API but 409s the same one twice', async () => {
+			boundStripe();
+			const bind = (credentialId: string) =>
+				fetch('/agents/agnt_disabled_1/credentials', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ credential_id: credentialId }),
+				});
+			expect((await bind('cred_stripe_2')).status).toBe(201);
+			expect((await bind('cred_stripe_1')).status).toBe(409);
+		});
+
+		it('with every covering credential bound, asks for a new one', async () => {
+			boundStripe();
+			const user = userEvent.setup();
+			renderPage('/?agent=agnt_disabled_1');
+			await queueStripe(user);
+			const pane = await screen.findByTestId('queue-active-pane');
+			expect(within(pane).queryByRole('radio')).toBeNull();
+			expect(within(pane).getByRole('button', { name: 'Add credential' })).toBeEnabled();
+		});
+
+		it('is still owed until a NEW binding serves the API', async () => {
+			resetCredentialsStore([
+				makeMockCredential({
+					credential_id: 'cred_stripe_1',
+					name: 'Stripe key',
+					type: CredentialType.BEARER_TOKEN,
+					api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				}),
+				sandbox(),
+			]);
+			boundStripe();
+			const user = userEvent.setup();
+			const { queryClient } = renderPage('/?agent=agnt_disabled_1');
+			await queueStripe(user);
+			await user.click(await screen.findByRole('button', { name: 'Close for now' }));
+			// The account the agent already had does not settle the item.
+			expect(
+				await screen.findByRole('button', { name: 'Finish adding 1 API' }),
+			).toBeInTheDocument();
+
+			seedCredentialBindings([
+				{
+					agent_id: 'agnt_disabled_1',
+					credential_id: 'cred_stripe_2',
+					name: 'Stripe sandbox',
+					serves: [{ api_vendor: 'stripe.com', api_name: 'default', api_version: null }],
+				},
+			]);
+			await queryClient.invalidateQueries();
+			expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeInTheDocument();
+		});
 	});
 
 	it('drops an owed API from "Finish adding" once the agent reaches it', async () => {
@@ -1768,5 +2101,63 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		await user.click(screen.getByRole('button', { name: 'Finish adding 1 API' }));
 		expect(await screen.findByText('Set up 1 API')).toBeInTheDocument();
 		expect(queueRows()).toEqual(['Notion:active']);
+	});
+});
+
+describe('AgentsPage — the header follows the zero-agents landing', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+		clearAgentsStore();
+	});
+
+	const newAgent = () => screen.getByRole('button', { name: 'New agent' });
+
+	it('is secondary while an arrival shows, and primary once the fleet takes over', async () => {
+		const user = userEvent.setup();
+		selfRegisterAgent('my-first-agent');
+		renderPage();
+
+		await screen.findByTestId('arrival-card');
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'secondary');
+		expect(screen.queryByRole('button', { name: 'Create your first agent' })).toBeNull();
+
+		const approve = screen.getByRole('button', { name: 'Approve my-first-agent' });
+		await waitFor(() => expect(approve).toBeEnabled());
+		await user.click(approve);
+		await user.click(await screen.findByRole('button', { name: 'Skip for now' }));
+		await screen.findByTestId('agent-dock');
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+	});
+
+	it('is primary for an org whose only agents were denied or archived: it shows the fleet', async () => {
+		seedExtraAgents([{ id: 'agnt_old', name: 'stray', status: 'rejected' }]);
+		renderPage();
+
+		await screen.findByTestId('agent-strip');
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+	});
+
+	it('is never secondary over the fleet, even while it loads', async () => {
+		resetAgentsStore();
+		renderPage();
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+		await screen.findByTestId('agent-dock');
+		expect(newAgent()).toHaveAttribute('data-emphasis', 'primary');
+	});
+
+	it('390px: the landing header keeps New agent and Credentials on screen', async () => {
+		await page.viewport(390, 844);
+		renderPage();
+		await screen.findByTestId('agents-empty-landing');
+
+		for (const name of ['New agent', 'Credentials']) {
+			const rect = screen.getByRole('button', { name }).getBoundingClientRect();
+			expect(rect.left).toBeGreaterThanOrEqual(0);
+			expect(rect.right).toBeLessThanOrEqual(390);
+		}
 	});
 });

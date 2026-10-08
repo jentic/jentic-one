@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpec, refName, derefSchema } from '@/modules/docs/lib/apiSpec';
+import {
+	parseSpec,
+	refName,
+	derefSchema,
+	replaceOrigins,
+	withAbsoluteServers,
+	withDeploymentServer,
+} from '@/modules/docs/lib/apiSpec';
 import { operationAnchorId } from '@/modules/docs/lib/anchor';
 import type { OpenApiDocument } from '@/modules/docs/api/types';
 
@@ -234,5 +241,81 @@ describe('derefSchema', () => {
 describe('operationAnchorId', () => {
 	it('is stable, slug-safe, and uppercases the method', () => {
 		expect(operationAnchorId('get', '/credentials/{id}')).toBe('op-GET--credentials-id-');
+	});
+});
+
+describe('withDeploymentServer', () => {
+	const placeholder: OpenApiDocument = {
+		openapi: '3.1.0',
+		info: {
+			description: 'POST https://broker.your-instance.example/petstore.swagger.io/v2/pet',
+		},
+		servers: [
+			{ url: 'https://broker.your-instance.example', description: 'Production' },
+			{ url: 'https://broker-dev.your-instance.example', description: 'Development' },
+		],
+	};
+
+	it('replaces the servers with the advertised deployment URL', () => {
+		const spec = withDeploymentServer(placeholder, 'https://broker.acme.test/');
+		expect(parseSpec(spec).servers).toEqual([
+			{ url: 'https://broker.acme.test', description: 'This deployment' },
+		]);
+		// The input document is not mutated.
+		expect(placeholder.servers).toHaveLength(2);
+	});
+
+	it('rewrites the placeholder hosts the prose cites', () => {
+		const spec = withDeploymentServer(placeholder, 'https://broker.acme.test');
+		expect(parseSpec(spec).description).toBe(
+			'POST https://broker.acme.test/petstore.swagger.io/v2/pet',
+		);
+	});
+
+	it('never treats a relative server as a placeholder to rewrite', () => {
+		const spec = withDeploymentServer(
+			{ info: { description: 'GET /a/b' }, servers: [{ url: '/' }] },
+			'https://broker.acme.test',
+		);
+		expect(parseSpec(spec).description).toBe('GET /a/b');
+	});
+
+	it.each([null, undefined, ''])('keeps the spec untouched for %j', (url) => {
+		expect(withDeploymentServer(placeholder, url)).toBe(placeholder);
+	});
+});
+
+describe('replaceOrigins', () => {
+	it('rewrites nested string values but not keys', () => {
+		const spec: OpenApiDocument = {
+			'https://a.example': 'https://a.example/x',
+			nested: [{ self: 'https://a.example/jobs/1' }, 3],
+		};
+		expect(replaceOrigins(spec, { 'https://a.example': 'https://b.test' })).toEqual({
+			'https://a.example': 'https://b.test/x',
+			nested: [{ self: 'https://b.test/jobs/1' }, 3],
+		});
+	});
+
+	it('returns the same document when there is nothing to replace', () => {
+		const spec: OpenApiDocument = { openapi: '3.1.0' };
+		expect(replaceOrigins(spec, { 'https://a.example': 'https://a.example' })).toBe(spec);
+	});
+});
+
+describe('withAbsoluteServers', () => {
+	it('resolves relative servers against the origin and keeps absolute ones', () => {
+		const spec: OpenApiDocument = {
+			servers: [
+				{ url: '/', description: 'Same-origin (relative)' },
+				{ url: '/v1' },
+				{ url: 'https://api.example.com' },
+			],
+		};
+		expect(parseSpec(withAbsoluteServers(spec, 'https://jentic.acme.test')).servers).toEqual([
+			{ url: 'https://jentic.acme.test', description: 'Same-origin (relative)' },
+			{ url: 'https://jentic.acme.test/v1', description: undefined },
+			{ url: 'https://api.example.com', description: undefined },
+		]);
 	});
 });

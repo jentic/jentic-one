@@ -143,7 +143,7 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	target, _ := args["operation_id"].(string)
 	if target == "" {
 		return nil, invalidParams(errors.New(toolName + ` requires "operation_id" (aliases: "id", "uuid"): ` +
-			`a registry operation id from a search_apis hit, or a METHOD:url pair like "GET:https://api.example.com/v1/things"`))
+			`a METHOD:url pair like "GET:https://api.example.com/v1/things" (a search_apis hit's target)`))
 	}
 	body, _ := args["body"].(json.RawMessage)
 	if readOnlyVariant && len(body) > 0 {
@@ -231,6 +231,19 @@ func (s *mcpServer) executeTool(ctx context.Context, req *mcp.CallToolRequest, r
 	// agent_directive, non-retryable until access changes.
 	if denial := agentops.Classify(res); denial != nil {
 		return s.executeDenialError(cctx, denial), nil
+	}
+
+	// A broker-origin error that is not a denial (unknown credential id/name,
+	// unregistered operation) never reached the upstream, so it is an error
+	// result, not a normal one (#1429). Re-sending the same call cannot succeed.
+	if coded := agentops.BrokerError(res); coded != nil {
+		nextTool := brokerErrorNextTool(coded)
+		// The classify core phrases the recovery for the CLI (jentic search /
+		// creds list); re-flavor it for this lane's tools so the agent is pointed
+		// at a tool it can actually call, matching nextTool. Relayed candidates
+		// stay in details["candidates"].
+		coded.Actionable = brokerErrorToolHint(nextTool)
+		return s.softErrorExtra(cctx, coded, nextTool, map[string]any{"retryable": false}), nil
 	}
 
 	// Everything the broker relayed — 2xx, upstream 4xx/5xx, and the ask-tier
@@ -472,7 +485,7 @@ func synthesizedDenialHint(status int, problemType string) string {
 	}
 	switch status {
 	case http.StatusForbidden:
-		return "The broker denied this call. Call whoami to see your bindings and scopes; if a " +
+		return "The broker denied this call. Call whoami to see your bindings and permissions; if a " +
 			"permission rule forbids this operation, ask your operator to adjust it — do not try to " +
 			"route around a rule by connecting a new credential."
 	case http.StatusConflict:
@@ -690,8 +703,9 @@ func executeInputSchema(withBody bool) map[string]any {
 	props := map[string]any{
 		"operation_id": map[string]any{
 			"type": "string",
-			"description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a registry " +
-				"operation id from a search_apis hit, or a METHOD:url pair like \"GET:https://api.example.com/v1/things\".",
+			"description": "The operation to execute (required; \"id\" and \"uuid\" are accepted aliases): a METHOD:url " +
+				"pair like \"GET:https://api.example.com/v1/things\" — pass a search_apis hit's target verbatim. " +
+				"(A registry operation id also resolves, for compatibility — prefer METHOD:url.)",
 		},
 		"inputs": map[string]any{
 			"type": "object",
@@ -752,7 +766,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"this session. This is the final step of the flow (whoami → search_apis → " +
 					"inspect_operation → execute): always inspect the contract first, and never execute just " +
 					"to probe whether you have access (call whoami). " +
-					`Example: {"operation_id": "op_abc123", "inputs": {"petId": "42", "limit": 10}, ` +
+					`Example: {"operation_id": "POST:https://api.example.com/v1/pets", "inputs": {"petId": "42", "limit": 10}, ` +
 					`"body": {"name": "Bob"}}. ` +
 					"Returns {status, headers, body, execution_id}: any HTTP status, including upstream " +
 					"4xx/5xx, is the upstream's answer — a denial by the broker itself comes back as an " +
@@ -795,5 +809,46 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 			},
 			handler: s.handleGetExecutionResult,
 		},
+	}
+}
+
+// brokerErrorToolHint is the MCP-lane recovery prose for a broker resolve
+// failure, keyed on the next_tool brokerErrorNextTool chose so the two never
+// disagree. It names tools this surface serves, never CLI commands.
+func brokerErrorToolHint(nextTool string) string {
+	switch nextTool {
+	case "search_apis":
+		return "The broker has no such operation registered. Call search_apis to find the right " +
+			"operation, confirm it with inspect_operation, then execute that one — do not retry this call."
+	case "whoami":
+		return "A Jentic-Credential-Id or Jentic-Credential-Name header named a credential the broker could " +
+			"not resolve for this operation. Pick a valid id from details.candidates when present (else call " +
+			"whoami to see your credential bindings) and re-issue the call naming one bound to this operation — " +
+			"do not retry the same header."
+	default: // inspect_operation
+		return "The broker rejected the request before it reached the upstream API. Call inspect_operation " +
+			"to re-read the operation's contract — the method, revision pin, payload size, idempotency key, or a " +
+			"required header is wrong — and fix the request rather than retrying it."
+	}
+}
+
+// brokerErrorNextTool points a broker resolve failure at the tool that can fix
+// it, keyed on agentops.BrokerErrorRecoveryFor (the same routing the CLI prose
+// uses): an unregistered operation needs search_apis, an unresolvable
+// credential header gets whoami (the same safe default the denial path uses),
+// and any other broker 4xx — a contract or payload error — points at
+// inspect_operation so the agent re-reads the contract instead of looping on an
+// identity check that cannot fix it. Never get_started: the identity already
+// resolved.
+func brokerErrorNextTool(coded *ux.CodedError) string {
+	status, _ := coded.Details["http_status"].(int)
+	pt, _ := coded.Details["problem_type"].(string)
+	switch agentops.BrokerErrorRecoveryFor(status, pt) {
+	case agentops.RecoverOperation:
+		return "search_apis"
+	case agentops.RecoverCredential:
+		return "whoami"
+	default:
+		return "inspect_operation"
 	}
 }

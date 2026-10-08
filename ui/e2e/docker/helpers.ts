@@ -194,6 +194,19 @@ export async function getAdminUserId(request: APIRequestContext): Promise<string
 	return id;
 }
 
+/**
+ * Mark the first-run suggestion as left for `agentId`, before the page boots —
+ * the same `localStorage` key the Agents page writes when the operator leaves
+ * it (`firstRunDismissedKey` in `src/modules/agents/lib/firstRun.ts`). On a
+ * fresh DB a lone active agent with no APIs otherwise resumes the first-run
+ * landing at its last step instead of the fleet view a spec is asserting.
+ */
+export async function dismissFirstRunFor(page: Page, agentId: string): Promise<void> {
+	await page.addInitScript((id) => {
+		window.localStorage.setItem(`j1.agents.firstRun.dismissed.${id}`, new Date().toISOString());
+	}, agentId);
+}
+
 /** A short unique suffix so repeated runs against a persistent DB don't collide. */
 export function uniqueSuffix(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -287,22 +300,22 @@ export async function postCredentialRaw(
 }
 
 /**
- * PUT /agents/{id}/scopes → 200. Replaces ALL scopes for an agent (bulk
- * replace, see replaceAgentScopes). This is the public-API path that landed
- * with #517 — it is what lets a DCR agent acquire `capabilities:execute`
- * without a direct DB write. Returns the resulting scope list.
+ * PUT /agents/{id}/permissions → 200. Replaces ALL permissions for an agent
+ * (bulk replace — there is no partial grant/revoke endpoint). This is the
+ * public-API path that landed with #517 — it is what lets a DCR agent acquire
+ * `capabilities:execute` without a direct DB write. Returns the resulting list.
  */
-export async function replaceAgentScopes(
+export async function replaceAgentPermissions(
 	request: APIRequestContext,
 	agentId: string,
-	scopes: string[],
+	permissions: string[],
 ): Promise<string[]> {
-	const res = await request.put(`/agents/${agentId}/scopes`, {
+	const res = await request.put(`/agents/${agentId}/permissions`, {
 		headers: authHeaders(),
-		data: { scopes },
+		data: { permissions },
 	});
-	expect(res.status(), `replaceAgentScopes failed: ${await res.text()}`).toBe(200);
-	return (await res.json()).scopes;
+	expect(res.status(), `replaceAgentPermissions failed: ${await res.text()}`).toBe(200);
+	return (await res.json()).permissions;
 }
 
 /** POST /agents/{id}/credentials → 201. Binds a credential directly to an agent. Returns the binding id. */

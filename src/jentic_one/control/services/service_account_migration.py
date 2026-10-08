@@ -30,7 +30,7 @@ Disposition (OQ-1, rev 5): ``active`` → full migration (successor
 ``pending``/``rejected``/``archived`` → skip-but-stamp (no successor; stamp
 value ``skipped``). Successor creation is raw SQL — never
 ``AgentService.create()``/``approve()`` (F1: both default-grant
-``DEFAULT_AGENT_SCOPES``; a zero-grant SA must yield a zero-grant
+``DEFAULT_AGENT_PERMISSIONS``; a zero-grant SA must yield a zero-grant
 successor).
 
 **Retirement (theme-8 Phase 4).** :meth:`ServiceAccountMigrationService.retire`

@@ -5,12 +5,20 @@
  * One banner names the longest-waiting pending agent with a live elapsed wait; the
  * rest fold into "and N more waiting". While the list is still a floor the count
  * hedges as "N+". Nothing pending renders NOTHING.
+ *
+ * The decision reads the same on every approval surface: Approve (primary,
+ * described by what it grants), then Deny (tonal — its reason dialog carries
+ * the destructive red), then Review as a quiet link-weight action. Approve and
+ * Deny show only to a caller who may decide (`agents:write` or `org:admin`);
+ * Review stays.
  */
-import { useEffect, useReducer } from 'react';
+import { useEffect, useId, useReducer, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ActorStatusBadge, Button } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ACTION_LABEL, ACTION_VARIANT, type AgentEntity } from '@/modules/agents/api';
+import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 
 interface PendingApprovalBannerProps {
 	/** Pending rows in backend order (`created_at DESC` — newest first),
@@ -48,6 +56,7 @@ export function PendingApprovalBanner({
 	approvePendingId,
 }: PendingApprovalBannerProps) {
 	const reducedMotion = useReducedMotion();
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	// Trust but verify: the query asks for `status=pending`, and the filter keeps a
 	// stale response from ever naming a non-pending agent.
@@ -80,11 +89,30 @@ export function PendingApprovalBanner({
 	}, [hasPending]);
 
 	const busy = longest ? approvePendingId === longest.id : false;
+	const grantId = useId();
+
+	// When the named agent is decided and the next one takes its place, focus
+	// that was on the banner's buttons lands on the next agent's line — a
+	// neutral spot, never straight onto a decision button for an agent the
+	// operator hasn't read yet.
+	const regionRef = useRef<HTMLElement | null>(null);
+	const lineRef = useRef<HTMLParagraphElement | null>(null);
+	const shownId = longest?.id ?? null;
+	const lastShownId = useRef(shownId);
+	useEffect(() => {
+		const previous = lastShownId.current;
+		lastShownId.current = shownId;
+		if (!previous || !shownId || previous === shownId) return;
+		const active = document.activeElement;
+		if (active && active !== document.body && !regionRef.current?.contains(active)) return;
+		lineRef.current?.focus({ preventScroll: true });
+	}, [shownId]);
 
 	return (
 		<AnimatePresence initial={false}>
 			{longest && (
 				<motion.section
+					ref={regionRef}
 					key="pending-approval-banner"
 					role="region"
 					aria-label="Awaiting approval"
@@ -94,12 +122,17 @@ export function PendingApprovalBanner({
 					transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
 					className="overflow-hidden"
 				>
-					<div className="border-warning/40 bg-warning/5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3.5 py-2.5">
+					<div className="bg-warning/10 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3.5 py-2.5">
 						<span
 							className="bg-warning h-1.5 w-1.5 shrink-0 animate-pulse rounded-full motion-reduce:animate-none"
 							aria-hidden="true"
 						/>
-						<p className="min-w-0 flex-1 basis-52 text-sm">
+						<p
+							ref={lineRef}
+							tabIndex={-1}
+							data-testid="pending-approval-line"
+							className="focus-visible:ring-ring min-w-0 flex-1 basis-52 rounded-sm text-sm outline-none focus-visible:ring-2"
+						>
 							<span className="font-heading font-semibold">{longest.name}</span>{' '}
 							<ActorStatusBadge status="pending" className="mx-0.5 align-middle" />{' '}
 							<span
@@ -109,35 +142,48 @@ export function PendingApprovalBanner({
 								{waitingLabel(longest.createdAt)} for approval
 								{moreWaiting && <> · {moreWaiting}</>}
 							</span>
+							<ApprovalGrantNote
+								key={longest.id}
+								agentId={longest.id}
+								id={grantId}
+								className="text-muted-foreground block pt-0.5"
+							/>
 						</p>
 						<span className="flex items-center gap-2">
+							{canDecide && (
+								<>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.approve}
+										disabled={busy}
+										loading={busy}
+										onClick={() => onApprove(longest.id)}
+										aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
+										aria-describedby={grantId}
+									>
+										{ACTION_LABEL.approve}
+									</Button>
+									<Button
+										size="sm"
+										variant={ACTION_VARIANT.deny}
+										disabled={busy}
+										onClick={() =>
+											onDeny({ id: longest.id, name: longest.name })
+										}
+										aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</>
+							)}
 							<Button
 								size="sm"
-								variant="outline"
+								variant="ghost"
 								disabled={busy}
 								onClick={() => onReview(longest.id)}
 								aria-label={`Review ${longest.name}`}
 							>
 								Review
-							</Button>
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.approve}
-								disabled={busy}
-								loading={busy}
-								onClick={() => onApprove(longest.id)}
-								aria-label={`${ACTION_LABEL.approve} ${longest.name}`}
-							>
-								{ACTION_LABEL.approve}
-							</Button>
-							<Button
-								size="sm"
-								variant={ACTION_VARIANT.deny}
-								disabled={busy}
-								onClick={() => onDeny({ id: longest.id, name: longest.name })}
-								aria-label={`${ACTION_LABEL.deny} ${longest.name}`}
-							>
-								{ACTION_LABEL.deny}
 							</Button>
 						</span>
 					</div>

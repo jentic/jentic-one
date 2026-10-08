@@ -120,7 +120,7 @@ func newApisOperationsCmd(app *app) *cobra.Command {
 func newApisInspectCmd(app *app) *cobra.Command {
 	o := &apisInspectOptions{}
 	cmd := &cobra.Command{
-		Use:   "inspect <operation_id>",
+		Use:   "inspect <METHOD:url>",
 		Short: "Inspect an operation's structural detail",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

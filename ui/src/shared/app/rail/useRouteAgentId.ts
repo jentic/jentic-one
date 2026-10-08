@@ -1,6 +1,8 @@
 /**
- * The agent the page is about, if any — `/agents/:agentId` or
- * `/agents?agent=<id>`.
+ * The agent the page is about, if any — the Agents page's selection
+ * (`/agents?agent=<id>`), or a page mounted under `/agents/:agentId/…` (a
+ * deployment can add per-agent sub-routes; `/agents/:agentId` itself redirects
+ * to the selection).
  *
  * The Activity rail does NOT follow it on its own: the rail's actor filter is
  * one choice the user owns, the same on every page. On an agent's page the
@@ -13,7 +15,7 @@ const AGENT_PATH = /^\/agents\/([^/]+)\/?/;
 /** Sub-paths under `/agents/` that are not an agent id. */
 const NOT_AN_AGENT = new Set(['service-accounts']);
 
-export function routeAgentId(pathname: string, search: string): string | null {
+function routeAgentId(pathname: string, search: string): string | null {
 	const m = AGENT_PATH.exec(pathname);
 	if (m && !NOT_AN_AGENT.has(m[1])) return decodeURIComponent(m[1]);
 	if (pathname === '/agents' || pathname === '/agents/') {

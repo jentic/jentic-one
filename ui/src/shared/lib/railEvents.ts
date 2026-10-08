@@ -6,7 +6,6 @@
  * in `agentStream.tsx` and the rail components go through here.
  *
  *   GET   /events           — backlog (filter + cursor)            → listEvents
- *   PATCH /events/{id}       — acknowledge an event                 → acknowledgeEvent
  *   GET   /events/stream     — live SSE (Bearer header, fetch-stream)→ streamEvents
  *
  * The SSE call is hand-rolled over `fetch` + `ReadableStream` because the
@@ -19,7 +18,7 @@ import {
 	EventsService,
 	ApiError,
 	getToken,
-	type EventAcknowledgeRequest,
+	problemDetailText,
 	type EventListResponse,
 	type EventResponse,
 	type EventSeverity,
@@ -43,8 +42,10 @@ export class RailApiError extends Error {
 }
 
 export function toRailError(error: unknown, fallback: string): RailApiError {
+	// Already classified (the stream's own non-OK response): keep its status.
+	if (error instanceof RailApiError) return error;
 	if (error instanceof ApiError) {
-		const detail = (error.body as { detail?: string } | undefined)?.detail ?? error.message;
+		const detail = problemDetailText(error.body) ?? error.message;
 		return new RailApiError(detail || fallback, error.status, error);
 	}
 	if (error instanceof Error) {
@@ -53,11 +54,19 @@ export function toRailError(error: unknown, fallback: string): RailApiError {
 	return new RailApiError(fallback, null, error);
 }
 
+/**
+ * A refused event read: 401 (no valid session) or 403 (no `events:read`).
+ * Retrying cannot change the answer, so the stream stops on it.
+ */
+export function isEventAccessDenied(error: unknown): boolean {
+	const status = error instanceof RailApiError || error instanceof ApiError ? error.status : null;
+	return status === 401 || status === 403;
+}
+
 export interface ListEventsParams {
 	eventType?: string[] | null;
 	severity?: EventSeverity[] | null;
 	requiresAction?: boolean | null;
-	acknowledged?: boolean | null;
 	from?: string | null;
 	to?: string | null;
 	traceId?: string | null;
@@ -75,7 +84,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 			eventType: params.eventType ?? null,
 			severity: params.severity ?? null,
 			requiresAction: params.requiresAction ?? null,
-			acknowledged: params.acknowledged ?? null,
 			from: params.from ?? null,
 			to: params.to ?? null,
 			traceId: params.traceId ?? null,
@@ -86,18 +94,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 		});
 	} catch (error) {
 		throw toRailError(error, 'Failed to load events.');
-	}
-}
-
-/** Acknowledge an event (`PATCH /events/{id}`) — the rail's one real action. */
-export async function acknowledgeEvent(
-	eventId: string,
-	requestBody: EventAcknowledgeRequest = { acknowledged: true },
-): Promise<EventResponse> {
-	try {
-		return await EventsService.acknowledgeEvent({ eventId, requestBody });
-	} catch (error) {
-		throw toRailError(error, 'Failed to acknowledge the event.');
 	}
 }
 
@@ -113,6 +109,8 @@ export interface StreamEventsParams {
 
 export interface StreamEventsHandlers {
 	onEvent: (event: EventResponse) => void;
+	/** Every failed attempt. A refused one ({@link isEventAccessDenied}) is the
+	 * last: no reconnect follows it. */
 	onError?: (error: RailApiError) => void;
 	onOpen?: () => void;
 	/**
@@ -170,8 +168,10 @@ function rewindIso(iso: string): string {
  * mid-batch drop doesn't skip same-instant siblings); the provider dedups by id.
  * The backoff only resets after a connection stays healthy for a while
  * (`HEALTHY_CONNECTION_MS`), so an immediately-dropping stream keeps escalating
- * instead of hot-looping. Returns an unsubscribe fn that aborts the in-flight
- * request and cancels any pending retry.
+ * instead of hot-looping. A 401/403 is terminal: the caller's access, not the
+ * connection, is the problem, so the loop reports it and stops. Returns an
+ * unsubscribe fn that aborts the in-flight request and cancels any pending
+ * retry.
  */
 export function streamEvents(
 	params: StreamEventsParams,
@@ -282,7 +282,9 @@ export function streamEvents(
 				if (openMs >= HEALTHY_CONNECTION_MS) attempt = 0;
 			} catch (error) {
 				if (stopped || controller.signal.aborted) return; // intentional unsubscribe
-				handlers.onError?.(toRailError(error, 'Event stream error.'));
+				const railError = toRailError(error, 'Event stream error.');
+				handlers.onError?.(railError);
+				if (isEventAccessDenied(railError)) return;
 			}
 			if (stopped || controller.signal.aborted) return;
 			// Schedule a reconnect with backoff (capped).

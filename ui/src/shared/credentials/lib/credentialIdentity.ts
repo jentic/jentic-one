@@ -3,10 +3,17 @@
 // surface that lists siblings leans on the same facts: auth type, when it was
 // added, and a short id tail.
 import { slugifyApiField } from '@/shared/lib/apiSlug';
-import { CREDENTIAL_TYPE_LABELS, CredentialType, type Credential } from '@/shared/credentials/api';
+import {
+	CREDENTIAL_TYPE_LABELS,
+	CredentialType,
+	credentialDetails,
+	type Credential,
+} from '@/shared/credentials/api';
 
-/** Characters of the credential id shown as its tail — enough to tell siblings apart. */
-const ID_TAIL_LENGTH = 6;
+/** Characters of the credential id shown as its tail — enough to tell siblings
+ * apart, and the same four the broker's ambiguous-credential refusal lists
+ * (`last4`), so a tail on screen matches the one in the error. */
+const ID_TAIL_LENGTH = 4;
 
 /** `added 23 Sept 2026`-style date; `recently` when the backend sent none. */
 export function formatCredentialDate(value: string | null | undefined): string {
@@ -16,12 +23,45 @@ export function formatCredentialDate(value: string | null | undefined): string {
 	return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** The last few characters of the id, the one fact two same-named siblings never share. */
-export function credentialIdTail(cred: Pick<Credential, 'credential_id'>): string {
-	return cred.credential_id.slice(-ID_TAIL_LENGTH);
+/** The last few characters of a credential id. */
+export function idTail(credentialId: string): string {
+	return credentialId.slice(-ID_TAIL_LENGTH);
 }
 
-/** `API key · added 23 Sept 2026 · …a1b2c3` — one line that tells siblings apart.
+/** The last few characters of the id, the one fact two same-named siblings never share. */
+export function credentialIdTail(cred: Pick<Credential, 'credential_id'>): string {
+	return idTail(cred.credential_id);
+}
+
+/**
+ * A short hint that tells `cred` apart from the siblings sharing its name, or
+ * null when its name is already unique among `siblings`. The first real fact
+ * no same-named sibling shares wins: the redacted key hint (`details.hint`,
+ * e.g. `••••4242`), then the pinned version (`v2024-01-01`), else the id tail
+ * (`…b2c3`), which siblings never share.
+ */
+export function credentialSiblingHint(
+	cred: Credential,
+	siblings: readonly Credential[],
+): string | null {
+	const key = nameKey(cred.name);
+	const twins = siblings.filter((s) => nameKey(s.name) === key);
+	if (twins.length < 2) return null;
+	const facts: ((c: Credential) => string | null)[] = [
+		(c) => {
+			const hint = credentialDetails(c).hint;
+			return typeof hint === 'string' && hint.trim() ? hint.trim() : null;
+		},
+		(c) => (c.api.version?.trim() ? `v${c.api.version.trim()}` : null),
+	];
+	for (const fact of facts) {
+		const mine = fact(cred);
+		if (mine && twins.filter((t) => fact(t) === mine).length === 1) return mine;
+	}
+	return `…${credentialIdTail(cred)}`;
+}
+
+/** `API key · added 23 Sept 2026 · …b2c3` — one line that tells siblings apart.
  * `type: false` drops the type, for a host that already shows it as a badge. */
 export function credentialDistinguisher(
 	cred: Pick<Credential, 'credential_id' | 'type' | 'created_at'>,
@@ -63,38 +103,6 @@ export function credentialAwaitsConsent(credential: Credential | undefined): boo
 	const details = credential.details;
 	if (!details || typeof details !== 'object') return false;
 	return details.grant_type === 'authorization_code' && details.connected === false;
-}
-
-/** The API an access-request item names; `name`/`version` left open mean "any". */
-export interface ApiReference {
-	vendor: string;
-	name?: string | null;
-	version?: string | null;
-}
-
-/**
- * The active credentials that serve `ref`, the way the platform resolves a bind
- * that names no credential: an open axis on the reference matches any value, a
- * credential with no API name serves its whole vendor, and credentials pinned to
- * the exact name win over vendor-wide ones.
- */
-export function credentialsServingReference(
-	credentials: readonly Credential[],
-	ref: ApiReference,
-): Credential[] {
-	const vendor = slugifyApiField(ref.vendor);
-	const name = ref.name?.trim() ? slugifyApiField(ref.name) : null;
-	const version = ref.version?.trim() || null;
-	const serving = credentials.filter((cred) => {
-		if (!cred.active || slugifyApiField(cred.api.vendor) !== vendor) return false;
-		const credName = cred.api.name?.trim() ? slugifyApiField(cred.api.name) : null;
-		if (name && credName && credName !== name) return false;
-		const credVersion = cred.api.version?.trim() || null;
-		return !version || !credVersion || credVersion === version;
-	});
-	if (!name) return serving;
-	const exact = serving.filter((cred) => cred.api.name?.trim());
-	return exact.length > 0 ? exact : serving;
 }
 
 /** How two credential names compare: case and surrounding space never tell them apart. */

@@ -357,11 +357,11 @@ async def test_pin_and_live_share_one_url(
     resolver = InProcessRegistryResolver(registry_db)
     unpinned = await discover(resolver, method="GET", url=PUBLISHED_URL)
     assert unpinned is not None
-    assert unpinned.operation_id == op_of[live]
+    assert unpinned.operation.id == op_of[live]
 
     pinned = await discover(resolver, method="GET", url=PUBLISHED_URL, revision_id=draft)
     assert pinned is not None
-    assert pinned.operation_id == op_of[draft]
+    assert pinned.operation.id == op_of[draft]
 
 
 async def test_draft_only_url_resolves_only_through_its_pin(

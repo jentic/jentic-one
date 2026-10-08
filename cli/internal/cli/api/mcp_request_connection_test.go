@@ -253,13 +253,13 @@ func TestMCPRequestConnection_403IsOperatorScopeGrant(t *testing.T) {
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["error_code"] != ux.CodeBrokerDenied {
-		t.Errorf("error_code = %v, want %q (a missing scope is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
+		t.Errorf("error_code = %v, want %q (a missing permission is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
 	}
 	if _, has := payload["next_tool"]; has {
-		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
+		t.Errorf("next_tool = %v, want none (the permission grant is an operator action, not a tool call)", payload["next_tool"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "credentials:connect") || !strings.Contains(step, "operator") || !strings.Contains(step, "jentic logout") {
-		t.Errorf("actionable_step %q must name the credentials:connect scope, route to the operator, and re-mint the token", step)
+		t.Errorf("actionable_step %q must name the credentials:connect permission, route to the operator, and re-mint the token", step)
 	}
 }
 

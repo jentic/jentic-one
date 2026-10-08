@@ -6,20 +6,21 @@
  */
 export {
 	useAgents,
-	useAgent,
 	usePendingAgents,
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
 	useRefreshFleetCredentialBindings,
-	useAgentBindingRuleCounts,
 	useAgentBindingRuleSummaries,
-	useBindableCredentialsForAgent,
+	useRetryBindingRules,
+	summarizeBindingRules,
 	useBindAgentCredential,
 	useUnbindAgentCredential,
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
 	useInvalidateCredentialBindingSurfaces,
 	useAgentBindingPermissions,
+	useAgentBindingEffectiveRules,
+	useDetachAgentBindingRuleSet,
 	useReplaceAgentBindingPermissions,
 	useTestAgentBindingPermissions,
 	useAgentApiKeyInfo,
@@ -27,7 +28,6 @@ export {
 	useApproveAgent,
 	useDenyAgent,
 	useDisableAgent,
-	useEnableAgent,
 	useSetAgentServing,
 	useArchiveAgent,
 	useCreateAgent,
@@ -35,8 +35,8 @@ export {
 	useIsGeneratingAgentApiKey,
 	useRevokeAgentApiKey,
 	usePermissionCatalogue,
-	useAgentScopes,
-	useReplaceAgentScopes,
+	useAgentPermissions,
+	useReplaceAgentPermissions,
 	useAgentOauthGrants,
 	useRevokeOauthGrant,
 	useActorUsageDetail,
@@ -45,59 +45,42 @@ export {
 	useActorAudit,
 	useUpdateAgent,
 	useMcpSessions,
-	useMcpLastSeen,
 	useLatestMcpActivity,
 	useInstanceIdentity,
-	agentOauthGrantsKey,
-	agentOauthGrantsRootKey,
 	ServingRefreshError,
 } from '@/modules/agents/api/hooks';
 export type {
-	SetServingVariables,
-	PendingAgentsResult,
 	BindingRuleSummary,
+	BindingRulesState,
+	AgentBindingEffectiveRules,
 } from '@/modules/agents/api/hooks';
 
-export { AgentsApiError } from '@/modules/agents/api/client';
-export type {
-	ActorAuditEntry,
-	ActorUsageDetail,
-	ActorExecutionEntity,
-	UsageBucketEntity,
-	AgentPatch,
+export {
+	AgentsApiError,
+	isAgentsAccessDenied,
+	isAgentsSessionEnded,
 } from '@/modules/agents/api/client';
+export type { ActorUsageDetail, AgentPatch } from '@/modules/agents/api/client';
 
 export {
-	ACTOR_STATUSES,
-	STATUS_LABELS,
-	STATUS_BADGE_VARIANT,
 	STATUS_DOT,
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
 	ACTION_VARIANT,
-	toActorStatus,
 } from '@/modules/agents/api/types';
 
 export type {
 	ActorStatus,
-	ActorVerb,
 	AgentAction,
-	AgentBindableCredential,
 	AgentEntity,
-	ApiKeyHistoryEntry,
-	ApiKeyInfoEntity,
-	ApiKeyResult,
 	BindingPermissionRule,
 	BindingPermissionTestResult,
+	BindingRuleSetEntity,
 	CredentialBindingEntity,
-	InstanceIdentityEntity,
-	McpLastSeen,
 	McpSessionEntity,
 	OAuthGrantEntity,
 	PermissionCatalogEntry,
 	PermissionRuleInput,
-	ServedApiEntity,
-	Attribution,
 } from '@/modules/agents/api/types';
 
-export { mcpClientLabel, isServiceAccountSuccessor } from '@/modules/agents/api/types';
+export { mcpClientLabel } from '@/modules/agents/api/types';

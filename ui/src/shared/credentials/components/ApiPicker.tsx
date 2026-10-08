@@ -10,21 +10,14 @@ import {
 	Sparkles,
 	Zap,
 } from 'lucide-react';
-import {
-	AgentBadge,
-	Badge,
-	EmptyState,
-	ErrorAlert,
-	Input,
-	LoadingState,
-	VendorIcon,
-} from '@/shared/ui';
+import { Badge, EmptyState, ErrorAlert, Input, LoadingState, Tag, VendorIcon } from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
 import { apiRefDisplayName } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import {
 	apiRowToSelected,
+	catalogToSelected,
 	useApis,
 	useCatalog,
 	useVendors,
@@ -70,6 +63,9 @@ export interface ApiPickerProps {
 	/** Short badge explaining why a `disabledKeys` row is out (e.g. "Already added");
 	 * a function labels each row by its `apiRefKey`. */
 	disabledLabel?: string | ((key: string) => string | undefined);
+	/** A quiet note on a row that stays pickable (e.g. "Added via GitHub — personal"),
+	 * by `apiRefKey`. */
+	rowHint?: (key: string) => string | undefined;
 	/** The search box, for a host that must move focus there itself (e.g. a sheet
 	 * re-opened without remounting the picker). */
 	searchInputRef?: RefObject<HTMLInputElement | null>;
@@ -89,33 +85,6 @@ const ROW_VARIANTS: Variants = {
 	show: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
 };
 
-function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
-	// The identity a catalog import registers: vendor is the entry's `vendor`, and
-	// name is the WHOLE `api_id` (`abstractapi.com/ip-geolocation-api`), which the
-	// backend slugs to `abstractapi-com-ip-geolocation-api`. A credential saved
-	// from this pick must carry that same identity — the broker only finds a
-	// credential whose name matches the registered API's — so this mirrors the
-	// import rather than splitting the slug itself.
-	//
-	// The label reads from `api_id` through the shared helper the workspace rows
-	// use, so one API never titles two ways in this picker. Version isn't on the
-	// catalog entry; a credential leaves it unpinned anyway.
-	const slug = entry.api_id;
-	const vendor = entry.vendor ?? slug.split('/')[0] ?? slug;
-	const name = slug;
-	const version = '1.0.0';
-	return {
-		source: 'catalog',
-		vendor,
-		name,
-		version,
-		apiId: slug,
-		specUrl: entry.spec_url ?? undefined,
-		registered: entry.registered,
-		label: apiRefDisplayName({ catalogApiId: slug, vendor, name }),
-	};
-}
-
 export function ApiPicker({
 	onSelect,
 	onVendorSelect,
@@ -123,6 +92,7 @@ export function ApiPicker({
 	selectedKeys,
 	disabledKeys,
 	disabledLabel,
+	rowHint,
 	emptyAction,
 	searchInputRef,
 }: ApiPickerProps) {
@@ -218,7 +188,7 @@ export function ApiPicker({
 
 	// Presence, not emptiness, switches the rows into checkbox mode.
 	const selection: RowSelection | undefined = selectedKeys
-		? { selectedKeys, disabledKeys, disabledLabel }
+		? { selectedKeys, disabledKeys, disabledLabel, rowHint }
 		: undefined;
 
 	return (
@@ -242,7 +212,7 @@ export function ApiPicker({
 					<button
 						type="button"
 						onClick={onManualEntry}
-						className="text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
+						className="text-muted-foreground hover:text-foreground hover:bg-tint-2 focus-visible:ring-ring inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none"
 					>
 						<PencilLine className="h-3.5 w-3.5" />
 						Enter manually
@@ -304,7 +274,7 @@ export function ApiPicker({
 						From the Jentic public catalog
 					</SectionHeading>
 					{localRows.length === 0 && (
-						<p className="text-muted-foreground/80 mb-2 text-xs">
+						<p className="text-muted-foreground mb-2 text-xs">
 							{/* Multi-select hosts save no credential here, and they
 							    tally the import count themselves. */}
 							{selection
@@ -350,7 +320,7 @@ export function ApiPicker({
 			)}
 
 			{isInitialEmpty && (
-				<div className="border-border bg-muted/30 flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-center">
+				<div className="bg-field border-border/60 flex flex-col items-center gap-2 rounded-lg border border-dashed py-10 text-center">
 					<Sparkles className="text-muted-foreground h-6 w-6" />
 					<p className="text-foreground text-sm font-medium">
 						Search 10,000+ APIs from the public catalog
@@ -369,7 +339,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 	return (
 		<p
 			id={id}
-			className="text-muted-foreground mb-1.5 px-1 font-mono text-[10px] tracking-widest uppercase"
+			className="text-foreground-faint mb-1.5 px-1 text-[10.5px] font-bold tracking-[0.08em] uppercase"
 		>
 			{children}
 		</p>
@@ -381,6 +351,7 @@ interface RowSelection {
 	selectedKeys: ReadonlySet<string>;
 	disabledKeys?: ReadonlySet<string>;
 	disabledLabel?: ApiPickerProps['disabledLabel'];
+	rowHint?: ApiPickerProps['rowHint'];
 }
 
 /**
@@ -415,6 +386,7 @@ function PickerRow({
 		typeof selection?.disabledLabel === 'function'
 			? selection.disabledLabel(key)
 			: selection?.disabledLabel;
+	const hint = blocked ? undefined : selection?.rowHint?.(key);
 	return (
 		<button
 			type="button"
@@ -425,23 +397,29 @@ function PickerRow({
 			data-testid="picker-row"
 			data-source={source}
 			className={cn(
-				'group border-border bg-background flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all',
-				blocked
-					? 'cursor-not-allowed opacity-60'
-					: 'hover:border-primary/50 hover:bg-muted/40 hover:shadow-sm',
-				checked && 'border-primary/60 bg-primary/5',
+				'group bg-field focus-visible:ring-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none',
+				blocked ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-tonal',
+				checked && 'bg-surface-selected shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
 			)}
 		>
 			{selection && <TickBox checked={!!checked} />}
-			<AgentBadge id={badgeKey} name={api.label} kind="API" size="sm" />
+			<VendorIcon name={api.label} vendor={badgeKey} size="sm" />
 			<div className="min-w-0 flex-1">
-				<span className="text-foreground block truncate text-sm font-medium">
+				<span className="text-foreground-name block truncate text-sm font-semibold">
 					{api.label}
 				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{meta}</p>
+				<p className="text-foreground-sub mt-0.5 truncate font-mono text-xs">{meta}</p>
+				{hint && (
+					<p
+						data-testid="picker-row-hint"
+						className="text-muted-foreground mt-0.5 truncate text-xs"
+					>
+						{hint}
+					</p>
+				)}
 			</div>
 			{blocked && blockedLabel ? (
-				<Badge variant="default" className="shrink-0 text-[10px]">
+				<Badge variant="neutral" className="shrink-0">
 					{blockedLabel}
 				</Badge>
 			) : (
@@ -492,9 +470,7 @@ function LocalApiRow({
 				schemes.length > 0 && (
 					<div className="flex shrink-0 gap-1">
 						{schemes.slice(0, 2).map((t) => (
-							<Badge key={t} variant="default" className="text-[10px]">
-								{prettySchemeType(t)}
-							</Badge>
+							<Tag key={t}>{prettySchemeType(t)}</Tag>
 						))}
 					</div>
 				)
@@ -525,7 +501,7 @@ function CatalogRow({
 			selection={selection}
 			trailing={
 				entry.registered && (
-					<Badge variant="success" className="shrink-0 text-[10px]">
+					<Badge variant="success" className="shrink-0">
 						Imported
 					</Badge>
 				)
@@ -546,12 +522,12 @@ function VendorTile({
 			type="button"
 			onClick={(): void => onSelect(vendor)}
 			data-testid="vendor-tile"
-			className="group hover:border-primary/60 bg-background border-border relative flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all hover:shadow-md"
+			className="group bg-field hover:bg-surface-tonal focus-visible:ring-ring relative flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
 		>
 			<VendorIcon name={vendor.display_name} vendor={vendor.vendor} size="md" />
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
-					<p className="text-foreground truncate text-sm font-semibold">
+					<p className="text-foreground-name truncate text-sm font-semibold">
 						{vendor.source === 'db'
 							? vendor.name
 							: `Sign in with ${vendor.display_name}`}

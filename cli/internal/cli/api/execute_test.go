@@ -1123,6 +1123,41 @@ func TestExecuteCmdMethodPathDirect(t *testing.T) {
 	}
 }
 
+// TestExecuteCmdMethodPathRefusesTrace pins the TRACE refusal on the command's
+// real resolve path (app.resolveOperation → agentops.ResolveOperation) for the
+// broker-relative METHOD:/path short-circuit: the request must never be dialed,
+// and the failure is a coded RESOLVE_FAILED (exit 2) — not a 405 with exit 0.
+func TestExecuteCmdMethodPathRefusesTrace(t *testing.T) {
+	var dialed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dialed = true
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "TRACE:/v1/debug",
+		"--json",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	err := root.Execute()
+	if dialed {
+		t.Fatal("TRACE:/path was sent to the broker; it must be refused at resolve time")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("err = %T (%v), want *ux.CodedError with %q", err, err, ux.CodeResolveFailed)
+	}
+}
+
 func TestExecuteCmdMethodPathWithPathParams(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1210,6 +1245,11 @@ func TestParseMethodPath(t *testing.T) {
 		{"post:/v1/users", "POST", "/v1/users"},
 		{"DELETE:/v1/items/{id}", "DELETE", "/v1/items/{id}"},
 		{"PATCH:/v1/pets/42", "PATCH", "/v1/pets/42"},
+		// TRACE is part of the OpenAPI method set the registry ingests, so the
+		// parser recognises it: whether execute will *serve* the method is a
+		// resolve-time policy call (agentops.ResolveOperation rejects TRACE),
+		// not something this grammar decides.
+		{"TRACE:/v1/debug", "TRACE", "/v1/debug"},
 		{"listPets", "", ""},
 		{"createUser", "", ""},
 		{"notamethod:/foo", "", ""},
@@ -1713,5 +1753,120 @@ func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
 	}
 	if !strings.Contains(coded.Msg, "malformed broker_url") {
 		t.Errorf("error should name the malformed broker_url: %q", coded.Msg)
+	}
+}
+
+func TestExecuteCmdBrokerResolveFailureExits2(t *testing.T) {
+	// #1429: a broker-origin 400 that is not a denial (here an unknown
+	// Jentic-Credential-Id) means the call never reached the upstream. It must
+	// exit 2 with RESOLVE_FAILED, not print the problem body and exit 0 — on the
+	// default, --json, and --raw paths alike. The broker embeds the caller's own
+	// covering credentials; those candidates must survive into the coded error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusBadRequest)
+		// The broker's real problem_body shape: message in title, no detail.
+		_, _ = w.Write([]byte(`{"type":"credential_id_not_found",` +
+			`"title":"Credential id cred_nope is not among your credentials","status":400,"error_origin":"broker",` +
+			`"candidates":[{"id":"cred_real","name":"prod","last4":"real","created_at":null}]}`))
+	}))
+	defer srv.Close()
+
+	for _, extra := range [][]string{nil, {"--json"}, {"--raw"}} {
+		t.Run(strings.Join(append([]string{"default"}, extra...), " "), func(t *testing.T) {
+			app := testApp(t)
+			seedRegistered(t, app, "default", srv.URL)
+			out := new(bytes.Buffer)
+			errBuf := new(bytes.Buffer)
+			app.Out = out
+			app.Err = errBuf
+			root := newAPIRootCmd(app.App)
+			root.SetOut(out)
+			root.SetErr(errBuf)
+			root.SetArgs(append([]string{
+				"execute", "GET:/v1/pets",
+				"--header", "Jentic-Credential-Id=cred_nope",
+				"--broker-scheme", "http",
+				"--broker-host", srv.Listener.Addr().String(),
+			}, extra...))
+
+			err := root.Execute()
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed || coded.ExitCode() != 2 {
+				t.Fatalf("args %v: want RESOLVE_FAILED exit 2, got err=%v", extra, err)
+			}
+			if !strings.Contains(coded.Msg, "cred_nope") {
+				t.Errorf("args %v: message should carry the broker detail, got %q", extra, coded.Msg)
+			}
+			// The relayed candidates must reach the agent so it can pick a valid id
+			// without a follow-up whoami/creds list.
+			candidates, _ := coded.Details["candidates"].([]any)
+			if len(candidates) != 1 {
+				t.Errorf("args %v: details[candidates] = %v, want the broker's one candidate relayed",
+					extra, coded.Details["candidates"])
+			}
+			if !strings.Contains(coded.Actionable, "cred_real (prod)") {
+				t.Errorf("args %v: the recovery step should name the candidate, got %q", extra, coded.Actionable)
+			}
+
+			// Stream separation: the problem body is still written to stdout for a
+			// machine to parse; the coded error is left for the root reporter to
+			// render on stderr.
+			switch {
+			case contains(extra, "--json"):
+				var envelope map[string]any
+				if jerr := json.Unmarshal(out.Bytes(), &envelope); jerr != nil {
+					t.Fatalf("--json stdout should be the parseable envelope: %v\nraw: %s", jerr, out.String())
+				}
+				if envelope["status"] != float64(400) {
+					t.Errorf("--json envelope status = %v, want 400", envelope["status"])
+				}
+			case contains(extra, "--raw"):
+				if !strings.Contains(out.String(), "cred_nope") {
+					t.Errorf("--raw stdout should carry the raw problem body, got %q", out.String())
+				}
+			default:
+				if !strings.Contains(out.String(), "cred_nope") {
+					t.Errorf("default stdout should carry the broker problem body, got %q", out.String())
+				}
+			}
+			// The recovery renders once, via the root error reporter (Actionable);
+			// the command itself must not print a second copy of it.
+			if strings.Contains(errBuf.String(), "cred_real") {
+				t.Errorf("args %v: the recovery must not be printed twice, got %q", extra, errBuf.String())
+			}
+			if coded.IsReported() {
+				t.Errorf("args %v: the command must leave reporting to the root reporter", extra)
+			}
+		})
+	}
+}
+
+func TestExecuteCmdUpstream400StillExits0(t *testing.T) {
+	// The other side of #1429: an upstream 4xx the broker merely relayed is the
+	// caller's data and keeps exiting 0.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Jentic-Error-Origin", "upstream")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid pet name"}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	app.Out = new(bytes.Buffer)
+	app.Err = new(bytes.Buffer)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(app.Out)
+	root.SetErr(app.Err)
+	root.SetArgs([]string{
+		"execute", "GET:/v1/pets",
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("an upstream 400 must exit 0, got %v", err)
 	}
 }

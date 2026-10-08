@@ -108,3 +108,65 @@ export function parseSpecOperations(spec: unknown): ParsedSpec {
 
 	return { securitySchemes, operations };
 }
+
+/** How a resolved spec treats authentication — see {@link specAuthRequirement}. */
+export type SpecAuthRequirement = 'required' | 'optional' | 'none';
+
+function requirementIsMandatory(raw: unknown): boolean {
+	if (!Array.isArray(raw) || raw.length === 0) return false;
+	return raw.every((entry) => {
+		const rec = asRecord(entry);
+		return rec != null && Object.keys(rec).length > 0;
+	});
+}
+
+function requirementOffersScheme(raw: unknown): boolean {
+	if (!Array.isArray(raw)) return false;
+	return raw.some((entry) => {
+		const rec = asRecord(entry);
+		return rec != null && Object.keys(rec).length > 0;
+	});
+}
+
+/**
+ * Whether a resolved OpenAPI document actually REQUIRES authentication, as
+ * opposed to merely declaring `securitySchemes`:
+ *
+ *   - `required` — at least one operation's effective `security` (its own, or
+ *     the document default) lists requirements, none of them the empty `{}`
+ *     that makes auth optional
+ *   - `optional` — schemes are declared or offered, but no operation requires
+ *     one (`security: []`, or an empty `{}` alternative everywhere)
+ *   - `none` — nothing declared, nothing required
+ *
+ * `null` when the input isn't an OpenAPI document. Covers OpenAPI 3.x
+ * `components.securitySchemes` and Swagger 2 `securityDefinitions`.
+ */
+export function specAuthRequirement(spec: unknown): SpecAuthRequirement | null {
+	const doc = asRecord(spec);
+	if (!doc || (doc.openapi === undefined && doc.swagger === undefined)) return null;
+
+	const declared =
+		Object.keys(asRecord(asRecord(doc.components)?.securitySchemes) ?? {}).length > 0 ||
+		Object.keys(asRecord(doc.securityDefinitions) ?? {}).length > 0;
+
+	const effective: unknown[] = [];
+	const paths = asRecord(doc.paths);
+	if (paths) {
+		for (const pathItemRaw of Object.values(paths)) {
+			const pathItem = asRecord(pathItemRaw);
+			if (!pathItem) continue;
+			for (const method of HTTP_METHODS) {
+				const opRaw = asRecord(pathItem[method]);
+				if (!opRaw) continue;
+				effective.push(opRaw.security !== undefined ? opRaw.security : doc.security);
+			}
+		}
+	}
+	// No operations to judge by: the document default is all there is.
+	if (effective.length === 0) effective.push(doc.security);
+
+	if (effective.some(requirementIsMandatory)) return 'required';
+	if (declared || effective.some(requirementOffersScheme)) return 'optional';
+	return 'none';
+}

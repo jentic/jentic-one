@@ -18,10 +18,17 @@
  * Links from before the redesign carried a `?tab=` vocabulary; they're
  * rewritten on arrival (see LEGACY_TABS).
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
 import { ArrowLeft, Maximize2 } from 'lucide-react';
-import { Button, CardFooter, PageShell, PageHeader, PageHelp } from '@/shared/ui';
+import {
+	Button,
+	CardFooter,
+	PageShell,
+	PageHeader,
+	PageHelp,
+	useReportRightDock,
+} from '@/shared/ui';
 import { ActivityStreamPanel } from '@/shared/app/rail/ActivityStreamPanel';
 import { activityStreamVtStyle, withViewTransition } from '@/shared/app/viewTransitions';
 import { ACTIVITY_SOURCES, type ActivitySource } from '@/modules/monitor/api';
@@ -34,6 +41,7 @@ import { monitorHref } from '@/modules/monitor/lib/links';
 import { DEFAULT_WINDOW, useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { AUTO_REFRESH_MS, useUsageOverview } from '@/modules/monitor/lib/useUsageOverview';
 import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
+import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 
 /**
  * Pre-redesign `?tab=` values → what replaces them. `expand` opens the full
@@ -63,17 +71,22 @@ function windowLabel(days: number): string {
 export default function MonitorPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const isAdmin = usePermission(ORG_ADMIN);
+	const canReadAudit = useCanAccess(AUDIT_READ);
 	const filters = useMonitorFilters();
 
 	const tabParam = searchParams.get('tab');
 	const showParam = searchParams.get('show');
-	// The Audit log is org:admin; anyone else asking for it lands on Everything.
-	const sources = isAdmin ? ACTIVITY_SOURCES : ACTIVITY_SOURCES.filter((s) => s !== 'audit');
+	// The Audit log needs `audit:read` (or `org:admin`); without it the source is
+	// not offered, and a link asking for it lands on Everything.
+	const sources = canReadAudit ? ACTIVITY_SOURCES : ACTIVITY_SOURCES.filter((s) => s !== 'audit');
 	const source: ActivitySource =
 		isActivitySource(showParam) && sources.includes(showParam) ? showParam : 'all';
 	const expanded = !isAdmin || searchParams.get('view') === 'activity' || source !== 'all';
 
 	const usage = useUsageOverview({ enabled: isAdmin && !expanded });
+	// Toasts sit left of the docked Live activity panel (the grid's last column at xl).
+	const dockGridRef = useRef<HTMLDivElement>(null);
+	useReportRightDock(dockGridRef, { lastChild: true, active: !expanded });
 
 	// Arrival rewrites (replace: no history entry). Legacy `?tab=` values map
 	// onto the new vocabulary; the rest are retired params.
@@ -152,7 +165,7 @@ export default function MonitorPage() {
 								: []),
 							{
 								heading: 'Live activity',
-								body: 'Platform events — calls, jobs, approvals, alerts — newest first, as they happen. Acknowledge alerts right from the row. On the Overview it sits docked on the right; Expand opens the full log.',
+								body: 'Platform events — calls, jobs, approvals, alerts — newest first, as they happen. An alert links to where it is resolved. On the Overview it sits docked on the right; Expand opens the full log.',
 							},
 							{
 								heading: 'The full log',
@@ -216,7 +229,10 @@ export default function MonitorPage() {
 						/>
 					)}
 
-					<div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,26rem)]">
+					<div
+						ref={dockGridRef}
+						className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,26rem)]"
+					>
 						<MonitorOverview
 							state={usage}
 							linkBase={linkBase}
@@ -230,8 +246,7 @@ export default function MonitorPage() {
 							actions={
 								<Button
 									variant="ghost"
-									size="sm"
-									className="h-8 w-8 p-0"
+									size="icon-xs"
 									aria-label="Expand activity to the full log"
 									title="Expand to the full log"
 									onClick={() => setExpanded(true)}

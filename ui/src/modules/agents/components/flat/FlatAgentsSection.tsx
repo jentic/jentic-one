@@ -3,12 +3,30 @@
  * selected agent's APIs band and its tile grid. Selection lives in `?agent=<id>`
  * so it is linkable. Tiles are composed client-side from reads the app already
  * makes — no new endpoints.
+ *
+ * With no fleet in the org it shows `FirstAgentLanding`, where the first
+ * self-registered agent is approved and given its first API before the fleet
+ * view takes over. The landing's state (resume on load, the roster poll, the
+ * exits) is `useFirstAgentLanding`; its rules are `lib/firstRun.ts`.
+ *
+ * A caller known to lack `agents:read`, or a refused roster read (403), sees
+ * "No access to agents". A `?agent=` the whole roster does not hold shows
+ * "Agent not found" rather than another agent, or the first-agent landing when
+ * the roster is empty.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion, useReducedMotionConfig } from 'framer-motion';
 import { Plus } from 'lucide-react';
-import { Button, Card, ErrorAlert, ExpandableText, Skeleton, STATUS_ICON } from '@/shared/ui';
+import {
+	ActorLabel,
+	Button,
+	Card,
+	ErrorAlert,
+	ExpandableText,
+	Skeleton,
+	STATUS_ICON,
+} from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
 import {
@@ -17,12 +35,13 @@ import {
 	type ApiResponse,
 	type Credential,
 	type DrainedList,
+	type SelectedApi,
 } from '@/shared/credentials/api';
 import {
-	useAgents,
 	useAgentCredentialBindings,
 	useAgentsCredentialBindings,
 	useAgentBindingRuleSummaries,
+	useRetryBindingRules,
 	useActorUsageDetail,
 	useActorExecutions,
 	usePendingAgents,
@@ -33,34 +52,60 @@ import {
 	useUnbindAgentCredential,
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
+	isAgentsAccessDenied,
+	isAgentsSessionEnded,
+	ACTION_LABEL,
+	ACTION_VARIANT,
 	type ActorStatus,
 	type AgentEntity,
 } from '@/modules/agents/api';
 import {
+	accountLabels,
 	agentApiCount,
 	agentSetupGapCount,
 	composeApiTiles,
+	distinctApiCount,
+	multiAccountApis,
 	partitionBindings,
+	tileApiKey,
 	tileStats,
 } from '@/modules/agents/lib/apiTiles';
-import { viewerIsOrgAdmin } from '@/modules/agents/lib/bindAuthority';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
+import {
+	AGENTS_READ,
+	AGENTS_WRITE,
+	CREDENTIALS_WRITE,
+	useCanAccess,
+	useOptionalCurrentUser,
+	usePermissionsKnown,
+} from '@/shared/auth';
 import { AgentStrip } from '@/modules/agents/components/flat/AgentStrip';
 import { AgentStatStrip } from '@/modules/agents/components/flat/AgentStatStrip';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
 import { ApiAccessSidebar } from '@/modules/agents/components/flat/ApiAccessSidebar';
 import { PendingApprovalBanner } from '@/modules/agents/components/flat/PendingApprovalBanner';
+import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
 import {
 	LifecycleDialogs,
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
-import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
-import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
-import { FirstRunChecklist } from '@/modules/agents/components/flat/FirstRunChecklist';
+import { NewAgentPanel } from '@/modules/agents/components/flat/NewAgentPanel';
+import { FirstAgentLanding } from '@/modules/agents/components/flat/FirstAgentLanding';
+import {
+	AgentNotFound,
+	AgentsNoAccess,
+	AgentsSessionEnded,
+} from '@/modules/agents/components/flat/AgentAccessStates';
 import { AddApisTray } from '@/modules/agents/components/flat/AddApisTray';
 import { ApiSetupQueue } from '@/modules/agents/components/flat/ApiSetupQueue';
-import { stillOwedItems, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	preflightApis,
+	stillOwedItems,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
 import type { QueueBackSeed } from '@/modules/agents/lib/setupQueue';
+import { useFirstAgentLanding } from '@/modules/agents/lib/useFirstAgentLanding';
+import { usePreflightInputs } from '@/modules/agents/lib/usePreflightInputs';
 import { AgentDock, type AgentDockSurface } from '@/modules/agents/components/flat/AgentDock';
 import {
 	AgentActivitySheet,
@@ -84,57 +129,126 @@ interface FlatAgentsSectionProps {
 	setCreateOpen: (open: boolean) => void;
 	/** The page header's fleet filter — applied by the strip. */
 	filter: string;
+	/** Whether the zero-agents landing is on screen — the header labels itself by it. */
+	onLandingChange: (showing: boolean) => void;
 }
 
-export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAgentsSectionProps) {
-	const query = useAgents({ status: 'all' });
+export function FlatAgentsSection({
+	createOpen,
+	setCreateOpen,
+	filter,
+	onLandingChange,
+}: FlatAgentsSectionProps) {
+	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
+	// after a create it names an agent the roster hasn't refetched yet.
+	const [searchParams, setSearchParams] = useSearchParams();
+	const selectAgent = useCallback(
+		(id: string, { replace = false }: { replace?: boolean } = {}) =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set('agent', id);
+					return next;
+				},
+				{ replace },
+			),
+		[setSearchParams],
+	);
+	const clearAgentParam = useCallback(
+		() =>
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.delete('agent');
+					return next;
+				},
+				{ replace: true },
+			),
+		[setSearchParams],
+	);
+	// Known to lack `agents:read`: the roster is not requested (see
+	// `useFirstAgentLanding`), and the page reads as a refused one would.
+	const canReadAgents = useCanAccess(AGENTS_READ);
+	const permissionsKnown = usePermissionsKnown();
+	const rosterWithheld = permissionsKnown && !canReadAgents;
+
+	// The signal names the agent, not a boolean: a boolean would open the tray
+	// over whichever agent was on screen before. `queue` holds APIs the operator
+	// already chose (the landing's GitHub), which skip the tray for the queue.
+	const [addApisFor, setAddApisFor] = useState<{
+		agentId: string;
+		queue: SelectedApi[];
+	} | null>(null);
+	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+
+	const agentParam = searchParams.get('agent');
+	const approve = useApproveAgent();
+	const deny = useDenyAgent();
+	const landing = useFirstAgentLanding({
+		approve,
+		deny,
+		selectAgent,
+		selectedAgentId: agentParam,
+		openAddApis: setAddApisFor,
+	});
+	const { query } = landing;
 
 	// The strip is the fleet, with no "Load more", so drain the cursor eagerly.
 	const { fetchNextPage, hasNextPage, isFetchingNextPage, isError } = query;
 	useEagerCursorDrain({ hasNextPage, isFetchingNextPage, isError, fetchNextPage });
 
-	const agents = useMemo(() => {
-		const entities = query.data?.pages.flatMap((p) => p.entities) ?? [];
-		return [...entities].sort(
-			(a, b) =>
-				STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
-				b.createdAt.localeCompare(a.createdAt),
-		);
-	}, [query.data]);
+	const agents = useMemo(
+		() =>
+			[...landing.agents].sort(
+				(a, b) =>
+					STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+					b.createdAt.localeCompare(a.createdAt),
+			),
+		[landing.agents],
+	);
 
-	// An ABSENT `?agent=` is written back; an UNKNOWN one is left alone — just
-	// after a create it names an agent the roster hasn't refetched yet.
-	const [searchParams, setSearchParams] = useSearchParams();
-	const agentParam = searchParams.get('agent');
-	const selected = agents.find((a) => a.id === agentParam) ?? agents[0] ?? null;
-	const fallbackId = agentParam == null ? (selected?.id ?? null) : null;
+	// Until the URL catches up with an exit's hand-off, the handed-off agent is
+	// the one on screen.
+	const shownId = agentParam ?? landing.handoffAgentId;
+	// An id the settled, whole roster does not hold is not this caller's agent
+	// (another user's, an unclaimed one only an admin sees, or none). A roster
+	// still loading or refetching — just after a create — may not have it yet,
+	// and a cached one may predate an agent registered since, so the roster is
+	// read once more before the id is judged; once judged, a later background
+	// refetch does not flip it back. Until then nothing is selected, rather than
+	// another agent in its place.
+	const rosterSettled = query.isSuccess && !query.hasNextPage && !query.isFetching && !isError;
+	const paramInRoster = agentParam != null && agents.some((a) => a.id === agentParam);
+	const paramUnknown =
+		agentParam != null && !paramInRoster && agentParam !== landing.handoffAgentId;
+	const [recheckedId, setRecheckedId] = useState<string | null>(null);
+	const recheckRequested = useRef<string | null>(null);
+	const { refetch: refetchRoster } = query;
 	useEffect(() => {
-		if (fallbackId == null) return;
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.set('agent', fallbackId);
-				return next;
-			},
-			{ replace: true },
-		);
-	}, [fallbackId, setSearchParams]);
-
-	function selectAgent(id: string) {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.set('agent', id);
-				return next;
-			},
-			{ replace: false },
-		);
-	}
-
-	// The signal is the new agent's id, not a boolean: a boolean would open the
-	// tray over whichever agent was on screen before.
-	const [addApisFor, setAddApisFor] = useState<string | null>(null);
-	const clearAddApisFor = useCallback(() => setAddApisFor(null), []);
+		if (!paramUnknown || !rosterSettled || recheckRequested.current === agentParam) return;
+		recheckRequested.current = agentParam;
+		void refetchRoster().finally(() => setRecheckedId(agentParam));
+	}, [paramUnknown, rosterSettled, agentParam, refetchRoster]);
+	const [missingId, setMissingId] = useState<string | null>(null);
+	const agentNotFound =
+		paramUnknown && ((rosterSettled && recheckedId === agentParam) || missingId === agentParam);
+	useEffect(() => {
+		setMissingId(agentNotFound ? agentParam : null);
+	}, [agentNotFound, agentParam]);
+	const selected = paramUnknown
+		? null
+		: (agents.find((a) => a.id === shownId) ?? agents[0] ?? null);
+	// Written back only once the fleet view is decided and on screen, so the
+	// landing leaves the URL plain — and not while a hand-off's own selection
+	// is still on its way.
+	const fleetShown = landing.ready && !landing.visible;
+	const fallbackId =
+		agentParam == null && fleetShown && landing.handoffAgentId == null
+			? (selected?.id ?? null)
+			: null;
+	useEffect(() => {
+		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
+	}, [fallbackId, selectAgent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
 	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
@@ -151,16 +265,16 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 	}, []);
 
 	function handleAgentCreated(agent: AgentEntity, opts: { addApis: boolean }) {
-		// Selected either way: the operator just named this agent.
+		// Selected either way: the operator just named this agent. The fleet view
+		// shows once the roster has it.
 		selectAgent(agent.id);
-		setAddApisFor(opts.addApis ? agent.id : null);
+		setAddApisFor(opts.addApis ? { agentId: agent.id, queue: [] } : null);
+		landing.finishedElsewhere(agent.id);
 	}
 
 	// Same cache slice the nav badge polls; `atLeast` hedges an incomplete drain.
 	const { agents: pendingAgents, atLeast: pendingAtLeast } = usePendingAgents();
 
-	const approve = useApproveAgent();
-	const deny = useDenyAgent();
 	const disable = useDisableAgent();
 	const archive = useArchiveAgent();
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
@@ -211,55 +325,140 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 		return map;
 	}, [agentIds, bindingsByAgent, apisSource.complete, apisSource.items]);
 
+	const firstPageFailed = Boolean(query.error && !query.data);
+	const loading = query.isPending || !landing.ready;
+	const landingWanted = !rosterWithheld && !firstPageFailed && !loading && landing.visible;
+	// A `?agent=` the roster does not hold is judged before the landing shows, so an
+	// empty roster reads "Agent not found" for it too, not the first-agent landing.
+	const landingShown = landingWanted && !paramUnknown;
+	// Before paint, so the header's label never disagrees with the body.
+	useLayoutEffect(() => onLandingChange(landingShown), [landingShown, onLandingChange]);
+
 	// Rendered by every branch below: the header's "New agent" flips `createOpen`
-	// from outside, and a loading roster would otherwise swallow the click.
-	const createSheet = (
-		<AgentCreateSheet
-			open={createOpen}
-			onClose={() => setCreateOpen(false)}
-			onCreated={handleAgentCreated}
-		/>
+	// from outside, and a loading roster would otherwise swallow the click. The
+	// lifecycle confirms serve the landing, the panel and the fleet.
+	const overlays = (
+		<>
+			<NewAgentPanel
+				open={createOpen}
+				onClose={() => setCreateOpen(false)}
+				onCreated={handleAgentCreated}
+				initialName={landingShown ? landing.commandName : undefined}
+				approve={approve}
+				deny={deny}
+				onDeny={({ id, name }) => setConfirm({ kind: 'deny', id, name })}
+				onExit={(agent, to) => {
+					selectAgent(agent.id);
+					setAddApisFor(
+						to.kind === 'skip'
+							? null
+							: { agentId: agent.id, queue: to.kind === 'queue' ? to.apis : [] },
+					);
+					landing.finishedElsewhere(agent.id);
+				}}
+				onShowFleet={(agent) => selectAgent(agent.id)}
+			/>
+			<LifecycleDialogs
+				confirm={confirm}
+				onClose={() => setConfirm(null)}
+				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
+				mutations={{ deny, disable, archive }}
+			/>
+		</>
 	);
+
+	if (rosterWithheld) {
+		return (
+			<>
+				<AgentsNoAccess />
+				{overlays}
+			</>
+		);
+	}
 
 	// A failed FIRST page is a dead surface; a failed LATER page keeps the loaded
 	// fleet on screen, with the inline notice below offering the retry.
-	if (query.error && !query.data) {
+	if (firstPageFailed) {
 		return (
 			<>
-				<ErrorAlert message={query.error as Error} />
-				{createSheet}
+				{isAgentsAccessDenied(query.error) ? (
+					<AgentsNoAccess />
+				) : isAgentsSessionEnded(query.error) ? (
+					<AgentsSessionEnded />
+				) : (
+					<ErrorAlert message={query.error as Error} />
+				)}
+				{overlays}
 			</>
 		);
 	}
 
-	if (query.isPending) {
+	const loadingState = (
+		<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
+			<span className="sr-only">Loading agents…</span>
+			{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
+			<Skeleton className="h-11 w-full max-w-md rounded-lg" />
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+				{[0, 1, 2].map((i) => (
+					<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
+				))}
+			</div>
+		</div>
+	);
+
+	// Until the resume decision is known, neither the fleet nor the landing.
+	if (loading) {
 		return (
 			<>
-				<div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
-					<span className="sr-only">Loading agents…</span>
-					{/* Shaped like the tab rail, so the first paint doesn't reflow. */}
-					<Skeleton className="h-11 w-full max-w-md rounded-lg" />
-					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-						{[0, 1, 2].map((i) => (
-							<Skeleton key={i} className="h-44 rounded-xl" />
-						))}
-					</div>
-				</div>
-				{createSheet}
+				{loadingState}
+				{overlays}
 			</>
 		);
 	}
 
-	if (agents.length === 0) {
+	// The landing's roster does not hold the linked agent: "Agent not found" once
+	// the roster has been read again, loading until then. "Show my agents" drops
+	// the link, which brings the landing back.
+	if (landingWanted && paramUnknown) {
 		return (
 			<>
-				{/* Agents is the app's home, so an empty fleet is a fresh workspace:
-				    the setup steps, then the self-registration route. */}
-				<div className="space-y-4">
-					<FirstRunChecklist onCreateAgent={() => setCreateOpen(true)} />
-					<DcrQuickstart />
-				</div>
-				{createSheet}
+				{agentNotFound ? <AgentNotFound onShowAgents={clearAgentParam} /> : loadingState}
+				{overlays}
+			</>
+		);
+	}
+
+	if (landingShown) {
+		const landingAgent = landing.agent;
+		return (
+			<>
+				{/* Agents is the app's home, so an empty fleet is a fresh workspace. */}
+				<FirstAgentLanding
+					onCreateAgent={() => setCreateOpen(true)}
+					agent={landingAgent}
+					onApprove={() => {
+						if (landingAgent) approve.mutate(landingAgent.id);
+					}}
+					approvePending={landing.approving}
+					onDeny={() => {
+						if (landingAgent)
+							setConfirm({
+								kind: 'deny',
+								id: landingAgent.id,
+								name: landingAgent.name,
+							});
+					}}
+					onExit={landing.exit}
+					registerName={landing.registerName}
+					onRegisterNameChange={landing.setRegisterName}
+					commandName={landing.commandName}
+					registerNameDuplicateOf={landing.registerNameDuplicateOf}
+					expectedName={landing.expectedName}
+					morePending={landing.morePending}
+					onShowFleet={landing.showFleet}
+					slotRef={landing.slotRef}
+				/>
+				{overlays}
 			</>
 		);
 	}
@@ -296,6 +495,12 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				/>
 			)}
 
+			{agentNotFound && (
+				<AgentNotFound
+					onShowAgents={agents.length > 0 ? () => selectAgent(agents[0].id) : undefined}
+				/>
+			)}
+
 			{selected && (
 				<SelectedAgentPanel
 					key={selected.id}
@@ -307,7 +512,13 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 					onCloseTile={() => setOpenTileKey(null)}
 					onApprove={() => approve.mutate(selected.id)}
 					approvePending={approve.isPending && approve.variables === selected.id}
-					autoOpenAddApis={addApisFor === selected.id}
+					onDeny={() =>
+						setConfirm({ kind: 'deny', id: selected.id, name: selected.name })
+					}
+					autoOpenAddApis={addApisFor?.agentId === selected.id}
+					autoQueueApis={
+						addApisFor?.agentId === selected.id ? addApisFor.queue : EMPTY_PICKS
+					}
 					onAutoOpenAddApisConsumed={clearAddApisFor}
 					queueBatch={queueBatches[selected.id] ?? EMPTY_BATCH}
 					onQueueBatchChange={setQueueBatchFor}
@@ -358,13 +569,7 @@ export function FlatAgentsSection({ createOpen, setCreateOpen, filter }: FlatAge
 				</>
 			)}
 
-			<LifecycleDialogs
-				confirm={confirm}
-				onClose={() => setConfirm(null)}
-				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
-				mutations={{ deny, disable, archive }}
-			/>
-			{createSheet}
+			{overlays}
 		</>
 	);
 }
@@ -398,39 +603,53 @@ type BanneredStatus = Exclude<ActorStatus, 'active' | 'disabled'>;
 /** Per-state banner tint — about attention, not editability. */
 const NON_ACTIVE_BANNER: Record<BanneredStatus, { shell: string; chip: string }> = {
 	pending: {
-		shell: 'border-warning/40 bg-warning/[0.04]',
+		shell: 'bg-warning/10',
 		chip: 'bg-warning/15 text-warning',
 	},
 	rejected: {
-		shell: 'border-danger/40 bg-danger/[0.04]',
+		shell: 'bg-danger/10',
 		chip: 'bg-danger/15 text-danger',
 	},
 	archived: {
-		shell: 'border-border/70 bg-muted/20',
-		chip: 'bg-muted-foreground/10 text-muted-foreground/70',
+		shell: 'bg-surface-1',
+		chip: 'bg-surface-field text-muted-foreground',
 	},
 };
 
 /** The notice above the grid — and, for pending, the decision itself. */
 function StateBanner({
+	agentId,
 	status,
 	denialReason,
+	deniedBy,
 	onApprove,
 	approvePending,
+	onDeny,
 }: {
+	agentId: string;
 	status: BanneredStatus;
 	denialReason: string | null;
+	deniedBy: string | null;
 	onApprove: () => void;
 	approvePending: boolean;
+	onDeny: () => void;
 }) {
 	const { shell, chip } = NON_ACTIVE_BANNER[status];
 	const Icon = STATUS_ICON[status];
+	const grantId = useId();
+	// Approving or denying needs `agents:write` (or `org:admin`); anyone else
+	// reads the state without the verbs.
+	const canDecide = useCanAccess(AGENTS_WRITE);
+	const detail =
+		status === 'pending' && !canDecide
+			? 'Not serving traffic. Someone who can manage agents needs to approve it.'
+			: NON_ACTIVE_COPY[status].detail;
 	return (
 		<div
 			role="status"
 			data-testid={`agent-state-banner-${status}`}
 			className={cn(
-				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-xl border p-3 sm:flex-nowrap',
+				'flex flex-wrap items-center gap-x-3 gap-y-3 rounded-lg p-3 sm:flex-nowrap',
 				shell,
 			)}
 		>
@@ -445,14 +664,47 @@ function StateBanner({
 					{NON_ACTIVE_COPY[status].title}
 				</p>
 				<p className="text-muted-foreground text-xs leading-snug">
-					{NON_ACTIVE_COPY[status].detail}
+					{detail}
 					{status === 'rejected' && denialReason && <> Reason: {denialReason}</>}
+					{status === 'rejected' && deniedBy && (
+						<>
+							{' '}
+							Denied by <ActorLabel actorId={deniedBy} />.
+						</>
+					)}
+					{status === 'pending' && (
+						<>
+							{' '}
+							<ApprovalGrantNote agentId={agentId} id={grantId} />
+						</>
+					)}
 				</p>
 			</div>
-			{status === 'pending' && (
-				<Button size="sm" loading={approvePending} onClick={onApprove} className="shrink-0">
-					Approve
-				</Button>
+			{status === 'pending' && canDecide && (
+				// The banner pins the longest-waiting agent only; any OTHER pending
+				// agent is decided here, so both verbs sit on its own panel — in the
+				// order and weights every approval surface uses: Approve, then Deny.
+				<span className="flex shrink-0 items-center gap-2">
+					<Button
+						size="sm"
+						variant={ACTION_VARIANT.approve}
+						loading={approvePending}
+						onClick={onApprove}
+						aria-describedby={grantId}
+						data-testid="state-banner-approve"
+					>
+						{ACTION_LABEL.approve}
+					</Button>
+					<Button
+						size="sm"
+						variant={ACTION_VARIANT.deny}
+						disabled={approvePending}
+						onClick={onDeny}
+						data-testid="state-banner-deny"
+					>
+						{ACTION_LABEL.deny}
+					</Button>
+				</span>
 			)}
 		</div>
 	);
@@ -484,10 +736,14 @@ interface SelectedAgentPanelProps {
 	onCloseTile: () => void;
 	onApprove: () => void;
 	approvePending: boolean;
+	/** Open the page's reason-required deny dialog for this (pending) agent. */
+	onDeny: () => void;
 	/** This agent was just created and its APIs are the next step. */
 	autoOpenAddApis: boolean;
 	/** Spend the signal, so re-selecting this agent later does not reopen the tray. */
 	onAutoOpenAddApisConsumed: () => void;
+	/** APIs already chosen: the auto-open skips the tray and queues these. */
+	autoQueueApis: SelectedApi[];
 	/** Owned by the parent, because this panel remounts on every agent switch. */
 	queueBatch: PreflightItem[];
 	onQueueBatchChange: (agentId: string, items: PreflightItem[]) => void;
@@ -495,6 +751,7 @@ interface SelectedAgentPanelProps {
 
 /** Stable empty batch, so an agent with nothing pending doesn't re-render. */
 const EMPTY_BATCH: PreflightItem[] = [];
+const EMPTY_PICKS: SelectedApi[] = [];
 
 /** DOM id of the API access sidebar panel (the tiles' aria-controls target). */
 const API_ACCESS_SIDEBAR_ID = 'api-access-sidebar';
@@ -508,12 +765,14 @@ function SelectedAgentPanel({
 	onCloseTile,
 	onApprove,
 	approvePending,
+	onDeny,
 	autoOpenAddApis,
 	onAutoOpenAddApisConsumed,
+	autoQueueApis,
 	queueBatch,
 	onQueueBatchChange,
 }: SelectedAgentPanelProps) {
-	const reducedMotion = useReducedMotion();
+	const reducedMotion = useReducedMotionConfig();
 	/** Which step of the Add-APIs flow is on screen. */
 	const [addStep, setAddStep] = useState<'closed' | 'tray' | 'queue'>('closed');
 	/** Set while the tray is editing the queue's batch (the queue's Back). The queue
@@ -559,6 +818,10 @@ function SelectedAgentPanel({
 		[liveBindings],
 	);
 	const ruleSummaries = useAgentBindingRuleSummaries(agent.id, credentialIds);
+	const retryRules = useRetryBindingRules(agent.id);
+	// A Blocked status opens the sheet ON its rules editor: the tile key whose
+	// next open should land on "Add rule" (spent by the sheet once focused).
+	const [rulesFocusKey, setRulesFocusKey] = useState<string | null>(null);
 	const purgeableOrphanIds = useMemo(
 		() => orphanBindings.map((b) => b.credentialId),
 		[orphanBindings],
@@ -569,9 +832,16 @@ function SelectedAgentPanel({
 		() => composeApiTiles(liveBindings, credentialsSource.items, apisSource.items),
 		[liveBindings, credentialsSource.items, apisSource.items],
 	);
-	const stats = useMemo(() => tileStats(tiles), [tiles]);
+	const stats = useMemo(
+		() => tileStats(tiles, (tile) => ruleSummaries.get(tile.credentialId)),
+		[tiles, ruleSummaries],
+	);
+	// APIs reached through several credentials: each such tile names its credential
+	// and carries a chip saying how a call picks between them.
+	const multiAccount = useMemo(() => multiAccountApis(tiles), [tiles]);
+	const tileAccountLabels = useMemo(() => accountLabels(tiles), [tiles]);
 
-	// The same per-actor read the console's KPI strip makes; `null` on 403.
+	// The per-actor 7-day usage rollup; `null` on 403.
 	const usageQuery = useActorUsageDetail(agent.id);
 	const executionsQuery = useActorExecutions(agent.id);
 
@@ -609,8 +879,9 @@ function SelectedAgentPanel({
 	const joinLoading =
 		!joinFailed && (bindingsQuery.isPending || (hasBindings && sourcesDraining));
 	const stripAccess = joinLoading ? undefined : joinFailed ? null : stats;
-	// The grid's own length, so the number beside "APIs" is what is on screen.
-	const apiCount = joinLoading || joinFailed ? null : tiles.length;
+	// The grid's own APIs, so the number beside "APIs" is what is on screen —
+	// one per API, however many credentials draw it.
+	const apiCount = joinLoading || joinFailed ? null : distinctApiCount(tiles);
 	const stripCredentialCount = bindingsQuery.isPending
 		? undefined
 		: bindingsFailed
@@ -632,22 +903,30 @@ function SelectedAgentPanel({
 		agent.status === 'active' || agent.status === 'disabled' ? null : agent.status;
 
 	const isArchived = agent.status === 'archived';
-	// Only pending (cannot authenticate yet), rejected and archived block binding.
-	const canBind = agent.status === 'active' || agent.status === 'disabled';
+	// Only pending (cannot authenticate yet), rejected and archived block binding,
+	// and binding needs `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
+	// Finishing a sign-in is a credential write, as in the access sidebar.
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
+	const statusAllowsBind = agent.status === 'active' || agent.status === 'disabled';
+	const canBind = statusAllowsBind && canManage;
 	const bindBlockedReason =
-		agent.status === 'pending'
-			? 'Approve this agent before giving it APIs.'
-			: agent.status === 'rejected'
-				? 'A rejected agent cannot be given APIs.'
-				: isArchived
-					? 'An archived agent cannot be given APIs.'
-					: null;
+		statusAllowsBind && !canManage
+			? 'Adding APIs needs permission to manage agents.'
+			: agent.status === 'pending'
+				? 'Approve this agent before giving it APIs.'
+				: agent.status === 'rejected'
+					? 'A rejected agent cannot be given APIs.'
+					: isArchived
+						? 'An archived agent cannot be given APIs.'
+						: null;
 
 	// Re-entry lands on the queue while a batch is owed — those picks are decided.
-	// "Owed" is judged against the live bindings whenever the queue is shut: an API
-	// the agent now reaches (bound by the queue, or elsewhere meanwhile) is done, so
-	// it leaves the batch rather than holding "Finish adding N" or reopening. Never
-	// pruned while the queue is open — it tracks its own progress.
+	// "Owed" is judged against the live bindings whenever the queue is shut: an item
+	// a new binding now serves (bound by the queue, or elsewhere meanwhile) is done,
+	// so it leaves the batch rather than holding "Finish adding N" or reopening. A
+	// second-account item is not settled by the account the agent already had.
+	// Never pruned while the queue is open — it tracks its own progress.
 	const queueShut = addStep === 'closed';
 	const owedBatch = useMemo(
 		() =>
@@ -667,11 +946,39 @@ function SelectedAgentPanel({
 	// Hold the signal until the agent can actually bind, then spend it opening the
 	// tray. Consuming before the `canBind` gate would drop a live intent for a
 	// not-yet-approved agent; once it's approvable the same signal still fires.
+	// APIs already chosen skip the tray: they are preflighted exactly as the
+	// tray's Continue would, then handed to the queue — a pick the agent already
+	// reaches included, which adds another credential. A preflight that can't run
+	// (a failed read) falls back to the tray.
+	const preflight = usePreflightInputs(bindings);
+	const bindingsFailedToLoad = bindingsQuery.isError;
 	useEffect(() => {
 		if (!autoOpenAddApis || !canBind) return;
+		if (
+			autoQueueApis.length === 0 ||
+			preflight.credentialsSource.error ||
+			bindingsFailedToLoad
+		) {
+			onAutoOpenAddApisConsumed();
+			setAddStep('tray');
+			return;
+		}
+		if (!preflight.ready) return;
 		onAutoOpenAddApisConsumed();
-		setAddStep('tray');
-	}, [autoOpenAddApis, canBind, onAutoOpenAddApisConsumed]);
+		onQueueBatchChange(agent.id, preflightApis(autoQueueApis, preflight.inputs));
+		setAddStep('queue');
+	}, [
+		autoOpenAddApis,
+		canBind,
+		onAutoOpenAddApisConsumed,
+		autoQueueApis,
+		bindingsFailedToLoad,
+		preflight.credentialsSource.error,
+		preflight.ready,
+		preflight.inputs,
+		onQueueBatchChange,
+		agent.id,
+	]);
 
 	const addApisButton = !isArchived && (
 		<span className="flex items-center gap-2">
@@ -705,10 +1012,13 @@ function SelectedAgentPanel({
 
 			{bannerStatus && (
 				<StateBanner
+					agentId={agent.id}
 					status={bannerStatus}
 					denialReason={agent.denialReason}
+					deniedBy={agent.attribution.deniedBy}
 					onApprove={onApprove}
 					approvePending={approvePending}
+					onDeny={onDeny}
 				/>
 			)}
 
@@ -738,11 +1048,11 @@ function SelectedAgentPanel({
 					role="status"
 					aria-live="polite"
 					aria-busy="true"
-					className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+					className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
 				>
 					<span className="sr-only">Loading APIs…</span>
 					{[0, 1, 2].map((i) => (
-						<Skeleton key={i} className="h-44 rounded-xl" />
+						<Skeleton key={i} className="bg-surface-1 h-[154px] rounded-lg" />
 					))}
 				</div>
 			) : bindingsQuery.error ? (
@@ -756,8 +1066,10 @@ function SelectedAgentPanel({
 					}}
 				/>
 			) : tiles.length === 0 ? (
-				<Card className="border-dashed p-6">
-					<h3 className="text-sm font-semibold">{agent.name} can reach nothing yet</h3>
+				<Card outlined className="border-dashed p-6">
+					<h3 className="font-heading text-foreground-name text-sm font-semibold">
+						{agent.name} can reach nothing yet
+					</h3>
 					<p className="text-muted-foreground mt-2 max-w-prose text-sm">
 						{NO_APIS_COPY[agent.status]}
 					</p>
@@ -770,21 +1082,43 @@ function SelectedAgentPanel({
 						!serving && 'saturate-[.35]',
 					)}
 				>
-					<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 						{tiles.map((tile) => (
 							<ApiTile
 								key={tile.key}
 								tile={tile}
 								rules={ruleSummaries.get(tile.credentialId)}
-								onOpen={() => onOpenTile(tile.key)}
-								onSuspend={() =>
-									suspendBinding.mutate({ credentialId: tile.credentialId })
+								onRetryRules={() => retryRules(tile.credentialId)}
+								onOpen={() => {
+									// A plain open never inherits a rules focus that didn't land.
+									setRulesFocusKey(null);
+									onOpenTile(tile.key);
+								}}
+								onOpenRules={() => {
+									setRulesFocusKey(tile.key);
+									onOpenTile(tile.key);
+								}}
+								// Pause and resume are binding writes (`agents:write`).
+								onSuspend={
+									canManage
+										? () =>
+												suspendBinding.mutate({
+													credentialId: tile.credentialId,
+												})
+										: undefined
 								}
-								onResume={() => resumeBinding.mutate(tile.credentialId)}
+								onResume={
+									canManage
+										? () => resumeBinding.mutate(tile.credentialId)
+										: undefined
+								}
 								bindingPending={pendingBindingCredentialId === tile.credentialId}
 								agentServing={serving}
 								expanded={openTileKey === tile.key}
 								sidebarId={API_ACCESS_SIDEBAR_ID}
+								accountLabel={tileAccountLabels.get(tile.key)}
+								accountCount={multiAccount.get(tileApiKey(tile))?.count ?? 1}
+								canConnect={canWriteCredentials}
 							/>
 						))}
 					</div>
@@ -792,12 +1126,16 @@ function SelectedAgentPanel({
 			)}
 
 			{/* The tray keeps its draft across a dismissal so it stays mounted; the queue
-			    mounts only while it owns a batch. The tray opens once bindings load —
-			    before that, every bound API would look new and invite a duplicate bind. */}
+			    mounts only while it owns a batch. The tray opens once the bindings read
+			    settles: while it is pending every bound API would look new. A failed read
+			    opens it on the error with a retry, and nothing continues until the read
+			    succeeds — an unknown binding set would offer bound credentials again. */}
 			{canBind && (
 				<>
 					<AddApisTray
-						open={addStep === 'tray' && bindings !== undefined}
+						open={
+							addStep === 'tray' && (bindings !== undefined || bindingsFailedToLoad)
+						}
 						onClose={() => {
 							// Closing mid-edit is closing the flow: the batch waits, unedited.
 							if (batchEdit) onQueueBatchChange(agent.id, batchEdit.remaining);
@@ -807,6 +1145,9 @@ function SelectedAgentPanel({
 						agentId={agent.id}
 						agentName={agent.name}
 						bindings={bindings ?? []}
+						bindingsError={bindingsFailedToLoad ? (bindingsQuery.error as Error) : null}
+						onRetryBindings={() => void bindingsQuery.refetch()}
+						bindingsRetrying={bindingsQuery.isFetching}
 						seed={batchEdit?.seed ?? null}
 						onContinue={(items) => {
 							onQueueBatchChange(agent.id, items);
@@ -839,9 +1180,16 @@ function SelectedAgentPanel({
 				agent={agent}
 				tile={openTile}
 				siblingApiTitles={siblingApiTitles}
+				accountCount={openTile ? (multiAccount.get(tileApiKey(openTile))?.count ?? 1) : 1}
 				open={openTileKey != null}
-				onClose={onCloseTile}
+				onClose={() => {
+					setRulesFocusKey(null);
+					onCloseTile();
+				}}
 				sidebarId={API_ACCESS_SIDEBAR_ID}
+				agentServing={serving}
+				focusRules={openTileKey != null && rulesFocusKey === openTileKey}
+				onRulesFocused={() => setRulesFocusKey(null)}
 			/>
 		</motion.section>
 	);

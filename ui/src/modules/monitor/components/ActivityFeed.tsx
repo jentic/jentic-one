@@ -20,20 +20,17 @@
  *
  * Viewing a fixed range (brushed on the timeline) turns the live stream off —
  * nothing new can land inside a window that has already closed.
+ *
+ * A caller without event access reads neither feed and sees a plain "No access"
+ * state; a 401/403 from either read lands there too, and nothing retries it.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import {
-	ArrowUp,
-	BellRing,
-	CheckCircle2,
-	ChevronDown,
-	ChevronRight,
-	Pause,
-	Play,
-} from 'lucide-react';
+import { ArrowUp, BellRing, ChevronDown, ChevronRight, Pause, Play, ShieldX } from 'lucide-react';
 import { ActorLabel, Button, EmptyState, ErrorAlert, SkeletonRows } from '@/shared/ui';
+import { useCanReadEvents } from '@/shared/auth';
 import {
+	EVENTS_FORBIDDEN_COPY,
 	adaptEvent,
 	formatStreamDayLabel,
 	formatStreamTime,
@@ -50,7 +47,7 @@ import { cn } from '@/shared/lib/utils';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	EventSeverity,
-	useAcknowledgeEvent,
+	isMonitorAccessDenied,
 	useEventFeed,
 	useEventStream,
 	type EventResponse,
@@ -142,7 +139,6 @@ export function ActivityFeed() {
 			severity:
 				statusFilter === 'failed' ? [EventSeverity.ERROR, EventSeverity.CRITICAL] : null,
 			requiresAction: statusFilter === 'action' ? true : null,
-			acknowledged: statusFilter === 'action' ? false : null,
 		}),
 		[filters.from, filters.to, filters.actorId, filters.actorType, statusFilter],
 	);
@@ -153,11 +149,17 @@ export function ActivityFeed() {
 	// eslint-disable-next-line react-hooks/exhaustive-deps -- re-anchor on a real filter change only
 	const streamSince = useMemo(() => new Date().toISOString(), [paramsKey]);
 	const streamFloor = Date.parse(streamSince) - STREAM_SKEW_MS;
-	const history = useEventFeed(params);
+	const canReadEvents = useCanReadEvents();
+	const history = useEventFeed(params, { enabled: canReadEvents });
 	const fixedRange = filters.to != null;
-	const stream = useEventStream({ ...params, from: streamSince, to: null }, !fixedRange, 200, {
-		toastOnError: false,
-	});
+	const stream = useEventStream(
+		{ ...params, from: streamSince, to: null },
+		!fixedRange && canReadEvents,
+		200,
+		{ toastOnError: false },
+	);
+	const forbidden =
+		!canReadEvents || stream.status === 'forbidden' || isMonitorAccessDenied(history.error);
 
 	// A dropped stream retries on its own with backoff; the header says so.
 	const [attempt, setAttempt] = useState(0);
@@ -193,11 +195,9 @@ export function ActivityFeed() {
 					!isRetiredEventType(e.type) &&
 					// A backend (or mock) that replays backlog on connect must not
 					// resurface old rows as "new".
-					Date.parse(e.created_at) >= streamFloor &&
-					// The stream can't filter on acknowledged; Needs action can.
-					!(params.acknowledged === false && e.acknowledged),
+					Date.parse(e.created_at) >= streamFloor,
 			),
-		[stream.events, params.acknowledged, streamFloor],
+		[stream.events, streamFloor],
 	);
 
 	// Reveal new arrivals immediately while it's safe to insert.
@@ -225,29 +225,16 @@ export function ActivityFeed() {
 		shellScroller().scrollTo({ top: 0, behavior: 'smooth' });
 	};
 
-	// Acks flip locally at once; the refetched history confirms them.
-	const acknowledge = useAcknowledgeEvent();
-	const [ackedIds, setAckedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const pendingAckId = acknowledge.isPending ? acknowledge.variables : null;
-	const onAcknowledge = (eventId: string) =>
-		acknowledge.mutate(eventId, {
-			onSuccess: () => setAckedIds((prev) => new Set(prev).add(eventId)),
-		});
-
 	const events = useMemo(() => {
-		// History wins a dedupe: after an acknowledge it's the fresher copy.
+		// History wins a dedupe: it's the server-confirmed copy.
 		const byId = new Map<string, EventResponse>();
 		for (const e of liveEvents) if (revealed.has(e.event_id)) byId.set(e.event_id, e);
 		for (const e of historyEvents) byId.set(e.event_id, e);
 		return [...byId.values()]
 			.filter((e) => !isRetiredEventType(e.type))
-			.map((e) => {
-				const ev = adaptEvent(e);
-				return ackedIds.has(ev.id) ? { ...ev, acknowledged: true } : ev;
-			})
-			.filter((ev) => !(params.acknowledged === false && ev.acknowledged))
+			.map(adaptEvent)
 			.sort((a, b) => b.tsMs - a.tsMs);
-	}, [liveEvents, historyEvents, revealed, ackedIds, params.acknowledged]);
+	}, [liveEvents, historyEvents, revealed]);
 
 	const days = useMemo(() => buildDays(events, Date.now()), [events]);
 	const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
@@ -271,18 +258,20 @@ export function ActivityFeed() {
 
 	const filtered = statusFilter !== 'all' || filters.actorId != null || filters.range != null;
 	const initialLoading = history.isLoading && events.length === 0;
-	const showEmpty = !initialLoading && !history.isError && events.length === 0;
+	const showEmpty = !forbidden && !initialLoading && !history.isError && events.length === 0;
 
 	const liveBar = (
-		<header className="border-border/60 flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
-			{fixedRange ? (
+		<header className="border-hairline flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
+			{forbidden ? (
+				<LiveIndicator status="forbidden" paused={false} />
+			) : fixedRange ? (
 				<span className="text-muted-foreground text-xs font-medium">
 					Fixed range — live updates off
 				</span>
 			) : (
 				<LiveIndicator status={stream.status} paused={paused} />
 			)}
-			{!fixedRange && (
+			{!fixedRange && !forbidden && (
 				<Button
 					variant="ghost"
 					size="sm"
@@ -305,7 +294,7 @@ export function ActivityFeed() {
 
 	const loadOlder =
 		history.hasNextPage && !showEmpty ? (
-			<div className="border-border/60 flex justify-center border-t px-4 py-3">
+			<div className="border-hairline flex justify-center border-t px-4 py-3">
 				<Button
 					variant="secondary"
 					size="sm"
@@ -324,8 +313,6 @@ export function ActivityFeed() {
 			nested={nested}
 			active={openKey != null && openKey === detailKey(recordFor(ev))}
 			onOpen={() => openEvent(ev)}
-			onAcknowledge={() => onAcknowledge(ev.id)}
-			acknowledging={pendingAckId === ev.id}
 		/>
 	);
 
@@ -338,11 +325,13 @@ export function ActivityFeed() {
 		>
 			<div className="space-y-3">
 				<p className="sr-only" role="status" aria-live="polite">
-					{fixedRange
-						? 'Viewing a fixed range; live updates off.'
-						: paused
-							? 'Live updates paused.'
-							: `Live updates ${STATUS_TEXT[stream.status]}.`}
+					{forbidden
+						? 'No access to activity.'
+						: fixedRange
+							? 'Viewing a fixed range; live updates off.'
+							: paused
+								? 'Live updates paused.'
+								: `Live updates ${STATUS_TEXT[stream.status]}.`}
 				</p>
 
 				{pending.length > 0 && (
@@ -361,11 +350,16 @@ export function ActivityFeed() {
 				<LogList
 					ariaLabel="Activity feed"
 					columns={{ actor: 'Who', subject: 'Area', detail: '' }}
-					actionWidth="7.5rem"
 					header={liveBar}
 					footer={loadOlder}
 				>
-					{history.isError && events.length === 0 ? (
+					{forbidden ? (
+						<EmptyState
+							icon={<ShieldX className="h-8 w-8" />}
+							title={EVENTS_FORBIDDEN_COPY.title}
+							description={EVENTS_FORBIDDEN_COPY.description}
+						/>
+					) : history.isError && events.length === 0 ? (
 						<div className="p-4">
 							<ErrorAlert
 								message={
@@ -385,7 +379,7 @@ export function ActivityFeed() {
 							title={filtered ? 'Nothing matches' : 'No activity yet'}
 							description={
 								statusFilter === 'action'
-									? 'Nothing is waiting on you. Failures and approvals that need a decision show up here.'
+									? 'No flagged events in this window. Events that asked for a human — failures, approvals, upstream updates — show up here; each links to where its current state lives.'
 									: filtered
 										? 'No events match the current filters in this window.'
 										: 'Calls, jobs, approvals and alerts will stream in here as they happen.'
@@ -458,17 +452,26 @@ const STATUS_TEXT: Record<LiveStreamStatus, string> = {
 	connecting: 'connecting',
 	live: 'live',
 	error: 'reconnecting',
+	forbidden: 'unavailable',
 };
 
 function LiveIndicator({ status, paused }: { status: LiveStreamStatus; paused: boolean }) {
-	const label = paused
-		? 'Paused'
-		: status === 'live'
-			? 'Live'
-			: status === 'error'
-				? 'Reconnecting…'
-				: 'Connecting…';
-	const tone = paused ? 'bg-muted-foreground' : status === 'live' ? 'bg-success' : 'bg-warning';
+	const label =
+		status === 'forbidden'
+			? 'No access'
+			: paused
+				? 'Paused'
+				: status === 'live'
+					? 'Live'
+					: status === 'error'
+						? 'Reconnecting…'
+						: 'Connecting…';
+	const tone =
+		paused || status === 'forbidden'
+			? 'bg-muted-foreground'
+			: status === 'live'
+				? 'bg-success'
+				: 'bg-caution';
 	return (
 		<span className="text-muted-foreground inline-flex items-center gap-2 text-xs font-medium">
 			<span className="relative flex h-2 w-2" aria-hidden="true">
@@ -485,37 +488,18 @@ function LiveIndicator({ status, paused }: { status: LiveStreamStatus; paused: b
 function FeedRow({
 	ev,
 	onOpen,
-	onAcknowledge,
-	acknowledging,
 	active,
 	nested,
 }: {
 	ev: StreamEvent;
 	onOpen: () => void;
-	onAcknowledge: () => void;
-	acknowledging: boolean;
 	active?: boolean;
 	nested?: boolean;
 }) {
 	const tone = eventTone(ev);
 	const action =
-		ev.requiresAction && !ev.acknowledged ? (
-			<Button
-				variant="outline"
-				size="sm"
-				onClick={onAcknowledge}
-				loading={acknowledging}
-				disabled={acknowledging}
-			>
-				Acknowledge
-			</Button>
-		) : ev.requiresAction && ev.acknowledged ? (
-			<span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-				<CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-				<span className="max-sm:sr-only">Acknowledged</span>
-			</span>
-		) : recordFor(ev) || primaryDestinationFor(ev) ? (
-			<ChevronRight className="text-muted-foreground/60 h-4 w-4" aria-hidden="true" />
+		recordFor(ev) || primaryDestinationFor(ev) ? (
+			<ChevronRight className="text-foreground-faint h-4 w-4" aria-hidden="true" />
 		) : null;
 
 	return (
@@ -539,7 +523,6 @@ function FeedRow({
 			action={action}
 			label={ev.title}
 			active={active}
-			muted={ev.acknowledged}
 			nested={nested}
 			onOpen={onOpen}
 		/>

@@ -150,7 +150,7 @@ the Deprecations table.
   unaffected.
 - **The toolkit management surface is gone.** All `/toolkits/*` and
   `/agents/{id}/toolkits*` routes now return `404`. The `toolkits:read`,
-  `toolkits:write`, and `owner:toolkits:read` scopes are retired: no route
+  `toolkits:write`, and `owner:toolkits:read` permissions are retired: no route
   requires them and they grant nothing, but they are **tolerated in stored
   grants** — re-submitting a permission row that predates
   the retirement never fails validation. Access is managed on the
@@ -221,6 +221,14 @@ steps are what stands between you and Phase 6b.
 section below.
 
 ## Upgrading to 0.41.0
+
+**Use 0.41.1 instead of 0.41.0 on PostgreSQL.** In 0.41.0 the admin scope
+sweeps (`d1e2f3a4b5c6`, `e2f3a4b5c6d7`) fail with `column "allowed_scopes" is
+of type character varying[] but expression is of type jsonb` when an OAuth
+client's `allowed_scopes` still lists a retired `toolkits:*` or
+`service-accounts:*` scope. The failing revision rolls back and nothing is
+half-applied. 0.41.1 fixes the sweep, so re-running the migration on the
+0.41.1 image continues from where it stopped. The rules below apply to both.
 
 0.41.0 is the theme-5 Phase 6b release: it drops the toolkit tables (details
 in the next section). Two rules:
@@ -360,7 +368,7 @@ acknowledged. Read this **before** running migrations.
   the `deprecated_toolkit_key_used` WARNING log to a `jak_` key minted for
   their successor agent. The service-account → agent migration no longer
   copies toolkit bindings or re-stamps `toolkit_keys` (both tables are gone);
-  it still copies scope grants, credential bindings and their inline rules.
+  it still copies permission grants, credential bindings and their inline rules.
 - **The `Jentic-Toolkit-Id` header is gone**, on both sides: it is no longer
   read on requests (it was already ignored on the default path) and no
   longer emitted on responses. A request that still sends it is served
@@ -439,8 +447,8 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
 - **Migration is automatic and idempotent.** The combined/control server runs
   `migrate-service-accounts` once at startup (best-effort; the CLI is the
   recovery path). Every service account is copied to a successor agent —
-  stored scope grants (empty stays empty; never the default agent scope
-  set), toolkit/credential bindings, the per-binding inline permission
+  stored permission grants (empty stays empty; never the default agent
+  permission set), toolkit/credential bindings, the per-binding inline permission
   rules (control DB), and the API-key digest — its outstanding opaque
   sessions are revoked, and the row is stamped (`migrated_to_actor_id`).
   **API-key callers keep authenticating**: the resolver is now agent-first,
@@ -458,7 +466,7 @@ SA surface survives this release (Phase 2 removes it) but is stamp-guarded.
   before upgrading.
 - **Ownership and visibility shift.** The successor is created with
   `parent_actor_id` = the SA's owner, so (a) it becomes visible to
-  `owner:agents:read` holders, and (b) any copied `owner:*` delegation scope
+  `owner:agents:read` holders, and (b) any copied `owner:*` delegation permission
   now widens to the **owner's** resources — review SAs holding `owner:*`
   grants in the report. (c) Control-DB objects `created_by` the `sva_` id
   (credentials and access requests, whose owner-scoped reads key on
@@ -602,7 +610,7 @@ paths. Read this **before** running migrations.
   migrates control, brings admin to `d1e2f3a4b5c6` (just before the drop),
   and then, under a lock:
   1. **Migrates** every service account not yet migrated, exactly as the
-     0.40 job did: the scope grants, credential bindings, control-DB inline
+     0.40 job did: the permission grants, credential bindings, control-DB inline
      permission rules and API-key digest are copied to a successor agent
      named `service-account:<sva_ id>`, and outstanding SA sessions are
      revoked. Non-active service accounts are stamped without a successor.
@@ -611,7 +619,7 @@ paths. Read this **before** running migrations.
      and bindings added to it **after** its migration are copied to the
      successor too (a binding with its inline rules), unless the successor
      is archived or gone, or the audit log shows the successor had that
-     scope removed or that binding purged. Nothing is ever copied onto an
+     permission removed or that binding purged. Nothing is ever copied onto an
      existing successor grant, binding or rule list: anything an operator
      removed from the successor since — including a binding whose inline
      rules were emptied — is **not** restored.
@@ -659,10 +667,10 @@ paths. Read this **before** running migrations.
   `service_account_migration_startup_failed` (the boot job fails; the
   server still starts). There is no 0.40.x patch for this: finish the
   rollout promptly, or drain 0.40.x replicas before the migration Job runs.
-- **Retired scope strings are swept.** `service-accounts:read`,
+- **Retired permission strings are swept.** `service-accounts:read`,
   `service-accounts:write` and `owner:service-accounts:read` are removed from
   every stored grant and token surface, in the same way as the theme-5
-  toolkit-scope sweep. They have granted nothing since Phase 2.
+  toolkit-permission sweep. They have granted nothing since Phase 2.
 - **`sak_` keys stop working (breaking).** Every `sak_` key is refused,
   migrated or not, before any lookup: `401` with the detail *"Service-account
   keys (sak_) were retired in Jentic One 0.41: each service account was
@@ -764,14 +772,14 @@ run it with the admin connection's `schema_name` — `admin` in the shipped
 configs — on the `search_path`, or prefix the tables with it):
 
 ```sql
-SELECT a.id, a.name, a.owner_id, a.status, g.scope, g.granted_by
-FROM actor_scope_grants g
+SELECT a.id, a.name, a.owner_id, a.status, g.permission, g.granted_by
+FROM actor_permission_grants g
 JOIN agents a ON a.id = g.actor_id
 WHERE g.actor_type = 'agent'
   AND a.name LIKE 'service-account:%'
-  AND g.scope IN ('org:admin', 'users:write', 'agents:write',
+  AND g.permission IN ('org:admin', 'users:write', 'agents:write',
                   'credentials:write', 'config:write', 'oauth-clients:write')
-ORDER BY a.id, g.scope;
+ORDER BY a.id, g.permission;
 ```
 
 `granted_by = 'system:theme8-sa-migration'` marks a grant the migration
@@ -814,12 +822,72 @@ is neither the row's `owner_id` nor its `agent_id`.
 **What to do.** Expected rows need no action — the upgrade kept the access
 the old model already allowed. For an unexpected one:
 
-- narrow the agent's scopes with `PUT /agents/{agent_id}/scopes` (the body
-  is the full scope set to keep), or disable the agent while you decide;
+- narrow the agent's permissions with `PUT /agents/{agent_id}/permissions` (the
+  body is the full permission set to keep), or disable the agent while you decide;
 - remove a binding with
   `DELETE /agents/{agent_id}/credentials/{credential_id}`.
 
 Both are ordinary, audited mutations.
+
+## Upgrading to the permissions-rename release
+
+Internal authorization is spelled "permission" on every surface (OAuth2/OIDC
+names — `scope`, `allowed_scopes`, `scopes_supported`, `insufficient_scope` —
+are unchanged). There are no compatibility aliases; read this before rolling
+it out.
+
+- **Schema.** The admin migration `e3f4a5b6c7d8` renames the table
+  `actor_scope_grants` → `actor_permission_grants` and its column `scope` →
+  `permission` (plus the unique constraint, primary key, and indexes). Stored
+  values are unchanged (`agents:write` stays `agents:write`), and so are the
+  `asg_…` row ids.
+- **Old pods stop working once the migration has run.** The previous
+  release reads `actor_scope_grants` almost everywhere: its ORM model (every
+  grant read and write), the broker's execution gate for every agent
+  (JWT-authenticated ones included), token minting, API-key and opaque-token
+  resolution, and the control plane's grant effects. From the moment the
+  migration renames the table until the last old pod is replaced, those pods
+  fail authentication, execution, and every grant change. The
+  [upgrade contract](../operations/upgrades.md#the-contract) already treats
+  old code on a new schema as unsupported — here it is an outage, so schedule
+  the upgrade in a maintenance window, or scale the app and broker to zero
+  before the migration and back up after it. With Helm, the migration runs as
+  a `pre-upgrade` hook, so the window lasts from the hook until the rollout
+  completes.
+- **HTTP API.**
+  - `GET|PUT /agents/{id}/scopes` is now `/agents/{id}/permissions`, with
+    `{"permissions": […]}` bodies.
+  - `POST /agents` takes its initial grants as `permissions` (was `scopes`).
+    Both `POST /agents` and `PUT /agents/{id}/permissions` now reject unknown
+    body fields with 422, so a client still sending `scopes` fails loudly
+    instead of the key being ignored (which, on `POST /agents`, would have
+    granted the full default permission set).
+  - `GET /me` reports `permissions` / `token_permissions` instead of
+    `scopes` / `token_scopes`.
+  - The agent permission-ceiling problem types are
+    `agent_permission_not_grantable` (403, was `scope_not_grantable`) and
+    `unknown_agent_permission` (422, was `unknown_scope`) — distinct from the
+    admin user-permission types `permission_not_grantable` /
+    `unknown_permission`.
+  - The endpoint reference emits `required_permissions` under schema
+    `jentic.endpoint-permission-tree/v1`.
+- **Audit log.** New agent create/approve/replace/register entries write the
+  `permissions` payload key and the `replace_permissions` /
+  `default_permissions` reason strings, replacing the `scopes` key and
+  `replace_scopes` / `default_scopes` reasons. Entries already in the log keep
+  the old spelling (they are history), so external `GET /audit` consumers that
+  key on `scopes` must read both spellings across the upgrade.
+- **CLI and Go SDK.** `jentic endpoints --scope` is now `--permission`.
+  The generated control client renames `AgentScopesRequest`/`Response` to
+  `AgentPermissionsRequest`/`Response`, and `MeAgent` exposes
+  `Permissions`/`TokenPermissions` — a breaking change for Go importers of
+  `github.com/jentic/jentic-one/cli`. **Upgrade every CLI with the server.**
+  The version-skew guard lives in the new CLI only: a new CLI talking to an
+  old server refuses `/me` and the endpoint reference with a
+  `SERVER_INCOMPATIBLE` error, but an older CLI talking to a new server fails
+  silently — `jentic doctor` reports "scopes: none", `jentic endpoints` shows
+  every route as open to any authenticated caller, and `--scope` matches
+  nothing.
 
 ## Deprecations
 

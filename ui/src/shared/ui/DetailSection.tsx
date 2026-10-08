@@ -4,12 +4,12 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/shared/ui/Card';
 import { cn } from '@/shared/lib/utils';
 
 /**
- * DetailSection — the card shell every detail-console section renders inside
- * (agent console and friends): the shared `Card` family
+ * DetailSection — the card shell every entity-detail section renders inside
+ * (the agent dock sheets, Monitor's detail sheets, and friends): the shared `Card` family
  * with a header grammar (icon medallion + heading + right-slot) layered on
  * top, so section chrome stays one primitive across the product.
  *
- * Promoted to the shared library once more than one detail console needed
+ * Promoted to the shared library once more than one detail surface needed
  * the identical shell (library-first rule).
  */
 
@@ -56,11 +56,17 @@ export function DetailSection({
 	children,
 }: DetailSectionProps) {
 	return (
-		<Card className={cn('flex flex-col', danger && 'border-danger/50', className)}>
+		<Card
+			className={cn(
+				'flex flex-col',
+				danger && 'shadow-[inset_0_0_0_1px_hsl(var(--danger)/0.35)]',
+				className,
+			)}
+		>
 			<CardHeader
 				className={cn(
 					'flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 sm:px-5 sm:py-4',
-					danger && 'border-danger/30 bg-danger/5',
+					danger && 'bg-danger/5',
 				)}
 			>
 				<div className="flex items-center gap-2.5">
@@ -68,10 +74,10 @@ export function DetailSection({
 						<span
 							aria-hidden="true"
 							className={cn(
-								'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
+								'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
 								danger
-									? 'bg-danger/10 text-danger ring-danger/25'
-									: 'bg-muted text-muted-foreground ring-border',
+									? 'bg-danger/10 text-danger'
+									: 'bg-surface-tonal text-foreground-sub',
 							)}
 						>
 							{icon}
@@ -107,8 +113,8 @@ interface EmptyRowProps {
 /** Dashed empty-state panel used inside a `DetailSection`. */
 export function EmptyRow({ icon, children }: EmptyRowProps) {
 	return (
-		<div className="border-border/50 rounded-lg border border-dashed px-5 py-6 text-center">
-			<span className="text-muted-foreground/50 mx-auto block h-6 w-6 [&>svg]:h-6 [&>svg]:w-6">
+		<div className="bg-field rounded-field px-5 py-6 text-center">
+			<span className="text-foreground-faint mx-auto block h-6 w-6 [&>svg]:h-6 [&>svg]:w-6">
 				{icon}
 			</span>
 			<p className="text-muted-foreground mt-2 text-sm">{children}</p>

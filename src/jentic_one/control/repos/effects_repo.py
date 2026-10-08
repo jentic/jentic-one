@@ -263,33 +263,33 @@ class EffectsRepository:
         return bool(getattr(result, "rowcount", 0))
 
     @staticmethod
-    async def grant_scope_to_actor(
+    async def grant_permission_to_actor(
         session: AsyncSession,
         *,
         actor_id: str,
         actor_type: str,
-        scope: str,
+        permission: str,
         granted_by: str,
         created_by: str,
     ) -> bool:
-        """Grant a scope to an actor idempotently via raw SQL.
+        """Grant a permission to an actor idempotently via raw SQL.
 
         Returns True if created, False if already existed.
         """
         grant_id = generate_ksuid("asg")
         result = await session.execute(
             text(
-                "INSERT INTO actor_scope_grants "
-                "(id, actor_id, actor_type, scope, granted_by, created_by) "
-                "VALUES (:id, :actor_id, :actor_type, :scope, :granted_by, :created_by) "
-                "ON CONFLICT (actor_id, scope) DO NOTHING "
+                "INSERT INTO actor_permission_grants "
+                "(id, actor_id, actor_type, permission, granted_by, created_by) "
+                "VALUES (:id, :actor_id, :actor_type, :permission, :granted_by, :created_by) "
+                "ON CONFLICT (actor_id, permission) DO NOTHING "
                 "RETURNING id"
             ),
             {
                 "id": grant_id,
                 "actor_id": actor_id,
                 "actor_type": actor_type,
-                "scope": scope,
+                "permission": permission,
                 "granted_by": granted_by,
                 "created_by": created_by,
             },

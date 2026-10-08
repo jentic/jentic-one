@@ -11,7 +11,7 @@
  * per-tag services; Monitor's four tabs map onto:
  *   ExecutionsService  GET  /executions, GET /executions/{execution_id}
  *   JobsService        GET  /jobs, GET /jobs/{job_id}, POST /jobs/{job_id}:cancel
- *   EventsService      GET  /events, PATCH /events/{event_id}, GET /events/stream
+ *   EventsService      GET  /events, GET /events/stream
  *   AuditService       GET  /audit (actor lens, org:admin)
  * (The live SSE stream is hand-rolled over fetch — see streamEvents below.)
  */
@@ -28,7 +28,6 @@ import {
 	type AuditListResponse,
 	type AuditResponse,
 	type AuditTargetType,
-	type EventAcknowledgeRequest,
 	type EventListResponse,
 	type EventResponse,
 	type EventSeverity,
@@ -56,6 +55,14 @@ export class MonitorApiError extends Error {
 		this.status = status;
 		this.cause = cause;
 	}
+}
+
+/**
+ * A refused read: 401 (no valid session) or 403 (missing permission). Retrying
+ * cannot change the answer, so callers stop and show an access state instead.
+ */
+export function isMonitorAccessDenied(error: unknown): boolean {
+	return error instanceof MonitorApiError && (error.status === 401 || error.status === 403);
 }
 
 function toMonitorError(error: unknown, fallback: string): MonitorApiError {
@@ -207,7 +214,6 @@ export interface ListEventsParams {
 	eventType?: string[] | null;
 	severity?: EventSeverity[] | null;
 	requiresAction?: boolean | null;
-	acknowledged?: boolean | null;
 	actorId?: string | null;
 	actorType?: string | null;
 	from?: string | null;
@@ -223,7 +229,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 			eventType: params.eventType ?? null,
 			severity: params.severity ?? null,
 			requiresAction: params.requiresAction ?? null,
-			acknowledged: params.acknowledged ?? null,
 			actorId: params.actorId ?? null,
 			actorType: params.actorType ?? null,
 			from: params.from ?? null,
@@ -234,17 +239,6 @@ export async function listEvents(params: ListEventsParams = {}): Promise<EventLi
 		});
 	} catch (error) {
 		throw toMonitorError(error, 'Failed to load events.');
-	}
-}
-
-export async function acknowledgeEvent(
-	eventId: string,
-	requestBody: EventAcknowledgeRequest = { acknowledged: true },
-): Promise<EventResponse> {
-	try {
-		return await EventsService.acknowledgeEvent({ eventId, requestBody });
-	} catch (error) {
-		throw toMonitorError(error, 'Failed to acknowledge the event.');
 	}
 }
 

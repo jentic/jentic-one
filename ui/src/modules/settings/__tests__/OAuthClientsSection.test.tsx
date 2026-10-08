@@ -10,9 +10,8 @@ import {
 	checkA11y,
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
-import { setToken, type EventResponse } from '@/shared/api';
+import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { AgentStreamProvider, useAgentStream } from '@/shared/lib/agentStream';
 import { resetSettingsStore } from '@/modules/settings/mocks/handlers';
 import { SettingsPage } from '@/modules/settings/pages/SettingsPage';
 
@@ -212,55 +211,6 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 
 		expect(await screen.findByText('Cursor denied')).toBeInTheDocument();
 		expect(await screen.findByText('No pending registrations')).toBeInTheDocument();
-	});
-
-	it('settles the actionable rail row on deny success (the deny-arm settle mirror)', async () => {
-		// A deny emits no `oauth_client.*` SSE event (§4.8/D7) — the approve arm
-		// gets its rail settle from the `oauth_client.approved` event, so the
-		// deny mutation must mirror it locally via the stream context. Mount the
-		// section INSIDE the provider with the actionable registration in the
-		// backlog and watch the row acknowledge on deny success.
-		const registered: EventResponse = {
-			_links: { self: '/events/evt_oauth_registered' },
-			event_id: 'evt_oauth_registered',
-			type: 'oauth_client.registered',
-			severity: 'info' as EventResponse['severity'],
-			summary: 'OAuth client registered: Cursor',
-			requires_action: true,
-			acknowledged: false,
-			created_at: new Date().toISOString(),
-			// The internal admin-row id — the deny mutation's settle key.
-			data: { oauth_client_id: 'oac_pending_1' },
-		};
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
-			),
-		);
-		function SettleProbe() {
-			const { events } = useAgentStream();
-			const row = events.find((e) => e.type === 'oauth_client.registered');
-			return <div data-testid="registered-acked">{row ? String(row.acknowledged) : ''}</div>;
-		}
-		const user = userEvent.setup();
-		renderWithProviders(
-			<AgentStreamProvider live={false}>
-				<SettingsPage />
-				<Toaster />
-				<SettleProbe />
-			</AgentStreamProvider>,
-			{ route: '/settings?tab=queue' },
-		);
-		await screen.findByText('Cursor');
-		await expect.poll(() => screen.getByTestId('registered-acked').textContent).toBe('false');
-
-		await user.click(screen.getByRole('button', { name: 'Deny' }));
-		const dialog = await screen.findByRole('dialog');
-		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
-
-		expect(await screen.findByText('Cursor denied')).toBeInTheDocument();
-		// The mutation's onSuccess settled the stream row locally.
-		await expect.poll(() => screen.getByTestId('registered-acked').textContent).toBe('true');
 	});
 
 	it('keeps the deny reason draft across a casual dismiss (dialog-state rule)', async () => {

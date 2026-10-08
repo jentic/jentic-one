@@ -28,6 +28,7 @@ def _make_credential(
     active: bool = True,
     provider: str = "static",
     server_variables: dict[str, str] | None = None,
+    created_by: str | None = "usr_cred_owner",
 ) -> MagicMock:
     cred = MagicMock()
     cred.id = cred_id
@@ -38,6 +39,7 @@ def _make_credential(
     cred.api_version = api_version
     cred.active = active
     cred.provider = provider
+    cred.created_by = created_by
     cred.server_variables = server_variables
     cred.created_at = None
     cred.token_value_credential = None
@@ -45,6 +47,8 @@ def _make_credential(
     cred.basic_credential = None
     cred.oauth_client_credential = None
     cred.oauth_token = None
+    cred.sigv4_credential = None
+    cred.provider_account_ref = None
     return cred
 
 
@@ -469,3 +473,36 @@ async def test_resolve_credential_name_selects_less_specific_covering() -> None:
         )
 
     assert result.credential_id == "cred_wild"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored_type",
+    [
+        StoredCredentialType.STATIC_BEARER_TOKEN,
+        StoredCredentialType.API_KEY,
+        StoredCredentialType.BASIC_AUTH,
+        StoredCredentialType.OAUTH2_AUTHORIZATION_CODE,
+        StoredCredentialType.NO_AUTH,
+        StoredCredentialType.AWS_SIGV4,
+    ],
+)
+@pytest.mark.parametrize("owner", ["usr_cred_owner", None])
+async def test_resolve_carries_credential_owner(
+    stored_type: StoredCredentialType, owner: str | None
+) -> None:
+    """Every wire type carries the stored row's ``created_by`` as the credential
+    owner, so use and health events can name it."""
+    cred = _make_credential(type=stored_type.value, created_by=owner)
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        result = await CredentialResolver(ctx).resolve(api=api, caller="agent_1")
+
+    assert result.stored_type == stored_type
+    assert result.created_by == owner

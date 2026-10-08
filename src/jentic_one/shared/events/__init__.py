@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import unicodedata
 from typing import Any
 
 import structlog
@@ -18,6 +19,35 @@ logger = structlog.get_logger(__name__)
 
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _ZERO_TRACE_ID = "0" * 32
+
+#: Width bound for any variable value an emitter interpolates into an event
+#: ``summary`` (``Event.summary`` is ``String(512)``). Error text and registry
+#: path templates are unbounded, and an oversized INSERT fails the emit.
+MAX_EVENT_SUMMARY_FIELD_LEN = 128
+
+
+def summary_label(name: str | None, fallback_id: str) -> str:
+    """Name an entity in an event ``summary``: its quoted display name, else its id.
+
+    The UI renders ``summary`` as-is, so a human-readable name beats an opaque
+    id. Whitespace runs collapse to one space, control and format characters
+    (Unicode ``Cc``/``Cf``, e.g. bidi overrides and zero-width marks) are
+    dropped, and a single quote becomes a typographic one so a name cannot close
+    the quoting and read as part of the sentence. The name is bounded by
+    :data:`MAX_EVENT_SUMMARY_FIELD_LEN`, so a summary naming two entities stays
+    inside the column. Callers keep the id in the event's ``data``.
+    """
+    visible = "".join(
+        " " if ch.isspace() else ch
+        for ch in (name or "")
+        if ch.isspace() or unicodedata.category(ch) not in {"Cc", "Cf"}
+    )
+    clean = " ".join(visible.replace("'", "\u2019").split())
+    if not clean:
+        return fallback_id
+    if len(clean) > MAX_EVENT_SUMMARY_FIELD_LEN:
+        clean = clean[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
+    return f"'{clean}'"
 
 
 def valid_trace_id_or_none(trace_id: str | None) -> str | None:
@@ -177,65 +207,6 @@ async def emit_event_best_effort(
         logger.warning("emit_event_best_effort_failed", type=type)
 
 
-async def settle_actionable_events(
-    session: AsyncSession,
-    *,
-    event_type: str,
-    acknowledged_by: str,
-    acknowledgement_note: str,
-    actor_id: str | None = None,
-    actor_type: str | None = None,
-    data_match: dict[str, str] | None = None,
-) -> int:
-    """Acknowledge outstanding actionable events once their action is taken.
-
-    Actionable events (``requires_action=True``) prompt operators to review
-    something; when the review happens elsewhere (e.g. approving an agent),
-    the prompt must be settled or it stays live on the
-    rail/dashboard forever with a working-but-pointless action button.
-
-    Matches on type + optional actor scoping via SQL, then on exact-equality
-    ``data_match`` pairs in Python (event ``data`` is unindexed JSON). Returns
-    the number of events acknowledged. Raises on DB errors — callers decide
-    whether settlement may fail the surrounding operation (it usually must
-    not; wrap in try/except + savepoint).
-    """
-    pending = await EventRepository.list_all(
-        session,
-        event_type=[event_type],
-        requires_action=True,
-        acknowledged=False,
-        actor_id=actor_id,
-        actor_type=actor_type,
-        # Alerts are per-entity (one per registration/request), so a page of
-        # 1000 is effectively "all" — generous rather than silently partial.
-        limit=1000,
-    )
-    if len(pending) >= 1000:
-        # The page IS partial after all — an older matching alert may sit
-        # beyond it and stay live. Loud so operators can spot the backlog;
-        # the fleet reaching 1000 outstanding actionable alerts is itself
-        # the anomaly worth investigating.
-        logger.warning(
-            "settle_actionable_events_page_full",
-            event_type=event_type,
-            actor_id=actor_id,
-        )
-    settled = 0
-    for event in pending:
-        data = event.data or {}
-        if data_match and any(data.get(k) != v for k, v in data_match.items()):
-            continue
-        await EventRepository.acknowledge(
-            session,
-            event.id,
-            acknowledged_by=acknowledged_by,
-            acknowledgement_note=acknowledgement_note,
-        )
-        settled += 1
-    return settled
-
-
 async def emit_credential_access(
     session: AsyncSession,
     *,
@@ -247,6 +218,8 @@ async def emit_credential_access(
     api_vendor: str,
     api_name: str,
     api_version: str,
+    credential_owner: str | None = None,
+    credential_name: str | None = None,
     trace_id: str | None = None,
 ) -> str:
     """Emit a credential-access audit event and return its ID.
@@ -256,14 +229,24 @@ async def emit_credential_access(
     credential use produces exactly one event regardless of call-site (sync
     router or async worker). Carries only **non-secret** identifiers — never the
     decrypted material.
+
+    ``actor_id`` is the identity that used the credential; ``created_by`` names
+    the credential's owner (``credential_owner``, falling back to the actor when
+    the owner is unknown), so under owner-scoped event reads both the owner and
+    the actor's owner see the use.
+
+    The summary names the credential by ``credential_name`` (the stored
+    ``Credential.name``), falling back to ``credential_id``; the id always
+    rides in ``data``.
     """
     api = "/".join(part for part in (api_vendor, api_name, api_version) if part)
+    credential = summary_label(credential_name, credential_id)
     return await emit_event(
         session,
         type=EventType.CREDENTIAL_ACCESSED,
         severity=EventSeverity.INFO,
-        summary=f"Credential {credential_id} accessed by {actor_id} for {api or api_vendor}",
-        created_by=actor_id,
+        summary=f"Credential {credential} accessed by {actor_id} for {api or api_vendor}",
+        created_by=credential_owner or actor_id,
         trace_id=trace_id,
         actor_id=actor_id,
         actor_type=actor_type,

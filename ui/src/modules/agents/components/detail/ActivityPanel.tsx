@@ -1,5 +1,5 @@
 /**
- * ActivityPanel — the detail page's Activity tab: the shared console chart
+ * ActivityPanel — the body of the dock's Activity sheet: the shared chart
  * pair (stacked execution volume + success-rate trend, `ExecutionVolumeCharts`)
  * plus the shared recent-executions feed (`RecentExecutionsCard`), both
  * scoped by `actor_id`. Monitor owns the full history (cursor paging, trace
@@ -13,6 +13,7 @@
 import { Activity } from 'lucide-react';
 import { EmptyState, ExecutionVolumeCharts, LoadingState, RecentExecutionsCard } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
+import { formatOperation } from '@/shared/lib';
 import { useActorExecutions, useActorUsageDetail } from '@/modules/agents/api';
 
 interface ActivityPanelProps {
@@ -72,17 +73,26 @@ export function ActivityPanel({ actorId }: ActivityPanelProps) {
 					monitorHref={monitorLink}
 					emptyMessage="No executions recorded for this actor yet."
 					hasMore={executions.data.hasMore}
-					items={items.map((row) => ({
-						id: row.id,
-						status: row.status,
-						httpStatus: row.httpStatus,
-						label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
-							row.operationId ? `.${row.operationId}` : ''
-						}`,
-						error: row.error,
-						durationMs: row.durationMs,
-						startedAt: row.startedAt,
-					}))}
+					items={items.map((row) => {
+						// Human-readable operation only (method + path
+						// template); the opaque op_… id never renders, so
+						// legacy rows show just the credential attribution.
+						const operation = formatOperation({
+							operation_path: row.operationPath,
+							operation_method: row.operationMethod,
+						});
+						return {
+							id: row.id,
+							status: row.status,
+							httpStatus: row.httpStatus,
+							label: `${row.credentialName ?? row.credentialId ?? row.toolkitName ?? row.toolkitId ?? 'unattributed'}${
+								operation ? ` · ${operation}` : ''
+							}`,
+							error: row.error,
+							durationMs: row.durationMs,
+							startedAt: row.startedAt,
+						};
+					})}
 				/>
 			)}
 		</div>

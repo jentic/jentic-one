@@ -50,10 +50,12 @@ function redact(body: CredentialCreateRequest, id: string, now: string): Credent
 		name: body.name,
 		type: body.type as CredentialType,
 		provider: (body as { provider?: string }).provider ?? 'manual',
+		// Omitted axes are wildcards: the backend stores NULL and serialises it as
+		// `""` (the create flow saves unpinned, so `version` is usually omitted).
 		api: {
 			vendor: body.api.vendor,
-			name: body.api.name ?? 'default',
-			version: body.api.version ?? '1.0.0',
+			name: body.api.name ?? '',
+			version: body.api.version ?? '',
 		},
 		active: true,
 		details,
@@ -404,19 +406,17 @@ export function resetConnectSessionsStore(): void {
 }
 
 /** Seed the `/vendors` registry. */
-export function setMockVendors(vendors: VendorSummary[]): void {
+function setMockVendors(vendors: VendorSummary[]): void {
 	vendorsStore = [...vendors];
 }
 
 /** Seed a vendor's `/vendors/{key}/auth-capabilities` payload. */
-export function setMockVendorCapabilities(key: string, caps: VendorAuthCapabilities): void {
+function setMockVendorCapabilities(key: string, caps: VendorAuthCapabilities): void {
 	vendorCapabilitiesStore[key] = caps;
 }
 
 /** Choose which challenge shape `:confirm` returns. */
-export function setMockConfirmChallengeKind(
-	kind: 'device_authorization' | 'authorization_code',
-): void {
+function setMockConfirmChallengeKind(kind: 'device_authorization' | 'authorization_code'): void {
 	confirmChallengeKind = kind;
 }
 
@@ -426,7 +426,7 @@ export function getMockConnectSessions(): readonly MockConnectSession[] {
 }
 
 /** Drive a session's `/status` poll result (e.g. flip it to a terminal state). */
-export function setMockConnectSessionStatus(
+function setMockConnectSessionStatus(
 	sessionId: string,
 	status: Partial<StatusResponse> & { status: SessionStatus },
 ): void {
@@ -463,7 +463,7 @@ function isMockSession(v: unknown): v is MockConnectSession {
 	return typeof v === 'object' && v != null && 'poll_token' in v;
 }
 
-export const connectSessionsHandlers = [
+const connectSessionsHandlers = [
 	http.get('/vendors', () => HttpResponse.json({ data: vendorsStore })),
 
 	http.get('/vendors/:key/auth-capabilities', ({ params }) => {
@@ -629,6 +629,25 @@ export const credentialsHandlers = [
 
 	http.post('/credentials', async ({ request }) => {
 		const body = (await request.json()) as CredentialCreateRequest;
+		// Mirror the backend's identity guard (`_canonical_api_scope`, #746): a `/`
+		// in api.name/version reads as a spec path and is rejected, not slugged.
+		for (const [axis, value] of [
+			['name', body.api?.name],
+			['version', body.api?.version],
+		] as const) {
+			if (value && value.includes('/')) {
+				return HttpResponse.json(
+					{
+						type: 'invalid_credential_input',
+						status: 400,
+						title: 'Bad Request',
+						detail: `api.${axis} '${value}' is not an identity — it looks like a spec path`,
+						instance: '/credentials',
+					},
+					{ status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+				);
+			}
+		}
 		seq += 1;
 		const id = `cred_${seq}`;
 		const now = new Date().toISOString();

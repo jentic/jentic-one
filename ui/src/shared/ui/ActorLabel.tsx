@@ -5,19 +5,24 @@
  * `actor_id` (a KSUID like `agnt_6a3d3c62…`). Drop this anywhere one of those
  * ids would otherwise be rendered: it looks the actor up in the cached actor
  * directory (`useActorDirectory`) and shows its name, falling back to the raw
- * id (mono font, as before) while the directory is loading or when the id is
- * unknown. The raw id is always available on hover via `title`.
+ * id (mono font) while the directory is loading or when the id is unknown.
+ * Callers without `users:read` resolve the id through the batched by-id
+ * lookup instead of the full directory. The raw id is always available on hover via `title`.
  *
  * Dependency-light by design — one shared hook, no module coupling — so any
  * surface (monitor, rail, agents) can use it.
  *
  * Directory scope is `user` / `agent` — the only actor types `GET /actors`
- * returns (toolkits and service accounts are retired actor types). Either can
+ * and `GET /actors/lookup` return (toolkits and service accounts are retired actor types). Either can
  * still appear as the `actor_id` of a HISTORICAL execution/audit/event record
  * (`actor_type === "toolkit"` / `"service_account"`; live `jntc_live_…` keys
  * now resolve as successor agents, `sak_…` keys are refused), so we render those
  * gracefully with a type prefix + the raw `tk_…` / `sva_…` id rather than
  * trying — and failing — to resolve a name that the directory never holds.
+ *
+ * An agent the caller may not see (the by-id lookup answers for it with no
+ * match — another user's agent, for a caller without `users:read`) renders as
+ * "Agent (not visible to you)" rather than a bare id; the id stays on hover.
  *
  * Some attribution fields carry non-id SENTINELS rather than a KSUID — e.g.
  * `registered_by: "self"` (an agent self-registered via DCR). Those render as a
@@ -62,6 +67,9 @@ const ACTOR_SENTINEL_LABEL: Record<string, string> = {
 	[SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR]: 'Service-account migration',
 };
 
+/** The prefix every agent id carries. */
+const AGENT_ID_PREFIX = 'agnt_';
+
 /** A subtle type prefix for a known `actor_type`, or undefined otherwise. */
 function typePrefix(actorType: ActorType | string | null | undefined): string | undefined {
 	if (actorType == null) return undefined;
@@ -84,7 +92,12 @@ export interface ActorLabelProps {
 }
 
 export function ActorLabel({ actorId, actorType, resolvedName, className }: ActorLabelProps) {
-	const { resolve } = useActorDirectory();
+	// Only a real id needs resolving: a caller-supplied name or a sentinel never
+	// reaches the directory (and never costs a lookup).
+	const needsLookup =
+		resolvedName === undefined &&
+		!Object.prototype.hasOwnProperty.call(ACTOR_SENTINEL_LABEL, actorId);
+	const { resolve, isHidden } = useActorDirectory(needsLookup ? [actorId] : []);
 	const name = resolvedName ?? resolve(actorId);
 	const typeLabel = typePrefix(actorType);
 
@@ -118,6 +131,18 @@ export function ActorLabel({ actorId, actorType, resolvedName, className }: Acto
 			<span className={className} title={actorId}>
 				<span className="font-mono">{actorId}</span>{' '}
 				<span className="text-muted-foreground">{RETIRED_SERVICE_ACCOUNT_SUFFIX}</span>
+			</span>
+		);
+	}
+
+	// An agent the lookup answered for without a match is outside what this caller
+	// may see: say so, rather than print an id that resolves to nothing for them.
+	const isAgent =
+		actorType === ActorType.AGENT || (actorType == null && actorId.startsWith(AGENT_ID_PREFIX));
+	if (isAgent && isHidden(actorId)) {
+		return (
+			<span className={className} title={actorId} data-testid="actor-label-hidden">
+				Agent <span className="text-muted-foreground">(not visible to you)</span>
 			</span>
 		);
 	}

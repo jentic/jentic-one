@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+from jentic_one.shared.schemas import OperationInfo
 
 
 class ExecuteRequestContext(BaseModel):
@@ -23,15 +25,23 @@ class ExecuteRequestContext(BaseModel):
 
     ``toolkit_id`` is nullable-legacy: nothing sets it since theme-5 Phase 6b
     deleted toolkit derivation; it stays so queued/in-process callers built
-    against the older shape keep validating. ``operation_id`` / ``api_*`` come
+    against the older shape keep validating. ``operation`` / ``api_*`` come
     from in-process discovery, not inbound ``Jentic-Api-*`` headers.
     """
+
+    # Forbid unknown fields: this is part of the public Broker contract and
+    # pydantic's default extra="ignore" would silently DROP a misspelled or
+    # unsupported kwarg (e.g. a flat ``operation_id=`` — the identity rides
+    # ``operation``) instead of failing loudly at the caller.
+    model_config = ConfigDict(extra="forbid")
 
     upstream_url: str
     method: str
     trace_id: str
     toolkit_id: str | None = None
-    operation_id: str | None = None
+    # The discovered operation (id + path template + method), carried as one
+    # object so every persistence/telemetry seam sees the same identity.
+    operation: OperationInfo | None = None
     api_vendor: str | None = None
     api_name: str | None = None
     api_version: str | None = None
@@ -60,3 +70,13 @@ class ExecuteRequestContext(BaseModel):
     # ``CREDENTIAL_ACCESSED`` audit event to this execution.
     credential_id: str | None = None
     credential_name: str | None = None
+
+    @property
+    def operation_id(self) -> str | None:
+        """The discovered operation's opaque registry id, or ``None``.
+
+        Read-only convenience for telemetry/header seams; the identity itself
+        is set through ``operation`` (an ``operation_id=`` kwarg is rejected by
+        ``extra="forbid"``).
+        """
+        return self.operation.id if self.operation else None

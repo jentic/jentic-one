@@ -12,13 +12,13 @@ jobs, auth identity, connect sessions); the execute family proxies to the
 broker server-side
 (the broker stays MCP-free).
 
-Scope enforcement mirrors the REST routes fronted: the same
+Permission enforcement mirrors the REST routes fronted: the same
 ``required_permissions`` the routers declare, checked against the resolved
 identity through the same ``compute_effective`` expansion + ``org:admin``
-bypass ``get_current_identity`` applies. A scope failure maps exactly like the
-Go client's wire 403 (``mcpCoded``): NOT_AUTHENTICATED with the get_started
+bypass ``get_current_identity`` applies. A permission failure maps exactly like
+the Go client's wire 403 (``mcpCoded``): NOT_AUTHENTICATED with the get_started
 pointer — except ``search_catalog`` and ``import_api``, whose 403s are
-missing-scope facts routed to the operator (BROKER_DENIED with an
+missing-permission facts routed to the operator (BROKER_DENIED with an
 ask-your-operator step, the Go special case).
 """
 
@@ -207,10 +207,10 @@ def _coerce(spec: ParamSpec, value: Any) -> Any:
     return value
 
 
-# ── scope enforcement (same scopes as the REST routes fronted) ──────────────
+# ── permission enforcement (same permissions as the REST routes fronted) ────
 
 
-def require_scopes(identity: Identity, required: list[str]) -> None:
+def require_permissions(identity: Identity, required: list[str]) -> None:
     """The ``get_current_identity(required_permissions=…)`` check, mount-side.
 
     Same expansion (``compute_effective``) and the same ``org:admin`` bypass;
@@ -227,11 +227,11 @@ def require_scopes(identity: Identity, required: list[str]) -> None:
         "the identity may have been revoked or disabled",
         # Lane-aware prose (#1327 deferred work): the stdio taxonomy points
         # this code at get_started, which this mount does not serve. whoami
-        # DOES resolve here (the credential authenticated; it lacks scopes),
+        # DOES resolve here (the credential authenticated; it lacks permissions),
         # so it is the honest next step on this lane.
-        actionable="call whoami to see this connection's identity and granted scopes, "
-        "and relay the missing scopes to your operator — scopes are granted by a "
-        "human in the Jentic One dashboard",
+        actionable="call whoami to see this connection's identity and granted "
+        "permissions, and relay the missing ones to your operator — permissions are "
+        "granted by a human in the Jentic One dashboard",
     )
 
 
@@ -278,7 +278,9 @@ def _parse_method_url(target: str) -> tuple[str, str] | None:
     if not rest.startswith(("http://", "https://")):
         return None
     method = first.upper()
-    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+    # The full method set OpenAPI ingestion accepts (Go: ``parseMethodURL``) —
+    # a discovered TRACE operation's contract is readable; execute refuses it.
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}:
         return None
     return method, rest
 
@@ -347,7 +349,7 @@ async def handle_search_apis(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
     limit = args.get("limit", 0)
     if limit and not 1 <= limit <= 100:
         raise invalid_params(f"limit must be between 1 and 100, got {limit}")
-    require_scopes(env.identity, ["apis:read"])
+    require_permissions(env.identity, ["apis:read"])
     _require_db(env.ctx, "registry", "search")
 
     try:
@@ -375,6 +377,7 @@ async def handle_search_apis(env: CallEnv, arguments: dict[str, Any]) -> mcp_typ
             "operation_id": r.operation_id,
             "method": r.method,
             "url": r.url,
+            "target": r.target,
             "name": r.name or "",
             "description": r.description or "",
             "relevance_score": r.relevance_score,
@@ -417,10 +420,10 @@ async def handle_inspect_operation(
     if not target:
         raise invalid_params(
             'inspect_operation requires "operation_id" (aliases: "id", "uuid"): '
-            "a registry operation id from a search_apis hit, or a METHOD:url pair "
-            'like "GET:https://api.example.com/v1/things"'
+            'a METHOD:url pair like "GET:https://api.example.com/v1/things" '
+            "(a search_apis hit's target)"
         )
-    require_scopes(env.identity, ["apis:read"])
+    require_permissions(env.identity, ["apis:read"])
     payload = await _inspect_document(env, target, args.get("revision", ""))
     payload["schema_version"] = SCHEMA_VERSION
     return tool_result(env.ctx, payload)
@@ -437,8 +440,7 @@ async def _inspect_document(env: CallEnv, target: str, revision: str) -> dict[st
         CODE_RESOLVE_FAILED,
         f"operation {target!r} not found",
         actionable="Call search_apis with a natural-language description of what you "
-        "want to do, then inspect the operation_id (or the METHOD:url) from one of "
-        "its hits.",
+        "want to do, then inspect the target from one of its hits.",
         next_tool="search_apis",
     )
     rev_id: uuid_mod.UUID | None = None
@@ -491,17 +493,17 @@ async def handle_search_catalog(
     if limit and not 1 <= limit <= 200:
         raise invalid_params(f"limit must be between 1 and 200, got {limit}")
     try:
-        require_scopes(env.identity, ["capabilities:read"])
+        require_permissions(env.identity, ["capabilities:read"])
     except ToolError as exc:
         # The Go special case: a 403 on THIS route is the missing
-        # capabilities:read scope — an access gap the operator closes with a
+        # capabilities:read permission — an access gap the operator closes with a
         # dashboard grant, not a revoked identity. The wire
         # error rides as the message tail, like Go's ``: %v`` (mcp_catalog.go).
         raise ToolError(
             CODE_BROKER_DENIED,
-            f"reading the catalog requires the capabilities:read scope: {exc}",
+            f"reading the catalog requires the capabilities:read permission: {exc}",
             actionable="Ask your human operator to grant this agent the "
-            "capabilities:read scope in the dashboard, then retry "
+            "capabilities:read permission in the dashboard, then retry "
             "search_catalog once they confirm.",
         ) from None
     _require_db(env.ctx, "registry", "the catalog")
@@ -712,9 +714,9 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
     Catalog imports normally land ``IMPORTED`` (already live/searchable), so
     this loop is usually a runtime no-op — non-draft revisions map to their
     state verbatim, exactly like Go. For a genuine draft:
-    ``RevisionService.promote`` enforces NO scopes in-process (the
+    ``RevisionService.promote`` enforces NO permissions in-process (the
     ``apis:write`` gate lives only on the REST route), so the handler
-    soft-checks the scope itself — an unguarded call would let a default agent
+    soft-checks the permission itself — an unguarded call would let a default agent
     actually promote, a capability escalation over REST. The check is
     ``has_effective_permission`` (implication-map expansion), never a literal
     membership test: grants arrive unexpanded and ``org:admin`` implies
@@ -746,7 +748,7 @@ async def _promote_revisions(env: CallEnv, revisions: list[Any]) -> dict[str, st
             promoted[revision_id] = state
             continue
         if not can_write:
-            promoted[revision_id] = "promote failed: missing apis:write scope"
+            promoted[revision_id] = "promote failed: missing apis:write permission"
             continue
         api = rev.get("api") or {}
         try:
@@ -776,16 +778,16 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
         )
     validate_api_id(api_id)
     try:
-        require_scopes(env.identity, ["catalog:import"])
+        require_permissions(env.identity, ["catalog:import"])
     except ToolError as exc:
         # The Go special case (importAPIError's 403 arm): a 403 on THIS route
-        # is the missing catalog:import scope — an access gap the operator
+        # is the missing catalog:import permission — an access gap the operator
         # closes with a dashboard grant, not a revoked identity.
         raise ToolError(
             CODE_BROKER_DENIED,
-            f"importing a cataloged API requires the catalog:import scope: {exc}",
+            f"importing a cataloged API requires the catalog:import permission: {exc}",
             actionable="Ask your human operator to grant this agent the "
-            "catalog:import scope in the dashboard, then retry import_api "
+            "catalog:import permission in the dashboard, then retry import_api "
             "once they confirm.",
         ) from None
     _require_db(env.ctx, "registry", "the catalog")
@@ -804,15 +806,15 @@ async def handle_import_api(env: CallEnv, arguments: dict[str, Any]) -> mcp_type
             job_id = await _file_import(env, api_id)
 
             try:
-                require_scopes(env.identity, ["jobs:read"])
+                require_permissions(env.identity, ["jobs:read"])
             except ToolError:
                 # In-process tracking rides the same jobs:read gate the Go
-                # client's poll leg does (GET /jobs/{id}). Absent the scope,
+                # client's poll leg does (GET /jobs/{id}). Absent the permission,
                 # degrade to the filed-{job_id, status} envelope — NOT an
                 # error: the filing succeeded, only the courtesy tracking is
                 # off the table (REST parity: the poll would have been
-                # refused, the import would not). Both scopes ride
-                # DEFAULT_AGENT_SCOPES, so defaults are unaffected.
+                # refused, the import would not). Both permissions ride
+                # DEFAULT_AGENT_PERMISSIONS, so defaults are unaffected.
                 return tool_result(
                     env.ctx,
                     {"schema_version": SCHEMA_VERSION, "job_id": job_id, "status": "queued"},
@@ -876,7 +878,7 @@ async def _file_import(env: CallEnv, api_id: str) -> str:
             CODE_BROKER_DENIED,
             str(exc),
             actionable="Relay this to your human operator: superseding a confirmed "
-            "overlay is an operator decision (overlays:confirm), not a scope an agent "
+            "overlay is an operator decision (overlays:confirm), not a permission an agent "
             "should request for itself.",
         ) from None
     except CatalogUnavailableError as exc:
@@ -986,9 +988,8 @@ async def _execute_tool(
     target = args.get("operation_id", "")
     if not target:
         raise invalid_params(
-            f'{tool_name} requires "operation_id" (aliases: "id", "uuid"): a registry '
-            "operation id from a search_apis hit, or a METHOD:url pair like "
-            '"GET:https://api.example.com/v1/things"'
+            f'{tool_name} requires "operation_id" (aliases: "id", "uuid"): a METHOD:url '
+            'pair like "GET:https://api.example.com/v1/things" (a search_apis hit\'s target)'
         )
     body_value = args.get("body")
     if read_only_variant and body_value is not None:
@@ -1009,6 +1010,29 @@ async def _execute_tool(
         upstream_target = str(doc.get("url", ""))
         if not method or not upstream_target:
             raise ToolError(CODE_INTERNAL_ERROR, "inspect response missing method or url")
+        if not upstream_target.startswith(("http://", "https://")):
+            # A host-relative url (spec declares no absolute server — the case
+            # where a search hit's target is the registry operation_id): the
+            # contract is inspectable, but there is no upstream host to proxy
+            # to (Go: ``agentops.ensureAbsoluteUpstream``).
+            raise ToolError(
+                CODE_RESOLVE_FAILED,
+                f"operation {target!r} has no upstream host (url {upstream_target!r}): "
+                "its spec declares no absolute server, so it cannot be executed",
+                actionable="Call search_apis for an operation whose target is a METHOD:url pair.",
+                next_tool="search_apis",
+            )
+    if method == "TRACE":
+        # The broker's proxy route never serves TRACE: it echoes the request
+        # back, which would reflect the credentials the broker injects. Refuse
+        # locally (Go: ``agentops.ensureExecutableMethod``) instead of a 405.
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"operation {target!r} is a TRACE operation, which cannot be executed",
+            actionable="Call search_apis for a different operation; TRACE is never "
+            "proxied by the broker.",
+            next_tool="search_apis",
+        )
     if read_only_variant and method not in ("GET", "HEAD"):
         raise invalid_params(
             f"operation {target!r} resolves to {method} — execute_read only performs "
@@ -1045,6 +1069,8 @@ async def _execute_tool(
         raise redirect
     if (denial := ex.classify_denial(status, response_headers, raw)) is not None:
         raise denial
+    if (resolve_failure := ex.classify_broker_error(status, response_headers, raw)) is not None:
+        raise resolve_failure
     return tool_result(
         env.ctx, ex.execute_result_payload(status, response_headers, raw, execution_id)
     )
@@ -1081,7 +1107,7 @@ async def handle_get_execution_result(
             'get_execution_result requires "job_id" (aliases: "id", "job"): the job id '
             "from a held (202) execute response"
         )
-    require_scopes(env.identity, ["jobs:read"])
+    require_permissions(env.identity, ["jobs:read"])
     _require_db(env.ctx, "admin", "job polling")
 
     try:
@@ -1233,16 +1259,16 @@ async def handle_request_connection(
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
         # agents hold credentials:connect by default.
-        require_scopes(env.identity, ["credentials:connect", "credentials:write"])
+        require_permissions(env.identity, ["credentials:connect", "credentials:write"])
     except ToolError as exc:
         # The Go special case (requestConnectionError's 403 arm): a 403 on
-        # THIS route is the missing credentials:connect scope — an access gap
+        # THIS route is the missing credentials:connect permission — an access gap
         # the operator closes with a dashboard grant, not a revoked identity.
         raise ToolError(
             CODE_BROKER_DENIED,
-            f"starting a connect session requires the credentials:connect scope: {exc}",
+            f"starting a connect session requires the credentials:connect permission: {exc}",
             actionable="Ask your human operator to grant this agent the "
-            "credentials:connect scope in the dashboard, then retry "
+            "credentials:connect permission in the dashboard, then retry "
             "request_connection once they confirm.",
         ) from None
 

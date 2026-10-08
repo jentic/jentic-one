@@ -26,7 +26,7 @@ export function Banner({ children, onDismiss, dismissLabel = 'Dismiss', classNam
 			role="status"
 			aria-live="polite"
 			className={cn(
-				'border-primary/30 bg-primary/10 text-foreground flex items-center gap-3 border-b px-4 py-2 text-sm',
+				'bg-primary/10 text-foreground flex items-center gap-3 px-4 py-2 text-sm',
 				className,
 			)}
 		>

@@ -6,12 +6,13 @@
  *   2. Fold a run of consecutive routine events — same type, same actor, same
  *      day — into ONE row ("Support Triage · 6 calls succeeded") that expands.
  *   3. Keep anything that went wrong or needs a human individual: failures,
- *      actionable and acknowledged events never fold.
+ *      and actionable events never fold.
  *   4. Defer to RailEventRow for actual rendering, so density is decided per-row.
  */
 import { useMemo, useRef, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import {
+	EVENTS_FORBIDDEN_COPY,
 	categoryForKind,
 	formatStreamDayLabel,
 	isFailureSeverity,
@@ -21,7 +22,7 @@ import {
 import type { ActivityCategory, InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 export type RailFeedFilters = {
-	/** Only error/critical events (acknowledged ones included, dimmed). */
+	/** Only error/critical events. */
 	failuresOnly: boolean;
 	/** Only these kinds of activity; empty or absent = every kind. */
 	categories?: ReadonlySet<ActivityCategory>;
@@ -111,7 +112,7 @@ function formatLastEventAgo(tsMs: number): string {
 
 /** Routine events fold; anything that went wrong or wants a human stays its own row. */
 function isFoldable(ev: StreamEvent): boolean {
-	return !isFailureSeverity(ev.severity) && !ev.requiresAction && !ev.acknowledged;
+	return !isFailureSeverity(ev.severity) && !ev.requiresAction;
 }
 
 function foldsWith(a: StreamEvent, b: StreamEvent): boolean {
@@ -198,7 +199,7 @@ export function RailFeed({
 		const lastEvent = events[0];
 		const ago = lastEvent ? formatLastEventAgo(lastEvent.tsMs) : null;
 		return (
-			<div className="text-muted-foreground border-border bg-background/40 rounded border border-dashed px-3 py-6 text-center text-[11px]">
+			<div className="text-muted-foreground border-hairline-field bg-surface-1 rounded border border-dashed px-3 py-6 text-center text-[11px]">
 				{filters.failuresOnly && events.length > 0 ? (
 					<>No failures in what's loaded.</>
 				) : filters.categories && filters.categories.size > 0 && events.length > 0 ? (
@@ -231,7 +232,7 @@ export function RailFeed({
 					return (
 						<div
 							key={`day-${row.dayKey}`}
-							className="text-muted-foreground flex items-center gap-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider uppercase"
+							className="text-foreground-faint flex items-center gap-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider uppercase"
 							// Presentational: keeps the separator out of the role="log"
 							// announcement stream. The visible text is still readable in
 							// context; an aria-label here would be prohibited ARIA
@@ -239,7 +240,7 @@ export function RailFeed({
 							role="presentation"
 						>
 							<span className="shrink-0">{formatStreamDayLabel(row.tsMs)}</span>
-							<span className="bg-border h-px flex-1" />
+							<span className="bg-hairline-field h-px flex-1" />
 						</div>
 					);
 				}
@@ -271,7 +272,7 @@ export function RailFeed({
 							onNavigate={onNavigate}
 						/>
 						{isOpen && (
-							<div className="border-border ml-3.5 space-y-0.5 border-l pl-1.5">
+							<div className="border-hairline-field ml-3.5 space-y-0.5 border-l pl-1.5">
 								{row.members.map((member) => (
 									<RailEventRow
 										key={member.id}
@@ -287,6 +288,19 @@ export function RailFeed({
 					</div>
 				);
 			})}
+		</div>
+	);
+}
+
+/** The rail body for a caller who cannot read events: one plain statement. */
+export function RailForbidden() {
+	return (
+		<div
+			data-testid="rail-forbidden"
+			className="text-muted-foreground border-border bg-background/40 rounded border border-dashed px-3 py-6 text-center text-[11px]"
+		>
+			<p className="text-foreground font-medium">{EVENTS_FORBIDDEN_COPY.title}</p>
+			<p className="mt-1">{EVENTS_FORBIDDEN_COPY.description}</p>
 		</div>
 	);
 }

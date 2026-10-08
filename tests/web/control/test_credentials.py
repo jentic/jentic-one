@@ -16,13 +16,15 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import delete, text
 
 from jentic_one.admin.repos import AgentCredentialBindingRepository
+from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
-from tests.web.control.conftest import _build_app, _effective
+from tests.web.control.conftest import CRED_WRITER_IDENTITY, _build_app, _effective
 
 pytestmark = pytest.mark.integration
 
@@ -52,6 +54,28 @@ def _create_api_key(client: TestClient) -> str:
     assert resp.status_code == 201, resp.text
     credential_id: str = resp.json()["credential"]["credential_id"]
     return credential_id
+
+
+def test_create_response_carries_created_by(cred_writer_client: TestClient) -> None:
+    """The create echo names the caller as ``created_by``, matching later reads."""
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "api_key",
+            "name": "web-cred-created-by",
+            "api": {"vendor": "openweathermap.org", "name": "onecall", "version": "3.0"},
+            "provider": "static",
+            "key": "sk-web-test-key-created-by",
+            "location": "query",
+            "field_name": "appid",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()["credential"]
+    assert created["created_by"] == CRED_WRITER_IDENTITY.sub
+
+    got = cred_writer_client.get(f"/credentials/{created['credential_id']}").json()
+    assert got["created_by"] == created["created_by"]
 
 
 def test_patch_changing_field_name_is_rejected(cred_writer_client: TestClient) -> None:
@@ -273,6 +297,63 @@ def test_catalog_api_id_defaults_to_null(cred_writer_client: TestClient) -> None
     cred_id = _create_api_key(cred_writer_client)
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["catalog_api_id"] is None
+
+
+# --- Create-time unmatched-API advisory on the wire (#1020) ---
+
+
+def test_create_unmatched_scope_returns_warnings(cred_writer_client: TestClient) -> None:
+    """A scope covering no imported API still creates (201) but the response
+    carries the advisory `warnings` list."""
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "bearer_token",
+            "name": "web-cred-1020-unmatched",
+            "api": {"vendor": "webtest-unmatched.example", "name": "nothing-here", "version": ""},
+            "provider": "static",
+            "token": "sk-web-warn-token",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    warnings = resp.json()["warnings"]
+    assert isinstance(warnings, list) and warnings
+    assert "matches no imported API" in warnings[0]
+    assert "webtest-unmatched-example/nothing-here" in warnings[0]
+
+
+async def test_create_matching_scope_returns_null_warnings(
+    cred_writer_client: TestClient, web_context: Context
+) -> None:
+    """When the (canonicalized) scope covers an imported registry API the
+    response `warnings` field is null."""
+    async with web_context.registry_db.session() as session:
+        api = await ApiRepository.upsert(
+            session,
+            vendor="webtest-match-example",
+            name="onecall",
+            version="3.0",
+            created_by="usr_test",
+        )
+        api_id = api.id
+        await session.commit()
+    try:
+        resp = cred_writer_client.post(
+            "/credentials",
+            json={
+                "type": "bearer_token",
+                "name": "web-cred-1020-matched",
+                "api": {"vendor": "webtest-match.example", "name": "onecall", "version": "3.0"},
+                "provider": "static",
+                "token": "sk-web-match-token",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["warnings"] is None
+    finally:
+        async with web_context.registry_db.session() as session:
+            await session.execute(delete(Api).where(Api.id == api_id))
+            await session.commit()
 
 
 # --- Agent bindings (reverse lookup, theme 5 phase 1) ---
@@ -543,6 +624,49 @@ def test_agent_permissions_owner_gated(
     assert resp.json()["type"] == "credential_not_found"
 
 
+@pytest.fixture()
+def bound_agent_client(
+    web_context: Context, bound_agents: tuple[str, list[str]]
+) -> Iterator[TestClient]:
+    """The first agent of ``bound_agents`` itself, holding credentials:read."""
+    _, (agent_id, _) = bound_agents
+    identity = Identity(
+        sub=agent_id,
+        email=f"{agent_id}@test.local",
+        permissions=_effective("credentials:read"),
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_test",
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_agent_permissions_reads_limited_to_visible_agents(
+    bound_agent_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """A bound agent reads its own binding's rules but not a sibling's.
+
+    The sibling's binding answers the same 404 ``agent_binding_not_found`` as
+    an agent that is not bound at all, on both the list and the dry-run read.
+    """
+    credential_id, (agent_id, sibling_id) = bound_agents
+    probe = {"method": "GET", "path": "/v1/things"}
+
+    own = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+    assert bound_agent_client.get(own).status_code == 200
+    assert bound_agent_client.post(f"{own}:test", json=probe).status_code == 200
+
+    for target in (sibling_id, "agnt_never_bound"):
+        base = f"/credentials/{credential_id}/agents/{target}/permissions"
+        for resp in (
+            bound_agent_client.get(base),
+            bound_agent_client.post(f"{base}:test", json=probe),
+        ):
+            assert resp.status_code == 404, resp.text
+            assert resp.json()["type"] == "agent_binding_not_found"
+
+
 def test_agent_permissions_write_needs_write_scope(
     delegated_agent_client: TestClient, bound_agents: tuple[str, list[str]]
 ) -> None:
@@ -570,8 +694,8 @@ async def clean_rule_sets(web_context: Context) -> AsyncGenerator[None, None]:
 def plain_writer_client(web_context: Context) -> Iterator[TestClient]:
     """A credentials:write caller who is NOT org:admin and NOT the set creator.
 
-    Exists to pin the provisional creator-or-admin write gate (plan OQ-6):
-    holding the write scope alone must not admit edits to someone else's set.
+    Pins the rule-set write and attach gates: holding the write permission
+    alone admits neither edits to someone else's set nor attaching it.
     """
     identity = Identity(
         sub="usr_webtest_plain_writer",
@@ -715,8 +839,8 @@ def test_rule_set_mutations_gated_to_creator_or_admin(
     plain_writer_client: TestClient,
     clean_rule_sets: None,
 ) -> None:
-    """Provisional OQ-6 gate: a non-admin non-creator with credentials:write can
-    read a shared set but not mutate it; their own sets they can mutate."""
+    """A non-admin non-creator with credentials:write can read a shared set but
+    not mutate it; their own sets they can mutate."""
     set_id = cred_writer_client.post("/permission-rule-sets", json={"name": "admins-set"}).json()[
         "rule_set_id"
     ]
@@ -1009,6 +1133,54 @@ def test_binding_rule_writes_require_credential_owner_or_admin(
     assert resp.status_code == 200, resp.text
     assert plain_writer_client.delete(f"{base}/rule-set").status_code == 204
     assert cred_writer_client.put(f"{base}/permissions", json=[]).status_code == 200
+
+
+@pytest.fixture()
+def other_writer_client(web_context: Context) -> Iterator[TestClient]:
+    """A second non-admin credentials:write caller, for sets the plain writer did not create."""
+    identity = Identity(
+        sub="usr_webtest_other_writer",
+        email="otherwriter@test.local",
+        permissions=_effective("credentials:read", "credentials:write"),
+    )
+    app = _build_app(web_context, identity)
+    with TestClient(app) as tc:
+        yield tc
+
+
+def test_rule_set_attach_requires_creator_admin_or_curated(
+    plain_writer_client: TestClient,
+    other_writer_client: TestClient,
+    cred_writer_client: TestClient,
+    owned_binding: tuple[str, str],
+    clean_rule_sets: None,
+) -> None:
+    """The binding owner attaches their own set or an admin-created (curated) set,
+    but gets 403 rule_set_attach_denied for another non-admin user's set."""
+    credential_id, agent_id = owned_binding
+    attach = f"/credentials/{credential_id}/agents/{agent_id}/rule-set"
+
+    others = other_writer_client.post("/permission-rule-sets", json={"name": "others-set"}).json()
+    curated = cred_writer_client.post("/permission-rule-sets", json={"name": "curated-set"}).json()
+    own = plain_writer_client.post("/permission-rule-sets", json={"name": "own-set"}).json()
+    assert (others["curated"], curated["curated"], own["curated"]) == (False, True, False)
+    listed = {
+        r["rule_set_id"]: r["curated"]
+        for r in plain_writer_client.get("/permission-rule-sets").json()["data"]
+    }
+    assert listed[curated["rule_set_id"]] is True
+    assert listed[others["rule_set_id"]] is False
+
+    resp = plain_writer_client.put(attach, json={"rule_set_id": others["rule_set_id"]})
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "rule_set_attach_denied"
+
+    for set_id in (curated["rule_set_id"], own["rule_set_id"]):
+        assert plain_writer_client.put(attach, json={"rule_set_id": set_id}).status_code == 204
+    # org:admin attaches any set, including another user's.
+    resp = cred_writer_client.put(attach, json={"rule_set_id": others["rule_set_id"]})
+    assert resp.status_code == 204
+    assert plain_writer_client.delete(attach).status_code == 204
 
 
 _SELF_CONNECTED_AGENT = "agnt_rulewrite_selfconn"

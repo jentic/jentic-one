@@ -6,6 +6,7 @@
  * sheet on the Agents page.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { useLocation } from 'react-router';
 import { page, userEvent as browserUser } from 'vitest/browser';
 import { worker } from '@/mocks/browser';
@@ -212,6 +213,45 @@ describe('CredentialInventorySheet — credential flows', () => {
 			.getAllByTestId('toast')
 			.find((t) => t.textContent?.includes('Credential created'))!;
 		expect(toast).toHaveTextContent('CI token');
+	});
+
+	it('downgrades the create toast to a warning when the API scope matches no imported API', async () => {
+		const warning =
+			"API scope 'acme/*/*' matches no imported API — executions using this credential will fail.";
+		worker.use(
+			http.post('/credentials', () =>
+				HttpResponse.json(
+					{
+						credential: makeMockCredential({
+							credential_id: 'c_warn',
+							name: 'CI token',
+						}),
+						secret: { token: 'x' },
+						warnings: [warning],
+					},
+					{ status: 201 },
+				),
+			),
+		);
+		renderInventory();
+		const user = userEvent.setup();
+		await openCreateWizard(user);
+
+		await user.click(await screen.findByRole('button', { name: /Enter manually/i }));
+		await user.type(screen.getByPlaceholderText('Production API key'), 'CI token');
+		await user.type(screen.getByPlaceholderText('acme'), 'acme');
+		await user.type(screen.getByPlaceholderText('sk_live_…'), 'super-secret-value');
+		await user.click(screen.getByRole('button', { name: 'Create credential' }));
+
+		await waitFor(() => {
+			const toasts = screen.queryAllByTestId('toast');
+			expect(toasts.some((t) => t.textContent?.includes('check its API scope'))).toBe(true);
+		});
+		const toast = screen
+			.getAllByTestId('toast')
+			.find((t) => t.textContent?.includes('check its API scope'))!;
+		expect(toast).toHaveTextContent('matches no imported API');
+		expect(toast).not.toHaveTextContent('ready to use');
 	});
 
 	it('creates a credential via the guided flow: pick local API → auto-shape to API_KEY', async () => {

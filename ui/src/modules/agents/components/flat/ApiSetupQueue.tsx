@@ -10,10 +10,33 @@
  * component mounted meanwhile, and the edited batch is folded back in
  * ({@link reconcileQueue}) so progress survives the round trip. Bindings are created
  * with no rules — default-deny, so an added API cannot serve traffic yet.
+ *
+ * An API the agent already reaches is set up the same way: the pane names the
+ * credentials it has and offers only credentials not bound to it yet, so the item
+ * adds another credential rather than a 409.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Check, KeyRound, Loader2, LogIn, Minus, X } from 'lucide-react';
-import { Badge, Button, SheetPrimitive } from '@/shared/ui';
+import {
+	AlertTriangle,
+	ArrowLeft,
+	Check,
+	KeyRound,
+	Loader2,
+	LockOpen,
+	LogIn,
+	Minus,
+	X,
+} from 'lucide-react';
+import {
+	Badge,
+	Button,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
+	SheetPrimitive,
+	ConfirmDialog,
+} from '@/shared/ui';
+import { apiIdentityTuple } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
@@ -22,13 +45,17 @@ import {
 	type CreatedCredentialInfo,
 } from '@/shared/credentials/components/CreateCredentialFlow';
 import { useBindAgentCredential } from '@/modules/agents/api';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import {
 	credentialAwaitsConsent,
 	type CredentialChoice,
 } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialOptions } from '@/shared/credentials/components/CredentialOptions';
-import { defaultChoice, type PreflightItem } from '@/modules/agents/lib/apiPreflight';
+import {
+	addedViaLabel,
+	anotherCredentialWarning,
+	defaultChoice,
+	type PreflightItem,
+} from '@/modules/agents/lib/apiPreflight';
 import {
 	QUEUE_RULES_NOTICE,
 	QUEUE_STATUS_LABELS,
@@ -119,7 +146,19 @@ export function ApiSetupQueue({
 	const importMutation = useImportCatalogEntry();
 	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
 
-	const active = useMemo(() => activeEntry(entries), [entries]);
+	// A credential this queue has bound can't be bound to the agent again (a 409),
+	// even when it also covers a later API — so it leaves every later pane.
+	const active = useMemo(() => {
+		const entry = activeEntry(entries);
+		if (!entry) return null;
+		const bound = new Set(
+			entries.flatMap((e) =>
+				e.status === 'added' && e.credentialId ? [e.credentialId] : [],
+			),
+		);
+		const covering = entry.covering.filter((c) => !bound.has(c.credential_id));
+		return covering.length === entry.covering.length ? entry : { ...entry, covering };
+	}, [entries]);
 	const summary = useMemo(() => queueSummary(entries), [entries]);
 	const formEntry = useMemo(
 		() => entries.find((e) => e.key === formKey) ?? null,
@@ -247,7 +286,7 @@ export function ApiSetupQueue({
 			className="sm:w-[560px] xl:w-[640px]"
 		>
 			<div className="flex h-full flex-col">
-				<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+				<SheetHeader className="justify-between">
 					<div className="min-w-0">
 						{onBack && (
 							<Button
@@ -255,13 +294,16 @@ export function ApiSetupQueue({
 								size="sm"
 								onClick={goBack}
 								disabled={busy}
-								className="text-muted-foreground hover:text-foreground mb-1 -ml-2 h-7 px-2 text-xs"
+								className="mb-1 -ml-2 h-7 px-2 text-xs"
 							>
 								<ArrowLeft className="h-3.5 w-3.5" />
 								Back to APIs
 							</Button>
 						)}
-						<h2 id={headingId} className="text-foreground text-base font-semibold">
+						<h2
+							id={headingId}
+							className="font-heading text-foreground-name text-base font-semibold"
+						>
 							Set up {summary.total} {summary.total === 1 ? 'API' : 'APIs'}
 						</h2>
 						<p className="text-muted-foreground text-xs">
@@ -270,17 +312,17 @@ export function ApiSetupQueue({
 					</div>
 					<Button
 						variant="ghost"
-						size="sm"
+						size="icon-xs"
 						aria-label="Close"
 						onClick={close}
 						disabled={busy}
-						className="text-muted-foreground hover:text-foreground shrink-0"
+						className="shrink-0"
 					>
 						<X className="h-4 w-4" />
 					</Button>
-				</header>
+				</SheetHeader>
 
-				<div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+				<SheetBody className="space-y-4">
 					{active ? (
 						<ActivePane
 							paneRef={paneRef}
@@ -312,10 +354,10 @@ export function ApiSetupQueue({
 						activeKey={active?.key ?? null}
 						onRetry={retry}
 					/>
-				</div>
+				</SheetBody>
 
-				<footer className="border-border bg-card/60 border-t">
-					<div className="bg-muted h-0.5 w-full" aria-hidden="true">
+				<SheetFooter className="block p-0">
+					<div className="bg-surface-tonal h-0.5 w-full" aria-hidden="true">
 						<div
 							className="bg-primary h-full transition-[width] duration-300 ease-out"
 							style={{
@@ -345,7 +387,7 @@ export function ApiSetupQueue({
 						</div>
 						{/* One note, not a stack: what an added API can do yet, and — while anything
 						    is outstanding, failures included — what closing costs. */}
-						<p className="text-muted-foreground/90 text-xs leading-snug">
+						<p className="text-muted-foreground text-xs leading-snug">
 							{QUEUE_RULES_NOTICE}
 							{!summary.done && (
 								<>
@@ -356,7 +398,7 @@ export function ApiSetupQueue({
 							)}
 						</p>
 					</div>
-				</footer>
+				</SheetFooter>
 			</div>
 
 			{formEntry && (
@@ -428,6 +470,9 @@ function ActivePane({
 	const wantsNew = count === 0 || selected?.kind === 'new';
 	/** A new credential for this API is one sign-in click — the tray established it. */
 	const newIsSignIn = entry.outcome === 'oauth';
+	/** Its spec declares no authentication, so the new credential carries no secret. */
+	const newIsNoAuth = entry.outcome === 'no-auth';
+	const other = entry.existing.length > 0 ? ' other' : '';
 
 	return (
 		<section
@@ -436,21 +481,28 @@ function ActivePane({
 			tabIndex={-1}
 			aria-label={`Set up ${entry.api.label}`}
 			data-testid="queue-active-pane"
-			className="border-border bg-muted/20 focus-visible:ring-ring space-y-3 rounded-xl border p-4 outline-none focus-visible:ring-2"
+			className="bg-surface-inset focus-visible:ring-ring space-y-3 rounded-lg p-4 outline-none focus-visible:ring-2"
 		>
 			<div className="flex items-start gap-3">
 				<span
 					aria-hidden
-					className="bg-background border-border flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border"
+					className="bg-surface-field flex h-9 w-9 shrink-0 items-center justify-center rounded-md"
 				>
 					<KeyRound className="text-muted-foreground h-4 w-4" />
 				</span>
 				<div className="min-w-0 flex-1">
-					<p className="text-foreground truncate text-sm font-medium">
+					<p className="text-foreground-name truncate text-sm font-semibold">
 						{entry.api.label}
 					</p>
-					<p className="text-muted-foreground font-mono text-xs">
-						{entry.api.vendor}/{entry.api.name}
+					<p
+						data-testid="queue-active-identity"
+						className="text-muted-foreground font-mono text-xs"
+					>
+						{/* A catalog pick's name is its whole `api_id`, which already
+						    leads with the vendor (or is just the vendor). */}
+						{entry.api.name === entry.api.vendor
+							? entry.api.name
+							: apiIdentityTuple({ vendor: entry.api.vendor, name: entry.api.name })}
 					</p>
 				</div>
 				{working && (
@@ -461,13 +513,32 @@ function ActivePane({
 				)}
 			</div>
 
+			{entry.existing.length > 0 && (
+				<div className="space-y-1.5">
+					<p
+						data-testid="queue-existing-accounts"
+						className="text-muted-foreground text-xs"
+					>
+						{addedViaLabel(entry.existing)}. Pick another credential to add it to{' '}
+						{agentName}.
+					</p>
+					<p
+						data-testid="queue-ambiguity-warning"
+						className="text-foreground flex items-start gap-2 text-xs"
+					>
+						<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<span>{anotherCredentialWarning(entry.api.label)}</span>
+					</p>
+				</div>
+			)}
+
 			{count > 0 && (
 				<CredentialOptions
 					id={`queue-credential-${entry.key}`}
 					legend={
 						count === 1
-							? `You have 1 credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
-							: `You have ${count} credentials for ${entry.api.label}. Which should ${agentName} use?`
+							? `You have 1${other} credential for ${entry.api.label}. Should ${agentName} use it, or a new one?`
+							: `You have ${count}${other} credentials for ${entry.api.label}. Which should ${agentName} use?`
 					}
 					credentials={entry.covering}
 					selected={selected}
@@ -488,17 +559,19 @@ function ActivePane({
 				<p className="text-muted-foreground text-xs">
 					{newIsSignIn
 						? 'Sign in once and this API is set up — there is nothing to type in.'
-						: 'This API needs a new credential. Nothing is stored until you save it.'}
+						: newIsNoAuth
+							? "This API's spec declares no authentication, so its credential has no secret to enter."
+							: 'This API needs a new credential. Nothing is stored until you save it.'}
 				</p>
 			)}
 
 			{dropPending ? (
 				<div
-					className="border-warning/40 bg-warning/5 space-y-2 rounded-lg border p-3"
+					className="bg-surface-inset space-y-2 rounded-md p-3"
 					data-testid="queue-drop-confirm"
 				>
 					<p className="text-foreground flex items-start gap-2 text-xs">
-						<AlertTriangle className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<AlertTriangle className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
 						{/* There is no "later" state to drop into. */}
 						<span>
 							{dropWarning(entry.api.label)} {agentName} will not be able to call it,
@@ -536,8 +609,12 @@ function ActivePane({
 						</Button>
 					) : wantsNew ? (
 						<Button size="sm" disabled={working} onClick={onOpenForm}>
-							<KeyRound className="h-4 w-4" />
-							Add credential
+							{newIsNoAuth ? (
+								<LockOpen className="h-4 w-4" />
+							) : (
+								<KeyRound className="h-4 w-4" />
+							)}
+							{newIsNoAuth ? 'Add without a secret' : 'Add credential'}
 						</Button>
 					) : (
 						// Nothing selected yet, which only happens among several: the
@@ -564,13 +641,13 @@ function DonePane({ summary }: { summary: QueueSummary }) {
 		<section
 			aria-label="Setup finished"
 			data-testid="queue-done-pane"
-			className="border-border bg-muted/20 flex items-start gap-3 rounded-xl border p-4"
+			className="bg-surface-inset flex items-start gap-3 rounded-lg p-4"
 		>
 			<span
 				aria-hidden
 				className={cn(
 					'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-					nothingAdded ? 'bg-muted' : 'bg-success/10',
+					nothingAdded ? 'bg-surface-field' : 'bg-success/10',
 				)}
 			>
 				{nothingAdded ? (
@@ -622,7 +699,7 @@ function ProgressList({
 					data-status={entry.status}
 					className={cn(
 						'flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 text-sm',
-						entry.key === activeKey && 'bg-muted/40',
+						entry.key === activeKey && 'bg-tint-2',
 					)}
 				>
 					<span
@@ -651,12 +728,12 @@ function ProgressList({
 					)}
 					{entry.status === 'failed' && (
 						<>
-							<Badge variant="danger" className="shrink-0 text-[10px]">
+							<Badge variant="danger" className="shrink-0">
 								{entry.error}
 							</Badge>
 							<Button
-								size="sm"
-								variant="ghost"
+								size="xs"
+								variant="tonal"
 								onClick={(): void => onRetry(entry.key)}
 								className="shrink-0"
 							>

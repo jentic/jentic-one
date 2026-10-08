@@ -1,6 +1,6 @@
 /**
  * ActivityDrawerButton — the Activity rail for viewports below `xl`, where the
- * docked rail is hidden. A top-bar button (with a red dot for unacknowledged
+ * docked rail is hidden. A top-bar button (with a red dot for recent
  * failures — counts are the Notifications bell's job) opens the SAME
  * `ActivityRailBody` in a right-side sheet.
  */
@@ -29,7 +29,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 
 	const label =
 		failureCount > 0
-			? `Activity (${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'})`
+			? `Activity (${failureCount} recent failure${failureCount === 1 ? '' : 's'})`
 			: 'Activity';
 
 	return (
@@ -42,7 +42,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 				aria-expanded={open}
 				title={label}
 				className={cn(
-					'text-muted-foreground hover:bg-muted hover:text-foreground relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150',
+					'text-muted-foreground hover:bg-surface-tonal hover:text-foreground relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150',
 					className,
 				)}
 			>
@@ -56,7 +56,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 				open={open}
 				onClose={() => setOpen(false)}
 				ariaLabel="Activity"
-				className="bg-muted flex flex-col sm:w-[360px]"
+				className="bg-surface-sheet flex flex-col sm:w-[360px]"
 			>
 				<ActivityRailBody
 					variant="drawer"

@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import (
 from sqlalchemy import delete
 
 from jentic_one.admin.core.schema.access_tokens import AccessToken
-from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
+from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
@@ -49,7 +49,7 @@ async def clean_grants(integration_context: Context) -> AsyncGenerator[None, Non
             await session.execute(delete(RefreshToken))
             await session.execute(delete(AuthorizationCode))
             await session.execute(delete(OAuthClientGrant))
-            await session.execute(delete(ActorScopeGrant))
+            await session.execute(delete(ActorPermissionGrant))
             await session.execute(delete(ExternalIdentity))
             await session.execute(delete(OAuthClient).where(OAuthClient.created_by == SEED_MARKER))
             await session.execute(delete(Agent).where(Agent.created_by == SEED_MARKER))

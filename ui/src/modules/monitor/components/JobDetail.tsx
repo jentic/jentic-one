@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
-import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState } from '@/shared/ui';
+import { ActorLabel, AppLink, Button, ErrorAlert, LoadingState, ConfirmDialog } from '@/shared/ui';
 import {
 	isTerminalJobStatus,
 	toJobStatus,
@@ -16,7 +16,6 @@ import {
 	useCancelJob,
 	useJob,
 } from '@/modules/monitor/api';
-import { ConfirmDialog } from '@/modules/monitor/components/ConfirmDialog';
 import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
 import {
 	DetailFrame,
@@ -28,11 +27,13 @@ import { formatTimestamp } from '@/modules/monitor/lib/format';
 import { monitorHref } from '@/modules/monitor/lib/links';
 import { formatSpan, jobKindLabel, jobSentence } from '@/modules/monitor/lib/logVocabulary';
 import { ORG_ADMIN, usePermission } from '@/modules/monitor/lib/usePermission';
+import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 
 export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameContext }) {
 	const query = useJob(jobId);
 	const isAdmin = usePermission(ORG_ADMIN);
-	const { actor } = useActorForJob(jobId, { canReadAudit: isAdmin });
+	const canReadAudit = useCanAccess(AUDIT_READ);
+	const { actor } = useActorForJob(jobId, { canReadAudit });
 	const cancel = useCancelJob();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -167,6 +168,7 @@ export function JobDetail({ jobId, frame }: { jobId: string; frame: DetailFrameC
 					</>
 				}
 				confirmLabel="Cancel job"
+				cancelLabel="Keep job"
 				onConfirm={confirmCancel}
 				onClose={() => setConfirmOpen(false)}
 				pending={cancel.isPending}

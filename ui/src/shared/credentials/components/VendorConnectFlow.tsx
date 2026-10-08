@@ -95,7 +95,7 @@ export type VendorConnectFlowProps =
 			vendor: VendorSummary;
 			// When set, the flow opens with the given agent pre-selected and
 			// the picker rendered disabled. Used by the "Bind credential"
-			// entry from an agent's detail page so the user can't
+			// entry for a specific agent so the user can't
 			// accidentally re-target during binding.
 			preselectedAgentId?: string;
 			// Extra content rendered on the terminal step's success path
@@ -206,7 +206,7 @@ function VendorSelfConnectFlow({
 	// pre-filling here is functionally equivalent to omitting it).
 	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
-	// an agent's detail page), the picker starts locked to that id.
+	// a specific agent), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
 	const [agentId, setAgentId] = useState<string | null>(preselectedAgentId ?? null);
 
@@ -537,7 +537,7 @@ function VendorSelfConnectFlow({
 
 			{flowError && <ErrorAlert message={flowError} />}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
 					<ArrowLeft className="h-4 w-4" />
 					Back
@@ -584,7 +584,7 @@ const AGENT_FILTER_THRESHOLD = 6;
  * link to the Agents page for when they'd rather create one first.
  * ``disabled`` locks the field to its current value (only that agent's
  * card is shown, checked and inert) so the "Bind credential" entry from
- * an agent's detail page can pre-select without risk of accidental
+ * a specific agent can pre-select without risk of accidental
  * re-target.
  */
 function AgentPickerField({
@@ -621,7 +621,7 @@ function AgentPickerField({
 		return (
 			<div className="space-y-2">
 				<Label>Which agent uses this credential?</Label>
-				<div className="border-border bg-muted/30 rounded-lg border border-dashed p-3">
+				<div className="bg-surface-inset rounded-lg p-3">
 					<p className="text-muted-foreground text-xs">
 						You don&apos;t have any agents yet — you can still connect without one and
 						bind an agent later, or{' '}
@@ -677,7 +677,7 @@ function AgentPickerField({
 				leading: (
 					<span
 						aria-hidden="true"
-						className="border-border text-muted-foreground flex h-7 w-7 items-center justify-center rounded-lg border border-dashed"
+						className="bg-surface-chip text-muted-foreground flex h-7 w-7 items-center justify-center rounded-[7px]"
 					>
 						<Unlink className="h-3.5 w-3.5" />
 					</span>
@@ -904,7 +904,7 @@ function VendorApproveFlow({
 						'The approval link is no longer valid.'
 					}
 				/>
-				<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
+				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close
 					</Button>
@@ -987,7 +987,7 @@ function VendorApproveFlow({
 				agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
 			/>
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
 					Cancel
 				</Button>
@@ -1113,7 +1113,7 @@ function RulesStep({
 
 			{error && <ErrorAlert message={error} />}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button
 					type="button"
 					variant="ghost"
@@ -1222,13 +1222,13 @@ function AgentRequestCard({
 	return (
 		<div className="space-y-2">
 			<Label>Requested by</Label>
-			<div className="bg-muted/40 border-border flex items-center gap-2.5 rounded-lg border px-3 py-2">
+			<div className="bg-surface-inset flex items-center gap-2.5 rounded-lg px-3 py-2">
 				{loading ? (
 					<Skeleton className="h-7 w-7 rounded-md" />
 				) : agent ? (
 					<AgentBadge id={agent.id} name={agent.name} size="sm" />
 				) : (
-					<div className="bg-muted flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
+					<div className="bg-surface-chip flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
 						<Bot className="text-muted-foreground h-3.5 w-3.5" />
 					</div>
 				)}
@@ -1242,8 +1242,8 @@ function AgentRequestCard({
 				</div>
 			</div>
 			{reason && (
-				<div className="bg-muted/20 border-border rounded-lg border px-3 py-2">
-					<p className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+				<div className="bg-surface-inset rounded-lg px-3 py-2">
+					<p className="text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase">
 						Reason
 					</p>
 					<p className="text-foreground mt-1 text-sm whitespace-pre-wrap">{reason}</p>
@@ -1286,7 +1286,7 @@ function ScopeChooseField({
 	if (error) return <ErrorAlert message={error.message} />;
 	if (scopes.length === 0) {
 		return (
-			<div className="border-border bg-muted/30 rounded-lg border border-dashed p-4">
+			<div className="bg-surface-inset rounded-lg p-4">
 				<p className="text-muted-foreground text-xs">
 					This integration doesn&apos;t expose any scopes — the connection will use the
 					vendor&apos;s defaults.
@@ -1302,7 +1302,7 @@ function ScopeChooseField({
 					{selected.size} of {scopes.length} selected
 				</span>
 			</div>
-			<div className="border-border divide-border divide-y overflow-hidden rounded-lg border">
+			<div className="bg-surface-inset divide-hairline-row divide-y overflow-hidden rounded-lg">
 				{scopes.map((scope) => (
 					<ScopeRow
 						key={scope.name}
@@ -1329,17 +1329,13 @@ function ScopeRow({
 	agentRequested: boolean;
 }) {
 	return (
-		<label className="hover:bg-muted/40 flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors">
+		<label className="hover:bg-tint-2 flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors">
 			<Checkbox checked={checked} onChange={onToggle} className="mt-0.5" />
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					<code className="text-foreground text-sm font-medium">{scope.name}</code>
 					<ScopeClassificationBadge classification={scope.classification} />
-					{agentRequested && (
-						<Badge variant="default" className="text-[10px]">
-							requested
-						</Badge>
-					)}
+					{agentRequested && <Badge variant="default">requested</Badge>}
 				</div>
 				{scope.description && (
 					<p className="text-muted-foreground mt-0.5 text-xs">{scope.description}</p>
@@ -1353,11 +1349,7 @@ function ScopeClassificationBadge({ classification }: { classification: ScopeCla
 	const variant =
 		classification === 'read' ? 'success' : classification === 'write' ? 'warning' : 'danger';
 	const label = classification.charAt(0).toUpperCase() + classification.slice(1);
-	return (
-		<Badge variant={variant} className="text-[10px]">
-			{label}
-		</Badge>
-	);
+	return <Badge variant={variant}>{label}</Badge>;
 }
 
 /**
@@ -1425,12 +1417,12 @@ function DeviceCodeAwaitingStep({
 			</div>
 
 			{challenge.user_code && (
-				<div className="border-border bg-muted/30 flex flex-col items-center gap-3 rounded-xl border border-dashed p-6">
-					<p className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase">
+				<div className="bg-surface-inset flex flex-col items-center gap-3 rounded-lg p-6">
+					<p className="text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase">
 						Your one-time code
 					</p>
 					<div className="flex items-center gap-3">
-						<code className="text-foreground bg-background border-border rounded-lg border px-4 py-2 font-mono text-2xl font-semibold tracking-widest">
+						<code className="text-foreground bg-surface-chip rounded-lg px-4 py-2 font-mono text-2xl font-semibold tracking-widest">
 							{challenge.user_code}
 						</code>
 						<CopyButton value={challenge.user_code} />
@@ -1514,7 +1506,7 @@ function RedirectAwaitingStep({
  */
 function UnsafeVendorUrlNotice() {
 	return (
-		<div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs">
+		<div className="bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs">
 			<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
 			<p>
 				The vendor returned a sign-in link that isn't a secure HTTPS URL. For safety we
@@ -1526,7 +1518,7 @@ function UnsafeVendorUrlNotice() {
 
 function PollingStatusLine({ display, status }: { display: VendorDisplay; status: string }) {
 	return (
-		<div className="border-border bg-muted/20 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
+		<div className="bg-surface-inset flex items-center gap-2.5 rounded-lg px-3 py-2.5">
 			<Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
 			<p className="text-muted-foreground text-xs">
 				{status === 'polling' || status === 'pending'
@@ -1539,7 +1531,7 @@ function PollingStatusLine({ display, status }: { display: VendorDisplay; status
 
 function CancelBar({ onCancel }: { onCancel: () => void }) {
 	return (
-		<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
+		<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
 				Cancel
 			</Button>
@@ -1613,7 +1605,7 @@ function TerminalStep({
 
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again

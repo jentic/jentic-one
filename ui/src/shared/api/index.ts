@@ -1,7 +1,7 @@
 // API facade — feature modules import from `@/shared/api`, never from
 // `./generated` directly, so the Bearer-JWT client config is always applied.
-// This file is APPEND-ONLY: add re-exports, never edit/remove existing lines,
-// so parallel feature PRs don't collide here.
+// Add re-exports by appending a block (so parallel feature PRs don't collide);
+// remove a re-export once nothing outside the facade imports it.
 
 // Client config + auth-error helper (side-effect import configures generated client).
 export { ApiError, isAuthError, isClientError } from '@/shared/api/client';
@@ -11,12 +11,14 @@ export { getToken, setToken, clearToken, subscribeToken } from '@/shared/api/tok
 
 // Health (deploy-mode aware).
 export { getHealth } from '@/shared/api/health';
-export type { Health } from '@/shared/api/health';
 
-// Generated typed services (regenerate with `npm run codegen`). The former
-// coarse `AdminService` was split per-tag by the retag; its endpoints now live
-// on UsersService / EventsService / ExecutionsService / AuditService /
-// JobsService / SystemService.
+// The configured client and its raw request, for endpoints the generated
+// services do not cover. Downstream UI overlays built on this app import them
+// from the facade, so they stay exported even when no module here uses them.
+export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
+export { request as apiRequest } from '@/shared/api/generated/core/request';
+
+// Generated typed services (regenerate with `npm run codegen`), one per API tag.
 export { UsersService } from '@/shared/api/generated/services/UsersService';
 export { EventsService } from '@/shared/api/generated/services/EventsService';
 export { ExecutionsService } from '@/shared/api/generated/services/ExecutionsService';
@@ -24,19 +26,11 @@ export { AuditService } from '@/shared/api/generated/services/AuditService';
 export { JobsService } from '@/shared/api/generated/services/JobsService';
 export { SystemService } from '@/shared/api/generated/services/SystemService';
 
-// Agents / dynamic registration. Agent-side credential
-// bindings live on `AgentsService` (the /agents router).
+// Agents. Agent-side credential bindings live on `AgentsService` (the /agents
+// router).
 export { AgentsService } from '@/shared/api/generated/services/AgentsService';
-export { AgentRegistrationService } from '@/shared/api/generated/services/AgentRegistrationService';
 export type { PermissionRuleReadSchema } from '@/shared/api/generated/models/PermissionRuleReadSchema';
-// The toolkit-era codegen retag namespaced `PermissionRuleSchema` per web
-// module; with the access-request schemas deleted (theme 7) the name no
-// longer collides, so the generator emits it un-namespaced. Re-exported under
-// the same stable public name so downstream consumers stay unchanged.
 export type { PermissionRuleSchema } from '@/shared/api/generated/models/PermissionRuleSchema';
-export { PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/PermissionRuleSchema';
-export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
-export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
 export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';
 export type { PermissionTestResponse } from '@/shared/api/generated/models/PermissionTestResponse';
 // Audit (read-only lens on the shared /audit endpoint via AuditService).
@@ -48,25 +42,10 @@ export { AuditTargetType } from '@/shared/api/generated/models/AuditTargetType';
 export type { LoginRequest } from '@/shared/api/generated/models/LoginRequest';
 export type { LoginResponse } from '@/shared/api/generated/models/LoginResponse';
 export type { CurrentUserResponse } from '@/shared/api/generated/models/CurrentUserResponse';
-export type { ChangePasswordRequest } from '@/shared/api/generated/models/ChangePasswordRequest';
-export type { RedeemInviteRequest } from '@/shared/api/generated/models/RedeemInviteRequest';
-export type { HealthResponse } from '@/shared/api/generated/models/HealthResponse';
 
-// Agents / dynamic registration (ui-agents module).
-// Note: AgentsService is already exported above; agents reuses it and does
-// not re-export to avoid dupes.
-export type { AgentCreateRequest } from '@/shared/api/generated/models/AgentCreateRequest';
+// Agent models (`AgentsService` is exported above).
 export type { AgentResponse } from '@/shared/api/generated/models/AgentResponse';
-export type { ApiKeyResponse } from '@/shared/api/generated/models/ApiKeyResponse';
-export type { ApiKeyInfoResponse } from '@/shared/api/generated/models/ApiKeyInfoResponse';
-export type { ApiKeyHistoryResponse } from '@/shared/api/generated/models/ApiKeyHistoryResponse';
-export type { ApiKeyHistoryEntryResponse } from '@/shared/api/generated/models/ApiKeyHistoryEntryResponse';
 export type { AgentListResponse } from '@/shared/api/generated/models/AgentListResponse';
-export type { RegisterRequest } from '@/shared/api/generated/models/RegisterRequest';
-export type { RegisterResponse } from '@/shared/api/generated/models/RegisterResponse';
-// The DenyRequest name no longer collides (the SA router is gone), so the
-// generator emits it un-namespaced; re-exported under the stable public name.
-export type { DenyRequest as AgentDenyRequest } from '@/shared/api/generated/models/DenyRequest';
 
 // Agent Rail — the persistent live-event rail consumes the REAL platform event
 // feed (`/events` + `/events/stream` SSE) via `EventsService`. These models
@@ -76,32 +55,23 @@ export type { DenyRequest as AgentDenyRequest } from '@/shared/api/generated/mod
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
 export type { EventListResponse } from '@/shared/api/generated/models/EventListResponse';
 export type { EventLinks } from '@/shared/api/generated/models/EventLinks';
-export type { EventAcknowledgeRequest } from '@/shared/api/generated/models/EventAcknowledgeRequest';
 export { EventSeverity } from '@/shared/api/generated/models/EventSeverity';
 
-// Discover (catalog) slice — services + models. The former `ApisService` was
-// renamed `ApIsService` by the retag (+ ApiSpecService / ApiOperationsService).
+// Discover (catalog) slice — services + models.
 export { CatalogService } from '@/shared/api/generated/services/CatalogService';
 export { ApIsService } from '@/shared/api/generated/services/ApIsService';
 export { ApiSpecService } from '@/shared/api/generated/services/ApiSpecService';
 export { ApiOperationsService } from '@/shared/api/generated/services/ApiOperationsService';
 export type { CatalogListResponse } from '@/shared/api/generated/models/CatalogListResponse';
 export type { CatalogEntryResponse } from '@/shared/api/generated/models/CatalogEntryResponse';
-export type { CatalogEntryLinksResponse } from '@/shared/api/generated/models/CatalogEntryLinksResponse';
 export type { CatalogRefreshResponse } from '@/shared/api/generated/models/CatalogRefreshResponse';
 export type { OperationPreviewListResponse } from '@/shared/api/generated/models/OperationPreviewListResponse';
 export type { PreviewOperationResponse } from '@/shared/api/generated/models/PreviewOperationResponse';
-export type { PreviewInfoResponse } from '@/shared/api/generated/models/PreviewInfoResponse';
-export type { PreviewParameterResponse } from '@/shared/api/generated/models/PreviewParameterResponse';
 export type { ApiImportResponse } from '@/shared/api/generated/models/ApiImportResponse';
 export type { ApiListResponse } from '@/shared/api/generated/models/ApiListResponse';
 export type { ApiResponse } from '@/shared/api/generated/models/ApiResponse';
-export type { ApiReferenceResponse } from '@/shared/api/generated/models/ApiReferenceResponse';
-export type { ApiLinksResponse } from '@/shared/api/generated/models/ApiLinksResponse';
 
-// Execution models (Monitor's calls view, agent activity). The Event* models
-// (EventResponse/EventListResponse/EventSeverity) are already exported above by
-// the Agent Rail block, so only the Execution models are added here.
+// Execution models (Monitor's calls view, agent activity).
 export type { ExecutionResponse } from '@/shared/api/generated/models/ExecutionResponse';
 export type { ExecutionListResponse } from '@/shared/api/generated/models/ExecutionListResponse';
 
@@ -115,6 +85,7 @@ export type { BasicAuthCreateRequest } from '@/shared/api/generated/models/Basic
 export type { BasicAuthUpdateRequest } from '@/shared/api/generated/models/BasicAuthUpdateRequest';
 export type { BearerTokenCreateRequest } from '@/shared/api/generated/models/BearerTokenCreateRequest';
 export type { BearerTokenUpdateRequest } from '@/shared/api/generated/models/BearerTokenUpdateRequest';
+export type { NoAuthCreateRequest } from '@/shared/api/generated/models/NoAuthCreateRequest';
 export type { OAuth2CreateRequest } from '@/shared/api/generated/models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from '@/shared/api/generated/models/OAuth2UpdateRequest';
 export type { Sigv4CreateRequest } from '@/shared/api/generated/models/Sigv4CreateRequest';
@@ -133,9 +104,6 @@ export type { CredentialRedactedResponse } from '@/shared/api/generated/models/C
 export type { ProviderDiscoveryResponse } from '@/shared/api/generated/models/ProviderDiscoveryResponse';
 export type { ProviderDiscoveryEntryResponse } from '@/shared/api/generated/models/ProviderDiscoveryEntryResponse';
 
-export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
-export { request as apiRequest } from '@/shared/api/generated/core/request';
-
 // First-run setup. The one-time create-admin
 // endpoint bootstraps the first operator account; CreateAdminRequest is its body.
 export type { CreateAdminRequest } from '@/shared/api/generated/models/CreateAdminRequest';
@@ -149,25 +117,22 @@ export { HEALTH_QUERY_KEY } from '@/shared/api/health';
 // sibling's cache through this instead of a hand-synced raw key literal.
 export { sharedQueryKeys } from '@/shared/api/queryKeys';
 
-// Actor scopes (#615). The platform permission catalogue + the agent scope
-// grant endpoints. `AgentsService` is already exported above (agents block); these add the permission catalogue
-// service and the scope request/response models the agents module wires into
-// the Scopes card. Append-only.
+// Actor permissions (#615). The platform permission catalogue + the agent
+// permission grant endpoints. `AgentsService` is already exported above (agents
+// block); these add the permission catalogue service and the permission
+// request/response models the agents module wires into the Permissions card.
+// Append-only.
 export { PermissionsService } from '@/shared/api/generated/services/PermissionsService';
 export type { PermissionResponse } from '@/shared/api/generated/models/PermissionResponse';
 export type { PermissionListResponse } from '@/shared/api/generated/models/PermissionListResponse';
-export type { AgentScopesRequest } from '@/shared/api/generated/models/AgentScopesRequest';
-export type { AgentScopesResponse } from '@/shared/api/generated/models/AgentScopesResponse';
+export type { AgentPermissionsRequest } from '@/shared/api/generated/models/AgentPermissionsRequest';
+export type { AgentPermissionsResponse } from '@/shared/api/generated/models/AgentPermissionsResponse';
 
 // --- Monitor module (executions / jobs / events / audit) -------------------
 // Re-exported through the facade so the Monitor repository tier consumes typed
 // services + models from `@/shared/api` rather than reaching into `./generated`
-// (ESLint layering forbids the latter). The retag split the old coarse
-// AdminService into per-tag services: Monitor's tabs use ExecutionsService /
-// JobsService / EventsService / AuditService — all exported above.
-// Note: Execution*, Event*, and Audit* models are already exported above (by the
-// execution, agent-rail, and agents blocks respectively); Monitor reuses them.
-// Only the Job models are not yet re-exported, so add them here (append-only).
+// (ESLint layering forbids the latter). Execution, event and audit services
+// and models are exported above; the Job models are added here.
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
 
@@ -180,9 +145,6 @@ export type { JobListResponse } from '@/shared/api/generated/models/JobListRespo
 export { MonitoringService } from '@/shared/api/generated/services/MonitoringService';
 export { GroupBy } from '@/shared/api/generated/models/GroupBy';
 export type { UsageResponse } from '@/shared/api/generated/models/UsageResponse';
-export type { UsageStatsBlock } from '@/shared/api/generated/models/UsageStatsBlock';
-export type { UsageBucket } from '@/shared/api/generated/models/UsageBucket';
-export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 
 // Monitor global filter bar: the actor directory (GET /actors,
 // `ActorsService.listActors`) hydrates the actor picker shared across the
@@ -195,6 +157,10 @@ export { ActorsService } from '@/shared/api/generated/services/ActorsService';
 export { ActorType } from '@/shared/api/generated/models/ActorType';
 export type { ActorListResponse } from '@/shared/api/generated/models/ActorListResponse';
 export type { ActorSummaryResponse } from '@/shared/api/generated/models/ActorSummaryResponse';
+// By-id name lookup (`GET /actors/lookup`, `ActorsService.lookupActors`): the
+// directory's fallback for callers without `users:read`.
+export type { ActorLookupEntryResponse } from '@/shared/api/generated/models/ActorLookupEntryResponse';
+export type { ActorLookupResponse } from '@/shared/api/generated/models/ActorLookupResponse';
 
 // Session lifecycle (#610/#608): expiry-aware token adoption + proactive
 // refresh scheduling + the one-shot "session expired" login notice.
@@ -203,7 +169,6 @@ export {
 	getSessionExpiresAt,
 	consumeSessionExpiredNotice,
 } from '@/shared/api/token-store';
-export type { ClearTokenReason } from '@/shared/api/token-store';
 
 // Overlays (#937). The overlay lifecycle
 // service backing the workspace OverlaysSection + the "close the overlay-update
@@ -211,6 +176,12 @@ export type { ClearTokenReason } from '@/shared/api/token-store';
 // typed `any` on the generated client; the workspace module re-types them in
 // its own `api/types.ts` + `adapters.ts`. Append-only, like the rest.
 export { OverlaysService } from '@/shared/api/generated/services/OverlaysService';
+
+// Notes (`GET /notes`, any authenticated caller). Agent/operator-authored hints
+// attached to an API (auth quirks, usage hints, corrections) — read by the
+// Library's API hub Overview. List responses are typed `any` on the generated
+// client; the workspace module re-types them in its adapters. Append-only.
+export { NotesService } from '@/shared/api/generated/services/NotesService';
 
 // System version. The running vs. latest-
 // available app release, read by the shell's update banner + UserMenu version
@@ -240,7 +211,6 @@ export type { InstanceIdentityResponse } from '@/shared/api/generated/models/Ins
 // the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same
 // session bundle as password login. Append-only, like the rest.
 export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
-export type { IdpDescriptor } from '@/shared/api/idp';
 
 // OAuth consent grants. The per-agent
 // "Connected clients" listing lives on `AgentsService.listAgentOauthGrants`
@@ -249,7 +219,6 @@ export type { IdpDescriptor } from '@/shared/api/idp';
 // /admin/oauth-grants`) live on `OAuthService`. Append-only, like the rest.
 export { OAuthService } from '@/shared/api/generated/services/OAuthService';
 export type { OAuthGrantResponse } from '@/shared/api/generated/models/OAuthGrantResponse';
-export type { OAuthGrantListResponse } from '@/shared/api/generated/models/OAuthGrantListResponse';
 // Admin cross-view rows (`GET /admin/oauth-grants`) — the per-client grants
 // panel in the OAuth-clients detail sheet. Append-only, like the rest.
 export type { OAuthGrantAdminResponse } from '@/shared/api/generated/models/OAuthGrantAdminResponse';
@@ -260,9 +229,7 @@ export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/
 // reverse lookup and per-binding rule list / replace / dry-run live on
 // `CredentialsService` (both services already exported above) — only the
 // request/response models are added here. Append-only, like the rest.
-export type { CredentialBindRequest } from '@/shared/api/generated/models/CredentialBindRequest';
 export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
-export type { CredentialBindingListResponse } from '@/shared/api/generated/models/CredentialBindingListResponse';
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
 export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
@@ -279,3 +246,14 @@ export type { OAuthAppRegistrationUpdateRequest } from '@/shared/api/generated/m
 export type { OAuthAppRegistrationRotateSecretRequest } from '@/shared/api/generated/models/OAuthAppRegistrationRotateSecretRequest';
 export type { AuthorizationCodeRegistrationCreateRequest } from '@/shared/api/generated/models/AuthorizationCodeRegistrationCreateRequest';
 export type { DeviceAuthorizationRegistrationCreateRequest } from '@/shared/api/generated/models/DeviceAuthorizationRegistrationCreateRequest';
+
+// Shared permission rule sets a direct binding can point at (the binding's
+// `rule_set_id`). Read here so a governed binding shows the set's rules — the
+// ones the broker evaluates — instead of its dormant inline rules. Append-only,
+// like the rest.
+export { PermissionRuleSetsService } from '@/shared/api/generated/services/PermissionRuleSetsService';
+export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetResponse';
+
+// RFC 9457 problem bodies: the string `detail` callers surface over the
+// transport's status text. Append-only, like the rest.
+export { problemDetailText } from '@/shared/api/problem';

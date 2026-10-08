@@ -27,6 +27,7 @@ from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.streaming import guarded_body, open_streaming_response
 from jentic_one.shared.resilience import CircuitBreaker
 from jentic_one.shared.resilience.circuit import _FAIL_PREFIX
+from jentic_one.shared.schemas import OperationInfo
 from jentic_one.shared.state.backend import MemoryStateBackend
 
 
@@ -173,7 +174,7 @@ async def test_open_streaming_response_sets_metadata_headers() -> None:
         upstream_url="https://api.example.com/x",
         method="GET",
         trace_id="t",
-        operation_id="op",
+        operation=OperationInfo(id="op"),
         api_vendor="vendor",
     )
     resp = await open_streaming_response(

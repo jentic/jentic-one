@@ -19,6 +19,8 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.services.errors import (
     HostOwnedByOtherVendorError,
     OverlayStateConflictError,
@@ -2144,3 +2146,296 @@ async def test_url_source_via_mock(
     async with registry_db.session() as session:
         rows = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(rows) == 1
+
+
+def _mock_spec_client(spec_text: str) -> AsyncMock:
+    """An httpx.AsyncClient double serving ``spec_text`` for any GET."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.text = spec_text
+    mock_response.content = spec_text.encode()
+    mock_response.headers = {"content-length": str(len(spec_text.encode()))}
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return mock_client
+
+
+async def test_catalog_import_lands_clean_identity_from_sub_segment(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#1020 end-to-end: a ``domain/sub`` catalog entry lands the clean identity.
+
+    Threads the *real* production seam — ``CatalogService._to_import_source``
+    builds the job source (sub-segment ``api_name`` + verbatim
+    ``catalog_api_id``) and ``ImportHandler`` ingests it — and asserts the
+    registry row is ``posthog-com/posthog-api``, not the vendor-doubled
+    ``posthog-com/posthog-com-posthog-api`` the pre-fix full-id slug produced.
+    """
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url="https://catalog.example.com/posthog/openapi.json",
+        github_url=None,
+        registered=False,
+    )
+    source = CatalogService(integration_context)._to_import_source(
+        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    )
+
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        result = await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    [revision] = result.body["revisions"]
+    assert revision["api"]["vendor"] == "posthog-com"
+    assert revision["api"]["name"] == "posthog-api"
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert len(rows) == 1
+        assert (rows[0].vendor, rows[0].name) == ("posthog-com", "posthog-api")
+        assert rows[0].catalog_api_id == "posthog.com/posthog-api"
+
+
+async def test_catalog_identity_conflict_surfaces_as_readable_job_failure(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """The #1020 collision guard reaches the operator through the job error.
+
+    Two catalog ids collapsing to the same registry identity must fail the
+    second import job with the guard's readable conflict message, leaving no
+    new revision behind and the stored provenance untouched.
+    """
+    async with registry_db.session() as session:
+        await ApiRepository.upsert(
+            session,
+            vendor="posthog-com",
+            name="posthog-api",
+            version="1.0.0",
+            created_by="usr_test",
+            catalog_api_id="posthog.com/posthog-api",
+        )
+        await session.commit()
+
+    with (
+        patch(
+            "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+            return_value=_mock_spec_client(MINIMAL_OPENAPI),
+        ),
+        pytest.raises(IngestJobError, match="catalog identity conflict"),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/other/openapi.json",
+                        "origin": "catalog",
+                        # The manifest's extract_vendor reduces both hosts to the
+                        # eTLD+1, so this entry carries the same vendor as the
+                        # seeded one — same identity, different catalog id.
+                        "vendor": "posthog.com",
+                        "api_name": "posthog-api",
+                        "catalog_api_id": "app.posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert revisions == []
+        api = (await session.execute(select(Api))).scalar_one()
+        assert api.catalog_api_id == "posthog.com/posthog-api"
+
+
+async def test_catalog_reimport_keeps_pre_existing_doubled_identity(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A re-import of an API first imported under the pre-#1020 doubled name
+    lands on that existing row instead of forking a clean-named sibling.
+
+    Forking would strand every credential, binding, and permission rule keyed
+    on the doubled identity on a row the catalog no longer updates. Re-slugging
+    existing rows is the coordinated #1079 migration's job, not re-import's.
+    """
+    spec_url = "https://catalog.example.com/posthog/openapi.json"
+    # Pre-fix import: the full catalog id seeded api_name, slugifying to the
+    # vendor-doubled `posthog-com-posthog-api`.
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": spec_url,
+                        "origin": "catalog",
+                        "vendor": "posthog.com",
+                        "api_name": "posthog.com/posthog-api",
+                        "catalog_api_id": "posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url=spec_url,
+        github_url=None,
+        registered=True,
+    )
+    svc = CatalogService(integration_context)
+    registered = await svc._registered_identity(entry)
+    assert registered == ("posthog-com", "posthog-com-posthog-api")
+    source = svc._to_import_source(
+        entry,
+        Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"]),
+        vendor=registered[0],
+        name=registered[1],
+    )
+    assert source["api_name"] == "posthog-com-posthog-api"
+
+    # The upstream changed, so the re-import produces a genuinely new revision.
+    updated_spec = json.loads(MINIMAL_OPENAPI)
+    updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(json.dumps(updated_spec)),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert [(r.vendor, r.name) for r in rows] == [("posthog-com", "posthog-com-posthog-api")]
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert len(revisions) == 2
+        assert {r.api_id for r in revisions} == {rows[0].id}
+
+
+async def test_catalog_reimport_after_spec_url_move_keeps_identity_by_catalog_id(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A doubled-name API whose manifest ``spec_url`` has since moved still
+    re-imports onto its existing row.
+
+    The moved URL makes the entry read as unregistered (``registered`` is
+    spec_url-keyed), so a spec_url-only lookup would fall back to the clean
+    sub-segment name and fork a second row carrying the same ``catalog_api_id``
+    — stranding the credentials and rules keyed on the old one. The stored
+    catalog id is the lookup that survives the move.
+    """
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/posthog/old/openapi.json",
+                        "origin": "catalog",
+                        "vendor": "posthog.com",
+                        "api_name": "posthog.com/posthog-api",
+                        "catalog_api_id": "posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url="https://catalog.example.com/posthog/new/openapi.json",
+        github_url=None,
+        registered=False,
+    )
+    svc = CatalogService(integration_context)
+    source = await svc._import_source_for(
+        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    )
+    assert (source["vendor"], source["api_name"]) == ("posthog-com", "posthog-com-posthog-api")
+
+    updated_spec = json.loads(MINIMAL_OPENAPI)
+    updated_spec["paths"]["/items"]["get"]["summary"] = "List all items"
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(json.dumps(updated_spec)),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert [(r.vendor, r.name) for r in rows] == [("posthog-com", "posthog-com-posthog-api")]
+
+
+async def test_upsert_keeps_current_revision_loaded_in_the_session(
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """The locking read in ``ApiRepository.upsert`` must not cache a placeholder
+    ``current_revision=None`` in the identity map: a later read in the same
+    session has to see the served revision (and the lock must be legal on
+    Postgres alongside the joined-eager outer join)."""
+    async with registry_db.session() as session:
+        api = await ApiRepository.upsert(
+            session, vendor="acme-com", name="widgets", version="1.0.0", created_by="usr_test"
+        )
+        revision = ApiRevision(api_id=api.id, state="published", source_type="url")
+        session.add(revision)
+        await session.flush()
+        api.current_revision_id = revision.id
+        await session.commit()
+
+    async with registry_db.session() as session:
+        locked = await ApiRepository.upsert(
+            session, vendor="acme-com", name="widgets", version="1.0.0", created_by="usr_test"
+        )
+        assert locked.current_revision is not None
+        again = await ApiRepository.get_by_identifier(session, "acme-com", "widgets", "1.0.0")
+        assert again is not None
+        assert again.current_revision is not None
+        assert again.current_revision.id == locked.current_revision_id

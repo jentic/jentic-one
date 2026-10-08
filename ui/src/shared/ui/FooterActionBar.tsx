@@ -64,8 +64,8 @@ export function FooterActionBar({
 				// The nav is `md:hidden`, so below `md` the bar clears its full height;
 				// from `md` up the bar owns the bottom edge and the safe area.
 				floating
-					? 'border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 shadow-card bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 w-fit max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full border px-3 py-2 backdrop-blur md:bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]'
-					: 'border-border bg-background/95 supports-[backdrop-filter]:bg-background/60 px-page-gutter inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] border-t py-3 backdrop-blur md:bottom-0 md:pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
+					? 'border-hairline-field bg-surface-sheet/95 supports-[backdrop-filter]:bg-surface-sheet/75 shadow-pop bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 w-fit max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full border px-3 py-2 backdrop-blur md:bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]'
+					: 'border-hairline bg-background/95 supports-[backdrop-filter]:bg-background/60 px-page-gutter inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] border-t py-3 backdrop-blur md:bottom-0 md:pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
 				className,
 			)}
 			// Inline `left` wins over the `left-1/2` class; `-translate-x-1/2`

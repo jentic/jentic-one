@@ -118,29 +118,6 @@ async def test_emitted_events_visible_via_list(
         assert events[0].requires_action is True
 
 
-async def test_acknowledge_emitted_event(admin_db: DatabaseSession, clean_events: None) -> None:
-    async with admin_db.transaction() as session:
-        event_id = await emit_event(
-            session,
-            type=EventType.IMPORT_FAILED,
-            severity=EventSeverity.ERROR,
-            summary="Import failed",
-            requires_action=True,
-            created_by="usr_test",
-        )
-
-    async with admin_db.transaction() as session:
-        acked = await EventRepository.acknowledge(
-            session,
-            event_id,
-            acknowledged_by="usr_test00000000000000000",
-            acknowledgement_note="Investigating",
-        )
-        assert acked.acknowledged is True
-        assert acked.acknowledged_by == "usr_test00000000000000000"
-        assert acked.acknowledged_at is not None
-
-
 async def test_emit_credential_access_persists_audit_event(
     admin_db: DatabaseSession, clean_events: None
 ) -> None:
@@ -174,6 +151,80 @@ async def test_emit_credential_access_persists_audit_event(
             "api_name": "charges",
             "api_version": "v1",
         }
+
+
+async def test_emit_credential_access_names_the_credential_owner(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """``created_by`` names the credential owner; ``actor_id`` stays the user of it."""
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            credential_owner="usr_cred_owner",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.actor_id == "agent_42"
+        assert event.created_by == "usr_cred_owner"
+
+
+async def test_emit_credential_access_summary_names_the_credential(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    """The summary names the credential; the id stays in ``data``."""
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+            credential_name="Stripe live key",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.summary == (
+            "Credential 'Stripe live key' accessed by agent_42 for stripe/charges/v1"
+        )
+        assert event.data["credential_id"] == "cred_abc"
+
+
+async def test_emit_credential_access_summary_falls_back_to_the_id(
+    admin_db: DatabaseSession, clean_events: None
+) -> None:
+    async with admin_db.transaction() as session:
+        event_id = await emit_credential_access(
+            session,
+            actor_id="agent_42",
+            actor_type="agent",
+            credential_id="cred_abc",
+            provider="stripe",
+            wire_type="api_key",
+            api_vendor="stripe",
+            api_name="charges",
+            api_version="v1",
+        )
+
+    async with admin_db.session() as session:
+        event = await EventRepository.get_by_id(session, event_id)
+        assert event is not None
+        assert event.summary == "Credential cred_abc accessed by agent_42 for stripe/charges/v1"
 
 
 async def test_emit_credential_access_never_records_secret(

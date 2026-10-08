@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import Boolean, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.db.types import UTCDateTime, json_variant
+from jentic_one.shared.db.types import json_variant
 
 
 class Event(AuditableMixin, AdminBase):
@@ -22,9 +20,9 @@ class Event(AuditableMixin, AdminBase):
         Index("ix_events_type_created", "type", "created_at"),
         Index("ix_events_severity_created", "severity", "created_at"),
         Index(
-            "ix_events_requires_action_unack",
+            "ix_events_requires_action",
             "requires_action",
-            postgresql_where=text("requires_action AND NOT acknowledged"),
+            postgresql_where=text("requires_action"),
         ),
         Index(
             "ix_events_trace_id",
@@ -61,12 +59,6 @@ class Event(AuditableMixin, AdminBase):
     requires_action: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
-    acknowledged: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false"
-    )
-    acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    acknowledged_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    acknowledgement_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     summary: Mapped[str] = mapped_column(String(512), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)

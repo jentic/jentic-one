@@ -8,6 +8,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Button } from '@/shared/ui/Button';
+import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
 interface LocationState {
@@ -87,78 +88,75 @@ export function LoginPage() {
 	};
 
 	return (
-		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
-			<form
-				onSubmit={handleSubmit}
-				className="border-border bg-card w-full max-w-sm rounded-xl border p-6 shadow-sm"
-				aria-labelledby="login-heading"
+		<AuthCard onSubmit={handleSubmit} aria-labelledby="login-heading">
+			<h1
+				id="login-heading"
+				className="font-heading text-foreground-name text-xl font-semibold"
 			>
-				<h1 id="login-heading" className="font-display text-xl font-semibold">
-					Sign in to Jentic One
-				</h1>
-				<p className="text-muted-foreground mt-1 text-sm">Admin console</p>
+				Sign in to Jentic One
+			</h1>
+			<p className="text-muted-foreground mt-1 text-sm">Admin console</p>
 
-				{sessionExpired && (
-					<p
-						role="status"
-						className="border-border bg-muted/60 text-muted-foreground mt-4 rounded-lg border px-4 py-3 text-sm"
-					>
-						Your session expired — please sign in again.
-					</p>
-				)}
+			{sessionExpired && (
+				<p
+					role="status"
+					className="bg-surface-field text-foreground-sub mt-4 rounded-md px-4 py-3 text-sm"
+				>
+					Your session expired — please sign in again.
+				</p>
+			)}
 
-				<div className="mt-6 space-y-4">
-					<div className="space-y-1">
-						<Label htmlFor="login-email">Email</Label>
-						<Input
-							id="login-email"
-							type="email"
-							autoComplete="username"
-							required
-							value={email}
-							onChange={(e) => setEmail(e.target.value)}
-						/>
-					</div>
-					<div className="space-y-1">
-						<Label htmlFor="login-password">Password</Label>
-						<Input
-							id="login-password"
-							type="password"
-							autoComplete="current-password"
-							showPasswordToggle
-							required
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-						/>
-					</div>
+			<div className="mt-6 space-y-4">
+				<div className="space-y-1">
+					<Label htmlFor="login-email">Email</Label>
+					<Input
+						id="login-email"
+						type="email"
+						autoComplete="username"
+						required
+						value={email}
+						onChange={(e) => setEmail(e.target.value)}
+					/>
 				</div>
+				<div className="space-y-1">
+					<Label htmlFor="login-password">Password</Label>
+					<Input
+						id="login-password"
+						type="password"
+						autoComplete="current-password"
+						showPasswordToggle
+						required
+						value={password}
+						onChange={(e) => setPassword(e.target.value)}
+					/>
+				</div>
+			</div>
 
-				{error !== null && <ErrorAlert message={error} className="mt-4" />}
+			{error !== null && <ErrorAlert message={error} className="mt-4" />}
 
-				<Button type="submit" loading={submitting} fullWidth className="mt-6">
-					{submitting ? 'Signing in…' : 'Sign in'}
-				</Button>
+			<Button type="submit" loading={submitting} fullWidth className="mt-6">
+				{submitting ? 'Signing in…' : 'Sign in'}
+			</Button>
 
-				{idpEnabled && (
-					<div className="mt-6">
-						<div className="flex items-center gap-3" aria-hidden="true">
-							<span className="border-border h-px flex-1 border-t" />
-							<span className="text-muted-foreground text-xs">or</span>
-							<span className="border-border h-px flex-1 border-t" />
-						</div>
-						{ssoError !== null && <ErrorAlert message={ssoError} className="mt-4" />}
-						<Button
-							type="button"
-							variant="outline"
-							fullWidth
-							className="mt-4"
-							onClick={() => void handleSso()}
-						>
-							{providerLabel(idpQuery.data?.provider ?? null)}
-						</Button>
+			{idpEnabled && (
+				<div className="mt-6">
+					<div className="flex items-center gap-3" aria-hidden="true">
+						<span className="border-hairline h-px flex-1 border-t" />
+						<span className="text-muted-foreground text-xs">or</span>
+						<span className="border-hairline h-px flex-1 border-t" />
 					</div>
-				)}
-			</form>
-		</main>
+					{ssoError !== null && <ErrorAlert message={ssoError} className="mt-4" />}
+					<Button
+						type="button"
+						variant="outline"
+						fullWidth
+						className="mt-4"
+						onClick={() => void handleSso()}
+					>
+						{providerLabel(idpQuery.data?.provider ?? null)}
+					</Button>
+				</div>
+			)}
+		</AuthCard>
 	);
 }

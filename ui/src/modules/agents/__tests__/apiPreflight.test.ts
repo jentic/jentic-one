@@ -8,8 +8,11 @@
 import { describe, it, expect } from 'vitest';
 import {
 	credentialCoversApi,
+	anotherAccountTallyLabel,
+	anotherCredentialWarning,
 	coveringCountLabel,
 	defaultChoice,
+	PREFLIGHT_LABELS,
 	preflightApi,
 	preflightApis,
 	preflightTally,
@@ -184,14 +187,43 @@ describe('preflightApi', () => {
 		expect(preflightApi(pick, inputs({ managedOAuthAvailable: true })).outcome).toBe('form');
 	});
 
-	it('an API the agent already reaches is attached, and names the credential', () => {
+	it('an API the agent already reaches adds another account, naming the one it has', () => {
 		const item = preflightApi(
 			makePick(),
 			inputs({ credentials: [makeCredential()], bindings: [makeBinding()] }),
 		);
-		expect(item.outcome).toBe('attached');
-		expect(item.attachedVia).toBe('Stripe — Production');
-		expect(item.importsApi).toBe(false);
+		expect(item.existing).toEqual([
+			{ bindingId: 'acb_1', credentialId: 'cred_1', name: 'Stripe — Production' },
+		]);
+		// The only covering credential is the bound one: binding it again is a 409,
+		// so the pick asks for a new credential instead.
+		expect(item.covering).toEqual([]);
+		expect(item.outcome).toBe('form');
+	});
+
+	it('offers the covering credentials the agent does not hold yet', () => {
+		const sandbox = makeCredential({ credential_id: 'cred_2', name: 'Stripe — Sandbox' });
+		const item = preflightApi(
+			makePick(),
+			inputs({ credentials: [makeCredential(), sandbox], bindings: [makeBinding()] }),
+		);
+		expect(item.outcome).toBe('choose');
+		expect(item.covering.map((c) => c.credential_id)).toEqual(['cred_2']);
+		expect(item.existing).toHaveLength(1);
+	});
+
+	it('never offers a credential already bound to the agent, whatever API it serves', () => {
+		// Bound for another API (its `serves` names Connect), yet it covers this
+		// one too: the agent↔credential pair is unique, so it is not offered.
+		const binding = makeBinding({
+			serves: [{ vendor: 'stripe.com', name: 'connect', version: null }],
+		});
+		const item = preflightApi(
+			makePick(),
+			inputs({ credentials: [makeCredential()], bindings: [binding] }),
+		);
+		expect(item.covering).toEqual([]);
+		expect(item.existing).toEqual([]);
 	});
 
 	it('a vendor-wildcard binding covers every API of that vendor', () => {
@@ -199,16 +231,21 @@ describe('preflightApi', () => {
 			serves: [{ vendor: 'stripe.com', name: null, version: null }],
 		});
 		const item = preflightApi(makePick({ name: 'connect' }), inputs({ bindings: [binding] }));
-		expect(item.outcome).toBe('attached');
+		expect(item.existing.map((a) => a.bindingId)).toEqual(['acb_1']);
 	});
 
-	it('a binding for a different API of the same vendor does not count as attached', () => {
+	it('a binding for a different API of the same vendor is not an existing account', () => {
 		const binding = makeBinding({
 			serves: [{ vendor: 'stripe.com', name: 'connect', version: null }],
 		});
-		expect(
-			preflightApi(makePick({ name: 'main' }), inputs({ bindings: [binding] })).outcome,
-		).toBe('form');
+		const item = preflightApi(makePick({ name: 'main' }), inputs({ bindings: [binding] }));
+		expect(item.outcome).toBe('form');
+		expect(item.existing).toEqual([]);
+	});
+
+	it('names an unnamed binding by its credential id', () => {
+		const item = preflightApi(makePick(), inputs({ bindings: [makeBinding({ name: null })] }));
+		expect(item.existing[0].name).toBe('cred_1');
 	});
 
 	it('flags an unregistered catalog pick as an import', () => {
@@ -305,6 +342,39 @@ describe('defaultChoice', () => {
 	});
 });
 
+describe('preflightApi — a pick whose spec declares no authentication', () => {
+	const noAuthKeys = new Set(['stripe.com/main']);
+
+	it('needs no credential to be typed in when nothing covers it', () => {
+		const item = preflightApi(makePick(), inputs({ noAuthKeys }));
+		expect(item.outcome).toBe('no-auth');
+		expect(PREFLIGHT_LABELS['no-auth']).toBe('No credential needed');
+	});
+
+	it('still offers a covering credential first', () => {
+		const item = preflightApi(
+			makePick(),
+			inputs({ noAuthKeys, credentials: [makeCredential()] }),
+		);
+		expect(item.outcome).toBe('choose');
+	});
+
+	it('is a form until the spec has been read', () => {
+		expect(preflightApi(makePick(), inputs()).outcome).toBe('form');
+	});
+
+	it('tallies apart from picks that need a secret', () => {
+		const items = preflightApis(
+			[makePick(), makePick({ vendor: 'acme.io', label: 'Acme' })],
+			inputs({ noAuthKeys }),
+		);
+		expect(preflightTally(items)).toMatchObject({ 'no-auth': 1, form: 1, total: 2 });
+		expect(preflightTallyLabel('no-auth', 1)).toBe(
+			'1 API declares no authentication — no secret to enter',
+		);
+	});
+});
+
 describe('preflightTally', () => {
 	it('counts each class and derives what the queue has to do', () => {
 		const coveringCred = makeCredential();
@@ -328,22 +398,18 @@ describe('preflightTally', () => {
 			choose: 1,
 			form: 2,
 			oauth: 0,
-			attached: 0,
+			another: 0,
 			total: 3,
 			imports: 1,
 		});
-		// Every actionable pick stops in the queue — the covered one included.
-		expect(tally.actionable).toBe(3);
 	});
 
-	it('already-attached picks are counted but never actionable', () => {
+	it('an already-added pick still counts, and as another account', () => {
 		const items = preflightApis(
 			[makePick()],
 			inputs({ credentials: [makeCredential()], bindings: [makeBinding()] }),
 		);
-		const tally = preflightTally(items);
-		expect(tally.attached).toBe(1);
-		expect(tally.actionable).toBe(0);
+		expect(preflightTally(items)).toMatchObject({ form: 1, another: 1, total: 1 });
 	});
 });
 
@@ -357,8 +423,15 @@ describe('preflightTallyLabel', () => {
 		);
 		expect(preflightTallyLabel('form', 1)).toBe('1 API needs a new credential');
 		expect(preflightTallyLabel('form', 2)).toBe('2 APIs need a new credential');
-		expect(preflightTallyLabel('attached', 1)).toBe('1 API is already added');
-		expect(preflightTallyLabel('attached', 2)).toBe('2 APIs are already added');
+		expect(anotherAccountTallyLabel(1)).toBe(
+			'1 API is already added — once another credential is added, calls to it must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
+		);
+		expect(anotherAccountTallyLabel(2)).toBe(
+			'2 APIs are already added — once another credential is added, calls to each must name one with the Jentic-Credential-Id header, unless one is scoped more narrowly',
+		);
+		expect(anotherCredentialWarning('GitHub')).toBe(
+			'Once added, calls to GitHub must name a credential with the Jentic-Credential-Id header, unless one is scoped more narrowly.',
+		);
 	});
 });
 
@@ -379,6 +452,15 @@ describe('stillOwedItems', () => {
 
 	it('drops the items a live binding now serves, keeping the rest in order', () => {
 		expect(stillOwedItems([stripe, notion], [makeBinding()])).toEqual([notion]);
+	});
+
+	it('a second-account item is done only once a NEW binding serves the API', () => {
+		const first = makeBinding();
+		const another = preflightApi(makePick(), inputs({ bindings: [first] }));
+		// The account it started with does not settle it.
+		expect(stillOwedItems([another], [first])).toEqual([another]);
+		const second = makeBinding({ id: 'acb_2', credentialId: 'cred_2', name: 'Sandbox' });
+		expect(stillOwedItems([another], [first, second])).toEqual([]);
 	});
 
 	it('hands back the same array when nothing is served, so a caller can compare by reference', () => {

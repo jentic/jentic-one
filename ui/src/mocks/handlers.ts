@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw';
-import { agentsHandlers } from '@/modules/agents/mocks/handlers';
+import { agentsHandlers, agentsE2eHooks } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
@@ -107,8 +107,8 @@ const actorDirectorySeed = [
 	},
 	{
 		// The admin id the agents-module fixtures stamp on approvals / audit
-		// rows (approved_by, audit actor_id) — must resolve or the detail
-		// consoles' "Approved by" and "Recent changes" show a raw id.
+		// rows (approved_by, audit actor_id) — must resolve or the Settings
+		// sheet's "Approved by" and "Recent changes" show a raw id.
 		id: 'usr_000000000000000000000admin',
 		actor_type: 'user',
 		name: 'Admin User',
@@ -154,6 +154,16 @@ export const handlers = [
 			next_cursor: null,
 		}),
 	),
+	// By-id lookup (GET /actors/lookup?id=…) over the same seed — the directory's
+	// path for callers without `users:read`.
+	http.get('/actors/lookup', ({ request }) => {
+		const ids = new Set(new URL(request.url).searchParams.getAll('id'));
+		return HttpResponse.json({
+			data: actorDirectorySeed
+				.filter((a) => ids.has(a.id))
+				.map(({ id, actor_type, name, active }) => ({ id, actor_type, name, active })),
+		});
+	}),
 	// Running/latest app version (GET /system/version) — cross-cutting shell
 	// endpoint powering the update banner + UserMenu version line. Default: no
 	// newer release (banner hidden); tests override via worker.use(...).
@@ -224,5 +234,6 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
+		...agentsE2eHooks,
 	};
 }

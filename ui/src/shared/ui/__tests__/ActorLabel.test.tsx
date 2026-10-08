@@ -115,4 +115,101 @@ describe('ActorLabel', () => {
 		expect(container.textContent).toBe('sva_x (retired service account)');
 		expect(container.querySelector('a')).toBeNull();
 	});
+
+	it('resolves names through the by-id lookup when the listing is refused', async () => {
+		const requested: string[][] = [];
+		worker.use(
+			http.get('/actors', () => HttpResponse.json({ detail: 'forbidden' }, { status: 403 })),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				requested.push(ids);
+				return HttpResponse.json({
+					data: [
+						{ id: 'usr_owner', name: 'Ada Lovelace', actor_type: 'user', active: true },
+						{
+							id: 'agnt_known',
+							name: 'Inbox Triage',
+							actor_type: 'agent',
+							active: true,
+						},
+					].filter((a) => ids.includes(a.id)),
+				});
+			}),
+		);
+		render(
+			<>
+				<ActorLabel actorId="usr_owner" />
+				<ActorLabel actorId="agnt_known" />
+				<ActorLabel actorId="self" />
+			</>,
+			{ wrapper },
+		);
+
+		expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+		expect(await screen.findByText('Inbox Triage')).toBeInTheDocument();
+		expect(screen.getByText('Self')).toBeInTheDocument();
+		// Both labels share one batched call; the sentinel is never looked up.
+		expect(requested).toHaveLength(1);
+		expect([...requested[0]].sort()).toEqual(['agnt_known', 'usr_owner']);
+	});
+	describe('an agent the by-id lookup does not resolve', () => {
+		function refuseListing() {
+			worker.use(
+				http.get('/actors', () =>
+					HttpResponse.json({ detail: 'forbidden' }, { status: 403 }),
+				),
+			);
+		}
+
+		it('reads "Agent (not visible to you)", the id on hover', async () => {
+			refuseListing();
+			worker.use(http.get('/actors/lookup', () => HttpResponse.json({ data: [] })));
+			render(
+				<>
+					<ActorLabel actorId="agnt_foreign" actorType="agent" />
+					{/* No type hint: the agent id prefix says it is an agent. */}
+					<ActorLabel actorId="agnt_untyped" />
+				</>,
+				{ wrapper },
+			);
+			await waitFor(() =>
+				expect(screen.getAllByTestId('actor-label-hidden')).toHaveLength(2),
+			);
+			const labels = screen.getAllByTestId('actor-label-hidden');
+			expect(labels[0]).toHaveTextContent('Agent (not visible to you)');
+			expect(labels[0]).toHaveAttribute('title', 'agnt_foreign');
+			expect(labels[1]).toHaveAttribute('title', 'agnt_untyped');
+		});
+
+		it('keeps the raw id for an unresolved user', async () => {
+			refuseListing();
+			worker.use(http.get('/actors/lookup', () => HttpResponse.json({ data: [] })));
+			render(<ActorLabel actorId="usr_gone" actorType="user" />, { wrapper });
+			// Settled: the lookup answered, and a user id is not relabelled.
+			await new Promise((r) => setTimeout(r, 200));
+			expect(screen.getByText('usr_gone')).toBeInTheDocument();
+			expect(screen.queryByTestId('actor-label-hidden')).toBeNull();
+		});
+
+		it('keeps the raw id when the lookup fails', async () => {
+			refuseListing();
+			worker.use(
+				http.get('/actors/lookup', () =>
+					HttpResponse.json({ detail: 'down' }, { status: 500 }),
+				),
+			);
+			render(<ActorLabel actorId="agnt_unknown" actorType="agent" />, { wrapper });
+			await new Promise((r) => setTimeout(r, 200));
+			expect(screen.getByText('agnt_unknown')).toBeInTheDocument();
+			expect(screen.queryByTestId('actor-label-hidden')).toBeNull();
+		});
+
+		it('keeps the raw id when the full directory is the source', async () => {
+			seedActors();
+			render(<ActorLabel actorId="agnt_not_listed" actorType="agent" />, { wrapper });
+			await new Promise((r) => setTimeout(r, 200));
+			expect(screen.getByText('agnt_not_listed')).toBeInTheDocument();
+			expect(screen.queryByTestId('actor-label-hidden')).toBeNull();
+		});
+	});
 });

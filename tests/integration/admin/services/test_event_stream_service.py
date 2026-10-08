@@ -18,7 +18,10 @@ from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.repos import EventRepository
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.events import EventView, Heartbeat
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+
+_ADMIN = Identity(sub="usr_event_admin", permissions=["org:admin"])
 
 pytestmark = pytest.mark.integration
 
@@ -46,7 +49,7 @@ async def test_stream_yields_events(integration_context: Context, clean_events: 
 
     service = EventStreamService(ctx)
     items: list[EventView | Heartbeat] = []
-    gen = service.stream(since=since, poll_interval_seconds=0)
+    gen = service.stream(identity=_ADMIN, since=since, poll_interval_seconds=0)
     async for item in gen:
         items.append(item)
         if len(items) >= 1:
@@ -62,7 +65,7 @@ async def test_stream_emits_heartbeat_when_no_events(
 ) -> None:
     ctx = integration_context
     service = EventStreamService(ctx)
-    gen = service.stream(since=datetime.now(UTC), poll_interval_seconds=0)
+    gen = service.stream(identity=_ADMIN, since=datetime.now(UTC), poll_interval_seconds=0)
     item = await gen.__anext__()
     assert isinstance(item, Heartbeat)
 
@@ -83,7 +86,6 @@ async def test_stream_resumes_from_last_event_id(
             severity="error",
             summary="Event one",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
         )
@@ -93,7 +95,6 @@ async def test_stream_resumes_from_last_event_id(
             severity="error",
             summary="Event two",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
         )
@@ -102,7 +103,7 @@ async def test_stream_resumes_from_last_event_id(
 
     service = EventStreamService(ctx)
     items: list[EventView | Heartbeat] = []
-    gen = service.stream(last_event_id=id_first, poll_interval_seconds=0)
+    gen = service.stream(identity=_ADMIN, last_event_id=id_first, poll_interval_seconds=0)
     async for item in gen:
         items.append(item)
         if len(items) >= 1:
@@ -131,7 +132,6 @@ async def test_stream_last_event_id_takes_precedence_over_since(
             severity="error",
             summary="Event one",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
         )
@@ -141,7 +141,6 @@ async def test_stream_last_event_id_takes_precedence_over_since(
             severity="error",
             summary="Event two",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
         )
@@ -150,7 +149,9 @@ async def test_stream_last_event_id_takes_precedence_over_since(
 
     service = EventStreamService(ctx)
     items: list[EventView | Heartbeat] = []
-    gen = service.stream(since=old_time, last_event_id=id_first, poll_interval_seconds=0)
+    gen = service.stream(
+        identity=_ADMIN, since=old_time, last_event_id=id_first, poll_interval_seconds=0
+    )
     async for item in gen:
         items.append(item)
         if len(items) >= 1:
@@ -180,7 +181,6 @@ async def test_stream_same_second_events_not_dropped(
             severity="info",
             summary="Event A (larger KSUID)",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
             created_at=same_ts,
@@ -191,7 +191,6 @@ async def test_stream_same_second_events_not_dropped(
             severity="info",
             summary="Event B (smaller KSUID)",
             requires_action=False,
-            acknowledged=False,
             data={},
             created_by="usr_test",
             created_at=same_ts,
@@ -202,7 +201,7 @@ async def test_stream_same_second_events_not_dropped(
     service = EventStreamService(ctx)
     items: list[EventView | Heartbeat] = []
     # Resume from event_b (smaller ID) — event_a (larger ID, same second) must appear.
-    gen = service.stream(last_event_id=id_b, poll_interval_seconds=0)
+    gen = service.stream(identity=_ADMIN, last_event_id=id_b, poll_interval_seconds=0)
     async for item in gen:
         items.append(item)
         if len(items) >= 1:
@@ -232,7 +231,7 @@ async def test_stream_delivers_event_committed_after_watermark_passed(
     # been open across the connect and committed late.
     gen = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+        service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0),
     )
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
@@ -246,7 +245,6 @@ async def test_stream_delivers_event_committed_after_watermark_passed(
                 severity="info",
                 summary="Late-committed registration",
                 requires_action=True,
-                acknowledged=False,
                 data={},
                 created_by="usr_test",
                 created_at=datetime.now(UTC) - timedelta(seconds=5),
@@ -292,7 +290,7 @@ async def test_stream_accepts_timezone_naive_since(
     service = EventStreamService(ctx)
     gen = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(since=naive_since, poll_interval_seconds=0),
+        service.stream(identity=_ADMIN, since=naive_since, poll_interval_seconds=0),
     )
     item = await gen.__anext__()
     assert isinstance(item, EventView)
@@ -329,7 +327,7 @@ async def test_stream_fresh_connect_does_not_replay_visible_history(
     service = EventStreamService(ctx)
     gen = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+        service.stream(identity=_ADMIN, poll_interval_seconds=0, overlap_seconds=15.0),
     )
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
@@ -351,6 +349,7 @@ async def test_stream_future_since_is_clamped_to_now(
     gen = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
         service.stream(
+            identity=_ADMIN,
             since=datetime.now(UTC) + timedelta(seconds=120),
             poll_interval_seconds=0,
             overlap_seconds=15.0,
@@ -392,7 +391,6 @@ async def test_stream_filters_with_cursor(integration_context: Context, clean_ev
                     severity="error",
                     summary="Error event",
                     requires_action=False,
-                    acknowledged=False,
                     data={},
                     created_by="usr_test",
                 ),
@@ -402,7 +400,6 @@ async def test_stream_filters_with_cursor(integration_context: Context, clean_ev
                     severity="info",
                     summary="Import event",
                     requires_action=False,
-                    acknowledged=False,
                     data={},
                     created_by="usr_test",
                 ),
@@ -412,7 +409,6 @@ async def test_stream_filters_with_cursor(integration_context: Context, clean_ev
                     severity="error",
                     summary="Another error",
                     requires_action=False,
-                    acknowledged=False,
                     data={},
                     created_by="usr_test",
                 ),
@@ -423,6 +419,7 @@ async def test_stream_filters_with_cursor(integration_context: Context, clean_ev
     service = EventStreamService(ctx)
     items: list[EventView | Heartbeat] = []
     gen = service.stream(
+        identity=_ADMIN,
         last_event_id=id_first,
         event_type=["toolkit.error"],
         poll_interval_seconds=0,
@@ -486,7 +483,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
     service = EventStreamService(ctx)
     gen = cast(
         "AsyncGenerator[EventView | Heartbeat, None]",
-        service.stream(since=datetime.now(UTC), poll_interval_seconds=60),
+        service.stream(identity=_ADMIN, since=datetime.now(UTC), poll_interval_seconds=60),
     )
 
     async def drive() -> None:

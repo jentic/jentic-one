@@ -11,21 +11,12 @@
  * unaffected.
  */
 import type { AgentResponse, PermissionRuleReadSchema, PermissionTestResponse } from '@/shared/api';
-import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
-import {
-	ACTOR_STATUSES,
-	STATUS_BADGE_VARIANT,
-	STATUS_DOT,
-	STATUS_LABELS,
-	toActorStatus,
-	type ActorStatus,
-} from '@/shared/ui';
+import { STATUS_DOT, toActorStatus, type ActorStatus } from '@/shared/ui';
 
-// The actor status vocabulary (union + label/variant/dot maps + `toActorStatus`)
-// now lives in `shared/ui` so every module renders an actor status identically
-// (module-boundary rule: siblings can't import each other). Re-exported here so
-// the agents module's public API (`@/modules/agents/api`) stays stable.
-export { ACTOR_STATUSES, STATUS_BADGE_VARIANT, STATUS_DOT, STATUS_LABELS, toActorStatus };
+// The actor status vocabulary lives in `shared/ui` so every module renders an
+// actor status identically (siblings can't import each other). The pieces the
+// agents views read are re-exported through `@/modules/agents/api`.
+export { STATUS_DOT, toActorStatus };
 export type { ActorStatus };
 
 /** Mirrors `ActorVerb` (approve|deny|disable|enable). Archive is a DELETE, not a verb. */
@@ -60,12 +51,13 @@ export const ACTION_LABEL: Record<AgentAction, string> = {
 
 /**
  * Button variant per lifecycle action — one source of truth so the destructive
- * emphasis is identical on the roster and the detail page.
+ * emphasis is identical on every surface that offers the action.
  */
 export const ACTION_VARIANT: Record<AgentAction, 'primary' | 'secondary' | 'danger' | 'outline'> = {
 	approve: 'primary',
 	enable: 'primary',
-	deny: 'danger',
+	// Tonal beside Approve: the deny reason dialog carries the destructive red.
+	deny: 'secondary',
 	disable: 'danger',
 	archive: 'secondary',
 };
@@ -112,16 +104,6 @@ export function agentToEntity(r: AgentResponse): AgentEntity {
 	};
 }
 
-/**
- * True when the agent was minted by the theme-8 service-account migration.
- * Keys off the immutable `registered_by` stamp
- * (`control/repos/service_account_migration_repo.py`), so it still holds
- * after an operator renames the agent.
- */
-export function isServiceAccountSuccessor(agent: Pick<AgentEntity, 'attribution'>): boolean {
-	return agent.attribution.registeredBy === SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR;
-}
-
 // ---------------------------------------------------------------------------
 // Direct agent↔credential bindings (theme 5 phase 5a — the direct path).
 //
@@ -151,38 +133,31 @@ export interface CredentialBindingEntity {
 	/** Why the binding is suspended: null for a manual pause, `api_deleted`
 	 * when the API its credential serves was deleted. */
 	suspendedReason: string | null;
-	/** Shared rule set this binding points at; null = inline rules apply.
-	 * Read-only here — rule-set management is out of scope for this phase. */
+	/** Shared rule set this binding points at; null = inline rules apply. While
+	 * set, the set's rules are the binding's effective policy and its inline
+	 * rules are dormant (the broker and `permissions:test` evaluate the set). */
 	ruleSetId: string | null;
 	boundAt: string;
 	serves: ServedApiEntity[];
 }
 
-/**
- * A candidate credential for the agent-side "Bind credential" picker. Sourced
- * from the org-wide `GET /credentials` surface via the repository tier (the
- * agents module cannot import the credentials page module; the shared
- * credential tier's generated service is reached through `api/client.ts`
- * only).
- */
-export interface AgentBindableCredential {
-	credential_id: string;
-	name: string;
-	type: string;
-	vendor: string | null;
-	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
-	apiName: string | null;
-	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
-	 * preferred friendly-title source. */
-	catalogApiId: string | null;
-	provider: string | null;
-	/** The credential's owner (creator). Only the owner — or an `org:admin` —
-	 * may bind it, so the picker hides the rest (e.g. enterprise shares). */
-	createdBy: string | null;
-}
-
 /** A stored permission rule on a direct binding (includes system fields). */
 export type BindingPermissionRule = PermissionRuleReadSchema;
+
+/** A shared permission rule set (`GET /permission-rule-sets/{id}`), as read by a
+ * binding that points at it. */
+export interface BindingRuleSetEntity {
+	id: string;
+	name: string;
+	description: string | null;
+	/** Created by an org admin: attachable by anyone who may write a binding's
+	 * rules, editable only by an org admin. */
+	curated: boolean;
+	/** How many agent-credential bindings point at this set. */
+	bindingCount: number;
+	/** The set's ordered, first-match-wins rules. */
+	rules: BindingPermissionRule[];
+}
 
 /** Broker dry-run verdict from the direct-binding `:test` — NO vendor
  * pooling, so `rule_index` always points into this binding's own rule list. */
@@ -217,7 +192,7 @@ export interface ApiKeyHistoryEntry {
 
 /**
  * A platform permission from the catalogue (`GET /permissions`). These are the
- * scope vocabulary that actor `scopes` draw from — distinct from the OAuth2
+ * vocabulary that actor `permissions` draw from — distinct from the OAuth2
  * provider scopes the credentials picker uses. `grantableByCaller` is false for
  * permissions the current operator lacks the authority to grant.
  */
@@ -249,13 +224,6 @@ export interface McpSessionEntity {
 	eventId: string;
 	sessionId: string | null;
 	transport: string | null;
-	clientName: string | null;
-	clientVersion: string | null;
-	startedAt: string;
-}
-
-/** The latest MCP session per agent — the roster's "last seen via MCP" cell. */
-export interface McpLastSeen {
 	clientName: string | null;
 	clientVersion: string | null;
 	startedAt: string;
@@ -299,8 +267,8 @@ export interface InstanceIdentityEntity {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth consent grants — the detail console's "Connected
-// clients" panel: which OAuth clients hold a live consent→agent grant.
+// OAuth consent grants — the Permissions sheet's "Connected
+// clients" card: which OAuth clients hold a live consent→agent grant.
 // ---------------------------------------------------------------------------
 
 /**

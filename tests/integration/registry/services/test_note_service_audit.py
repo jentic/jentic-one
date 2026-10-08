@@ -14,29 +14,14 @@ from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.registry.core.schema.apis import Api
-from jentic_one.registry.core.schema.notes import Note
 from jentic_one.registry.services.note_service import NoteService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
 
 pytestmark = pytest.mark.integration
 
 _IDENTITY = Identity(sub="usr_test", email="test@example.com")
-
-
-@pytest.fixture()
-async def clean_notes(registry_db: DatabaseSession) -> AsyncGenerator[None, None]:
-    async def _wipe() -> None:
-        async with registry_db.session() as session:
-            await session.execute(delete(Note))
-            await session.execute(delete(Api).where(Api.vendor == "audit-test.com"))
-            await session.commit()
-
-    await _wipe()
-    yield
-    await _wipe()
 
 
 @pytest.fixture()
@@ -49,15 +34,6 @@ async def clean_audit(integration_context: Context) -> AsyncGenerator[None, None
     await _wipe()
     yield
     await _wipe()
-
-
-@pytest.fixture()
-async def sample_api(registry_db: DatabaseSession, clean_notes: None) -> Api:
-    api = Api(vendor="audit-test.com", name="note-api", version="v1")
-    async with registry_db.session() as session:
-        session.add(api)
-        await session.commit()
-    return api
 
 
 async def _audit_entries_for(ctx: Context, target_id: str) -> list[AuditEntry]:
@@ -75,12 +51,12 @@ async def _audit_entries_for(ctx: Context, target_id: str) -> list[AuditEntry]:
 
 async def test_create_records_audit_entry(
     integration_context: Context,
-    sample_api: Api,
+    note_api: Api,
     clean_audit: None,
 ) -> None:
     svc = NoteService(integration_context)
     view = await svc.create(
-        resource_api=(sample_api.vendor, sample_api.name, sample_api.version),
+        resource_api=(note_api.vendor, note_api.name, note_api.version),
         body="An audited note",
         identity=_IDENTITY,
     )
@@ -94,12 +70,12 @@ async def test_create_records_audit_entry(
 
 async def test_update_and_delete_record_audit_entries(
     integration_context: Context,
-    sample_api: Api,
+    note_api: Api,
     clean_audit: None,
 ) -> None:
     svc = NoteService(integration_context)
     view = await svc.create(
-        resource_api=(sample_api.vendor, sample_api.name, sample_api.version),
+        resource_api=(note_api.vendor, note_api.name, note_api.version),
         body="Original body",
         identity=_IDENTITY,
     )

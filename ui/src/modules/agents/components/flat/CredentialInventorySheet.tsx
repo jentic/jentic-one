@@ -16,10 +16,13 @@ import {
 	RefreshButton,
 	SearchInput,
 	SegmentedToggle,
+	SheetBody,
+	SheetHeader,
 	SheetPrimitive,
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
+import { useOptionalCurrentUser } from '@/shared/auth';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -30,13 +33,15 @@ import {
 import {
 	CREDENTIAL_TYPE_LABELS,
 	CREDENTIAL_TYPE_ORDER,
-	CredentialType,
+	type CredentialType,
 	useAllCredentials,
 	useDeleteCredential,
 	type Credential,
 } from '@/shared/credentials/api';
-import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
+import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import { CredentialsList } from '@/shared/credentials/components/CredentialsList';
+import { credentialEditableBy } from '@/shared/credentials/lib/credentialAuthority';
+import { viewerIsOrgAdmin } from '@/shared/credentials/lib/bindAuthority';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -110,8 +115,9 @@ export function CredentialInventorySheet({
 	// is the `'credential'` scope, which is agent-agnostic by construction.
 	const invalidateBindingSurfaces = useInvalidateCredentialBindingSurfaces(null);
 	// A successful sign-in invalidates the whole credentials slice, so the flat
-	// surface's tiles and strip hints refresh along with this sheet's list.
-	const { connect: runConnect, deviceDialog } = useDeviceAwareConnect();
+	// surface's tiles and strip hints refresh along with this sheet's list. A
+	// just-created credential whose sign-in is abandoned is discarded.
+	const { afterCreate, connectExisting, deviceDialog } = useConnectAfterCreate();
 
 	// Which credentials the fleet uses, by inverting every agent's binding list — the
 	// same reads the agents surface already made. Archived agents are outside the
@@ -196,12 +202,18 @@ export function CredentialInventorySheet({
 
 	// Both usage figures are three-state with different gates: the fleet count is
 	// exact or withheld; a credential missing from a TRUNCATED top-N is unknown.
+	// The fleet count is joined from the viewer's own roster, which holds every
+	// agent only for an `org:admin`: for anyone else it counts their agents
+	// alone, even on a credential they created, and the card says so.
 	const usage = useCredentialUsageTotals(open);
+	const viewer = useOptionalCurrentUser();
+	const usedByYoursOnly = viewer != null && !viewerIsOrgAdmin(viewer);
 	const usageFor = useCallback(
 		(cred: Credential) => ({
 			usedByAgentCount:
 				agentsPerCredential?.get(cred.credential_id) ??
 				(agentsPerCredential != null ? 0 : fleetJoinLoading ? undefined : null),
+			usedByYoursOnly,
 			callsLast7d: usage.isLoading
 				? undefined
 				: usage.data == null
@@ -209,7 +221,14 @@ export function CredentialInventorySheet({
 					: (usage.data.totals.get(cred.credential_id) ??
 						(usage.data.complete ? 0 : null)),
 		}),
-		[agentsPerCredential, fleetJoinLoading, usage.isLoading, usage.data],
+		[agentsPerCredential, fleetJoinLoading, usedByYoursOnly, usage.isLoading, usage.data],
+	);
+
+	// The list includes credentials shared with the viewer; only the owner or an
+	// admin can change those, so their cards offer no edit or delete.
+	const readOnlyFor = useCallback(
+		(cred: Credential) => !credentialEditableBy(cred, viewer),
+		[viewer],
 	);
 
 	// The nested sheets each have a document-level Escape handler firing on the same
@@ -223,111 +242,6 @@ export function CredentialInventorySheet({
 	const openEdit = (cred: Credential): void => {
 		setStickyEditId(cred.credential_id);
 		setEditId(cred.credential_id);
-	};
-
-	// Connect right after create: an abandoned OAuth handshake discards the
-	// credential, which was never usable. `redirected` must NOT clean up — the
-	// user is mid-flow.
-	const handleConnectAfterCreate = async (
-		credentialId: string,
-		credentialName: string,
-	): Promise<void> => {
-		toast({ title: 'Opening sign-in…' });
-		const discard = async (): Promise<void> => {
-			try {
-				await deleteMutation.mutateAsync(credentialId);
-			} catch {
-				// Best-effort cleanup; the row stays listed if the delete fails.
-			}
-		};
-		try {
-			const outcome = await runConnect(credentialId, credentialName);
-			switch (outcome.status) {
-				case 'connected':
-					// The connect hook invalidated the credentials slice, which
-					// refetches this sheet's list along with every other join.
-					toast({ title: 'Connected', variant: 'success' });
-					break;
-				case 'redirected':
-					break;
-				case 'cancelled':
-					await discard();
-					toast({
-						title: 'Sign-in cancelled',
-						description: 'The unconnected credential was discarded.',
-					});
-					break;
-				case 'timeout':
-					await discard();
-					toast({
-						title: 'Sign-in timed out',
-						description: 'The unconnected credential was discarded. Try again.',
-						variant: 'error',
-					});
-					break;
-				case 'unsupported_challenge':
-					await discard();
-					toast({
-						title: 'Unsupported sign-in challenge',
-						description: 'The unconnected credential was discarded.',
-						variant: 'error',
-					});
-					break;
-				case 'unsafe_challenge_url':
-					await discard();
-					toast({
-						title: 'Sign-in link refused',
-						description:
-							'The provider returned an unsafe sign-in URL. The unconnected credential was discarded.',
-						variant: 'error',
-					});
-					break;
-			}
-		} catch {
-			await discard();
-			toast({
-				title: 'Could not complete sign-in',
-				description: 'The unconnected credential was discarded.',
-				variant: 'error',
-			});
-		}
-	};
-
-	// Standalone connect keeps the row whatever the outcome.
-	const handleConnect = async (cred: Credential): Promise<void> => {
-		toast({ title: `Opening sign-in for ${cred.name}…` });
-		try {
-			const outcome = await runConnect(cred.credential_id, cred.name);
-			switch (outcome.status) {
-				case 'connected':
-					toast({ title: 'Connected', variant: 'success' });
-					break;
-				case 'redirected':
-					break;
-				case 'cancelled':
-					toast({ title: 'Connection cancelled' });
-					break;
-				case 'timeout':
-					toast({
-						title: 'Connection timed out',
-						description: 'Finish the sign-in and refresh to see the result.',
-						variant: 'error',
-					});
-					break;
-				case 'unsupported_challenge':
-					toast({ title: 'Unsupported sign-in challenge', variant: 'error' });
-					break;
-				case 'unsafe_challenge_url':
-					toast({
-						title: 'Sign-in link refused',
-						description: 'The provider returned an unsafe sign-in URL.',
-						variant: 'error',
-					});
-					break;
-			}
-		} catch {
-			toast({ title: 'Could not start the OAuth flow', variant: 'error' });
-		}
 	};
 
 	const confirmDelete = (): void => {
@@ -353,13 +267,20 @@ export function CredentialInventorySheet({
 				className="sm:w-[640px] xl:w-[880px]"
 			>
 				<div className="flex h-full flex-col">
-					<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+					<SheetHeader className="justify-between">
 						<div className="min-w-0">
-							<h2 id={headingId} className="text-foreground text-base font-semibold">
+							<h2
+								id={headingId}
+								className="font-heading text-foreground-name text-base font-semibold"
+							>
 								Credentials
 							</h2>
+							{/* Only an `org:admin` lists the whole workspace; anyone else lists
+							    the credentials they created and the ones shared with them. */}
 							<p className="text-muted-foreground text-xs">
-								Every credential in this workspace — any agent can be bound to them.
+								{usedByYoursOnly
+									? 'Your credentials and the ones shared with you — your agents can be bound to them.'
+									: 'Every credential in this workspace — any agent can be bound to them.'}
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
@@ -391,17 +312,16 @@ export function CredentialInventorySheet({
 							/>
 							<Button
 								variant="ghost"
-								size="sm"
+								size="icon-xs"
 								aria-label="Close"
 								onClick={onClose}
-								className="text-muted-foreground hover:text-foreground"
 							>
 								<X className="h-4 w-4" />
 							</Button>
 						</div>
-					</header>
+					</SheetHeader>
 
-					<div className="border-border flex flex-wrap items-center gap-2 border-b px-5 py-3">
+					<div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pb-3">
 						{/* A credential bound to zero agents is reachable from no agent's screen —
 						    the sheet's one unique power, so it leads the toolbar. */}
 						<div className="flex shrink-0 items-center gap-2">
@@ -412,7 +332,6 @@ export function CredentialInventorySheet({
 								onChange={setBindingFilter}
 								layoutId="credential-inventory-binding-filter"
 								ariaLabel="Filter by agent usage"
-								className="border-primary/30 bg-primary/5"
 							/>
 						</div>
 						<SearchInput
@@ -437,13 +356,13 @@ export function CredentialInventorySheet({
 						/>
 					</div>
 
-					<div className="flex-1 overflow-y-auto px-5 py-4">
+					<SheetBody className="pt-3">
 						{unboundUnknown ? (
 							// Withheld, not guessed: the list would read as "used by nobody",
 							// and the next move on that reading is to delete them.
 							<div
 								role="status"
-								className="border-border bg-muted/40 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3"
+								className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3"
 							>
 								<p className="text-muted-foreground min-w-0 flex-1 text-sm">
 									Which credentials no agent uses can&rsquo;t be shown yet — that
@@ -452,8 +371,8 @@ export function CredentialInventorySheet({
 									see the full inventory meanwhile.
 								</p>
 								<Button
-									variant="secondary"
-									size="sm"
+									variant="tonal"
+									size="xs"
 									onClick={(): void => {
 										if (fleetError || hasNextPage) void fetchNextPage();
 										refreshFleetBindings();
@@ -470,11 +389,14 @@ export function CredentialInventorySheet({
 								onAdd={(): void => setCreateOpen(true)}
 								onEdit={openEdit}
 								onDelete={setDeleteTarget}
-								onConnect={(cred): void => void handleConnect(cred)}
+								onConnect={(cred): void =>
+									void connectExisting(cred.credential_id, cred.name)
+								}
 								// A drawer is not a page: three columns inside it are
 								// what clip a credential's name mid-word.
 								columns={2}
 								usageFor={usageFor}
+								readOnlyFor={readOnlyFor}
 								emptyState={
 									credentials.length > 0 ? (
 										<EmptyState
@@ -494,7 +416,7 @@ export function CredentialInventorySheet({
 								}
 							/>
 						)}
-					</div>
+					</SheetBody>
 				</div>
 			</SheetPrimitive>
 
@@ -516,13 +438,7 @@ export function CredentialInventorySheet({
 					)}
 					onCreated={(info: CreatedCredentialInfo): void => {
 						setCreateOpen(false);
-						if (
-							info.type === CredentialType.OAUTH2 &&
-							info.provider !== 'static' &&
-							info.needsConnect
-						) {
-							void handleConnectAfterCreate(info.credentialId, info.name);
-						}
+						afterCreate(info);
 					}}
 				/>
 			)}

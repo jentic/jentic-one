@@ -1,10 +1,10 @@
 """Integration tests for ``UpgradeStepService`` — the post-migration step ledger.
 
 Runs against real control databases on both dialects (Postgres takes the
-advisory-lock path; SQLite the serialised-writer path). No step is registered
-since theme-5 Phase 6b deleted the toolkit steps, so these tests drive the
-mechanism with an injected step: the ledger, retry-after-failure, and
-concurrent runs converging.
+advisory-lock path; SQLite the serialised-writer path). These tests drive the
+mechanism with an injected step: the ledger, repeatable steps, pending
+steps, retry-after-failure, and concurrent runs converging. The registered
+steps have their own tests.
 """
 
 from __future__ import annotations
@@ -16,11 +16,14 @@ import pytest
 from sqlalchemy import delete, text
 
 from jentic_one.control.core.schema.upgrade_steps import UpgradeStep
+from jentic_one.control.repos.upgrade_step_repo import UpgradeStepRepository
 from jentic_one.control.services.upgrade_steps import (
+    RULE_SETS_MARK_CURATED,
     STEPS,
     UpgradeStepOutcome,
     UpgradeStepService,
     UpgradeStepSpec,
+    step_names,
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
@@ -48,25 +51,27 @@ async def _ledger(control_db: DatabaseSession) -> list[str]:
     return [str(r.name) for r in rows]
 
 
-def _counting_step(calls: list[int], *, fail_first: bool = False) -> UpgradeStepSpec:
+def _counting_step(
+    calls: list[int], *, fail_first: bool = False, repeatable: bool = False
+) -> UpgradeStepSpec:
     async def _run(_ctx: Context) -> UpgradeStepOutcome:
         calls.append(1)
         if fail_first and len(calls) == 1:
             raise RuntimeError("simulated step failure")
         return UpgradeStepOutcome(name=_STEP, action="performed", summary={"n": len(calls)})
 
-    return UpgradeStepSpec(name=_STEP, run=_run)
+    return UpgradeStepSpec(name=_STEP, run=_run, repeatable=repeatable)
 
 
-def test_no_steps_registered_after_phase_6b() -> None:
-    """The theme-5 steps died with the toolkit tables; the next release adds its own."""
-    assert STEPS == ()
+def test_registered_steps() -> None:
+    assert step_names() == (RULE_SETS_MARK_CURATED,)
+    assert [step.repeatable for step in STEPS] == [True]
 
 
 async def test_empty_registry_is_a_no_op(
     integration_context: Context, control_db: DatabaseSession, clean_ledger: None
 ) -> None:
-    assert await UpgradeStepService(integration_context).run() == []
+    assert await UpgradeStepService(integration_context, steps=[]).run() == []
     assert await _ledger(control_db) == []
 
 
@@ -98,6 +103,37 @@ async def test_failed_step_is_not_ledgered_and_retries(
     retried = await svc.run()
     assert retried[0].action == "performed"
     assert await _ledger(control_db) == [_STEP]
+
+
+async def test_repeatable_step_runs_every_time_and_keeps_one_row(
+    integration_context: Context, control_db: DatabaseSession, clean_ledger: None
+) -> None:
+    calls: list[int] = []
+    svc = UpgradeStepService(integration_context, steps=[_counting_step(calls, repeatable=True)])
+
+    first = await svc.run()
+    second = await svc.run()
+
+    assert [o.action for o in first + second] == ["performed", "performed"]
+    assert len(calls) == 2
+    assert await _ledger(control_db) == [_STEP]
+    async with control_db.session() as session:
+        row = await UpgradeStepRepository.get(session, _STEP)
+    assert row is not None and row.summary == {"n": 2}, "the row records the latest run"
+
+
+async def test_pending_lists_steps_the_ledger_does_not_record(
+    integration_context: Context, clean_ledger: None
+) -> None:
+    calls: list[int] = []
+    svc = UpgradeStepService(integration_context, steps=[_counting_step(calls, repeatable=True)])
+
+    assert await svc.pending() == [_STEP]
+    await svc.run(skip={_STEP})
+    assert await svc.pending() == [_STEP], "an operator skip leaves the step pending"
+    await svc.run()
+    assert await svc.pending() == []
+    assert await UpgradeStepService(integration_context, steps=[]).pending() == []
 
 
 async def test_operator_skip_is_not_ledgered(

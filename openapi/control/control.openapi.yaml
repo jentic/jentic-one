@@ -66,6 +66,49 @@ components:
       - has_more
       title: ActorListResponse
       type: object
+    ActorLookupEntryResponse:
+      description: Display fields of one actor resolved by id.
+      properties:
+        active:
+          description: False for a disabled user or a non-active agent.
+          title: Active
+          type: boolean
+        actor_type:
+          $ref: '#/components/schemas/ActorType'
+          description: Whether the actor is a user or an agent.
+        id:
+          description: Actor id (`usr_…` or `agnt_…`).
+          title: Id
+          type: string
+        name:
+          description: 'Display name: a user''s full name or an agent''s name.'
+          title: Name
+          type: string
+      required:
+      - id
+      - actor_type
+      - name
+      - active
+      title: ActorLookupEntryResponse
+      type: object
+    ActorLookupResponse:
+      description: Actors resolved by id; ids that match no actor are omitted.
+      examples:
+      - data:
+        - active: true
+          actor_type: user
+          id: usr_2abc
+          name: Ada Lovelace
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/ActorLookupEntryResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: ActorLookupResponse
+      type: object
     ActorSummaryResponse:
       description: Single actor entry in the actors list.
       properties:
@@ -104,6 +147,7 @@ components:
       title: ActorType
       type: string
     AgentCreateRequest:
+      additionalProperties: false
       description: Request body for creating an agent manually.
       properties:
         description:
@@ -117,7 +161,7 @@ components:
           minLength: 1
           title: Name
           type: string
-        scopes:
+        permissions:
           anyOf:
           - items:
               maxLength: 64
@@ -127,7 +171,7 @@ components:
             maxItems: 100
             type: array
           - type: 'null'
-          title: Scopes
+          title: Permissions
       required:
       - name
       title: AgentCreateRequest
@@ -177,6 +221,35 @@ components:
           - type: 'null'
           title: Owner Id
       title: AgentPatchRequest
+      type: object
+    AgentPermissionsRequest:
+      additionalProperties: false
+      description: Request body for replacing an agent's permissions.
+      properties:
+        permissions:
+          items:
+            maxLength: 64
+            minLength: 1
+            pattern: ^[a-zA-Z0-9_:./-]+$
+            type: string
+          maxItems: 100
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsRequest
+      type: object
+    AgentPermissionsResponse:
+      description: Response containing an agent's current permissions.
+      properties:
+        permissions:
+          items:
+            type: string
+          title: Permissions
+          type: array
+      required:
+      - permissions
+      title: AgentPermissionsResponse
       type: object
     AgentResponse:
       description: Agent representation in API responses.
@@ -244,34 +317,6 @@ components:
       - status
       - created_at
       title: AgentResponse
-      type: object
-    AgentScopesRequest:
-      description: Request body for replacing an agent's scopes.
-      properties:
-        scopes:
-          items:
-            maxLength: 64
-            minLength: 1
-            pattern: ^[a-zA-Z0-9_:./-]+$
-            type: string
-          maxItems: 100
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesRequest
-      type: object
-    AgentScopesResponse:
-      description: Response containing an agent's current scopes.
-      properties:
-        scopes:
-          items:
-            type: string
-          title: Scopes
-          type: array
-      required:
-      - scopes
-      title: AgentScopesResponse
       type: object
     ApiImportLinksResponse:
       description: Hypermedia links for an import response.
@@ -1792,6 +1837,34 @@ components:
       type: object
     CredentialCreateResponse:
       description: 'Create response: redacted + secret shown once.'
+      examples:
+      - credential:
+          active: true
+          api:
+            name: stripe
+            vendor: stripe-com
+            version: '2024-04-10'
+          created_at: '2026-01-15T09:30:00Z'
+          credential_id: cred_01HZX9...
+          name: Stripe live key
+          provider: static
+          type: api_key
+        secret:
+          key: sk_live_…
+      - credential:
+          active: true
+          api:
+            name: posthog-api
+            vendor: posthog-com
+          created_at: '2026-01-15T09:31:00Z'
+          credential_id: cred_01HZXA...
+          name: PostHog personal key
+          provider: static
+          type: bearer_token
+        secret:
+          token: phx_…
+        warnings:
+        - 'API scope ''posthog-com/posthog-api/*'' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)'
       properties:
         credential:
           $ref: '#/components/schemas/CredentialRedactedResponse'
@@ -1800,6 +1873,14 @@ components:
           title: Secret
           type: object
           x-sensitive: true
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
+          title: Warnings
       required:
       - credential
       - secret
@@ -2179,22 +2260,6 @@ components:
       - detail
       title: ErrorItem
       type: object
-    EventAcknowledgeRequest:
-      description: Request body for acknowledging an event.
-      properties:
-        acknowledged:
-          title: Acknowledged
-          type: boolean
-        note:
-          anyOf:
-          - maxLength: 2000
-            type: string
-          - type: 'null'
-          title: Note
-      required:
-      - acknowledged
-      title: EventAcknowledgeRequest
-      type: object
     EventLinks:
       description: HAL-style links for an event.
       properties:
@@ -2246,20 +2311,6 @@ components:
       properties:
         _links:
           $ref: '#/components/schemas/EventLinks'
-        acknowledged:
-          title: Acknowledged
-          type: boolean
-        acknowledged_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Acknowledged At
-        acknowledged_by:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Acknowledged By
         actor_id:
           anyOf:
           - type: string
@@ -2308,7 +2359,6 @@ components:
       - severity
       - summary
       - requires_action
-      - acknowledged
       - created_at
       - _links
       title: EventResponse
@@ -2405,6 +2455,18 @@ components:
           - type: string
           - type: 'null'
           title: Operation Id
+        operation_method:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The operation's HTTP method, e.g. GET. Null whenever operation_path is null.
+          title: Operation Method
+        operation_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'The operation''s spec path template, e.g. /repos/{owner}/{repo}. Null when the record carries no human-readable operation identity: records predating the column, executions of a URL that resolved to no registered operation, and async jobs enqueued with only an operation_id. Display surfaces show a placeholder for such rows — the opaque operation_id is a machine key, not a human fallback.'
+          title: Operation Path
         origin:
           anyOf:
           - type: string
@@ -2902,18 +2964,18 @@ components:
           - type: string
           - type: 'null'
           title: Parent Agent Id
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
           type: string
-        token_scopes:
+        token_permissions:
           items:
             type: string
-          title: Token Scopes
+          title: Token Permissions
           type: array
         type:
           const: agent
@@ -2924,8 +2986,8 @@ components:
       - id
       - name
       - status
-      - scopes
-      - token_scopes
+      - permissions
+      - token_permissions
       title: MeAgent
       type: object
     MeUser:
@@ -2946,10 +3008,10 @@ components:
         name:
           title: Name
           type: string
-        scopes:
+        permissions:
           items:
             type: string
-          title: Scopes
+          title: Permissions
           type: array
         status:
           title: Status
@@ -2965,7 +3027,7 @@ components:
       - email
       - admin
       - status
-      - scopes
+      - permissions
       - must_change_password
       title: MeUser
       type: object
@@ -4363,6 +4425,10 @@ components:
         relevance_score:
           title: Relevance Score
           type: number
+        target:
+          description: 'The value to pass as the operation target to inspect/execute (CLI argument; MCP operation_id argument). METHOD:url when url is absolute; the registry operation_id when url is host-relative (the spec declares no servers, or only a relative one) — such a target is inspect-only: with no upstream host there is nothing for the broker to proxy, so execute refuses it.'
+          title: Target
+          type: string
         type:
           const: operation
           default: operation
@@ -4376,6 +4442,7 @@ components:
       - operation_id
       - method
       - url
+      - target
       - relevance_score
       - _links
       title: OperationResultResponse
@@ -5466,6 +5533,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5487,6 +5558,7 @@ components:
       - name
       - rules
       - binding_count
+      - curated
       - created_at
       title: RuleSetResponse
       type: object
@@ -5502,6 +5574,10 @@ components:
           - type: string
           - type: 'null'
           title: Created By
+        curated:
+          description: True when an org admin created the set. A curated set can be attached by any caller allowed to write a binding's rules and edited only by an org admin; any other set is attachable and editable by its creator or an org admin.
+          title: Curated
+          type: boolean
         description:
           anyOf:
           - type: string
@@ -5520,6 +5596,7 @@ components:
       - rule_set_id
       - name
       - rule_count
+      - curated
       - created_at
       title: RuleSetSummaryResponse
       type: object
@@ -6335,7 +6412,7 @@ components:
         - **Agents** — `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a JWT assertion signed by the key registered via `POST /register` (the JWT is the *assertion*, not the resulting access token).
         - **Users** — `grant_type=authorization_code` (interactive) or `grant_type=password`; refresh either with `grant_type=refresh_token`.
 
-        Per-endpoint scope and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-scopes / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
+        Per-endpoint permission and actor-type requirements are not modelled in this document (OpenAPI cannot faithfully express the OR-of-permissions / `org:admin` bypass / service-layer enforcement); see `GET /reference/endpoints.json` for the authoritative authorization reference.
       scheme: bearer
       type: http
 info:
@@ -6463,7 +6540,7 @@ info:
       edit.
     - **Trace correlation.** Every Broker call records a W3C
       `trace_id` on its `ExecutionRecord` and on any `Event` derived
-      from it. To walk all executions under one logical request, use
+      from it. To walk the executions you can see under one logical request, use
       `GET /executions?trace_id=…`.
     - **Event stream.** The dashboard / operator UI consumes the
       `/events` resource (paginated list + SSE stream). Some events
@@ -6491,7 +6568,7 @@ info:
       | `evt_` | Event | ULID-shaped. |
       | `op_` | Registered operation | |
       | `rev_` | API revision | ULID-shaped. |
-      | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
+      | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |
       | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
       | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
       | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
@@ -6880,6 +6957,88 @@ paths:
       security:
       - BearerAuth: []
       summary: List Actors
+      tags:
+      - Actors
+  /actors/lookup:
+    get:
+      description: |-
+        Resolve user and agent ids to display names for any signed-in caller.
+
+        Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
+        asked for, so a caller without ``users:read`` can label the owners,
+        approvers and actors it already sees by id. Users resolve for any caller;
+        agents only when the caller may see them (its own agents, itself, or with
+        ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
+        Ids that match no visible user or agent are left out of the response
+        rather than reported as errors. Listing the whole directory stays behind
+        ``users:read`` on ``GET /actors``.
+      operationId: lookupActors
+      parameters:
+      - description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+        in: query
+        name: id
+        required: true
+        schema:
+          description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+          items:
+            maxLength: 64
+            type: string
+          maxItems: 100
+          minItems: 1
+          title: Id
+          type: array
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActorLookupResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Resolve actor names by id
       tags:
       - Actors
   /admin/config/providers:
@@ -8090,7 +8249,7 @@ paths:
         Archive an agent — terminal-but-kept.
 
         The row is retained for history, but the action is not reversible and
-        the agent's authority is swept: scope grants, credential bindings, and
+        the agent's authority is swept: permission grants, credential bindings, and
         OAuth consent grants are revoked. For the reversible kill switch use
         ``:disable`` / ``:enable`` instead.
       operationId: archiveAgent
@@ -8789,7 +8948,8 @@ paths:
         name and redirect-URI origin, the granted scopes, the consenting user,
         and created/last-used timestamps. Allowed for the agent's owner or an
         admin — authorization is enforced in the service layer, mirroring the
-        ``:revoke`` semantics.
+        ``:revoke`` semantics. An agent the caller cannot see answers 404, the
+        same as an agent that does not exist.
       operationId: listAgentOauthGrants
       parameters:
       - in: path
@@ -8889,10 +9049,10 @@ paths:
       summary: List agent OAuth grants
       tags:
       - Agents
-  /agents/{agent_id}/scopes:
+  /agents/{agent_id}/permissions:
     get:
-      description: List scopes granted to an agent.
-      operationId: getAgentScopes
+      description: List permissions granted to an agent.
+      operationId: getAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -8905,7 +9065,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -8951,12 +9111,12 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Scopes
+      summary: Get Agent Permissions
       tags:
       - Agents
     put:
-      description: Replace all scopes for an agent.
-      operationId: replaceAgentScopes
+      description: Replace all permissions for an agent.
+      operationId: replaceAgentPermissions
       parameters:
       - in: path
         name: agent_id
@@ -8968,14 +9128,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AgentScopesRequest'
+              $ref: '#/components/schemas/AgentPermissionsRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentScopesResponse'
+                $ref: '#/components/schemas/AgentPermissionsResponse'
           description: Successful Response
         '400':
           content:
@@ -9021,12 +9181,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Replace Agent Scopes
+      summary: Replace Agent Permissions
       tags:
       - Agents
   /agents/{agent_id}:approve:
     post:
-      description: Approve a pending agent.
+      description: |-
+        Approve a pending agent.
+
+        Allowed for the agent's owner or an ``org:admin``. An agent with no owner
+        (an unclaimed self-registration) can be approved only by an ``org:admin``,
+        who becomes its owner. Any other caller gets a 404, whatever the agent's
+        status, so the response does not reveal agents outside the caller's
+        ownership.
       operationId: approveAgent
       parameters:
       - in: path
@@ -9107,7 +9274,7 @@ paths:
         ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
         claiming is an onboarding step a brand-new user may hit before they have
         rotated a temporary password, so a must-change-password state must not block
-        it. The claim only sets ownership — it grants no scopes and cannot act as the
+        it. The claim only sets ownership — it grants no permissions and cannot act as the
         agent — so allowing it under an expired password is low-risk.
       operationId: claimAgent
       parameters:
@@ -9179,7 +9346,12 @@ paths:
       - Agents
   /agents/{agent_id}:deny:
     post:
-      description: Deny a pending agent.
+      description: |-
+        Deny a pending agent.
+
+        Same authorization as approve: the agent's owner or an ``org:admin``, and
+        only an ``org:admin`` for an agent with no owner. Any other caller gets a
+        404.
       operationId: denyAgent
       parameters:
       - in: path
@@ -14020,7 +14192,11 @@ paths:
 
         While attached, the set's ordered list is the binding's effective policy
         and its inline rules are dormant — `permissions:test` evaluates the set.
-        The set must exist (404 `rule_set_not_found`).
+        The set must exist (404 `rule_set_not_found`). The caller must be the
+        set's creator or an org admin, unless the set is curated (created by an
+        org admin), which any caller who may write the binding's rules can
+        attach; otherwise 403 `rule_set_attach_denied`. Re-attaching the set the
+        binding already points at is a no-op.
       operationId: attachAgentCredentialRuleSet
       parameters:
       - in: path
@@ -14275,14 +14451,6 @@ paths:
           - type: boolean
           - type: 'null'
           title: Requires Action
-      - in: query
-        name: acknowledged
-        required: false
-        schema:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Acknowledged
       - in: query
         name: from
         required: false
@@ -14586,76 +14754,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get Event
-      tags:
-      - Events
-    patch:
-      description: Acknowledge an event.
-      operationId: acknowledgeEvent
-      parameters:
-      - in: path
-        name: event_id
-        required: true
-        schema:
-          title: Event Id
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EventAcknowledgeRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EventResponse'
-          description: Successful Response
-        '400':
-          content:
-            application/problem+json:
-              example: *id001
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Bad Request
-        '401':
-          content:
-            application/problem+json:
-              example: *id005
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unauthorized
-        '403':
-          content:
-            application/problem+json:
-              example: *id006
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Forbidden
-        '422':
-          content:
-            application/problem+json:
-              example: *id002
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Unprocessable Entity
-        '500':
-          content:
-            application/problem+json:
-              example: *id003
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Internal Server Error
-        '503':
-          content:
-            application/problem+json:
-              example: *id004
-              schema:
-                $ref: '#/components/schemas/ProblemDetail'
-          description: Service Unavailable
-      security:
-      - BearerAuth: []
-      summary: Acknowledge Event
       tags:
       - Events
   /executions:
@@ -18118,7 +18216,11 @@ paths:
       tags:
       - Permission Rule Sets
     patch:
-      description: Rename or re-describe a rule set (creator or org admin).
+      description: |-
+        Rename or re-describe a rule set.
+
+        A curated set is editable by an org admin; any other set by its creator
+        or an org admin (403 `rule_set_access_denied` otherwise).
       operationId: updatePermissionRuleSet
       parameters:
       - in: path
@@ -19746,8 +19848,10 @@ paths:
 security:
 - BearerAuth: []
 servers:
-- description: Same-origin (relative)
-  url: /
+- description: Production (placeholder — set to your deployment's Control Plane host)
+  url: https://control.your-instance.example
+- description: Development (placeholder — set to your deployment's Control Plane host)
+  url: https://control-dev.your-instance.example
 tags:
 - description: Part of the **Core / Access** bounded context — the authoritative record of "who can call what, with which secret". A `Credential` is the auth secret + header configuration the Broker injects on the way out to an upstream API. Credentials reference registry content via the loose `(vendor, name, version)` identity tuple (see `APIReference`) — there is no foreign key between Core and Registry, by design. Cleartext secret material is returned **exactly once** at creation (and on rotation via `PATCH`). Read paths return a redacted projection — last-N characters, hints, never the secret itself.
   name: Credentials
@@ -19825,11 +19929,11 @@ tags:
 
     **Authentication.** Any authenticated principal (agent or human) can submit, edit, confirm, or deprecate overlays. Platform-side rate limits gate abuse.
   name: Overlays
-- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`.
+- description: Append-only audit log of every Broker call (sync or async) — timing, status, trace IDs, and the upstream API reference (`vendor:name:version`). Bodies are not stored. Records are written by the Broker; this surface is read-only. To walk the history of a single logical request that fanned out into multiple upstream calls, list with `?trace_id={trace_id}`. An execution is visible only to the actor that ran it, the owner of the agent that ran it, and `org:admin`; to any other caller it is indistinguishable from a missing execution (`404`).
   name: Executions
 - description: In-flight async-job tracker for both Registry import jobs and Broker async-execution jobs — one uniform `Job` shape keyed by `kind`. Lifecycle only — type-specific result payloads (the imported revisions for `import`, upstream response body for `execution`) live under `/jobs/{job_id}/result`. Result availability follows the organisation-level retention policy (one-shot or TTL); once that expires, both `/jobs/{job_id}` and `/jobs/{job_id}/result` `404`. A job is visible only to the actor that created it, the owner of the agent that created it, and `org:admin`; to any other caller it is indistinguishable from a missing job (`404`), including on `:cancel`.
   name: Jobs
-- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter.
+- description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter. An event is visible only to the actor it names (`actor_id`), to the subject it is about (for example the owner of the credential or the agent concerned), to the human owner of either when that is an agent, and to `org:admin`; system events with no subject are visible only to `org:admin`. To any other caller an event is indistinguishable from a missing one (`404`).
   name: Events
 - description: |-
     Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).
@@ -19849,11 +19953,11 @@ tags:
 
     One reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.
 
-    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
+    The same vocabulary is used for `User.permissions` — the coarse set embedded in the JWT — so the catalogue below covers user assignment. The per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately on the direct agent↔credential bindings under the `Credentials` tag.
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System
-- description: Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject, scopes, and permissions behind the presented token.
+- description: Identity introspection for the calling principal (human or agent) — `GET /me` returns the resolved subject and its permissions behind the presented token.
   name: Identity
 - description: Agent actors — autonomous principals that call the Broker. Covers the agent lifecycle (list, read, approve / deny, enable / disable, archive) and the credentials directly bound to each agent.
   name: Agents

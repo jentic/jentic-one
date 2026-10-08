@@ -1,25 +1,36 @@
 /**
- * Actor directory — repository tier for the unified actor lookup endpoint
- * (`GET /actors`, PR #483, closes #478).
+ * Actor directory — repository tier for the unified actor lookup endpoints.
  *
  * Executions, audit entries, and the events feed carry an
- * opaque `actor_id` (a KSUID like `agnt_6a3d3c62…`). This wrapper hydrates the
- * full actor directory so any surface can map those ids to friendly names
- * instead of rendering the raw token.
+ * opaque `actor_id` (a KSUID like `agnt_6a3d3c62…`). These wrappers map those
+ * ids to friendly names instead of rendering the raw token, through one of two
+ * endpoints:
  *
- * The directory is small relative to executions and is designed for bulk cache
- * hydration (large default page size), so we page through ALL pages via
- * `next_cursor` once and let the query layer cache the result aggressively.
+ *   - `GET /actors` (`users:read`): the whole directory, paged through once via
+ *     `next_cursor` and cached aggressively by the query layer.
+ *   - `GET /actors/lookup?id=…` (any signed-in caller): only the ids asked for,
+ *     at most {@link ACTOR_LOOKUP_MAX_IDS} per call. {@link loadActor} batches
+ *     the ids requested in the same tick into as few calls as possible.
  *
  * Scope is the directory's own actor types — `user` / `agent`. A legacy
  * `tk_…` or `sva_…` id can still appear as the `actor_id` of a historical
  * execution or audit row; rendering that case is `<ActorLabel>`'s job. Other non-actor ids (`cred_`, `exec_`, `areq_`, `job_`)
  * are resolved separately and are out of scope here.
  */
-import { ActorsService, type ActorSummaryResponse } from '@/shared/api';
+import {
+	ActorsService,
+	type ActorLookupEntryResponse,
+	type ActorSummaryResponse,
+} from '@/shared/api';
 
 /** Max page size the backend accepts (`limit` 1..5000). */
 const PAGE_LIMIT = 5000;
+
+/** Max ids one `GET /actors/lookup` call accepts. */
+export const ACTOR_LOOKUP_MAX_IDS = 100;
+
+/** The fields both endpoints return for an actor. */
+export type ActorDirectoryEntry = ActorLookupEntryResponse;
 
 /**
  * Fetch every actor by following `next_cursor` until the backend reports no
@@ -46,4 +57,75 @@ export async function fetchActorDirectory(): Promise<ActorSummaryResponse[]> {
 	} while (cursor !== null);
 
 	return actors;
+}
+
+/**
+ * Resolve the given ids through `GET /actors/lookup`, splitting them into
+ * calls of at most {@link ACTOR_LOOKUP_MAX_IDS}. Ids that match no actor the
+ * caller may see are absent from the result.
+ */
+export async function lookupActors(ids: readonly string[]): Promise<ActorDirectoryEntry[]> {
+	const pages = await Promise.all(chunkIds(ids).map(lookupChunk));
+	return pages.flat();
+}
+
+/** Distinct ids split into groups of at most {@link ACTOR_LOOKUP_MAX_IDS}. */
+function chunkIds(ids: Iterable<string>): string[][] {
+	const unique = [...new Set(ids)];
+	const chunks: string[][] = [];
+	for (let i = 0; i < unique.length; i += ACTOR_LOOKUP_MAX_IDS) {
+		chunks.push(unique.slice(i, i + ACTOR_LOOKUP_MAX_IDS));
+	}
+	return chunks;
+}
+
+async function lookupChunk(id: string[]): Promise<ActorDirectoryEntry[]> {
+	return (await ActorsService.lookupActors({ id })).data;
+}
+
+interface Waiter {
+	resolve: (actor: ActorDirectoryEntry | null) => void;
+	reject: (error: unknown) => void;
+}
+
+let pending = new Map<string, Waiter[]>();
+let flushScheduled = false;
+
+async function flushPending(): Promise<void> {
+	const batch = pending;
+	pending = new Map();
+	flushScheduled = false;
+	// Settle each chunk on its own, so one failed call never rejects ids that
+	// another call resolved.
+	await Promise.all(
+		chunkIds(batch.keys()).map(async (chunk) => {
+			try {
+				const found = new Map((await lookupChunk(chunk)).map((a) => [a.id, a]));
+				for (const id of chunk) {
+					for (const waiter of batch.get(id) ?? []) waiter.resolve(found.get(id) ?? null);
+				}
+			} catch (error) {
+				for (const id of chunk) {
+					for (const waiter of batch.get(id) ?? []) waiter.reject(error);
+				}
+			}
+		}),
+	);
+}
+
+/**
+ * Resolve one actor id, coalescing every id requested in the same tick into
+ * one batched {@link lookupActors} call. Resolves to `null` for an id that
+ * matches no actor, so callers can cache the miss.
+ */
+export function loadActor(id: string): Promise<ActorDirectoryEntry | null> {
+	return new Promise((resolve, reject) => {
+		const waiters = pending.get(id);
+		if (waiters) waiters.push({ resolve, reject });
+		else pending.set(id, [{ resolve, reject }]);
+		if (!flushScheduled) {
+			flushScheduled = true;
+			setTimeout(() => void flushPending(), 0);
+		}
+	});
 }

@@ -34,7 +34,7 @@ An authenticated MCP connection. The credential (an OAuth grant your
 operator authorized when connecting the client, or a bearer token/API key
 the client presents at the transport) is attached by the MCP client on every
 request — you never run setup, never handle token refresh, and never see the
-raw credential. On the HTTP mount your scopes and bindings are resolved live
+raw credential. On the HTTP mount your permissions and bindings are resolved live
 per request, so an approved grant works on the very next tool call with no
 re-mint step (one exception: the session's OAuth consent ceiling — see the
 access step).
@@ -42,7 +42,7 @@ access step).
 ## Step 1 — identity
 
 Call `whoami` — it answers with your identity as the control plane sees it:
-id, **status**, scopes, and credential bindings.
+id, **status**, permissions, and credential bindings.
 
 ```
 whoami {}
@@ -80,7 +80,7 @@ For everything else, **report the gap to your human operator in one
 complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
 rules, and why. Approval is always a human action, and so are binding an
-existing credential and scope grants: the operator acts in the Jentic One
+existing credential and permission grants: the operator acts in the Jentic One
 dashboard; your job is to relay the gap, not to grant it.
 
 Bindings resolve live per request on the HTTP mount, so once your operator
@@ -117,8 +117,13 @@ as a failed (dead-letter) import whose error says identical content already
 exists — read that as "already there", never as something to retry. If the
 result carries a non-terminal `status` (queued, tracking timed out), poll
 `get_execution_result` with the `job_id` from that result rather than
-re-importing. Each `search_apis` hit carries the `operation_id` to pass
-straight to `inspect_operation`/`execute`.
+re-importing. Each `search_apis` hit carries a `target` — pass it verbatim
+as the `operation_id` argument of `inspect_operation`/`execute`. It is the
+hit's `METHOD:url` pair (or its registry `operation_id` when the hit's url
+is host-relative because the spec declares no absolute server — that
+operation is inspect-only, and `execute` refuses it); don't build
+it yourself from `method` + `url`. If a `METHOD:url` target fails as an
+ambiguous match (409), pin `revision` or pass the hit's `operation_id`.
 
 If APIs or credentials you know existed appear missing, compare `instance`
 stamps before diagnosing (see `SKILL.md` step 3): an MCP server on a remote
@@ -129,8 +134,8 @@ importing/searching again.
 ## Step 4 — inspect
 
 ```
-inspect_operation {"operation_id": "op_abc123"}
 inspect_operation {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}"}
+inspect_operation {"operation_id": "POST:https://api.example.com/v1/things"}
 ```
 
 Always inspect before you execute — the contract names the parameters and
@@ -148,7 +153,7 @@ clients approve read-only tools more readily; it rejects any other HTTP
 method — use `execute` for those):
 
 ```
-execute {"operation_id": "op_abc123", "inputs": {"limit": 10}}
+execute {"operation_id": "POST:https://api.example.com/v1/things", "inputs": {"limit": 10}}
 execute_read {"operation_id": "GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range}", "inputs": {"id": "ABC", "range": "A1:Z10"}}
 ```
 
@@ -192,14 +197,15 @@ delivered in the envelope instead of stderr.
 
 ## The 9 mount tools (each maps onto the loop)
 
-- `whoami` — your identity, status, scopes, and credential bindings with the
+- `whoami` — your identity, status, permissions, and credential bindings with the
   APIs each one serves; start here and decide access from it.
 - `request_connection` — start a connect session for a registry vendor when
   no binding serves the API you need; relay the returned `approval_url` to
   your operator (they approve — you never poll or approve), then confirm
   with `whoami` and retry.
 - `search_apis` — search the imported registry for operations by
-  natural-language query; each hit carries the `operation_id`.
+  natural-language query; each hit carries the `target` to pass to
+  `inspect_operation`/`execute`.
 - `inspect_operation` — one operation's full contract (method, URL,
   parameters, schemas, security); always inspect before executing.
 - `execute` — run an operation through the broker (full upstream URL; the

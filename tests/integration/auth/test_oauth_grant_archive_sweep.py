@@ -123,6 +123,7 @@ async def test_archive_revokes_active_grants_and_fails_refresh_closed(
         if (event.data or {}).get("grant_id") == grant_id:
             assert (event.data or {}).get("reason") == AGENT_ARCHIVE_REVOCATION_REASON
             assert event.created_by == admin_id
+            assert "because agent 'grant-test-agent' was archived" in event.summary
 
 
 async def test_disable_leaves_grants_active_by_design(

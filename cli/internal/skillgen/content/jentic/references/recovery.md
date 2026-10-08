@@ -27,12 +27,19 @@ this file adds the lane-specific detail.
   registry and importing a cataloged API need no grant — an approved agent
   already holds `apis:read` and `catalog:import` by default. (Importing
   arbitrary URL/inline specs via `POST /apis` is the only import path that
-  needs `apis:write`.) Don't invent other "catalog read" scopes; they're
+  needs `apis:write`.) Don't invent other "catalog read" permissions; they're
   rejected.
-- The `operation_id` from the registry search resolves directly; the id
-  from `catalog show` is the spec `operationId` (inspect resolves it via a
-  fallback). If one doesn't resolve, try the `METHOD URL` pair from the
-  hit's `_links.inspect` — don't guess ids.
+- Address operations by a search hit's `target` — pass it verbatim. It is
+  the `METHOD:url` pair (or, when the hit's url is host-relative because the
+  spec declares no absolute server, the registry `operation_id` — such an
+  operation is inspect-only; execute refuses it, as there is no upstream
+  host to proxy to). The
+  spec `operationId` from `catalog show` also resolves, as a fallback.
+  Never build targets by hand and never guess ids.
+- A `METHOD:url` that matches more than one operation fails with an
+  ambiguous-match error (HTTP 409): pin the revision (`--revision`) or fall
+  back to the hit's `operation_id`, which always names exactly one
+  operation.
 - Backend mismatch shows as *silent wrong answers*, not errors: verify with
   `jentic api GET /instance` / `jentic context view` before concluding
   anything is missing, and stick to one surface for the whole task.
@@ -77,7 +84,7 @@ credential-*provisioning* denials below you can now start the fix yourself
 when the vendor is in the connect registry: run `jentic connect <vendor>`
 (CLI) or call `request_connection` (MCP), relay the returned `approval_url`
 to your operator, confirm with `whoami` once they approve, then retry.
-Everything else (binding an existing credential, scope grants, rule
+Everything else (binding an existing credential, permission grants, rule
 changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
 
@@ -131,12 +138,12 @@ the right ask, then retry once they confirm.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic whoami` — your identity, status, scopes, and credential
+- `jentic whoami` — your identity, status, permissions, and credential
   bindings with the APIs each one **serves** (check this before executing;
   it renders the same `GET /me` view `jentic api GET /me` returns). When
   access is missing, start a registry vendor's connect yourself
   (`jentic connect <vendor>`) or report the gap to your operator —
-  approval, binding, and scope grants happen in the dashboard.
+  approval, binding, and permission grants happen in the dashboard.
 - `jentic connect <vendor>` — start a connect session for a registry
   vendor (e.g. `jentic connect github`): prints the `approval_url` a human
   approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
@@ -145,8 +152,8 @@ the right ask, then retry once they confirm.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported
   operations).
-- `jentic search "<query>"` → `jentic inspect <operation_id>` →
-  `jentic execute <operation_id | METHOD:URL>` — discover, inspect, and
+- `jentic search "<query>"` → `jentic inspect <target>` →
+  `jentic execute <target>` — discover, inspect, and
   call operations through the broker (use the full upstream URL; the broker
   is a forward proxy, not a path router).
 - `jentic register` / `jentic setup` — operator commands that create and
@@ -211,7 +218,7 @@ re-send while pending).
 
 ## Verification — MCP session
 
-- `whoami` answers with your identity (id, status, scopes, bindings) and an
+- `whoami` answers with your identity (id, status, permissions, bindings) and an
   `instance` stamp.
 - After `import_api`, `search_apis` finds operations from that API.
 - A known-allowed `execute_read` returns a 2xx response body.

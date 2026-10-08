@@ -17,10 +17,15 @@ import { Toaster } from '@/shared/ui';
 import MonitorPage from '@/modules/monitor/pages/MonitorPage';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 
-/** Mirrors the router location search string into the DOM for assertions. */
+/** Mirrors the router location into the DOM for assertions. */
 function LocationProbe() {
 	const location = useLocation();
-	return <div data-testid="location-search">{location.search}</div>;
+	return (
+		<>
+			<div data-testid="location-path">{location.pathname}</div>
+			<div data-testid="location-search">{location.search}</div>
+		</>
+	);
 }
 
 /**
@@ -57,13 +62,23 @@ function toggle(group: string, name: string) {
 	return within(screen.getByRole('group', { name: group })).getByRole('button', { name });
 }
 
+/** Like {@link toggle}, but waits for the option: a permission-gated source (the
+ * Audit log) is offered only once `/users/me` has resolved. */
+async function findToggle(group: string, name: string) {
+	return within(await screen.findByRole('group', { name: group })).findByRole('button', {
+		name,
+	});
+}
+
 const MEMBER = {
 	id: '00000000-0000-0000-0000-000000000002',
 	email: 'member@local',
 	first_name: 'Member',
 	last_name: 'User',
 	active: true,
-	permissions: [],
+	// A non-admin who can read the event feed; callers without it get the
+	// feed's no-access state (eventAccess.test.tsx).
+	permissions: ['events:read'],
 	must_change_password: false,
 	created_at: '2026-01-01T00:00:00Z',
 	updated_at: null,
@@ -108,7 +123,7 @@ describe('MonitorPage', () => {
 		await user.click(toggle('Activity source', 'Everything'));
 		await screen.findByRole('link', { name: 'Execution failed: github-api' });
 
-		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		await user.click(await screen.findByRole('button', { name: 'Overview' }));
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
 		const params = currentParams();
 		expect(params.get('view')).toBeNull();
@@ -139,6 +154,101 @@ describe('MonitorPage', () => {
 		);
 		expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument();
 		expect(usageCalls).toBe(0);
+	});
+
+	it('resolves actor names for non-admins by id, without the full directory', async () => {
+		let listCalls = 0;
+		const lookedUp = new Set<string>();
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(MEMBER)),
+			http.get('/actors', () => {
+				listCalls += 1;
+				return new HttpResponse(null, { status: 403 });
+			}),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				ids.forEach((id) => lookedUp.add(id));
+				return HttpResponse.json({
+					data: ids.map((id) => ({
+						id,
+						actor_type: 'user',
+						name: `Name of ${id}`,
+						active: true,
+					})),
+				});
+			}),
+		);
+		renderMonitor();
+		await screen.findByText('GET /repos/{owner}/{repo}');
+		await waitFor(() => expect(lookedUp.size).toBeGreaterThan(0));
+		const [someId] = [...lookedUp];
+		expect((await screen.findAllByText(`Name of ${someId}`)).length).toBeGreaterThan(0);
+		expect(listCalls).toBe(0);
+		// The actor picker has nothing to list without the directory.
+		expect(
+			within(screen.getByRole('combobox', { name: 'Filter by actor' })).getAllByRole(
+				'option',
+			),
+		).toHaveLength(1);
+	});
+
+	it("labels an agent outside an audit:read member's roster without its raw id", async () => {
+		const user = userEvent.setup();
+		const at = new Date(Date.now() - 60_000).toISOString();
+		const row = (id: string, actorId: string, actorType: string) => ({
+			action: 'agent.update',
+			actor_id: actorId,
+			actor_session_id: null,
+			actor_type: actorType,
+			after: null,
+			before: null,
+			diff: null,
+			id,
+			ip_address: null,
+			job_id: null,
+			occurred_at: at,
+			reason: null,
+			request_id: null,
+			target_id: 'agnt_target_1',
+			target_parent_id: null,
+			target_type: 'agent',
+			trace_id: null,
+			user_agent: null,
+		});
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({ ...MEMBER, permissions: ['events:read', 'audit:read'] }),
+			),
+			http.get('/actors', () => new HttpResponse(null, { status: 403 })),
+			// The lookup resolves only actors the caller may see: their own agent.
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				return HttpResponse.json({
+					data: ids
+						.filter((id) => id === 'agnt_mine_1')
+						.map((id) => ({ id, actor_type: 'agent', name: 'my-agent', active: true })),
+				});
+			}),
+			http.get('/audit', () =>
+				HttpResponse.json({
+					data: [
+						row('audit_foreign', 'agnt_foreign_1', 'agent'),
+						row('audit_mine', 'agnt_mine_1', 'agent'),
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?show=calls');
+		await user.click(await findToggle('Activity source', 'Audit log'));
+
+		expect(await screen.findByText('my-agent')).toBeInTheDocument();
+		const hidden = await screen.findByTestId('actor-label-hidden');
+		expect(hidden).toHaveTextContent('Agent (not visible to you)');
+		// The id stays reachable on hover, as on every actor label.
+		expect(hidden).toHaveAttribute('title', 'agnt_foreign_1');
+		expect(screen.queryByText('agnt_foreign_1')).not.toBeInTheDocument();
 	});
 
 	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
@@ -267,17 +377,11 @@ describe('MonitorPage', () => {
 		);
 	});
 
-	it('acknowledges an action event from its feed row', async () => {
-		const user = userEvent.setup();
+	it('shows no acknowledge control on an action event — events are history', async () => {
 		renderMonitor('/app/monitor?view=activity');
 		const row = await screen.findByRole('link', { name: 'Execution failed: github-api' });
-
-		await user.click(within(row).getByRole('button', { name: 'Acknowledge' }));
-
-		expect(await screen.findByText('Event acknowledged')).toBeInTheDocument();
-		// The ack button must not also open the row's detail sheet.
-		expect(currentParams().get('trace_id')).toBeNull();
-		expect(await within(row).findByText('Acknowledged')).toBeInTheDocument();
+		expect(within(row).queryByRole('button', { name: 'Acknowledge' })).toBeNull();
+		expect(within(row).queryByText('Acknowledged')).toBeNull();
 	});
 
 	it('folds a run of successful calls into one expandable row', async () => {
@@ -285,9 +389,6 @@ describe('MonitorPage', () => {
 		const now = Date.now();
 		const completed = (i: number) => ({
 			_links: { self: `/events/evt_run_${i}`, execution: `/executions/exec_run_${i}` },
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			created_at: new Date(now - i * 60_000).toISOString(),
 			data: { execution_id: `exec_run_${i}` },
 			detail: null,
@@ -458,7 +559,7 @@ describe('MonitorPage', () => {
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
-		await user.click(toggle('Activity source', 'Audit log'));
+		await user.click(await findToggle('Activity source', 'Audit log'));
 
 		// Audit entries read as sentences, not raw action codes.
 		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
@@ -526,9 +627,10 @@ describe('MonitorPage', () => {
 		renderMonitor();
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
+		// The picker's options load once `/users/me` confirms the caller may list actors.
 		await user.selectOptions(
 			screen.getByRole('combobox', { name: 'Filter by actor' }),
-			screen.getByRole('option', { name: /Admin User/ }),
+			await screen.findByRole('option', { name: /Admin User/ }),
 		);
 		await waitFor(() => {
 			expect(screen.queryByText('POST /v1/charges')).not.toBeInTheDocument();
@@ -572,7 +674,7 @@ describe('MonitorPage', () => {
 		renderMonitor('/app/monitor?show=calls&status=failed&days=30&actor_id=user_admin');
 		await screen.findByText('GET /repos/{owner}/{repo}');
 
-		await user.click(screen.getByRole('button', { name: 'Overview' }));
+		await user.click(await screen.findByRole('button', { name: 'Overview' }));
 		await screen.findByText(/Last 30 days/);
 
 		const params = currentParams();
@@ -661,17 +763,44 @@ describe('Monitor inter-linking', () => {
 	it('API call with unknown trace opens by execution_id, no audit link', async () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_4');
 
-		// The record leads with the operation; the raw id sits under it.
+		// Legacy id-only row (no operation_path/method): the record falls back
+		// to the generic heading — the opaque operation_id renders nowhere.
 		const dialog = await screen.findByRole('dialog');
 		expect(
-			await within(dialog).findByRole('heading', { name: 'POST /chat.postMessage' }),
+			await within(dialog).findByRole('heading', { name: 'API call' }),
 		).toBeInTheDocument();
 		expect(within(dialog).getByText('Execution')).toBeInTheDocument();
 		expect(within(dialog).getAllByText('exec_4').length).toBeGreaterThanOrEqual(1);
+		const operationLabel = await within(dialog).findByText('Operation');
+		const operationRow = operationLabel.parentElement as HTMLElement;
+		expect(within(operationRow).getByText('—')).toBeInTheDocument();
+		expect(screen.queryByText('op_chatpost01')).not.toBeInTheDocument();
+		// …but stays reachable for debugging via an icon-only copy affordance.
+		expect(
+			within(operationRow).getByRole('button', { name: 'Copy operation ID' }),
+		).toBeInTheDocument();
+		// No trace-scoped audit link is offered for an unusable trace.
 		expect(
 			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),
 		).not.toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
+	it('a multi-call trace labels every call by method + path, never the opaque id', async () => {
+		renderMonitor('/app/monitor?show=calls&trace_id=trace_aaaaaaaa');
+
+		const dialog = await screen.findByRole('dialog');
+		expect(
+			await within(dialog).findByRole('heading', { name: '2 calls in one trace' }),
+		).toBeInTheDocument();
+		expect(within(dialog).getAllByText('POST /v1/charges').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).getAllByText('POST /v1/refunds').length).toBeGreaterThanOrEqual(1);
+		expect(within(dialog).queryByText('op_charges01')).not.toBeInTheDocument();
+		expect(within(dialog).queryByText('op_refunds01')).not.toBeInTheDocument();
+		// Each call keeps its id reachable through the copy affordance.
+		expect(within(dialog).getAllByRole('button', { name: 'Copy operation ID' })).toHaveLength(
+			2,
+		);
 	});
 
 	it('Execution deep-link with a real trace opens the trace, not "no trace recorded"', async () => {
@@ -740,7 +869,7 @@ describe('Monitor inter-linking', () => {
 			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
 		});
 
-		await user.click(toggle('Activity source', 'Audit log'));
+		await user.click(await findToggle('Activity source', 'Audit log'));
 		await user.click(await screen.findByRole('link', { name: /Open job .* in Jobs/ }));
 		await waitFor(() => {
 			const params = currentParams();
@@ -795,6 +924,44 @@ describe('Monitor inter-linking', () => {
 		expect(await screen.findByRole('dialog')).toBeInTheDocument();
 	});
 
+	it('feed row → an agent event opens the agent selected on the Agents page', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: { self: '/events/evt_agent_reg_1' },
+							created_at: new Date().toISOString(),
+							data: { agent_id: 'agnt_curl_1' },
+							detail: null,
+							event_id: 'evt_agent_reg_1',
+							requires_action: false,
+							severity: 'info',
+							summary: "Agent 'curl-agent' self-registered",
+							trace_id: null,
+							type: 'agent.self_registered',
+							actor_id: 'agnt_curl_1',
+							actor_type: 'agent',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?view=activity');
+
+		await user.click(
+			await screen.findByRole('link', { name: "Agent 'curl-agent' self-registered" }),
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId('location-path')).toHaveTextContent('/agents'),
+		);
+		expect(currentParams().get('agent')).toBe('agnt_curl_1');
+	});
+
 	it('feed row → a job event opens the job detail sheet in place', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
@@ -821,9 +988,6 @@ describe('Monitor inter-linking', () => {
 								job: null,
 								action: null,
 							},
-							acknowledged: false,
-							acknowledged_at: null,
-							acknowledged_by: null,
 							created_at: new Date().toISOString(),
 							data: {},
 							detail: 'Upstream 401 from api.example.com',
@@ -860,8 +1024,7 @@ describe('Monitor inter-linking', () => {
 
 /**
  * Everything-feed status chips. Failed maps to the backend's repeatable
- * `severity=` (error + critical); Needs you to unacknowledged
- * `requires_action`.
+ * `severity=` (error + critical); Flagged to `requires_action`.
  */
 describe('Monitor feed status filter', () => {
 	beforeEach(() => {
@@ -894,12 +1057,12 @@ describe('Monitor feed status filter', () => {
 		worker.events.removeAllListeners();
 	});
 
-	it('Needs you shows only unacknowledged action events', async () => {
+	it('Flagged shows only action-required events', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
 		await screen.findByRole('link', { name: 'Import completed' });
 
-		await user.click(toggle('Status', 'Needs you'));
+		await user.click(toggle('Status', 'Flagged'));
 
 		await waitFor(() => expect(currentParams().get('status')).toBe('action'));
 		await waitFor(() => {
@@ -922,7 +1085,7 @@ describe('Monitor feed status filter', () => {
 		renderMonitor('/app/monitor?view=activity&status=action');
 
 		expect(await screen.findByText('Nothing matches')).toBeInTheDocument();
-		expect(toggle('Status', 'Needs you')).toHaveAttribute('aria-pressed', 'true');
+		expect(toggle('Status', 'Flagged')).toHaveAttribute('aria-pressed', 'true');
 
 		await user.click(screen.getByRole('button', { name: 'Show everything' }));
 		await waitFor(() => expect(currentParams().get('status')).toBeNull());

@@ -4,11 +4,10 @@
  */
 import { useEffect } from 'react';
 import type { RouteObject } from 'react-router';
-import { Navigate, useLocation } from 'react-router';
-import { ROUTES } from '@/shared/app';
+import { Navigate, useLocation, useParams } from 'react-router';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app';
 import { toast } from '@/shared/ui';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
-import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
 
 /**
  * `/app/agents/service-accounts/:id` (the retired service-account detail page —
@@ -58,6 +57,19 @@ function RetiredCredentialsRedirect() {
 	return <Navigate to={`${ROUTES.agents}?${params}`} replace />;
 }
 
+/**
+ * `/app/agents/:agentId` addresses an agent by path; the Agents page addresses
+ * it as its selection (`?agent=<id>`), so the path redirects there. Links minted
+ * outside the SPA (the CLI's approval pointer) and saved bookmarks keep landing
+ * on that agent. Any other query param (e.g. a `?tab=`) is dropped: the Agents
+ * page has no URL for its dock sheets. A component for the same TDZ reason as
+ * above.
+ */
+function AgentPathRedirect() {
+	const { agentId } = useParams<{ agentId: string }>();
+	return <Navigate to={agentId ? ROUTE_PATHS.agentTab(agentId) : ROUTES.agents} replace />;
+}
+
 export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
 	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
@@ -65,5 +77,5 @@ export const agentsRoutes: RouteObject[] = [
 	// Declared before `agents/:agentId` so the `service-accounts` segment is
 	// never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },
-	{ path: 'agents/:agentId', element: <AgentDetailPage /> },
+	{ path: 'agents/:agentId', element: <AgentPathRedirect /> },
 ];

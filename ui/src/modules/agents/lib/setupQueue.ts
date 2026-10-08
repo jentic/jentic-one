@@ -6,7 +6,11 @@
  * lost.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
-import type { PreflightItem, PreflightOutcome } from '@/modules/agents/lib/apiPreflight';
+import type {
+	ExistingAccount,
+	PreflightItem,
+	PreflightOutcome,
+} from '@/modules/agents/lib/apiPreflight';
 
 /** Where one API is in the queue: `active` = the pane is on it, `working` = a
  * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but
@@ -21,6 +25,9 @@ export interface QueueEntry {
 	/** Every org credential that covers this API, from the preflight — the
 	 * existing options the pane offers alongside a new credential. */
 	covering: Credential[];
+	/** The accounts the agent already reaches this API through, from the preflight —
+	 * set when the item adds another account. */
+	existing: ExistingAccount[];
 	/** Accepting this item imports the API into the workspace. */
 	importsApi: boolean;
 	status: QueueStatus;
@@ -48,7 +55,7 @@ export function isTerminal(status: QueueStatus): boolean {
 /** Statuses that SETTLE what happens to the API: attached (`added`), or the
  * operator was told it would not be (`dropped`). `failed` is absent — nobody
  * chose it, so the item is still outstanding work. */
-export function isResolved(status: QueueStatus): boolean {
+function isResolved(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped';
 }
 
@@ -64,6 +71,7 @@ function entryFor(item: PreflightItem): QueueEntry {
 		api: item.api,
 		outcome: item.outcome,
 		covering: item.covering,
+		existing: item.existing,
 		importsApi: item.importsApi,
 		status: 'waiting',
 	};
@@ -96,6 +104,7 @@ export function reconcileQueue(entries: QueueEntry[], items: PreflightItem[]): Q
 						api: item.api,
 						outcome: item.outcome,
 						covering: item.covering,
+						existing: item.existing,
 						importsApi: item.importsApi,
 					},
 		);
@@ -211,6 +220,7 @@ export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 			api: e.api,
 			outcome: e.outcome,
 			covering: e.covering,
+			existing: e.existing,
 			importsApi: e.importsApi,
 		}));
 }

@@ -20,7 +20,6 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronLeft } from 'lucide-react';
 import { ActivityRailBody, useScopedActivity } from '@/shared/app/rail/ActivityRailBody';
 import { LiveDot } from '@/shared/app/rail/LiveDot';
-import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { readBool, writeBool } from '@/shared/app/rail/railPreferences';
 import { activityStreamVtStyle } from '@/shared/app/viewTransitions';
 import { RAIL_COLLAPSED_STORAGE_KEY } from '@/shared/lib/agentStream';
@@ -38,10 +37,9 @@ const EASE = [0.32, 0.72, 0, 1] as const;
 function CollapsedStrip({ onExpand }: { onExpand: () => void }) {
 	const { failureCount, status, paused } = useScopedActivity();
 	const parts = [
-		failureCount > 0
-			? `${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`
-			: null,
+		failureCount > 0 ? `${failureCount} recent failure${failureCount === 1 ? '' : 's'}` : null,
 		status === 'error' ? 'reconnecting' : null,
+		status === 'forbidden' ? 'no access' : null,
 		paused ? 'paused' : null,
 	].filter(Boolean);
 	const label = `Show live activity${parts.length ? ` (${parts.join(', ')})` : ''}`;
@@ -51,7 +49,7 @@ function CollapsedStrip({ onExpand }: { onExpand: () => void }) {
 			onClick={onExpand}
 			aria-label={label}
 			title={label}
-			className="group hover:bg-background/40 flex h-full w-full flex-col items-center gap-2.5 py-2.5 transition-colors"
+			className="group hover:bg-surface-1-hover flex h-full w-full flex-col items-center gap-2.5 py-2.5 transition-colors"
 		>
 			<ChevronLeft className="text-muted-foreground group-hover:text-foreground h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
 			<LiveDot
@@ -124,7 +122,7 @@ export function AgentRail() {
 			// whole rail up with the scroll (the sticky wrapper is clamped to its
 			// row, and the row only grows with real `main` content). See #1318
 			// review follow-up: rail scrolled away on Settings/Toolkits.
-			className="bg-muted border-border relative hidden shrink-0 overflow-hidden border-l xl:block"
+			className="bg-surface-sheet border-hairline-field relative hidden shrink-0 overflow-hidden border-l xl:block"
 		>
 			<AnimatePresence initial={false}>
 				{collapsed ? (
@@ -167,6 +165,3 @@ export function AgentRail() {
 		</motion.aside>
 	);
 }
-
-// Re-export RailEventRow so future consumers can import it from the rail barrel.
-export { RailEventRow };

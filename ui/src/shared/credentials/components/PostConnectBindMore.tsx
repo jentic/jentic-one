@@ -15,7 +15,7 @@ import {
  * each agent's page.
  *
  * Lives under ``shared/credentials`` (not ``modules/agents``) because
- * both the credential inventory and the agent-detail page mount it via
+ * both the credential inventory and the Agents page mount it via
  * ``CreateCredentialFlow``'s ``renderPostConnect`` prop, and the
  * layering rules forbid sibling-module imports as well as
  * ``shared → modules`` ones.
