@@ -22,7 +22,7 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import { AGENTS_READ, useCanAccess, useOptionalCurrentUser } from '@/shared/auth';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -121,8 +121,11 @@ export function CredentialInventorySheet({
 
 	// Which credentials the fleet uses, by inverting every agent's binding list — the
 	// same reads the agents surface already made. Archived agents are outside the
-	// join: archiving sweeps their bindings. Gated on `open`.
-	const fleet = useAgents({ status: 'all', enabled: open });
+	// join: archiving sweeps their bindings. Gated on `open`, and on `agents:read`:
+	// a `credentials:read` holder without it would otherwise fire a roster read the
+	// server refuses, and a 403 there reads as "nothing is bound" (#1543).
+	const canReadAgents = useCanAccess(AGENTS_READ);
+	const fleet = useAgents({ status: 'all', enabled: open && canReadAgents });
 	const {
 		fetchNextPage,
 		hasNextPage,
@@ -131,7 +134,7 @@ export function CredentialInventorySheet({
 		isPending: fleetPending,
 	} = fleet;
 	useEagerCursorDrain({
-		hasNextPage: open && hasNextPage,
+		hasNextPage: open && canReadAgents && hasNextPage,
 		isFetchingNextPage,
 		isError: fleetError,
 		fetchNextPage,
@@ -143,12 +146,15 @@ export function CredentialInventorySheet({
 				.map((a) => a.id),
 		[fleet.data],
 	);
-	const bindingsByAgent = useAgentsCredentialBindings(open ? fleetAgentIds : []);
+	const bindingsByAgent = useAgentsCredentialBindings(open && canReadAgents ? fleetAgentIds : []);
 	const refreshFleetBindings = useRefreshFleetCredentialBindings();
 
 	// Credential id → how many agents hold it. `null` = cannot be proved, which is
 	// NOT "nothing is bound": a partial fleet makes a bound credential look unbound.
+	// A viewer who may not read the roster can never prove it, so it stays `null`
+	// without a read ever going out.
 	const agentsPerCredential = useMemo(() => {
+		if (!canReadAgents) return null;
 		if (fleetPending || hasNextPage || fleetError) return null;
 		if (fleetAgentIds.some((id) => !bindingsByAgent.has(id))) return null;
 		const counts = new Map<string, number>();
@@ -160,11 +166,13 @@ export function CredentialInventorySheet({
 			}
 		}
 		return counts;
-	}, [fleetPending, hasNextPage, fleetError, fleetAgentIds, bindingsByAgent]);
+	}, [canReadAgents, fleetPending, hasNextPage, fleetError, fleetAgentIds, bindingsByAgent]);
 	const unboundUnknown = bindingFilter === 'unbound' && agentsPerCredential == null;
 	// The roster drain is the one phase provably still in flight, so anything past it
-	// omits the figure rather than pulsing a skeleton forever.
-	const fleetJoinLoading = fleetPending || hasNextPage || isFetchingNextPage;
+	// omits the figure rather than pulsing a skeleton forever. A roster the viewer
+	// may not read is never in flight: without this the cards' usage figures pulse
+	// a skeleton forever, waiting on a request that is never made.
+	const fleetJoinLoading = canReadAgents && (fleetPending || hasNextPage || isFetchingNextPage);
 
 	const credentials = credentialsSource.items;
 
@@ -177,12 +185,20 @@ export function CredentialInventorySheet({
 	const bindingFilterOptions = useMemo(
 		() => [
 			{ value: 'any' as BindingFilter, label: 'Any agent' },
-			{
-				value: 'unbound' as BindingFilter,
-				label: unboundCount == null ? 'Unbound' : `Unbound (${unboundCount})`,
-			},
+			// Unbound is an assertion over every agent's bindings. A viewer who may
+			// not read the roster can never get that answer, so the filter is not
+			// offered at all rather than offered and then withheld behind a dead
+			// "Try again".
+			...(canReadAgents
+				? [
+						{
+							value: 'unbound' as BindingFilter,
+							label: unboundCount == null ? 'Unbound' : `Unbound (${unboundCount})`,
+						},
+					]
+				: []),
 		],
-		[unboundCount],
+		[canReadAgents, unboundCount],
 	);
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
