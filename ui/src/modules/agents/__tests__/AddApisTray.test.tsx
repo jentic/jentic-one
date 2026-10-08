@@ -724,3 +724,46 @@ describe('AddApisTray — offers only credentials the viewer may bind', () => {
 		).toEqual(['cred_mine', 'cred_theirs']);
 	});
 });
+
+describe('AddApisTray — one-click sign-in (shared OAuth apps)', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetCredentialsStore([STRIPE_CREDENTIAL]);
+		resetApisStore(WORKSPACE_APIS);
+		worker.use(
+			http.get('/vendors', () =>
+				HttpResponse.json({
+					data: [
+						{
+							entry_id: 'oar_gmail',
+							registration_id: 'oar_gmail',
+							key: 'googleapis.com',
+							vendor: 'googleapis.com',
+							display_name: 'Gmail',
+							name: 'Acme Gmail',
+							source: 'db',
+							flow_kinds: ['authorization_code'],
+							catalog_api_id: 'googleapis.com/gmail',
+						},
+					],
+				}),
+			),
+		);
+	});
+
+	it('leads with the shared apps and opens a sign-in for this agent', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<TrayHarness />);
+
+		const section = await screen.findByRole('region', { name: /one-click sign-in/i });
+		const tile = within(section).getByRole('button', { name: /Acme Gmail/ });
+		expect(within(tile).getByText('Shared app')).toBeInTheDocument();
+
+		await user.click(tile);
+		expect(await screen.findByText('via Acme Gmail')).toBeInTheDocument();
+		// The connect is pinned to the tray's agent, so the picker is locked.
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		expect(within(picker).getByRole('radio', { checked: true })).toBeDisabled();
+	});
+});

@@ -134,6 +134,12 @@ interface CreateCredentialFlowProps {
 	 */
 	initialApi?: SelectedApi;
 	/**
+	 * A one-click sign-in (a platform vendor or a shared OAuth app) the host
+	 * already picked, e.g. from its own picker: the flow opens on that
+	 * vendor's connect, and Back closes it.
+	 */
+	initialVendor?: VendorSummary;
+	/**
 	 * When provided, the flow opens directly into the vendor connect in
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
@@ -224,6 +230,7 @@ export function CreateCredentialFlow({
 	initialType,
 	pinnedApi,
 	initialApi,
+	initialVendor,
 	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
@@ -240,11 +247,13 @@ export function CreateCredentialFlow({
 	const seedVersion = seedApi ? pinnableVersionOf(seedApi) : '';
 	const seedForm = (): CredentialFormState =>
 		seedApi ? seedFormFromSelectedApi(baseForm, seedApi, false) : baseForm;
-	const [step, setStep] = useState<Step>(seedApi ? 'form' : 'pick');
+	const [step, setStep] = useState<Step>(initialVendor ? 'vendor' : seedApi ? 'form' : 'pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(seedApi ?? null);
 	/** The registry version the form's "Use for" picker can pin to (`''` hides it). */
 	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
-	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
+	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(
+		initialVendor ?? null,
+	);
 	/** The vendor step was entered from the form's shared-app options (Back returns there). */
 	const [vendorFromForm, setVendorFromForm] = useState(false);
 	const vendorsQuery = useVendors();
@@ -435,9 +444,9 @@ export function CreateCredentialFlow({
 	const reset = (): void => {
 		// A pinned or preselected API is the caller's premise, not a user choice, so
 		// a reset returns to that API's empty form rather than to the picker.
-		setStep(seedApi ? 'form' : 'pick');
+		setStep(initialVendor ? 'vendor' : seedApi ? 'form' : 'pick');
 		setSelectedApi(seedApi ?? null);
-		setSelectedVendor(null);
+		setSelectedVendor(initialVendor ?? null);
 		setManualMode(false);
 		setUploadOpen(false);
 		setActiveScheme(null);
@@ -914,6 +923,11 @@ export function CreateCredentialFlow({
 	};
 
 	const goBackFromVendor = (): void => {
+		// Opened on the host's own vendor pick: there is no picker to go back to.
+		if (initialVendor) {
+			onClose();
+			return;
+		}
 		if (vendorFromForm) {
 			setVendorFromForm(false);
 			setSelectedVendor(null);
