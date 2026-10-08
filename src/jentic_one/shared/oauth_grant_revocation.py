@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
 from jentic_one.admin.repos.access_token_repo import AccessTokenRepository
 from jentic_one.admin.repos.oauth_client_grant_repo import OAuthClientGrantRepository
+from jentic_one.admin.repos.oauth_client_repo import OAuthClientRepository
 from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.oauth_clients import OAuthGrantStatus
 
@@ -35,7 +36,7 @@ async def revoke_grant_and_sweep_tokens(
     actor_id: str,
     origin: str | None,
     audit_reason: str,
-    summary: str,
+    revocation_cause: str | None = None,
     event_reason: str | None = None,
 ) -> bool:
     """Flip one grant row + sweep its tokens + audit + event, in the caller's session.
@@ -50,6 +51,11 @@ async def revoke_grant_and_sweep_tokens(
     Flush-only: it joins whatever transaction the caller owns.
     Returns False (writing no audit/event) when the grant was already revoked;
     the token sweep re-runs regardless (idempotent belt).
+
+    ``revocation_cause`` is the cause half of the summary sentence, read as
+    "… was revoked because <cause>" (``None`` for the manual kill switch, whose
+    cause is the act itself). The summary is composed HERE and nowhere else —
+    see :func:`_revocation_summary` for why.
 
     ``actor_type`` is the opaque persisted string (an ``ActorType`` value
     or a retired label such as ``service_account`` on a residual token row):
@@ -91,9 +97,35 @@ async def revoke_grant_and_sweep_tokens(
         session,
         type=EventType.OAUTH_GRANT_REVOKED,
         severity=EventSeverity.INFO,
-        summary=summary,
+        summary=await _revocation_summary(session, grant, revocation_cause),
         requires_action=False,
         data=data,
         created_by=actor_id,
     )
     return True
+
+
+async def _revocation_summary(
+    session: AsyncSession, grant: OAuthClientGrant, cause: str | None
+) -> str:
+    """The one ``oauth_grant.revoked`` sentence, for every revocation cause.
+
+    Composed inside the revocation body, not at the call sites: the four causes
+    (manual ``:revoke``, agent sweep, RFC 7009 disconnect, client delete) each
+    supply only their cause clause, so there is exactly one definition of how
+    the client is named and how wide the sentence can get. Four hand-written
+    copies of this sentence is how the client came to be named by its raw
+    ``oc_…`` id while the rest of the summary vocabulary names entities through
+    :func:`summary_label` (#1543).
+
+    The client row is read here rather than passed in, so no caller can supply
+    a different name — or forget to supply one. It is one indexed lookup per
+    *newly revoked* grant, after the early return, on a path that already does
+    a grant flip, two token sweeps and two inserts.
+    ``oauth_client_grants.oauth_client_id`` is a plain column (no FK), so a
+    grant outliving its client is expected and degrades to the id.
+    """
+    client = await OAuthClientRepository.get_by_client_id(session, grant.oauth_client_id)
+    label = summary_label(None if client is None else client.name, grant.oauth_client_id)
+    sentence = f"OAuth grant {grant.id} for client {label} was revoked"
+    return sentence if cause is None else f"{sentence} because {cause}"

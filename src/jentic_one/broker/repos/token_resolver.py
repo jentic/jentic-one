@@ -64,6 +64,12 @@ class InProcessTokenResolver:
             "    FROM users u WHERE u.id = t.actor_id)"
             "  ELSE 'active'"
             " END AS actor_status,"
+            # The agent's display name, off the same PK the status arm above
+            # already probes: audit event summaries name the acting agent by it
+            # instead of by its opaque ksuid (#1543). Display-only — never a
+            # gate, so a NULL/missing row just degrades to the id.
+            " (SELECT a.name FROM agents a WHERE a.id = t.actor_id"
+            "   AND t.actor_type = 'agent') AS actor_name,"
             " (SELECT c.active FROM oauth_clients c"
             "  WHERE c.client_id = t.oauth_client_id) AS oauth_client_active,"
             " (SELECT c.approval_status = 'approved' FROM oauth_clients c"
@@ -145,6 +151,7 @@ class InProcessTokenResolver:
         )
         return Identity(
             sub=row.actor_id,
+            actor_name=row.actor_name or "",
             actor_type=actor_type,
             permissions=permissions,
             expires_at=expires_at,
