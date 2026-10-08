@@ -953,7 +953,10 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 					last_name: 'Er',
 					active: true,
 					// A member: manages agents and credentials, but is not an org admin.
-					permissions: ['agents:read', 'agents:write', 'credentials:write'],
+					// `apis:read` included because `GET /apis` requires it and the page
+					// no longer sends that read without it (#1543) — without it a tile
+					// falls back to its vendor host and never reads "Slack".
+					permissions: ['agents:read', 'agents:write', 'apis:read', 'credentials:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,

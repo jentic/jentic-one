@@ -869,8 +869,17 @@ function SelectedAgentPanel({
 	// skeleton while either source drains. No live bindings, no gate — a hidden
 	// orphan alone must not hold the skeleton.
 	const hasBindings = liveBindings.length > 0;
-	const sourcesError = credentialsSource.error ?? apisSource.error;
-	const sourcesDraining = !sourcesError && (!credentialsSource.complete || !apisSource.complete);
+	// The API registry is ENRICHMENT, not the grid's subject: a binding's own
+	// `serves` tuple draws a tile without it (untitled, no icon, no operation
+	// count). So a failed — or forbidden, for a viewer without `apis:read` —
+	// `GET /apis` degrades the tiles rather than replacing the whole grid with an
+	// error card whose Try again can never succeed (#1543). The credential list
+	// still gates the grid: it decides ownership, orphans and sign-in state, and
+	// tiles that quietly assert those unread is the defect above it.
+	const apisDegraded = Boolean(apisSource.error);
+	const sourcesError = credentialsSource.error;
+	const sourcesDraining =
+		!sourcesError && (!credentialsSource.complete || (!apisDegraded && !apisSource.complete));
 
 	// `undefined` = still loading → skeleton; `null` = failed → em-dash. A
 	// bindings-less agent skips the drain gate and renders honest zeros.
@@ -1059,11 +1068,8 @@ function SelectedAgentPanel({
 				<ErrorAlert message={bindingsQuery.error as Error} />
 			) : hasBindings && sourcesError ? (
 				<ErrorAlert
-					message="Couldn't load the credential and API details behind these tiles."
-					onRetry={() => {
-						if (credentialsSource.error) credentialsSource.retry();
-						if (apisSource.error) apisSource.retry();
-					}}
+					message="Couldn't load the credential details behind these tiles."
+					onRetry={() => credentialsSource.retry()}
 				/>
 			) : tiles.length === 0 ? (
 				<Card outlined className="border-dashed p-6">
@@ -1082,6 +1088,23 @@ function SelectedAgentPanel({
 						!serving && 'saturate-[.35]',
 					)}
 				>
+					{/* Non-blocking: the tiles below are drawn from the bindings
+					    themselves, just without the registry's titles and icons. */}
+					{apisDegraded && (
+						<div
+							role="status"
+							data-testid="agent-apis-degraded"
+							className="bg-surface-inset mb-3 flex flex-wrap items-center gap-3 rounded-lg px-4 py-2.5"
+						>
+							<p className="text-muted-foreground min-w-0 flex-1 text-sm">
+								These tiles are showing without their API details — the API list
+								couldn&rsquo;t be read. Access is unaffected.
+							</p>
+							<Button variant="tonal" size="xs" onClick={() => apisSource.retry()}>
+								Try again
+							</Button>
+						</div>
+					)}
 					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
 						{tiles.map((tile) => (
 							<ApiTile

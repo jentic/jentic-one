@@ -679,7 +679,12 @@ describe('AgentsPage — flat agents surface', () => {
 		});
 
 		describe('seen by a non-admin (whose credentials list is only their own)', () => {
-			beforeEach(() => seedViewer(['agents:read', 'agents:write', 'credentials:read']));
+			beforeEach(() =>
+				// `apis:read` included because `GET /apis` requires it and the page no
+				// longer sends that read without it (#1543); this spec is about an
+				// orphaned binding, not about an API-blind viewer.
+				seedViewer(['agents:read', 'agents:write', 'apis:read', 'credentials:read']),
+			);
 
 			it('is neither hidden nor purged — missing from their list is not proof', async () => {
 				const purges = recordPurges();
