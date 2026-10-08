@@ -349,11 +349,20 @@ export function conflictHint(ev: StreamEvent): string | null {
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
 	const data = (e.data ?? {}) as Record<string, unknown>;
-	// `agent.*` events (e.g. self-registration) identify the agent via the
-	// top-level `actor_id`, not the free-form `data` map — fall back to it so
-	// the row can deep-link to the agent's approval page.
+	// `agent_id` names the agent an event is ABOUT — never merely the one that
+	// emitted it. `agent.*` events (e.g. self-registration) are the one family
+	// whose subject IS the actor and which carry no `data.agent_id`, so the
+	// top-level `actor_id` back-fills the token there and only there. Every
+	// other namespace gets its subject from `data`: `credential.accessed` names
+	// a credential and rides on the USING agent's actor id, and treating that
+	// actor as the subject sent the row to `/agents?agent=<actor>` — which
+	// answers "Agent not found" whenever the actor sits outside the reader's
+	// roster (#1543).
 	const actorAgentId =
-		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
+		kindForType(e.type) === 'agent' &&
+		e.actor_type === 'agent' &&
+		typeof e.actor_id === 'string' &&
+		e.actor_id.length > 0
 			? e.actor_id
 			: undefined;
 	// The linked execution/job is surfaced as a HAL link (`_links.execution` =
@@ -370,11 +379,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		credential_id: stringField(data, 'credential_id'),
 		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
 		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
-		// Precedence matters: explicit `data.agent_id` first, then the top-level
-		// actor when it IS an agent (guarded — e.g. DCR self-registration). No
-		// `data.actor_id` fallback: no current emitter populates it, and one
-		// that did could carry a NON-agent id (e.g. the deciding user), which
-		// would deep-link "View agent" to /agents/<user_id>.
+		// Precedence matters: explicit `data.agent_id` first, then — for `agent.*`
+		// events only — the top-level actor when it IS an agent (e.g. DCR
+		// self-registration). No `data.actor_id` fallback: no current emitter
+		// populates it, and one that did could carry a NON-agent id (e.g. the
+		// deciding user), which would deep-link "View agent" to /agents/<user_id>.
 		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
 		// Catalog/overlay events carry the affected API's identity so the row can
 		// deep-link into Workspace: `api_id` (catalog slug) + the (vendor, name,

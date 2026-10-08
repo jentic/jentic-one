@@ -469,6 +469,44 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(primaryDestinationFor(stored)).not.toContain('/credentials/');
 	});
 
+	it('primaryDestinationFor sends a credential event emitted BY an agent to the inventory', () => {
+		// Pins #1543: a credential row's destination follows the agent the event
+		// is ABOUT, not the agent that emitted it. `credential.accessed` names
+		// only the credential; the agent arrives as the event's actor, and the
+		// Agents page answers "Agent not found" for an agent outside the
+		// reader's roster — so the row opens the credential inventory, which the
+		// credential's owner can always reach. Built through `adaptEvent`
+		// because the adapter is what back-fills `agent_id` from the actor.
+		const accessed = adaptEvent(
+			wireEvent({
+				event_id: 'evt_cred_accessed',
+				type: 'credential.accessed',
+				actor_id: 'agnt_someone_elses',
+				actor_type: 'agent',
+				data: { credential_id: 'cred_1' },
+			}),
+		);
+		expect(accessed.kind).toBe('credential');
+		expect(primaryDestinationFor(accessed)).toBe('/agents?credentials=1');
+		expect(primaryDestinationFor(accessed)).not.toContain('agent=');
+	});
+
+	it('primaryDestinationFor keeps a credential event that NAMES an agent on the agent page', () => {
+		// The other half of the same rule, and the regression net for it: a
+		// binding emitter puts `agent_id` in `data`, so the event is about that
+		// agent and the row selects it on the Agents page.
+		const bound = adaptEvent(
+			wireEvent({
+				event_id: 'evt_cred_bound',
+				type: 'credential.bound_to_agent',
+				actor_id: 'usr_1',
+				actor_type: 'user',
+				data: { credential_id: 'cred_1', agent_id: 'agt_42' },
+			}),
+		);
+		expect(primaryDestinationFor(bound)).toBe('/agents?agent=agt_42');
+	});
+
 	it('primaryDestinationFor routes execution events to the monitor executions tab', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
