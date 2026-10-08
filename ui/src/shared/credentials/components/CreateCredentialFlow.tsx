@@ -60,6 +60,7 @@ import {
 } from '@/shared/credentials/components/CredentialVersionScope';
 import {
 	VendorConnectFlow,
+	type ConnectedCredentialInfo,
 	type PostConnectInfo,
 } from '@/shared/credentials/components/VendorConnectFlow';
 import {
@@ -146,6 +147,11 @@ interface CreateCredentialFlowProps {
 	 */
 	preselectedAgentId?: string;
 	/**
+	 * Called once a vendor or shared-app sign-in finishes, with the credential
+	 * it created — so a host that tracks its own progress can mark it added.
+	 */
+	onVendorConnected?: (info: ConnectedCredentialInfo) => void;
+	/**
 	 * Render-prop threaded through to ``VendorConnectFlow`` — callers supply the
 	 * "bind to more agents" CTA (``PostConnectBindMore``); the flow stays
 	 * agnostic of what the extra content is.
@@ -221,6 +227,7 @@ export function CreateCredentialFlow({
 	surface = 'sheet',
 	approvalSession,
 	preselectedAgentId,
+	onVendorConnected,
 	renderPostConnect,
 	back,
 	registerSharedApp = false,
@@ -1030,6 +1037,7 @@ export function CreateCredentialFlow({
 					vendor={selectedVendor}
 					preselectedAgentId={preselectedAgentId}
 					renderPostConnect={renderPostConnect}
+					onConnected={onVendorConnected}
 					onBack={goBackFromVendor}
 					onDone={onClose}
 				/>

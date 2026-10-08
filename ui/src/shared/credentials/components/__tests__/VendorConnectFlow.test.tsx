@@ -313,6 +313,97 @@ describe('VendorConnectFlow — self mode', () => {
 		expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
 	});
 
+	it('reports the created credential once when the sign-in completes', async () => {
+		// Post-refactor: ``:connect`` fires at mount (so the session +
+		// import exist before the user reaches the rules page), and
+		// ``:confirm`` fires when the user continues off the rules page.
+		// Self and approve flows now share the same shape from mount onward.
+		worker.use(
+			http.post('/integrations:connect', () =>
+				HttpResponse.json(
+					{
+						session_id: 'sess_1',
+						approval_url:
+							'https://example.com/app/agents?approve=sess_1&poll_token=tok',
+						poll_token: 'tok',
+						resolved_flow: 'device_authorization',
+					},
+					{ status: 201 },
+				),
+			),
+			// ``:connect`` returning triggers a ``GET /connect-sessions/{id}``
+			// (useConnectSession) so the rules page can read ``api_reference``.
+			http.get('/connect-sessions/sess_1', () =>
+				HttpResponse.json({
+					session_id: 'sess_1',
+					state: 'created',
+					vendor_key: 'github',
+					vendor_display_name: 'GitHub',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+				}),
+			),
+			http.post('/connect-sessions/sess_1\\:confirm', () =>
+				HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'ABCD-1234',
+					verification_uri: 'https://github.com/login/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 5,
+				}),
+			),
+			http.get('/connect-sessions/:id/status', () =>
+				HttpResponse.json({
+					status: 'connected',
+					connected_as: 'octocat',
+					credential_id: 'cred_new',
+					bound_scopes: null,
+					error_code: null,
+				}),
+			),
+		);
+
+		const onConnected = vi.fn();
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendor}
+				onConnected={onConnected}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		// Wait for both capabilities + session-id + agent choice (Continue
+		// is gated on all three). ``read:user`` proves the scope catalog
+		// hydrated; picking Scout satisfies the agent gate; the button
+		// un-disables when ``:connect`` also returns.
+		await screen.findByText('read:user');
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await user.click(
+			await screen.findByRole('button', { name: /(skip.*continue|^continue$)/i }),
+		);
+
+		await waitFor(() =>
+			expect(onConnected).toHaveBeenCalledWith({
+				credentialId: 'cred_new',
+				name: vendor.display_name,
+			}),
+		);
+		expect(onConnected).toHaveBeenCalledTimes(1);
+	});
+
 	it('threads a user-typed credential name through the :connect payload', async () => {
 		stubCapabilities();
 		let capturedBody: unknown = null;
