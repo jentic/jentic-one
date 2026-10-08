@@ -56,6 +56,10 @@ class VendorSummaryResponse(BaseModel):
     # platform-shipped vendor entry.
     source: Literal["db", "config"]
     flow_kinds: list[str]
+    # For admin-registered rows, the catalog API the shared app signs in to
+    # (``<domain>/<sub>``) — lets a flow already on one API offer only its
+    # apps. ``None`` for platform-shipped config rows.
+    catalog_api_id: str | None = None
 
 
 class VendorListResponse(BaseModel):

@@ -456,6 +456,26 @@ async def test_list_entries_surfaces_db_only_vendor() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_list_entries_carries_each_registrations_catalog_api() -> None:
+    """DB entries name the catalog API their app signs in to; config entries don't."""
+    gmail = _FakeRegistration(
+        api_vendor="googleapis.com",
+        name="Gmail",
+        display_name="Gmail",
+        flow_kind="authorization_code",
+        client_id="gmail-cid",
+        catalog_api_id="googleapis.com/gmail",
+        authorization_code_details=_FakeDetails(),
+    )
+    svc = _service(config_entries={"slack": _slack_config_entry()}, registrations=[gmail])
+
+    by_source = {e.source: e for e in await svc.list_entries()}
+
+    assert by_source["db"].catalog_api_id == "googleapis.com/gmail"
+    assert by_source["config"].catalog_api_id is None
+
+
+@pytest.mark.asyncio()
 async def test_list_entries_stable_display_name_ordering() -> None:
     """Sort key is display_name — the picker must not shuffle between polls."""
     a_db = _FakeRegistration(

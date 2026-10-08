@@ -49,6 +49,7 @@ async def list_vendors(
                 name=e.name,
                 source=e.source,
                 flow_kinds=list(e.flow_kinds),
+                catalog_api_id=e.catalog_api_id,
             )
             for e in entries
         ]
