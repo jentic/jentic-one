@@ -165,12 +165,14 @@ export function ApiAccessSidebar({
 
 	const credentialId = shown?.credentialId ?? null;
 	// A credential shared with the viewer is theirs to bind and use, not to edit or
-	// delete. An unreachable credential row leaves the owner unknown — keep the
-	// actions and let the server decide.
+	// delete. Ownership that cannot be read is treated as NOT the viewer's — fail
+	// closed. `credentialCreatedBy` is absent (not null) when no credential row
+	// backed the tile at all, which is exactly what an owner-scoped
+	// `GET /credentials` returns for someone else's credential bound to this
+	// agent: offering Edit there opened a blank sheet and both verbs 404ed (#1543).
 	const viewer = useOptionalCurrentUser();
 	const credentialReadOnly =
-		shown?.credentialCreatedBy !== undefined &&
-		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
+		shown != null && !credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
 	// Pause, resume and unbind write the agent's bindings (`agents:write`); editing,
 	// deleting or connecting the credential and its binding rules need
 	// `credentials:write`. Either needs `org:admin` otherwise. Without them the

@@ -1017,4 +1017,42 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 			inDialog.getByRole('button', { name: 'Delete credential GitHub PAT org-wide' }),
 		).toBeInTheDocument();
 	});
+
+	/**
+	 * Pins #1543 item 2: the case `GET /credentials` cannot answer at all.
+	 *
+	 * `GET /credentials` is OWNER-SCOPED for a non-admin, so another user's
+	 * credential bound to this agent is simply ABSENT from the list — the tile is
+	 * composed from the binding alone and carries no `credentialCreatedBy` key
+	 * (not a null one: `apiTiles` spreads the field only when a credential row
+	 * was found). Ownership is therefore UNKNOWN, and unknown must read as "not
+	 * yours": the previous `!== undefined` guard inverted exactly this case into
+	 * "editable", drew Edit and Delete, and both 404ed — Edit on a sheet with
+	 * nothing to edit.
+	 */
+	it('withholds Edit and Delete when the credential is not in the viewer’s list at all', async () => {
+		// The viewer's own list holds GitHub only. Slack's binding survives, so the
+		// tile still renders — with no credential row behind it.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+		]);
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+
+		expect(inDialog.queryByRole('button', { name: /Edit credential/ })).not.toBeInTheDocument();
+		expect(
+			inDialog.queryByRole('button', { name: /Delete credential .* org-wide/ }),
+		).not.toBeInTheDocument();
+		// Unbinding is the agent's own business and stays — the binding is readable.
+		expect(
+			inDialog.getByRole('button', { name: /^Unbind .* from support-agent$/ }),
+		).toBeInTheDocument();
+	});
 });
