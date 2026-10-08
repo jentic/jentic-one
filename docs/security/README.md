@@ -269,7 +269,8 @@ Before pointing Jentic One at production credentials:
 - [ ] You have an export path for the audit trail (API pagination or DB-level
       export — there is no built-in exporter or retention control yet, and
       the tables grow unbounded).
-- [ ] Telemetry is set as you intend (it is **off by default**; see
+- [ ] Telemetry is set as you intend (on in the shipped install examples; off
+      when the block is omitted or `telemetry.enabled: false`; see
       [`telemetry` in the configuration reference](../reference/config.md#telemetry)).
 
 ## Reporting a vulnerability

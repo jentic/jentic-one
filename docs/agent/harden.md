@@ -107,5 +107,5 @@ exposure vector in past audits.
   log sink (`~/.jentic/logs/app.jsonl`) redacts secrets by design, but debug
   logging is noisier and slower.
 - Back up the data volume before every upgrade ([operate.md](operate.md)).
-- Telemetry is consent-based and recorded explicitly in the config either way;
-  an opted-out config carries no instance identifier.
+- Telemetry is on in the runbook's config and recorded explicitly either way;
+  an opted-out config (`enabled: false`) carries no instance identifier.

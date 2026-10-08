@@ -44,8 +44,10 @@ Jentic One is designed so that **credentials never leave the data plane**:
   control.
 - Access is governed by fine-grained, per-binding permissions, and every
   execution is written to an append-only audit log.
-- Jentic One does **not** send telemetry by default. Anonymous product telemetry
-  is **opt-in** (`telemetry.enabled: true`); when enabled it sends a small, fixed,
+- Anonymous product telemetry is gated by `telemetry.enabled`. The backend
+  default is off, so a config that omits the block sends nothing; the shipped
+  install examples and the interactive installer turn it on, and
+  `telemetry.enabled: false` opts out. When enabled it sends a small, fixed,
   closed-schema event set — `{id, version, event, actor_type?, tags?, ts}`, where
   `event`/`actor_type` are fixed enums and `tags` are fixed labels (e.g. the OS
   family `linux`/`darwin`/`windows`/`other`, sent once per boot on the
