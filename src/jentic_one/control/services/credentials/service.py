@@ -89,7 +89,13 @@ from jentic_one.shared.models.api_identity import (
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.permissions.evaluation import (
+    PermissionRule,
+    first_matching_rule,
+    normalize_methods,
+)
 from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.url_path import normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -769,24 +775,26 @@ class CredentialService:
                     session, agent_id, credential_id
                 )
 
-        method_upper = method.upper()
-        for idx, rule in enumerate(rules):
-            rule_methods = rule.methods
-            rule_path = rule.path
-            rule_ops = rule.operations
-            is_condition_less = rule_methods is None and rule_path is None and rule_ops is None
-            if is_condition_less and rule.effect.lower() == "allow":
-                continue
-            if rule_methods is not None:
-                methods_set = {m.upper() for m in rule_methods}
-                if method_upper not in methods_set:
-                    continue
-            if rule_path is not None:
-                matcher = compile_matcher(rule_path, str(rule.match_mode or "regex"))
-                if matcher is not None and not matcher.matches(path):
-                    continue
-            if rule_ops is not None and (operation_id is None or operation_id not in rule_ops):
-                continue
+        compiled = [
+            PermissionRule(
+                effect=rule.effect,
+                methods=normalize_methods(rule.methods),
+                path=compile_matcher(rule.path, str(rule.match_mode or "regex")),
+                operations=tuple(rule.operations) if rule.operations is not None else None,
+            )
+            for rule in rules
+        ]
+        # The broker enforces on the normalized server-relative path; normalize
+        # the dry-run input the same way so ``/%61dmin`` previews as ``/admin``.
+        idx = first_matching_rule(
+            compiled,
+            method=method,
+            path=normalize_path(path),
+            operation_id=operation_id,
+            binding=f"{agent_id}:{credential_id}",
+        )
+        if idx is not None:
+            rule = rules[idx]
             return PermissionTestResult(
                 allowed=rule.effect.lower() == "allow",
                 matched=True,

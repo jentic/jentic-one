@@ -9,14 +9,10 @@ from __future__ import annotations
 
 import structlog.testing
 
-from jentic_one.broker.repos.agent_rule_evaluator import (
-    PermissionRule,
-    _coerce_json_list,
-    _compile_path,
-    _normalize_methods,
-    _rule_matches,
-    evaluate_rules,
-)
+from jentic_one.broker.repos.agent_rule_evaluator import _coerce_json_list, _compile_path
+from jentic_one.shared.permissions.evaluation import PermissionRule, evaluate_rules
+from jentic_one.shared.permissions.evaluation import normalize_methods as _normalize_methods
+from jentic_one.shared.permissions.evaluation import rule_matches as _rule_matches
 from jentic_one.shared.permissions.matching import compile_matcher
 
 # ---------------------------------------------------------------------------

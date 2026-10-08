@@ -307,3 +307,100 @@ async def test_actor_status_resolver_refuses_retired_service_account_actors(
     assert not await resolver.holds_permission(
         actor_id="sva_queued", actor_type="service_account", permission=BROKER_EXECUTE_PERMISSION
     )
+
+
+async def _set_rule(ctx: Context, agent_id: str, *, path: str, match_mode: str) -> None:
+    async with ctx.control_db.session() as session:
+        await session.execute(
+            update(AgentPermissionRule)
+            .where(AgentPermissionRule.agent_id == agent_id)
+            .values(path=path, match_mode=match_mode)
+        )
+        await session.commit()
+
+
+_BASE_PATH_URL = "http://localhost:18765/eu/widgets"
+
+
+@pytest.mark.parametrize(
+    ("rule_path", "relative_path", "allowed"),
+    [
+        # The spec-relative rule the UI authors allows the base-path call.
+        ("/widgets", "/widgets", True),
+        # A rule written against the full upstream path does not match.
+        ("/eu/widgets", "/widgets", False),
+        # A job enqueued without the relative path falls back to the
+        # normalized full upstream path — never broader than that.
+        ("/eu/widgets", None, True),
+        ("/widgets", None, False),
+    ],
+)
+async def test_rules_are_reauthorized_on_the_server_relative_path(
+    integration_context: Context,
+    clean_tables: None,
+    rule_path: str,
+    relative_path: str | None,
+    allowed: bool,
+) -> None:
+    """Pins #1424: for an API whose server URL carries a base path
+    (``http://{host}:18765/{region}``), binding rules match the spec-relative
+    path, the same basis the rule editor, preview and ``permissions:test`` use."""
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    await _set_rule(integration_context, agent_id, path=rule_path, match_mode="prefix")
+    authorizer = build_queued_execution_authorizer(integration_context)
+
+    verdict = await authorizer.authorize(
+        QueuedExecutionRequest(
+            actor_id=agent_id,
+            actor_type="agent",
+            method="GET",
+            upstream_url=_BASE_PATH_URL,
+            api_vendor=_VENDOR,
+            api_name=_API_NAME,
+            api_version=_API_VERSION,
+            relative_path=relative_path,
+            credential_id=credential_id,
+        )
+    )
+
+    assert verdict.allowed is allowed
+    if not allowed:
+        assert verdict.problem is not None
+        assert verdict.problem["type"] == "action_denied"
+
+
+async def test_encoded_path_is_denied_by_a_deny_rule_on_fallback(
+    integration_context: Context, clean_tables: None
+) -> None:
+    """A percent-encoded spelling of a denied path cannot dodge a ``deny``
+    rule: the fallback matches on the normalized path discovery resolved."""
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    async with integration_context.control_db.session() as session:
+        session.add(
+            AgentPermissionRule(
+                agent_id=agent_id,
+                credential_id=credential_id,
+                effect="deny",
+                methods=["GET"],
+                path="/v1/admin",
+                match_mode="prefix",
+                sequence=0,
+            )
+        )
+        await session.commit()
+    authorizer = build_queued_execution_authorizer(integration_context)
+
+    verdict = await authorizer.authorize(
+        QueuedExecutionRequest(
+            actor_id=agent_id,
+            actor_type="agent",
+            method="GET",
+            upstream_url="https://api.acme.com/v1/%61dmin/users",
+            api_vendor=_VENDOR,
+            api_name=_API_NAME,
+            api_version=_API_VERSION,
+            credential_id=credential_id,
+        )
+    )
+
+    assert verdict.allowed is False

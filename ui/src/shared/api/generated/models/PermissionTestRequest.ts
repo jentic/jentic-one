@@ -15,7 +15,7 @@ export type PermissionTestRequest = {
      */
     operation_id?: (string | null);
     /**
-     * Path of the hypothetical request as the broker would see it.
+     * Path of the hypothetical request relative to the API's server URL (the spec's path, e.g. `/widgets/42`) — the path the broker evaluates rules on.
      */
     path: string;
 };

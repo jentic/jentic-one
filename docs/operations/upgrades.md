@@ -120,6 +120,39 @@ still marks the sets, prints one `could not list cross-owner bindings`
 warning, and reports `cross_owner_bindings: null`; the upgrade does not
 fail on it.
 
+## Binding rules written against the full upstream path
+
+The broker evaluates binding permission rules on the request path relative
+to the API's server URL — the spec's path, which the rule editor, its
+preview and `permissions:test` all show. A `prefix`/`exact` rule written with
+the server's base path included (`/eu/widgets` for a server
+`http://host/{region}`, `/api/v3/pet` for a server `https://host/api/v3`)
+matches nothing on that basis, so the binding denies those calls (`403
+action_denied`) until the rule is fixed. Upgrades don't rewrite rules
+automatically; run the rewrite job, preview first:
+
+```sh
+jentic_one rewrite-rule-base-paths --diff-only --report rewrite-preview.jsonl
+jentic_one rewrite-rule-base-paths --report rewrite.jsonl
+```
+
+It rewrites a rule only when stripping one of the bound API's server base
+paths gives a path that applies to a real operation, and the rule's current
+path applies to none. Each rewrite is audited, and a re-run changes nothing.
+Report lines with `"category": "skipped"` need a manual fix in the rule
+editor; their `reason` says why:
+
+| `reason` | Meaning |
+| -------- | ------- |
+| `regex_not_rewritable` | `regex` rules are never rewritten; check whether the pattern includes the base path. |
+| `matches_no_operation` | Stripping the base path leaves a path no operation uses. |
+| `ambiguous_base` | More than one server base path fits, with different results. |
+| `rule_set_mixed_apis` | A shared rule set is attached to bindings on APIs that need different rewrites. |
+| `api_not_found` | The bound credential's API has no live revision in the registry. |
+
+A `"category": "conflict"` line means the rule was edited while the job ran;
+re-run it.
+
 ## Where the commands live, per install
 
 | Install | Upgrade steps |

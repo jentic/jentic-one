@@ -10,7 +10,7 @@ the same fixture through the TS side. Any divergence fails CI on both
 sides.
 
 Do NOT tweak this file to make a red test go green — fix the divergence
-at the source (either the shared ``matching.py`` / ``agent_rule_evaluator.py``
+at the source (either the shared ``matching.py`` / ``evaluation.py``
 or the TS ``rule-matcher.ts``).
 """
 
@@ -22,11 +22,9 @@ from typing import Any
 
 import pytest
 
-from jentic_one.broker.repos.agent_rule_evaluator import PermissionRule as CompiledRule
-from jentic_one.broker.repos.agent_rule_evaluator import (
-    _normalize_methods,
-    evaluate_rules,
-)
+from jentic_one.shared.permissions.evaluation import PermissionRule as CompiledRule
+from jentic_one.shared.permissions.evaluation import evaluate_rules
+from jentic_one.shared.permissions.evaluation import normalize_methods as _normalize_methods
 from jentic_one.shared.permissions.matching import compile_matcher
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

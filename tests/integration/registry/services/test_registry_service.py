@@ -17,7 +17,11 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
-from jentic_one.registry.core.url_index import build_index_entry, merge_paths
+from jentic_one.registry.core.url_index import (
+    build_index_entry,
+    build_server_index_entries,
+    merge_paths,
+)
 from jentic_one.registry.repos.operation_repo import OperationInput, OperationRepository
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
 from jentic_one.registry.services.errors import AmbiguousMatchError
@@ -368,3 +372,91 @@ async def test_advertised_url_round_trip_for_trailing_slash_spec(
 
     assert result is not None
     assert result.operation.id == op_id
+
+
+async def _seed_server_operation(
+    registry_db: DatabaseSession,
+    *,
+    server_url: str,
+    variables: dict[str, dict[str, object]] | None,
+    path_template: str,
+    method: str = "GET",
+) -> str:
+    """Seed an operation indexed exactly as ingestion indexes a server-scoped spec.
+
+    The operation row holds the spec-relative template; the URL-index rows
+    carry the server base (static or templated) via ``build_server_index_entries``.
+    """
+    api = Api(vendor="widgets-example-com", name="widgets", version="1.0.0")
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        revision = ApiRevision(api_id=api.id, state="published", source_type="url")
+        session.add(revision)
+        await session.flush()
+        api.current_revision_id = revision.id
+        rev_id = revision.id
+        await session.commit()
+
+    async with registry_db.session() as session:
+        op_ids = await OperationRepository.bulk_create(
+            session,
+            rev_id,
+            [OperationInput(path=path_template, method=method)],
+            created_by="usr_test",
+        )
+        expansion = build_server_index_entries(server_url, variables, path_template)
+        for entry in expansion.entries:
+            await UrlIndexRepository.upsert_entry(
+                session,
+                revision_id=rev_id,
+                operation_id=op_ids[0],
+                method=method,
+                entry=entry,
+                created_by="usr_test",
+            )
+        await session.commit()
+    return op_ids[0]
+
+
+@pytest.mark.parametrize(
+    ("server_url", "variables", "url", "expected"),
+    [
+        # Petstore-shaped static base path.
+        (
+            "https://petstore.example.com/api/v3",
+            None,
+            "https://petstore.example.com/api/v3/widgets/9",
+            "/widgets/9",
+        ),
+        # The #1424 repro: a templated path server variable.
+        (
+            "http://{host}:18765/{region}",
+            {"host": {"default": "localhost"}, "region": {"enum": ["eu", "us"], "default": "eu"}},
+            "http://localhost:18765/eu/widgets/9",
+            "/widgets/9",
+        ),
+        # No base path: the relative path is the request path.
+        ("https://api.example.com", None, "https://api.example.com/widgets/9/", "/widgets/9"),
+    ],
+)
+async def test_resolve_operation_relative_path_excludes_server_base(
+    registry_db: DatabaseSession,
+    clean_url_index: None,
+    server_url: str,
+    variables: dict[str, dict[str, object]] | None,
+    url: str,
+    expected: str,
+) -> None:
+    """Pins #1424: discovery hands the broker the server-relative concrete path
+    (the basis binding rules are authored on), never the full upstream path."""
+    await _seed_server_operation(
+        registry_db, server_url=server_url, variables=variables, path_template="/widgets/{id}"
+    )
+
+    async with registry_db.session() as session:
+        result = await RegistryService(session).resolve_operation(method="GET", url=url)
+
+    assert result is not None
+    assert result.operation.path == "/widgets/{id}"
+    assert result.operation.relative_path == expected

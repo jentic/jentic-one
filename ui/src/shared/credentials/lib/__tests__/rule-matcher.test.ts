@@ -13,7 +13,7 @@ import fixture from './rule-matcher-parity.json';
  *
  * Do NOT edit the fixture to make a red test go green — fix the
  * divergence at the source (either the shared ``matching.py`` /
- * ``rule_evaluator.py`` or the TS ``rule-matcher.ts``).
+ * ``evaluation.py`` or the TS ``rule-matcher.ts``).
  */
 
 interface Case {

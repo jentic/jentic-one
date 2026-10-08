@@ -23,6 +23,14 @@ class OperationInfo(BaseModel):
     # — persisted flat as the record's ``operation_path`` column/API field.
     path: str | None = None
     method: str | None = None
+    # The concrete request path relative to the API's server URL, normalized —
+    # e.g. ``/repos/octocat/hello`` for ``https://host/v3/repos/octocat/hello``
+    # against server ``https://host/v3``. Binding permission rules are authored
+    # against spec paths, so this (never the full upstream path, which carries
+    # the server base) is what they are enforced on (#1424). Per-request, not
+    # persisted on the record; ``None`` when discovery could not rebuild it or
+    # on payloads written before it existed.
+    relative_path: str | None = None
 
     @property
     def display(self) -> str:

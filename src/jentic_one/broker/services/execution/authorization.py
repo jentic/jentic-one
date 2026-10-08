@@ -249,8 +249,10 @@ async def authorize_execution(
     inputs (``Jentic-Credential-Name`` / ``Jentic-Credential-Id`` on the sync
     path; the enqueue-time selection on the worker). ``request_server_variables``
     are the request URL's concrete server-variable values; credential selection
-    skips credentials scoped to other values. ``path`` is the upstream URL path
-    the rules match against and ``instance`` the RFC 9457 ``instance`` a denial
+    skips credentials scoped to other values. ``path`` is the server-relative
+    request path the rules match against (``OperationInfo.relative_path``, see
+    ``shared.permissions.evaluation.rule_request_path``) and ``instance`` the
+    RFC 9457 ``instance`` a denial
     carries.
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /

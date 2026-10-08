@@ -163,6 +163,17 @@ credential is a near-miss), several → resolution disambiguates (or asks for
 `Jentic-Credential-Id` with a `409`) — and the winning binding's permission
 rules are evaluated **default-deny**: no matching rule, no call
 ([`broker/repos/agent_rule_evaluator.py`](../../src/jentic_one/broker/repos/agent_rule_evaluator.py)).
+Rule paths match the request path **relative to the API's server URL** — the
+spec's path (`/widgets/42`), normalized, never the full upstream path with
+the server's base path (`/eu/widgets/42` for a server `http://host/{region}`).
+Discovery rebuilds that path from the matched operation
+(`OperationInfo.relative_path`), so the rule editor's preview, the
+`permissions:test` dry-run and enforcement all judge the same path; the
+evaluation loop itself is shared
+([`shared/permissions/evaluation.py`](../../src/jentic_one/shared/permissions/evaluation.py)).
+Rules written with the base path baked in can be fixed with
+`jentic_one rewrite-rule-base-paths` (see
+[upgrades](../operations/upgrades.md#binding-rules-written-against-the-full-upstream-path)).
 Authorization is direct-only: the retired toolkit path and its
 `broker.direct_bindings_enabled` fallback were removed with the phase-6b
 table drops (setting the flag to `false` now fails config validation).
