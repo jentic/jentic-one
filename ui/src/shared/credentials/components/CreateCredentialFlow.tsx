@@ -29,6 +29,7 @@ import {
 	useCreateCredential,
 	useImportCatalogEntry,
 	useProviders,
+	useVendors,
 	type SelectedApi,
 	type VendorSummary,
 } from '@/shared/credentials/api';
@@ -49,7 +50,7 @@ import {
 import { credentialNameClash } from '@/shared/credentials/lib/credentialIdentity';
 import { CredentialNameClashNote } from '@/shared/credentials/components/CredentialNameClashNote';
 import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
-import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
+import { ApiPicker, VendorTile } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
@@ -237,6 +238,9 @@ export function CreateCredentialFlow({
 	/** The registry version the form's "Use for" picker can pin to (`''` hides it). */
 	const [pinnableVersion, setPinnableVersion] = useState(seedVersion);
 	const [selectedVendor, setSelectedVendor] = useState<VendorSummary | null>(null);
+	/** The vendor step was entered from the form's shared-app options (Back returns there). */
+	const [vendorFromForm, setVendorFromForm] = useState(false);
+	const vendorsQuery = useVendors();
 	const [manualMode, setManualMode] = useState(false);
 	/** Spec upload from the pick step — "the API isn't listed" is otherwise a dead end. */
 	const [uploadOpen, setUploadOpen] = useState(false);
@@ -479,9 +483,20 @@ export function CreateCredentialFlow({
 
 	/** A verified vendor is the one-click path: hand off to the vendor connect. */
 	const handlePickVendor = (vendor: VendorSummary): void => {
+		setVendorFromForm(false);
 		setSelectedVendor(vendor);
 		setSelectedApi(null);
 		setManualMode(false);
+		setStep('vendor');
+	};
+
+	/**
+	 * A shared app offered on the form for the chosen API: the same vendor
+	 * connect, but Back returns to that API's form rather than the picker.
+	 */
+	const handlePickSharedAppForApi = (vendor: VendorSummary): void => {
+		setVendorFromForm(true);
+		setSelectedVendor(vendor);
 		setStep('vendor');
 	};
 
@@ -787,6 +802,17 @@ export function CreateCredentialFlow({
 		return { label: selectedApi.label, triple, willImport };
 	}, [selectedApi, pinnedVersion]);
 
+	// The organization's shared OAuth apps for the chosen API, offered ahead of
+	// the manual form. Matched on the catalog API each app signs in to, so a
+	// Gmail credential sees Gmail apps only.
+	const sharedAppsForApi = useMemo<VendorSummary[]>(() => {
+		const apiId = selectedApi?.apiId?.trim().toLowerCase();
+		if (registerSharedApp || manualMode || !apiId) return [];
+		return (vendorsQuery.data?.data ?? []).filter(
+			(v) => v.source === 'db' && v.catalog_api_id?.trim().toLowerCase() === apiId,
+		);
+	}, [registerSharedApp, manualMode, selectedApi?.apiId, vendorsQuery.data]);
+
 	const showManualType = manualMode || activeScheme == null || activeScheme.type === 'unknown';
 	const usingPipedream = isOAuth2 && state.provider === 'pipedream';
 
@@ -878,6 +904,16 @@ export function CreateCredentialFlow({
 	const goBackToPick = (): void => {
 		setStep('pick');
 		setErrors({});
+	};
+
+	const goBackFromVendor = (): void => {
+		if (vendorFromForm) {
+			setVendorFromForm(false);
+			setSelectedVendor(null);
+			setStep('form');
+			return;
+		}
+		goBackToPick();
 	};
 
 	const openUpload = (): void => setUploadOpen(true);
@@ -994,7 +1030,7 @@ export function CreateCredentialFlow({
 					vendor={selectedVendor}
 					preselectedAgentId={preselectedAgentId}
 					renderPostConnect={renderPostConnect}
-					onBack={goBackToPick}
+					onBack={goBackFromVendor}
 					onDone={onClose}
 				/>
 			)}
@@ -1062,6 +1098,30 @@ export function CreateCredentialFlow({
 						>
 							{shareBlockedReason}
 						</p>
+					)}
+
+					{sharedAppsForApi.length > 0 && (
+						<section aria-labelledby={`${fieldId}-shared-apps`} className="space-y-2">
+							<h3
+								id={`${fieldId}-shared-apps`}
+								className="font-heading text-foreground text-sm font-semibold"
+							>
+								Sign in with your organization's app
+							</h3>
+							<ul className="space-y-1.5">
+								{sharedAppsForApi.map((vendor) => (
+									<li key={vendor.entry_id}>
+										<VendorTile
+											vendor={vendor}
+											onSelect={handlePickSharedAppForApi}
+										/>
+									</li>
+								))}
+							</ul>
+							<p className="text-muted-foreground text-xs">
+								Or set up the credential yourself below.
+							</p>
+						</section>
 					)}
 
 					{apiSummary && (
