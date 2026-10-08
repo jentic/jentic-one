@@ -3,22 +3,33 @@
  * as one `CountLine`: "6,345 APIs in the catalog from 1,200+ vendors so far · 3
  * in your workspace · 1 update available · updated 2m ago".
  *
- * Reads `catalog_total` / `registered_count` / `outdated_count` /
- * `manifest_age_seconds` off the catalog response. These describe the WHOLE
- * manifest (not the current page or filtered set) and stay constant while
- * paging, so the row doesn't flicker as the user scrolls.
+ * Reads `catalog_total` / `outdated_count` / `manifest_age_seconds` off the
+ * catalog response. These describe the WHOLE manifest (not the current page or
+ * filtered set) and stay constant while paging, so the row doesn't flicker as
+ * the user scrolls.
  * `manifest_age_seconds === null` means the catalog has never been fetched / has
  * no snapshot yet. The "N update(s) available" segment renders only when
  * `outdated_count > 0`. The catalog response carries no vendor total, so the
  * vendor figure counts the vendors LOADED so far — a floor (`N+ … so far`)
  * until the whole catalog has paged in, and omitted when nothing is loaded.
+ *
+ * "N in your workspace" is the WORKSPACE's own count (`GET /apis`, via the
+ * digest the docked panel reads), NOT the manifest's `registered_count`. The
+ * manifest figure counts how many PUBLIC CATALOG entries match a local spec
+ * URL, so it silently excludes every locally-added or pasted spec
+ * (`source_url IS NULL`) — the header said 4 while the panel beside it listed 6
+ * (#1543). The two now read the same number by construction.
  */
 import { ArrowUpCircle } from 'lucide-react';
 import { CountLine, Skeleton } from '@/shared/ui';
 
 interface DiscoverStatusRowProps {
 	catalogTotal: number;
-	registeredCount: number;
+	/**
+	 * APIs in this workspace (`GET /apis`). `null` while the list is incomplete
+	 * or unreadable — the segment is omitted rather than understated.
+	 */
+	workspaceCount: number | null;
 	outdatedCount: number;
 	manifestAgeSeconds: number | null;
 	loading: boolean;
@@ -41,7 +52,7 @@ function formatAge(seconds: number | null): string {
 
 export function DiscoverStatusRow({
 	catalogTotal,
-	registeredCount,
+	workspaceCount,
 	outdatedCount,
 	manifestAgeSeconds,
 	loading,
@@ -72,9 +83,11 @@ export function DiscoverStatusRow({
 				</>
 			}
 			details={[
-				<span key="ws" className="text-success" data-testid="discover-status-workspace">
-					{registeredCount.toLocaleString()} in your workspace
-				</span>,
+				workspaceCount != null && (
+					<span key="ws" className="text-success" data-testid="discover-status-workspace">
+						{workspaceCount.toLocaleString()} in your workspace
+					</span>
+				),
 				outdatedCount > 0 && (
 					<span
 						key="up"
