@@ -42,6 +42,24 @@ interface PathMatcher {
 // Kept in step with the Python side's ``_PLACEHOLDER_RE``.
 const PLACEHOLDER_RE = /\{[^}/]+\}/g;
 
+// A ``{…}`` block that cannot be read as a regex repetition quantifier
+// (``{2}``, ``{2,}``, ``{2,5}``) — i.e. an OpenAPI path placeholder such as
+// ``{owner}``. Under ``regex`` the braces and the name inside match
+// LITERALLY, so such a path never matches a real request; the quantifier
+// forms are excluded because they are legitimate regex and must not be
+// flagged. See ``ruleValidityIssue``.
+const TEMPLATE_PLACEHOLDER_RE = /\{(?!\d+(?:,\d*)?\})[^}/]+\}/;
+
+/**
+ * Does this path name an OpenAPI template placeholder (``{owner}``) rather
+ * than a regex repetition quantifier (``{2,5}``)? Such a path is a literal
+ * under ``regex`` and a single-segment wildcard under ``prefix`` / ``exact``,
+ * so the rules editor uses this to steer the mode as the path is authored.
+ */
+export function hasTemplatePlaceholder(path: string): boolean {
+	return TEMPLATE_PLACEHOLDER_RE.test(path);
+}
+
 // Nested-unbounded-quantifier catastrophic-backtracking guard —
 // mirrors ``_REDOS_CATASTROPHIC_RE`` in the Python matcher. Kept
 // in lockstep so a rule the server would reject at save time also
@@ -202,7 +220,8 @@ export function evaluateRules(
  * rule isn't doing anything. Mirrors the fail-closed branches in
  * ``compileMatcher``.
  */
-export type RuleValidityIssue = 'invalid-regex' | 'empty-regex' | 'unsafe-regex';
+export type RuleValidityIssue =
+	'invalid-regex' | 'empty-regex' | 'unsafe-regex' | 'placeholder-in-regex';
 
 export function ruleValidityIssue(rule: PermissionRule): RuleValidityIssue | null {
 	// The regex mode is where silent failure is most likely — an empty
@@ -215,8 +234,13 @@ export function ruleValidityIssue(rule: PermissionRule): RuleValidityIssue | nul
 	if (REDOS_CATASTROPHIC_RE.test(rule.path)) return 'unsafe-regex';
 	try {
 		new RegExp(rule.path);
-		return null;
 	} catch {
 		return 'invalid-regex';
 	}
+	// An op-template path under ``regex`` COMPILES — ``{owner}`` is a valid
+	// pattern — but it only matches the literal characters ``{owner}``, so no
+	// real request can satisfy it. Reported last: a pattern that is also
+	// malformed or unsafe gets the more fundamental verdict.
+	if (TEMPLATE_PLACEHOLDER_RE.test(rule.path)) return 'placeholder-in-regex';
+	return null;
 }
