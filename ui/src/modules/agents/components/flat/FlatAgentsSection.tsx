@@ -26,6 +26,7 @@ import {
 	ExpandableText,
 	Skeleton,
 	STATUS_ICON,
+	UserText,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
@@ -1074,7 +1075,7 @@ function SelectedAgentPanel({
 			) : tiles.length === 0 ? (
 				<Card outlined className="border-dashed p-6">
 					<h3 className="font-heading text-foreground-name text-sm font-semibold">
-						{agent.name} can reach nothing yet
+						<UserText>{agent.name}</UserText> can reach nothing yet
 					</h3>
 					<p className="text-muted-foreground mt-2 max-w-prose text-sm">
 						{NO_APIS_COPY[agent.status]}

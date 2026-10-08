@@ -17,13 +17,14 @@ import {
 	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
+	UserText,
 	VendorIcon,
 	toast,
 	ConfirmDialog,
 	type DangerZoneAction,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
-import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { formatTimestamp, isolateText, timeAgo } from '@/shared/lib/utils';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -319,7 +320,7 @@ export function ApiAccessSidebar({
 							{
 								key: 'unbind',
 								title: 'Unbind from this agent',
-								description: `The binding and its rules are deleted for ${agent.name} only — the credential survives for every other agent.`,
+								description: `The binding and its rules are deleted for ${isolateText(agent.name)} only — the credential survives for every other agent.`,
 								buttonLabel: 'Unbind from this agent',
 								ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
 								emphasis: 'outline' as const,
@@ -364,6 +365,7 @@ export function ApiAccessSidebar({
 									<div className="flex min-w-0 items-center gap-2">
 										<h2
 											id={headingId}
+											dir="auto"
 											className="font-heading text-foreground-name truncate text-base font-semibold"
 										>
 											{shown.title}
@@ -371,9 +373,11 @@ export function ApiAccessSidebar({
 										<TileStatusChip status={status} className="shrink-0" />
 									</div>
 									<p className="text-muted-foreground truncate text-xs">
-										{shown.host}
-										{shown.authLabel ? ` · ${shown.authLabel}` : ''} — access
-										for {agent.name}
+										<UserText>
+											{shown.host}
+											{shown.authLabel ? ` · ${shown.authLabel}` : ''}
+										</UserText>{' '}
+										— access for <UserText>{agent.name}</UserText>
 										{shown.suspended ? ' · not serving calls' : ''}
 										{shown.suspended && shown.suspendedReason === 'api_deleted'
 											? ' because its API was deleted — review the rules before resuming'
@@ -461,7 +465,7 @@ export function ApiAccessSidebar({
 								<div className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3">
 									<div className="min-w-0 flex-1">
 										<p className="text-foreground-name truncate text-sm font-semibold">
-											{shown.credentialName}
+											<UserText>{shown.credentialName}</UserText>
 										</p>
 										<p className="text-muted-foreground text-xs">
 											{shown.authLabel ?? 'Credential'} · bound{' '}
@@ -657,12 +661,24 @@ export function ApiAccessSidebar({
 			{unbindOpen && shown && (
 				<ConfirmDialog
 					open
+					// No isolation on the title: a bidi paragraph ends at the heading's
+					// block boundary and the name is its LAST token, so an override
+					// inside it has no neighbouring copy left to reorder. Isolating
+					// here would only push U+2068/U+2069 into the dialog's accessible
+					// name for no gain.
 					title={`Unbind from ${agent.name}`}
 					body={
 						<>
-							Permanently unbind <strong>{shown.credentialName}</strong> from{' '}
-							<strong>{agent.name}</strong>? The binding and its rules are deleted —
-							the credential survives for every other agent.
+							Permanently unbind{' '}
+							<strong>
+								<UserText>{shown.credentialName}</UserText>
+							</strong>{' '}
+							from{' '}
+							<strong>
+								<UserText>{agent.name}</UserText>
+							</strong>
+							? The binding and its rules are deleted — the credential survives for
+							every other agent.
 						</>
 					}
 					confirmLabel="Unbind"

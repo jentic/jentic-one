@@ -18,6 +18,7 @@
 import { type ComponentType } from 'react';
 import { AlertTriangle, Bot, KeyRound, ShieldQuestion } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
+import { UserText } from '@/shared/ui/UserText';
 import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
@@ -139,11 +140,16 @@ function AttentionRow({
 				{tile}
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground-name line-clamp-2 text-[13px] leading-snug font-semibold">
-						{item.title}
+						<UserText>{item.title}</UserText>
 					</p>
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">
 						<span title={item.since}>{timeAgo(item.since)}</span>
-						{item.detail && <> · {item.detail}</>}
+						{item.detail && (
+							<>
+								{' · '}
+								<UserText>{item.detail}</UserText>
+							</>
+						)}
 					</p>
 					<div className="mt-2 flex items-center gap-1.5">
 						<RowActions item={item} onNavigate={onNavigate} />
@@ -157,9 +163,13 @@ function AttentionRow({
 		<li className="flex flex-wrap items-center gap-3 px-5 py-3 sm:flex-nowrap">
 			{tile}
 			<div className="min-w-0 flex-1 basis-40">
-				<p className="text-foreground-name truncate text-sm font-semibold">{item.title}</p>
+				<p className="text-foreground-name truncate text-sm font-semibold">
+					<UserText>{item.title}</UserText>
+				</p>
 				{item.detail && (
-					<p className="text-muted-foreground truncate text-xs">{item.detail}</p>
+					<p className="text-muted-foreground truncate text-xs">
+						<UserText>{item.detail}</UserText>
+					</p>
 				)}
 			</div>
 			<span

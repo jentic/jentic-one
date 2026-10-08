@@ -158,6 +158,9 @@ export type { LazyMountProps } from '@/shared/ui/LazyMount';
 
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
+export { UserText } from '@/shared/ui/UserText';
+export type { UserTextProps } from '@/shared/ui/UserText';
+
 export { ExpandableText } from '@/shared/ui/ExpandableText';
 
 export { Tooltip } from '@/shared/ui/Tooltip';

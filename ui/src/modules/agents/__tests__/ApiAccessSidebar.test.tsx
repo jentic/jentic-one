@@ -679,7 +679,9 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// And the surface tells the same story: selecting the other agent
 		// shows the honest empty state, not a ghost Slack tile.
 		await user.click(screen.getByRole('tab', { name: /legacy-scraper/ }));
-		expect(await screen.findByText('legacy-scraper can reach nothing yet')).toBeInTheDocument();
+		expect(
+			await screen.findByRole('heading', { name: 'legacy-scraper can reach nothing yet' }),
+		).toBeInTheDocument();
 		expect(screen.queryByText('Slack bot token')).not.toBeInTheDocument();
 	});
 
@@ -1057,5 +1059,21 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 		expect(
 			inDialog.getByRole('button', { name: /^Unbind .* from support-agent$/ }),
 		).toBeInTheDocument();
+	});
+
+	/**
+	 * Pins #1543 item 7. U+202E (RIGHT-TO-LEFT OVERRIDE) has no terminator: its
+	 * effect runs to the end of the enclosing bidi paragraph, so a name holding
+	 * one reverses the product copy BESIDE it. The name must therefore resolve as
+	 * its own isolated directional run.
+	 */
+	it('isolates a direction override inside a credential name from the copy beside it', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		const label = await inDialog.findByText('Slack bot token');
+		// The name's own element resolves it as a self-contained run, so an
+		// override inside it cannot reach the "Bearer token · bound …" line below.
+		expect(getComputedStyle(label).unicodeBidi).toBe('isolate');
 	});
 });
