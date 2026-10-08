@@ -8,7 +8,7 @@
 # `jentic --version` == tag gate.
 #
 # The runtime stage implements the container-isolation contract stated in
-# docs/security/mcp-same-host-hardening.md (Recipe 3):
+# docs/security/same-host/mcp-same-host-hardening.md (Recipe 3):
 #   - `jentic` on PATH,
 #   - non-root uid 10001 (`jentic` user) with writable HOME=/home/jentic,
 #   - $HOME/.config/jentic pre-created and OWNED by that user, so a named
