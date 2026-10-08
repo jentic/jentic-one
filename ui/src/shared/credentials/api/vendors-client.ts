@@ -10,11 +10,13 @@
 import {
 	AgentsService,
 	CredentialsService,
+	PermissionRuleSetsService,
 	getToken,
 	problemDetailText,
 	type AgentListResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
+	type RuleSetResponse,
 } from '@/shared/api';
 import type {
 	ConfirmRequest,
@@ -325,6 +327,16 @@ export async function listBindingPermissions(
 		return res.data;
 	} catch (err) {
 		throw toIntegrationsError(err, 'Failed to load the access rules.');
+	}
+}
+
+/** One shared rule set with its ordered rules (`GET /permission-rule-sets/{id}`)
+ * — what the broker evaluates for a binding that points at it. */
+export async function getPermissionRuleSet(ruleSetId: string): Promise<RuleSetResponse> {
+	try {
+		return await PermissionRuleSetsService.getPermissionRuleSet({ ruleSetId });
+	} catch (err) {
+		throw toIntegrationsError(err, 'Failed to load the rule set.');
 	}
 }
 

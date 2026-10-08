@@ -308,12 +308,15 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 		: null;
 
 	// Whether each bound agent can actually call anything: a binding with no
-	// allow rule is default-deny, so it reads Blocked, not just "bound".
+	// allow rule is default-deny, so it reads Blocked, not just "bound". The
+	// binding's `ruleSetId` rides along: a governed binding is judged by its
+	// SET's rules, which is what the broker evaluates.
 	const bindingPairs = useMemo(
 		() =>
 			(agentAccess?.bindings ?? []).map((b) => ({
 				agentId: b.agentId,
 				credentialId: b.credentialId,
+				ruleSetId: b.ruleSetId,
 			})),
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on content
 		[JSON.stringify(agentAccess?.bindings ?? [])],

@@ -13,9 +13,10 @@ import {
 	type QueryClient,
 	type UseQueryOptions,
 } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
 	bindCredentialToAgentBlocked,
+	getPermissionRuleSet,
 	listBindingPermissions,
 	replaceBindingPermissions,
 	cancelConnectSession,
@@ -33,6 +34,7 @@ import type {
 	AgentListResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
+	RuleSetResponse,
 } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
@@ -286,19 +288,75 @@ function accessFromRules(rules: readonly PermissionRuleReadSchema[]): 'blocked' 
 	return rules.some((r) => !r._system && String(r.effect) === 'allow') ? 'open' : 'blocked';
 }
 
+/** Mirrors `agentsKeys.ruleSet` — the agent rules editor reads the same slice. */
+function ruleSetKey(ruleSetId: string) {
+	return [...sharedQueryKeys.agentsRoot, 'rule-set', ruleSetId] as const;
+}
+
+/** One binding, as the access read needs it. */
+export interface BindingAccessPair {
+	agentId: string;
+	credentialId: string;
+	/**
+	 * The shared rule set attached to the binding, or `null`/absent for one
+	 * governed by its own inline rules.
+	 */
+	ruleSetId?: string | null;
+}
+
 /**
  * The access state of each (agent, credential) binding, keyed
- * `${agentId}\n${credentialId}` — read from the binding's rules in the same
- * cache slice the agent's rules editor uses, so a save there shows here.
+ * `${agentId}\n${credentialId}`.
+ *
+ * Read from whatever the BROKER evaluates, which is the attached rule set when
+ * there is one and the binding's inline rules otherwise — a set takes
+ * precedence and leaves the inline list dormant. Judging a governed binding by
+ * its dormant inline rules is what made the API hub read "Blocked" over a rule
+ * set that allowed the call (#1543). Both reads use the same cache slices as
+ * the agent's rules editor and its rule-set panel, so a save there shows here.
  */
 export function useBindingAccessStates(
-	pairs: ReadonlyArray<{ agentId: string; credentialId: string }>,
+	pairs: ReadonlyArray<BindingAccessPair>,
 ): ReadonlyMap<string, BindingAccessState> {
+	// Deduplicated and sorted so the query list is stable across renders that
+	// only reorder the bindings.
+	const ruleSetIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const p of pairs) if (p.ruleSetId) ids.add(p.ruleSetId);
+		return [...ids].sort();
+	}, [pairs]);
+
+	const combineRuleSets = useCallback(
+		(results: { data?: RuleSetResponse; isError: boolean }[]) => {
+			const map = new Map<string, BindingAccessState>();
+			results.forEach((r, i) => {
+				const id = ruleSetIds[i];
+				if (id == null) return;
+				map.set(
+					id,
+					r.data ? accessFromRules(r.data.rules) : r.isError ? 'unknown' : 'loading',
+				);
+			});
+			return map;
+		},
+		[ruleSetIds],
+	);
+	const ruleSetStates = useQueries({
+		queries: ruleSetIds.map((ruleSetId) => ({
+			queryKey: ruleSetKey(ruleSetId),
+			queryFn: () => getPermissionRuleSet(ruleSetId),
+		})),
+		combine: combineRuleSets,
+	});
+
+	// The inline list is only read for bindings that actually use it: a governed
+	// binding's inline rules decide nothing, so fetching them says nothing.
+	const inlinePairs = useMemo(() => pairs.filter((p) => !p.ruleSetId), [pairs]);
 	const combine = useCallback(
 		(results: { data?: PermissionRuleReadSchema[]; isError: boolean }[]) => {
 			const map = new Map<string, BindingAccessState>();
 			results.forEach((r, i) => {
-				const pair = pairs[i];
+				const pair = inlinePairs[i];
 				if (!pair) return;
 				map.set(
 					`${pair.agentId}\n${pair.credentialId}`,
@@ -307,15 +365,29 @@ export function useBindingAccessStates(
 			});
 			return map;
 		},
-		[pairs],
+		[inlinePairs],
 	);
-	return useQueries({
-		queries: pairs.map(({ agentId, credentialId }) => ({
+	const inlineStates = useQueries({
+		queries: inlinePairs.map(({ agentId, credentialId }) => ({
 			queryKey: bindingPermissionsKey(agentId, credentialId),
 			queryFn: () => listBindingPermissions(agentId, credentialId),
 		})),
 		combine,
 	});
+
+	return useMemo(() => {
+		const map = new Map<string, BindingAccessState>();
+		for (const pair of pairs) {
+			const key = `${pair.agentId}\n${pair.credentialId}`;
+			map.set(
+				key,
+				pair.ruleSetId
+					? (ruleSetStates.get(pair.ruleSetId) ?? 'loading')
+					: (inlineStates.get(key) ?? 'loading'),
+			);
+		}
+		return map;
+	}, [pairs, ruleSetStates, inlineStates]);
 }
 
 /**
