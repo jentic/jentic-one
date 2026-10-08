@@ -227,6 +227,62 @@ class ExecutionAuthorization:
     selected_credential: ResolvedCredential
 
 
+async def _warn_if_denied_only_by_base_path(
+    agent_rule_evaluator: AgentRuleEvaluatorProtocol,
+    *,
+    agent_id: str,
+    credential_id: str,
+    rule_set_id: str | None,
+    api: APIReference,
+    method: str,
+    path: str,
+    upstream_path: str | None,
+    operation_id: str | None,
+) -> None:
+    """Flag a denial the pre-#1424 full-upstream-path matching would have allowed.
+
+    Rules match the spec-relative path now; a rule written with the server's
+    base path (``/eu/widgets`` for a server ``https://host/{region}`` — the
+    old workaround) silently stops matching on upgrade. Re-evaluating on the
+    full upstream path names that cause in the logs. Diagnostic only: the
+    verdict stays a denial, and the re-check is a cache hit (same binding key)
+    so it costs no DB round trip. Only identifiers and request paths are
+    logged — the same paths the execute access log already carries.
+    """
+    if upstream_path is None or upstream_path == path:
+        return
+    try:
+        legacy = await agent_rule_evaluator.evaluate(
+            agent_id=agent_id,
+            credential_id=credential_id,
+            rule_set_id=rule_set_id,
+            method=method,
+            path=upstream_path,
+            operation_id=operation_id,
+        )
+    except Exception:
+        # Never let the diagnostic turn a clean 403 into a 500.
+        logger.debug("legacy_base_path_recheck_failed", exc_info=True)
+        return
+    if legacy.allowed:
+        logger.warning(
+            "rule_denied_on_relative_path_matched_legacy_base_path",
+            agent_id=agent_id,
+            credential_id=credential_id,
+            rule_set_id=rule_set_id,
+            vendor=api.vendor,
+            api_name=api.name,
+            method=method,
+            relative_path=path,
+            upstream_path=upstream_path,
+            actionable_step=(
+                "A binding rule matches the full upstream path (server base path "
+                "included) but not the spec-relative path rules are evaluated on; "
+                "run 'jentic_one rewrite-rule-base-paths' to update rules."
+            ),
+        )
+
+
 async def authorize_execution(
     *,
     ctx: Context,
@@ -242,6 +298,7 @@ async def authorize_execution(
     credential_id: str | None = None,
     request_server_variables: Mapping[str, str] | None = None,
     server_variables_unresolved: bool = False,
+    upstream_path: str | None = None,
 ) -> ExecutionAuthorization:
     """Authorize one execution for ``identity`` against the discovered ``api``.
 
@@ -253,7 +310,10 @@ async def authorize_execution(
     request path the rules match against (``OperationInfo.relative_path``, see
     ``shared.permissions.evaluation.rule_request_path``) and ``instance`` the
     RFC 9457 ``instance`` a denial
-    carries.
+    carries. ``upstream_path`` is the normalized full upstream path (server
+    base path included — ``full_upstream_rule_path``); it never changes the
+    verdict, it only lets a denial flag a rule still written against the base
+    path (see :func:`_warn_if_denied_only_by_base_path`).
 
     Raises a :class:`BrokerError` (``ActionDeniedError`` /
     ``CredentialIdentityMismatchError`` → 403, ``AmbiguousMatchError`` → 409,
@@ -299,6 +359,18 @@ async def authorize_execution(
         # request.
         no_rules = evaluation.rules_loaded == 0
         reason = DenialReason.NO_RULES_LOADED if no_rules else DenialReason.NO_RULE_MATCHED
+        if not no_rules:
+            await _warn_if_denied_only_by_base_path(
+                agent_rule_evaluator,
+                agent_id=identity.sub,
+                credential_id=selected_credential.credential_id,
+                rule_set_id=rule_set_ids.get(selected_credential.credential_id),
+                api=api,
+                method=method,
+                path=path,
+                upstream_path=upstream_path,
+                operation_id=operation_id,
+            )
         _authz_denied.add(
             1,
             {"reason": reason.value, "mode": "direct", "vendor": api.vendor},

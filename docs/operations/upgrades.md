@@ -128,7 +128,10 @@ preview and `permissions:test` all show. A `prefix`/`exact` rule written with
 the server's base path included (`/eu/widgets` for a server
 `http://host/{region}`, `/api/v3/pet` for a server `https://host/api/v3`)
 matches nothing on that basis, so the binding denies those calls (`403
-action_denied`) until the rule is fixed. Upgrades don't rewrite rules
+action_denied`) until the rule is fixed. Each such denial logs a
+`rule_denied_on_relative_path_matched_legacy_base_path` warning naming the
+binding (`agent_id`, `credential_id`, `rule_set_id`) and both paths, so you
+can find affected bindings in the broker logs. Upgrades don't rewrite rules
 automatically; run the rewrite job, preview first:
 
 ```sh

@@ -39,6 +39,16 @@ def rule_request_path(relative_path: str | None, upstream_url: str) -> str:
     if relative_path is not None:
         return relative_path
     _logger.info("rule_path_fallback_full_upstream_path")
+    return full_upstream_rule_path(upstream_url)
+
+
+def full_upstream_rule_path(upstream_url: str) -> str:
+    """The normalized full upstream path, server base path included.
+
+    The basis rules were matched on before #1424 — the fallback of
+    :func:`rule_request_path`, and the path the broker re-checks a denial
+    against to flag a rule still written with the server's base path.
+    """
     return normalize_path(urlparse(upstream_url).path or "/")
 
 

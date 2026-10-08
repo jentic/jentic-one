@@ -38,7 +38,7 @@ from jentic_one.shared.broker.protocols import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
-from jentic_one.shared.permissions.evaluation import rule_request_path
+from jentic_one.shared.permissions.evaluation import full_upstream_rule_path, rule_request_path
 from jentic_one.shared.schemas import APIReference
 
 logger = structlog.get_logger(__name__)
@@ -159,6 +159,7 @@ class QueuedExecutionAuthorizer:
                 operation_id=request.operation_id,
                 method=request.method,
                 path=rule_request_path(request.relative_path, request.upstream_url),
+                upstream_path=full_upstream_rule_path(request.upstream_url),
                 instance=instance,
                 credential_deriver=self._credential_deriver,
                 agent_rule_evaluator=self._agent_rule_evaluator,

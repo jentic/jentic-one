@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
+import structlog
 from sqlalchemy import delete, update
 
 from jentic_one.admin.core.schema.actor_permission_grants import ActorPermissionGrant
@@ -404,3 +405,51 @@ async def test_encoded_path_is_denied_by_a_deny_rule_on_fallback(
     )
 
     assert verdict.allowed is False
+
+
+@pytest.mark.parametrize(
+    ("rule_path", "warns"),
+    [
+        # The upgrade trap: a base-path rule now denies — the denial names it.
+        ("/eu/widgets", True),
+        # A denial no base-path reading would fix stays quiet.
+        ("/gadgets", False),
+    ],
+)
+async def test_denial_flags_a_rule_written_with_the_server_base_path(
+    integration_context: Context, clean_tables: None, rule_path: str, warns: bool
+) -> None:
+    """A denial that the pre-#1424 full-upstream-path matching would have
+    allowed logs an actionable warning; the verdict itself stays a denial."""
+    agent_id, credential_id = await _seed_bound_agent(integration_context)
+    await _set_rule(integration_context, agent_id, path=rule_path, match_mode="prefix")
+    authorizer = build_queued_execution_authorizer(integration_context)
+
+    with structlog.testing.capture_logs() as logs:
+        verdict = await authorizer.authorize(
+            QueuedExecutionRequest(
+                actor_id=agent_id,
+                actor_type="agent",
+                method="GET",
+                upstream_url=_BASE_PATH_URL,
+                api_vendor=_VENDOR,
+                api_name=_API_NAME,
+                api_version=_API_VERSION,
+                relative_path="/widgets",
+                credential_id=credential_id,
+            )
+        )
+
+    assert verdict.allowed is False
+    flagged = [
+        e for e in logs if e["event"] == "rule_denied_on_relative_path_matched_legacy_base_path"
+    ]
+    if warns:
+        assert len(flagged) == 1
+        assert flagged[0]["log_level"] == "warning"
+        assert flagged[0]["relative_path"] == "/widgets"
+        assert flagged[0]["upstream_path"] == "/eu/widgets"
+        assert flagged[0]["credential_id"] == credential_id
+        assert "rewrite-rule-base-paths" in flagged[0]["actionable_step"]
+    else:
+        assert flagged == []
