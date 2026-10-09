@@ -449,7 +449,15 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		const secret = screen.getByLabelText(/^Client secret/);
 		expect(secret).toHaveAttribute('autocomplete', 'off');
 		await user.type(secret, 'shh-client-secret');
-		await user.click(screen.getByRole('button', { name: 'Continue to sign-in' }));
+		// The API's declared endpoints are never a fallback: both are required.
+		const submit = screen.getByRole('button', { name: 'Continue to sign-in' });
+		expect(submit).toBeDisabled();
+		await user.type(screen.getByLabelText(/^Authorize URL/), 'https://idp.example/authorize');
+		await user.type(screen.getByLabelText(/^Token URL/), 'http://idp.example/token');
+		expect(submit).toBeDisabled();
+		await user.clear(screen.getByLabelText(/^Token URL/));
+		await user.type(screen.getByLabelText(/^Token URL/), 'https://idp.example/token');
+		await user.click(submit);
 
 		expect(await screen.findByText(/Almost there/)).toBeInTheDocument();
 		expect(window.open).toHaveBeenCalled();
@@ -457,8 +465,8 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			kind: 'own_oauth_client',
 			client_id: 'client-123',
 			client_secret: 'shh-client-secret',
-			authorize_url: null,
-			token_url: null,
+			authorize_url: 'https://idp.example/authorize',
+			token_url: 'https://idp.example/token',
 			confirmed_scopes: [],
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
@@ -477,6 +485,8 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		await user.click(screen.getByRole('button', { name: /^continue$/i }));
 		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
 		await user.type(screen.getByLabelText(/^Client secret/), 'x');
+		await user.type(screen.getByLabelText(/^Authorize URL/), 'https://idp.example/authorize');
+		await user.type(screen.getByLabelText(/^Token URL/), 'https://idp.example/token');
 		await user.click(screen.getByRole('button', { name: 'Continue to sign-in' }));
 
 		expect(await screen.findByText(/Check the authorize and token URLs/)).toBeInTheDocument();

@@ -390,6 +390,14 @@ export function secretStepSubtitle(kind: SecretKind, displayName: string): strin
 // Own OAuth client (awaiting_app)
 // ---------------------------------------------------------------------------
 
+function isHttpsUrl(value: string): boolean {
+	try {
+		return new URL(value.trim()).protocol === 'https:';
+	} catch {
+		return false;
+	}
+}
+
 export interface EnteredOAuthClient {
 	clientId: string;
 	clientSecret: string;
@@ -430,7 +438,14 @@ export function OwnOAuthClientStep({
 		tokenUrl: useId(),
 		callback: useId(),
 	};
-	const ready = clientId.trim().length > 0 && clientSecret.length > 0;
+	// Both endpoints are the approver's own: the API's declared ones are never
+	// used, since an agent may have submitted the spec and the token URL
+	// receives the client secret.
+	const ready =
+		clientId.trim().length > 0 &&
+		clientSecret.length > 0 &&
+		isHttpsUrl(authorizeUrl) &&
+		isHttpsUrl(tokenUrl);
 
 	const submit = (e: FormEvent): void => {
 		e.preventDefault();
@@ -473,7 +488,9 @@ export function OwnOAuthClientStep({
 				/>
 			</div>
 			<div className="space-y-1.5">
-				<Label htmlFor={ids.authorizeUrl}>Authorize URL</Label>
+				<Label htmlFor={ids.authorizeUrl} required>
+					Authorize URL
+				</Label>
 				<Input
 					id={ids.authorizeUrl}
 					type="url"
@@ -484,7 +501,9 @@ export function OwnOAuthClientStep({
 				/>
 			</div>
 			<div className="space-y-1.5">
-				<Label htmlFor={ids.tokenUrl}>Token URL</Label>
+				<Label htmlFor={ids.tokenUrl} required>
+					Token URL
+				</Label>
 				<Input
 					id={ids.tokenUrl}
 					type="url"
@@ -494,7 +513,8 @@ export function OwnOAuthClientStep({
 					placeholder="https://provider.com/oauth/token"
 				/>
 				<p className="text-muted-foreground text-xs">
-					Leave the URLs blank to use the endpoints the API declares.
+					Your OAuth provider&apos;s https endpoints. The token URL receives your client
+					secret, so copy both from your provider, not from the API&apos;s spec.
 				</p>
 			</div>
 			{callbackUrl && (
