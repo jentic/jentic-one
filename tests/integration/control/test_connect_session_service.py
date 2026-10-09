@@ -25,8 +25,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from pydantic import SecretStr
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, select, text, update
 
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.services.event_service import EventService
+from jentic_one.admin.services.schemas.events import EventFilter
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -74,6 +77,7 @@ from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.web.deps import resolve_identity
 
 pytestmark = pytest.mark.integration
@@ -1626,3 +1630,90 @@ async def test_owner_reads_but_cannot_write_pending_credential_of_owned_agent(
         await ConnectSessionRepository.update_fields(session, row.id, state="failed")
     with pytest.raises(CredentialNotFoundError):
         await credentials.get(row.credential_id, identity=owner)
+
+
+# ---------------------------------------------------------------------------
+# connect_session.created rail event
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+async def clean_session_events(integration_context: Context) -> AsyncGenerator[None, None]:
+    """Drop the ``connect_session.created`` rows this section writes, before and after."""
+
+    async def _purge() -> None:
+        async with integration_context.admin_db.session() as session:
+            await session.execute(
+                delete(Event).where(Event.type == EventType.CONNECT_SESSION_CREATED)
+            )
+            await session.commit()
+
+    await _purge()
+    yield
+    await _purge()
+
+
+async def _session_created_events(ctx: Context) -> list[Event]:
+    async with ctx.admin_db.session() as session:
+        result = await session.execute(
+            select(Event).where(Event.type == EventType.CONNECT_SESSION_CREATED)
+        )
+        return list(result.scalars().all())
+
+
+async def test_agent_started_session_emits_an_informational_event_for_the_owner(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_session_events: None,
+) -> None:
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+
+    events = await _session_created_events(ctx)
+    assert len(events) == 1
+    event = events[0]
+    assert event.severity == EventSeverity.INFO
+    assert event.requires_action is False
+    assert event.summary == "Agent 'scout' asked to connect 'Test Device Vendor'"
+    # The agent is the subject, so the owner-scoped event read shows it to
+    # the agent's owner; the agent is also who acted.
+    assert event.created_by == _AGENT_ID
+    assert event.actor_id == _AGENT_ID
+    assert event.actor_type == ActorType.AGENT.value
+    assert event.data is not None
+    assert event.data["session_id"] == created.session_id
+    assert event.data["agent_id"] == _AGENT_ID
+    assert event.data["vendor_key"] == "testdev"
+    # Never the poll token, in any form.
+    serialized = f"{event.summary} {event.detail} {event.data}"
+    assert created.poll_token not in serialized
+    assert hash_secret(created.poll_token) not in serialized
+
+    owner_view = await EventService(ctx).list_all(
+        EventFilter(event_type=[EventType.CONNECT_SESSION_CREATED]),
+        identity=Identity(sub=_USER_ID, permissions=["events:read"]),
+    )
+    assert [e.id for e in owner_view.data] == [event.id]
+    stranger_view = await EventService(ctx).list_all(
+        EventFilter(event_type=[EventType.CONNECT_SESSION_CREATED]),
+        identity=Identity(sub=_OTHER_USER_ID, permissions=["events:read"]),
+    )
+    assert stranger_view.data == []
+
+
+async def test_user_started_session_emits_no_rail_event(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_session_events: None,
+) -> None:
+    # A human connecting in the SPA is already looking at the result.
+    await ConnectSessionService(integration_context).create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    assert await _session_created_events(integration_context) == []
