@@ -21,6 +21,12 @@ this file adds the lane-specific detail.
   Only a broker **denial** (an `agent_directive` on stderr, exit **2**) is
   an access/credential issue; the code names the recovery. Follow the
   directive; don't keep re-sending the same execute.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address, which the broker
+  blocks by default. Nothing in your request is wrong, so re-inspecting the
+  contract or rewriting the host (`localhost`, another private IP) won't
+  help; ask your operator to allow that range
+  (`broker.egress.allowed_private_subnets`), then retry.
 - An empty search result (`{"data": []}`) usually means **nothing is
   imported yet**, not that you lack access. Go through the catalog
   (`jentic catalog search`/`import`), then search again. Both reading the
@@ -65,6 +71,10 @@ this file adds the lane-specific detail.
 - When an error envelope's `actionable_step` names a `jentic` CLI verb or a
   tool your session doesn't have, relay it to the operator as guidance
   instead of inventing a tool call.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address the broker blocks
+  by default — ask your operator to allow the range instead of following
+  `next_tool` or changing the host.
 - An empty `search_apis` result means nothing matching is imported yet —
   run `search_catalog` → `import_api`, then search again; no grant needed.
 - Backend mismatch: compare the `instance` stamp (`backend`/`host`/
