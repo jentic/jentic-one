@@ -21,6 +21,7 @@ class AgentOwnerRow(NamedTuple):
 
     owner_id: str | None
     status: str
+    name: str | None = None
 
 
 class EffectsRepository:
@@ -180,18 +181,19 @@ class EffectsRepository:
 
     @staticmethod
     async def get_agent_owner(session: AsyncSession, agent_id: str) -> AgentOwnerRow | None:
-        """Return the agent's owner and status via raw SQL (admin DB), ``None`` if missing.
+        """Return the agent's owner, status and name via raw SQL (admin DB), ``None`` if missing.
 
         Cross-DB seam for the connect flow's agent checks: the control-side
         session routes verify the target agent is owned by the caller, and
         ``:confirm`` also refuses an agent that is no longer usable (archived,
-        disabled, rejected) before writing a binding in its name. The broker
+        disabled, rejected) before writing a binding in its name; ``name``
+        labels the ``connect_session.created`` event. The broker
         and control modules may not import admin ORM models. ``owner_id`` is
         nullable — an existing but ownerless agent has ``owner_id=None``, not
         "missing".
         """
         result = await session.execute(
-            text("SELECT owner_id, status FROM agents WHERE id = :agent_id"),
+            text("SELECT owner_id, status, name FROM agents WHERE id = :agent_id"),
             {"agent_id": agent_id},
         )
         row = result.first()
@@ -200,6 +202,7 @@ class EffectsRepository:
         return AgentOwnerRow(
             owner_id=str(row[0]) if row[0] is not None else None,
             status=str(row[1]),
+            name=str(row[2]) if row[2] is not None else None,
         )
 
     @staticmethod
