@@ -262,6 +262,41 @@ func TestMCPRequestConnection_AmbiguousVendorListsCandidatesAndAsksTheUser(t *te
 	}
 }
 
+// An API-target request_connection lists only the shared apps the 400
+// ambiguous_vendor counted (registration_ids), not every app under the key.
+func TestMCPRequestConnection_APITargetAmbiguousListsTheCountedApps(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusBadRequest,
+		body: `{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`,
+		vendors: ambiguousVendorsBody,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL),
+		callToolRequest("request_connection", `{"api":"googleapis-com/gmail/v1"}`))
+	if err != nil {
+		t.Fatalf("an ambiguous api target must be a soft error: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["next_tool"] != "request_connection" {
+		t.Errorf("next_tool = %v, want request_connection (retry with the picked id)", payload["next_tool"])
+	}
+	details, _ := payload["details"].(map[string]any)
+	candidates, _ := details["candidates"].([]any)
+	ids := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		m, _ := c.(map[string]any)
+		id, _ := m["registration_id"].(string)
+		ids = append(ids, id)
+	}
+	if strings.Join(ids, ",") != "oar_gmail,oar_other" {
+		t.Errorf("candidates = %v, want the registrations the problem counted (oar_gmail, oar_other)", ids)
+	}
+}
+
 func TestMCPRequestConnection_PinAndRulesRideTheWire(t *testing.T) {
 	cp := &connectControlPlane{
 		status: http.StatusCreated,

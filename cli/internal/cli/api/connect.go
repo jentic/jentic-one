@@ -473,7 +473,8 @@ type vendorAppCandidate struct {
 // listVendorAppCandidates reads GET /vendors (capabilities:read, in the
 // default agent permission set) and keeps the registration-backed rows the
 // 400 ambiguous_vendor problem counted: its registration_ids when it lists
-// them, else every row for vendor — the same set the route's ambiguity check
+// them (an API-target connect matches apps by the API they serve, not by
+// key), else every row for vendor — the same set the route's ambiguity check
 // counts when no flow is preferred. Best effort: any failure yields nil, and
 // the caller's advice still routes the choice to the user without the list.
 func listVendorAppCandidates(ctx context.Context, client *control.ClientWithResponses, vendor string, he *HTTPError) []vendorAppCandidate {
