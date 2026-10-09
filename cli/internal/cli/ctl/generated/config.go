@@ -640,10 +640,10 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 // Agent connect-session settings on the control surface.
 type ControlConnectConfig struct {
 	// Allow connect sessions that target a registry API (rather than a
-	// vendor-registry key), where a human enters the credential at approval. While
-	// off, `:connect` refuses API targets with `manual_flows_disabled`. The dashboard
-	// cannot approve these sessions yet, so leave it off outside testing; turn it on
-	// only after every control replica runs a release that understands them.
+	// vendor-registry key), where a human enters the credential, or brings an OAuth
+	// app, when approving them in the dashboard. While off, `:connect` refuses API
+	// targets with `manual_flows_disabled`. Turn it on only after every control
+	// replica runs a release that understands them.
 	ManualFlowsEnabled bool `json:"manual_flows_enabled,omitempty,omitzero" yaml:"manual_flows_enabled,omitempty" mapstructure:"manual_flows_enabled,omitempty"`
 
 	// Hours an API-target connect session (a human-entered credential, or an OAuth
