@@ -332,6 +332,67 @@ async def test_create_session_persists_requested_permission_rules(
     assert credential.catalog_api_id == "testdev.example/api.testdev.example"
 
 
+class _RegisteredIdentityImporter:
+    """Catalog importer seam that reports one already-imported API identity."""
+
+    def __init__(self, identities: dict[str, tuple[str, str]]) -> None:
+        self._identities = identities
+
+    async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None:
+        return None
+
+    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
+        return self._identities.get(api_id)
+
+    async def current_version(self, *, api_id: str) -> str | None:
+        return None
+
+
+async def test_vendor_connect_stamps_the_catalog_import_identity(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    # A catalog import names ``testdev.example/api.testdev.example`` by its
+    # sub segment (``testdev-example/api-testdev-example``); a vendor connect
+    # stamps that identity so the credential covers the registered API.
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        assert row is not None
+        credential = await CredentialRepository.get_by_id(session, row.credential_id)
+    assert credential is not None
+    assert (credential.api_vendor, credential.api_name) == (
+        "testdev-example",
+        "api-testdev-example",
+    )
+
+
+async def test_vendor_connect_stamps_an_already_imported_apis_identity(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    # An API imported before the sub-segment naming keeps its whole-id name;
+    # the vendor connect follows the registered identity, not the derivation.
+    ctx = integration_context
+    importer = _RegisteredIdentityImporter(
+        {"testdev.example/api.testdev.example": ("testdev-example", "testdev-example-api-x")}
+    )
+    created = await ConnectSessionService(ctx, catalog_auto_importer=importer).create_session(
+        vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        assert row is not None
+        credential = await CredentialRepository.get_by_id(session, row.credential_id)
+    assert credential is not None
+    assert credential.api_name == "testdev-example-api-x"
+
+
 # ---------------------------------------------------------------------------
 # confirm — device flow + auth code + self-confirm guard
 # ---------------------------------------------------------------------------

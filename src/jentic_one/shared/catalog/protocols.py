@@ -27,6 +27,17 @@ class CatalogAutoImportProtocol(Protocol):
 
     async def ensure_imported(self, *, api_id: str, initiator_actor_id: str) -> str | None: ...
 
+    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
+        """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None.
+
+        A vendor connect stamps the credential with this identity so it covers
+        the registered API exactly — the name a catalog import gives depends on
+        the manifest (sub segment, or the whole id for a clashing entry) and on
+        when the API was first imported. ``None`` when nothing is imported yet
+        (or on any lookup error).
+        """
+        ...
+
     async def current_version(self, *, api_id: str) -> str | None:
         """Return the imported api's current-revision version, or None if not imported yet.
 
