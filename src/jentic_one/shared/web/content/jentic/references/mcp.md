@@ -201,8 +201,11 @@ its envelope points `next_tool` at `request_connection`. When the directive
 names a connect target — `parameters.connect.vendor_key` (pass it as
 `vendor`), `parameters.connect.api` (pass it as `api`), or a
 `suggested_command` naming the registry key — start the fix yourself (the
-envelope's `next_tool_arguments`, `{"vendor": …}` or `{"api": …}`, are the
-`request_connection` arguments) and relay the `approval_url`;
+envelope's `next_tool_arguments` — `{"vendor": …}`, plus
+`oauth_app_registration_id` when the directive pins the one shared app that
+covers the API, or `{"api": …}` — are the `request_connection` arguments; add
+the directive's `suggested_rules` as `requested_permission_rules`) and relay
+the `approval_url`;
 a denial carrying a `provisioning_url` means a connect request you opened
 is still waiting — relay that link to your operator rather than calling
 `request_connection` again. The denial taxonomy

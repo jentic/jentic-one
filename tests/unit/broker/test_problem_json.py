@@ -142,8 +142,10 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
         api_served=True,
         connect=ConnectTarget(vendor_key="github", registration_id="oar_1"),
     )
-    # Served keeps the bind-me-first ask; connect is the alternative.
-    assert served.parameters["suggested_command"] == "jentic connect github"
+    # Served keeps the bind-me-first ask; connect is the alternative, pinned
+    # to the one shared app the directive names.
+    assert served.parameters["suggested_command"] == "jentic connect github --registration oar_1"
+    assert "jentic connect github --registration oar_1" in served.human_readable_instruction
     assert served.parameters["connect"] == {"vendor_key": "github", "registration_id": "oar_1"}
     assert "bind" in served.human_readable_instruction
 

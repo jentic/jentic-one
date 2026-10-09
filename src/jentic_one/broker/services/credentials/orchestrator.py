@@ -477,7 +477,7 @@ class CredentialService:
             "vendor": api.vendor,
             **connect_parameters(None if provisioning_url else connect, suggested_rules),
         }
-        connect_vendor = connect.vendor_key if connect is not None else None
+        connect_command = connect.cli_command() if connect is not None else None
         # Off every connect target, the API itself is the connect target when
         # the deployment takes API connect requests (the control gate).
         connect_api = (
@@ -498,10 +498,10 @@ class CredentialService:
                 f"another: relay {provisioning_url} to them to approve it, then retry once "
                 "they confirm."
             )
-        elif connect_vendor:
+        elif connect_command:
             instruction = (
                 f"No credential is connected for '{api.vendor}'. Start connecting one "
-                f"yourself: run `jentic connect {connect_vendor}` (or call the "
+                f"yourself: run `{connect_command}` (or call the "
                 "request_connection tool) and relay the approval_url to your human "
                 "operator — they approve it in the browser; you cannot. Once they "
                 "confirm, verify the new binding with whoami and retry."

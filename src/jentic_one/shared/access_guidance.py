@@ -99,9 +99,7 @@ def catalog_api_scopes(catalog_api_id: str) -> tuple[CredentialScope, ...]:
     """
     raw_vendor = vendor_from_api_id(catalog_api_id) or catalog_api_id
     names = dict.fromkeys((catalog_import_name(catalog_api_id), catalog_api_id))
-    return tuple(
-        canonical_credential_scope(vendor=raw_vendor, name=n, version=None) for n in names
-    )
+    return tuple(canonical_credential_scope(vendor=raw_vendor, name=n, version=None) for n in names)
 
 
 def catalog_api_id_covers(catalog_api_id: str, *, vendor: str, name: str, version: str) -> bool:
@@ -123,6 +121,18 @@ class ConnectTarget:
 
     vendor_key: str
     registration_id: str | None = None
+
+    def cli_command(self) -> str:
+        """The ``jentic connect`` command for this target, pinned when one app matched.
+
+        The pin matters when the key is shared by registrations for other APIs
+        (e.g. one ``google`` key for Gmail and Drive apps): unpinned, that
+        connect would be refused as ``ambiguous_vendor``.
+        """
+        command = f"jentic connect {self.vendor_key}"
+        if self.registration_id is not None:
+            command += f" --registration {self.registration_id}"
+        return command
 
     def as_parameters(self) -> dict[str, Any]:
         """The ``parameters.connect`` object a broker directive carries."""

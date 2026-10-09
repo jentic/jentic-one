@@ -107,8 +107,10 @@ code:
   waiting: relay that link to your operator instead of connecting again,
   then retry once they approve. Otherwise, with `api_served: false` no
   credential is provisioned for the API at all: if the directive carries a
-  `suggested_command` (`jentic connect <vendor>` or `jentic connect --api
-  …`), run it with a `--reason` and relay the printed `approval_url` to
+  `suggested_command` (`jentic connect <vendor>` — with `--registration
+  <id>` when one shared app covers the API — or `jentic connect --api
+  …`), run it with a `--reason` (and the directive's `suggested_rules` as
+  `--rules`) and relay the printed `approval_url` to
   your operator; otherwise ask them to connect or
   provision a credential in the dashboard and bind you to it, proposing the
   auth type and permission rules you read from the API spec (see `SKILL.md`

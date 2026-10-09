@@ -513,13 +513,30 @@ func connectAPI(directive *ux.Directive) map[string]any {
 	return out
 }
 
+// connectRegistrationID is the shared OAuth app a denial directive pins in
+// parameters.connect.registration_id, or "" (Python twin:
+// _connect_registration_id).
+func connectRegistrationID(directive *ux.Directive) string {
+	if directive == nil {
+		return ""
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	id, _ := connect["registration_id"].(string)
+	return id
+}
+
 // requestConnectionArguments are the request_connection arguments a denial
-// directive fills: the vendor key, or else the api identity, it names. The
-// directive's registration_id and suggested_rules stay in agent_directive
-// (Python twin: _request_connection_arguments).
+// directive fills: the vendor key — with oauth_app_registration_id when the
+// directive pins the one shared app covering the API — or else the api
+// identity. The directive's suggested_rules stay in agent_directive (Python
+// twin: _request_connection_arguments).
 func requestConnectionArguments(directive *ux.Directive) map[string]any {
 	if key := connectVendorKey(directive); key != "" {
-		return map[string]any{"vendor": key}
+		args := map[string]any{"vendor": key}
+		if id := connectRegistrationID(directive); id != "" {
+			args["oauth_app_registration_id"] = id
+		}
+		return args
 	}
 	if api := connectAPI(directive); api != nil {
 		return map[string]any{"api": api}

@@ -475,10 +475,15 @@ async def test_not_provisioned_shared_app_registration_suggests_connect(
         "vendor_key": "google",
         "registration_id": "oar_gmail",
     }
-    assert directive.parameters["suggested_command"] == "jentic connect google"
+    # Pinned: an unpinned `jentic connect google` would be ambiguous (the
+    # Drive app shares the key).
+    assert (
+        directive.parameters["suggested_command"]
+        == "jentic connect google --registration oar_gmail"
+    )
     # inject carries no request method/path, so no rule is suggested.
     assert "suggested_rules" not in directive.parameters
-    assert "jentic connect google" in directive.human_readable_instruction
+    assert "jentic connect google --registration oar_gmail" in directive.human_readable_instruction
 
 
 @pytest.mark.asyncio

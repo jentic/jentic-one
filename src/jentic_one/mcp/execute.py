@@ -444,16 +444,34 @@ def _connect_api(directive: dict[str, Any] | None) -> dict[str, str] | None:
     return {k: str(v) for k, v in fields.items()}
 
 
+def _connect_registration_id(directive: dict[str, Any] | None) -> str:
+    """The shared OAuth app a denial directive pins (``parameters.connect.registration_id``)."""
+    if directive is None:
+        return ""
+    parameters = directive.get("parameters")
+    if not isinstance(parameters, dict):
+        return ""
+    connect = parameters.get("connect")
+    if not isinstance(connect, dict):
+        return ""
+    registration_id = connect.get("registration_id")
+    return registration_id if isinstance(registration_id, str) else ""
+
+
 def _request_connection_arguments(directive: dict[str, Any] | None) -> dict[str, Any]:
     """The ``request_connection`` arguments a denial directive fills (Go twin).
 
-    The ``vendor`` key, or else the ``api`` identity, the directive names; the
-    directive's ``registration_id`` and ``suggested_rules`` stay in
-    ``agent_directive``.
+    The ``vendor`` key — with ``oauth_app_registration_id`` when the directive
+    pins the one shared app covering the API — or else the ``api`` identity.
+    The directive's ``suggested_rules`` stay in ``agent_directive``.
     """
     key = _connect_vendor_key(directive)
     if key:
-        return {"vendor": key}
+        arguments = {"vendor": key}
+        registration_id = _connect_registration_id(directive)
+        if registration_id:
+            arguments["oauth_app_registration_id"] = registration_id
+        return arguments
     api = _connect_api(directive)
     return {"api": api} if api else {}
 
