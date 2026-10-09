@@ -258,7 +258,8 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 
 // TestMCPExecute_DenialFillsRequestConnectionArguments pins the
 // next_tool_arguments a provisioning denial carries: the vendor from the
-// directive's parameters.connect.vendor_key, and nothing when the directive
+// directive's parameters.connect.vendor_key, with oauth_app_registration_id
+// when it pins a registration_id, and nothing when the directive
 // names only the CLI suggested_command (an older broker) or when next_tool is
 // not request_connection. Python twin:
 // tests/unit/mcp/test_execute_golden.py.
@@ -271,6 +272,11 @@ func TestMCPExecute_DenialFillsRequestConnectionArguments(t *testing.T) {
 		{
 			"structured_connect",
 			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect google","connect":{"vendor_key":"google","registration_id":"oar_1"},"suggested_rules":[{"effect":"allow","methods":["GET"],"path":"/v1/pets","match_mode":"exact"}]},"human_readable_instruction":"Run jentic connect google (or request_connection)."}}`,
+			map[string]any{"vendor": "google", "oauth_app_registration_id": "oar_1"},
+		},
+		{
+			"structured_connect_unpinned",
+			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect google","connect":{"vendor_key":"google"}},"human_readable_instruction":"Run jentic connect google (or request_connection)."}}`,
 			map[string]any{"vendor": "google"},
 		},
 		{

@@ -120,6 +120,18 @@ class ConnectTarget:
     vendor_key: str
     registration_id: str | None = None
 
+    def cli_command(self) -> str:
+        """The ``jentic connect`` command for this target, pinned when one app matched.
+
+        The pin matters when the key is shared by registrations for other APIs
+        (e.g. one ``google`` key for Gmail and Drive apps): unpinned, that
+        connect would be refused as ``ambiguous_vendor``.
+        """
+        command = f"jentic connect {self.vendor_key}"
+        if self.registration_id is not None:
+            command += f" --registration {self.registration_id}"
+        return command
+
     def as_parameters(self) -> dict[str, Any]:
         """The ``parameters.connect`` object a broker directive carries."""
         params: dict[str, Any] = {"vendor_key": self.vendor_key}

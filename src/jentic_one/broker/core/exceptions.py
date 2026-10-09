@@ -370,7 +370,7 @@ def connect_parameters(
     """
     params: dict[str, Any] = {}
     if connect is not None:
-        params["suggested_command"] = f"jentic connect {connect.vendor_key}"
+        params["suggested_command"] = connect.cli_command()
         params["connect"] = connect.as_parameters()
     if suggested_rules:
         params["suggested_rules"] = suggested_rules
@@ -421,7 +421,7 @@ def no_credential_binding_directive(
         "api_served": api_served,
         **connect_parameters(connect, suggested_rules),
     }
-    connect_vendor = connect.vendor_key if connect is not None else None
+    connect_command = connect.cli_command() if connect is not None else None
     if api_served:
         instruction = (
             f"You have no credential binding for '{api}', but a credential already serves "
@@ -429,16 +429,16 @@ def no_credential_binding_directive(
             "or via POST /agents/{agent_id}/credentials) — only a human can grant the "
             "binding. Once bound, retry this call."
         )
-        if connect_vendor:
+        if connect_command:
             instruction += (
                 f" Alternatively, start connecting a fresh credential yourself with "
-                f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
+                f"`{connect_command}` (or the request_connection tool) and "
                 "relay its approval_url to your operator — approval is still theirs."
             )
-    elif connect_vendor:
+    elif connect_command:
         instruction = (
             f"No credential is provisioned for '{api}' yet. Start connecting one yourself: "
-            f"run `jentic connect {connect_vendor}` (or call the request_connection tool) "
+            f"run `{connect_command}` (or call the request_connection tool) "
             "and relay the approval_url it returns to your operator — they approve the "
             "connection in the browser; only a human can approve. Once they confirm, retry "
             "this call."

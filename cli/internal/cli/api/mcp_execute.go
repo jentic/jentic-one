@@ -492,15 +492,33 @@ func connectVendorKey(directive *ux.Directive) string {
 	return key
 }
 
+// connectRegistrationID is the shared OAuth app a denial directive pins in
+// parameters.connect.registration_id, or "" (Python twin:
+// _connect_registration_id).
+func connectRegistrationID(directive *ux.Directive) string {
+	if directive == nil {
+		return ""
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	id, _ := connect["registration_id"].(string)
+	return id
+}
+
 // requestConnectionArguments are the request_connection arguments a denial
-// directive fills: only the vendor the tool accepts today. The directive's
-// registration_id and suggested_rules stay in agent_directive (Python twin:
+// directive fills: the vendor key, with oauth_app_registration_id when the
+// directive pins the one shared app covering the API. The directive's
+// suggested_rules stay in agent_directive (Python twin:
 // _request_connection_arguments).
 func requestConnectionArguments(directive *ux.Directive) map[string]any {
-	if key := connectVendorKey(directive); key != "" {
-		return map[string]any{"vendor": key}
+	key := connectVendorKey(directive)
+	if key == "" {
+		return nil
 	}
-	return nil
+	args := map[string]any{"vendor": key}
+	if id := connectRegistrationID(directive); id != "" {
+		args["oauth_app_registration_id"] = id
+	}
+	return args
 }
 
 // synthesizedDenialHint is the MCP counterpart of the CLI's status-keyed

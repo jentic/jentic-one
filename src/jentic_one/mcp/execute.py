@@ -420,14 +420,35 @@ def _connect_vendor_key(directive: dict[str, Any] | None) -> str:
     return ""
 
 
+def _connect_registration_id(directive: dict[str, Any] | None) -> str:
+    """The shared OAuth app a denial directive pins (``parameters.connect.registration_id``)."""
+    if directive is None:
+        return ""
+    parameters = directive.get("parameters")
+    if not isinstance(parameters, dict):
+        return ""
+    connect = parameters.get("connect")
+    if not isinstance(connect, dict):
+        return ""
+    registration_id = connect.get("registration_id")
+    return registration_id if isinstance(registration_id, str) else ""
+
+
 def _request_connection_arguments(directive: dict[str, Any] | None) -> dict[str, Any]:
     """The ``request_connection`` arguments a denial directive fills (Go twin).
 
-    Only the ``vendor`` the tool accepts today; the directive's
-    ``registration_id`` and ``suggested_rules`` stay in ``agent_directive``.
+    The ``vendor`` key, with ``oauth_app_registration_id`` when the directive
+    pins the one shared app covering the API. The directive's
+    ``suggested_rules`` stay in ``agent_directive``.
     """
     key = _connect_vendor_key(directive)
-    return {"vendor": key} if key else {}
+    if not key:
+        return {}
+    arguments = {"vendor": key}
+    registration_id = _connect_registration_id(directive)
+    if registration_id:
+        arguments["oauth_app_registration_id"] = registration_id
+    return arguments
 
 
 def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:

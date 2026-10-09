@@ -464,13 +464,13 @@ class CredentialService:
             "vendor": api.vendor,
             **connect_parameters(connect, suggested_rules),
         }
-        connect_vendor = connect.vendor_key if connect is not None else None
+        connect_command = connect.cli_command() if connect is not None else None
 
         base = self._ctx.config.broker.account_linking_base_url
-        if connect_vendor:
+        if connect_command:
             instruction = (
                 f"No credential is connected for '{api.vendor}'. Start connecting one "
-                f"yourself: run `jentic connect {connect_vendor}` (or call the "
+                f"yourself: run `{connect_command}` (or call the "
                 "request_connection tool) and relay the approval_url to your human "
                 "operator — they approve it in the browser; you cannot. Once they "
                 "confirm, verify the new binding with whoami and retry."
@@ -485,7 +485,7 @@ class CredentialService:
                 f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
             )
             params["provisioning_url"] = provisioning_url
-            if not connect_vendor:
+            if not connect_command:
                 instruction = (
                     f"No credential is connected for '{api.vendor}'. Ask the user to open "
                     f"{provisioning_url} to authorize, then retry once they confirm."
