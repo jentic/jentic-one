@@ -26,6 +26,7 @@ from jentic_one.admin.services._support.pagination import Page, decode_cursor, e
 from jentic_one.admin.services.errors import (
     ExecutionApprovalAlreadyDecidedError,
     ExecutionApprovalForbiddenError,
+    ExecutionApprovalJobNotHeldError,
     ExecutionApprovalNotFoundError,
 )
 from jentic_one.admin.services.schemas.execution_approvals import (
@@ -131,7 +132,9 @@ class ExecutionApprovalService:
         """Approve or deny a pending approval — compare-and-set, first reviewer wins.
 
         In one transaction: approve moves the held job to ``queued``; deny fails
-        it with a permission-denied problem as its result. The decision is
+        it with a permission-denied problem as its result. A job that is no
+        longer ``held`` raises ``ExecutionApprovalJobNotHeldError`` and rolls
+        the decision back, so the approval stays ``pending``. The decision is
         audit-logged and emits ``execution.approval_decided``.
         """
         if identity.actor_type == ActorType.AGENT:
@@ -168,30 +171,25 @@ class ExecutionApprovalService:
                 raise ExecutionApprovalAlreadyDecidedError(
                     f"Execution approval '{approval_id}' is already {state}"
                 )
-            if approve:
-                await JobRepository.transition(
+            moved = await JobRepository.transition(
+                session,
+                updated.job_id,
+                from_status=JobStatus.HELD,
+                to_status=JobStatus.QUEUED if approve else JobStatus.FAILED,
+            )
+            if not moved:
+                # Raising rolls the decision back with the transaction.
+                raise ExecutionApprovalJobNotHeldError(approval_id, updated.job_id)
+            if not approve:
+                await JobRepository.update(session, updated.job_id, error="approval denied")
+                await JobResultRepository.create(
                     session,
-                    updated.job_id,
-                    from_status=JobStatus.HELD,
-                    to_status=JobStatus.QUEUED,
+                    job_id=updated.job_id,
+                    kind=JobKind.EXECUTION.value,
+                    body=approval_denied_problem(approval_id, body.reason),
+                    content_type=PROBLEM_CONTENT_TYPE,
+                    created_by=identity.sub,
                 )
-            else:
-                moved = await JobRepository.transition(
-                    session,
-                    updated.job_id,
-                    from_status=JobStatus.HELD,
-                    to_status=JobStatus.FAILED,
-                )
-                if moved:
-                    await JobRepository.update(session, updated.job_id, error="approval denied")
-                    await JobResultRepository.create(
-                        session,
-                        job_id=updated.job_id,
-                        kind=JobKind.EXECUTION.value,
-                        body=approval_denied_problem(approval_id, body.reason),
-                        content_type=PROBLEM_CONTENT_TYPE,
-                        created_by=identity.sub,
-                    )
             await AuditRepository.record(
                 session,
                 action=AuditAction.APPROVE if approve else AuditAction.DENY,
@@ -252,12 +250,14 @@ class ExecutionApprovalService:
                 raise ExecutionApprovalAlreadyDecidedError(
                     f"Execution approval '{approval_id}' is already {state or row.state}"
                 )
-            await JobRepository.transition(
+            moved = await JobRepository.transition(
                 session,
                 updated.job_id,
                 from_status=JobStatus.HELD,
                 to_status=JobStatus.CANCELLED,
             )
+            if not moved:
+                raise ExecutionApprovalJobNotHeldError(approval_id, updated.job_id)
             await AuditRepository.record(
                 session,
                 action=AuditAction.WITHDRAW,

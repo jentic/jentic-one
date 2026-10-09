@@ -32,6 +32,7 @@ from jentic_one.admin.repos import AgentRepository, UserRepository
 from jentic_one.admin.services.errors import (
     ExecutionApprovalAlreadyDecidedError,
     ExecutionApprovalForbiddenError,
+    ExecutionApprovalJobNotHeldError,
     ExecutionApprovalNotFoundError,
     JobAwaitingApprovalError,
 )
@@ -282,6 +283,58 @@ async def test_concurrent_filings_never_exceed_the_pending_cap(
             .all()
         )
     assert len(pending) == 2
+
+
+@pytest.mark.parametrize("decision", [ApprovalDecision.APPROVE, ApprovalDecision.DENY])
+async def test_a_decision_whose_job_is_no_longer_held_is_rolled_back(
+    integration_context: Context, actors: _Actors, decision: ApprovalDecision
+) -> None:
+    """The approval never settles without its job: it stays pending, nothing is
+    written, and the route answers 409."""
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(Job).where(Job.id == hold.job_id).values(status=JobStatus.CANCELLED)
+        )
+
+    with pytest.raises(ExecutionApprovalJobNotHeldError):
+        await ExecutionApprovalService(ctx).decide(
+            hold.approval_id, DecideInput(decision=decision), identity=actors.owner
+        )
+    approval = await _approval(ctx, hold.approval_id)
+    assert approval.state == "pending"
+    assert approval.decided_by is None
+    assert (await _job(ctx, hold.job_id)).status == JobStatus.CANCELLED
+    assert await _job_result_count(ctx, hold.job_id) == 0
+    async with ctx.admin_db.session() as session:
+        audits = (
+            await session.execute(
+                select(AuditEntry).where(AuditEntry.target_id == hold.approval_id)
+            )
+        ).all()
+    assert audits == []
+
+    async with _client(ctx, actors.owner) as client:
+        resp = await client.post(
+            f"/executions/approvals/{hold.approval_id}:decide", json={"decision": decision.value}
+        )
+    assert resp.status_code == 409
+    assert resp.json()["type"].endswith("execution_approval_job_not_held")
+
+
+async def test_a_withdrawal_whose_job_is_no_longer_held_is_rolled_back(
+    integration_context: Context, actors: _Actors
+) -> None:
+    ctx = integration_context
+    hold = await _hold(ctx, actors.agent)
+    async with ctx.admin_db.transaction() as session:
+        await session.execute(
+            update(Job).where(Job.id == hold.job_id).values(status=JobStatus.FAILED)
+        )
+    with pytest.raises(ExecutionApprovalJobNotHeldError):
+        await ExecutionApprovalService(ctx).withdraw(hold.approval_id, identity=actors.agent)
+    assert (await _approval(ctx, hold.approval_id)).state == "pending"
 
 
 async def test_approve_releases_the_job_once_with_audit_and_event(
