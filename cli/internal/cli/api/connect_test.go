@@ -536,3 +536,289 @@ func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
 		}
 	}
 }
+
+// --- registry-API targets (--api) ---------------------------------------------
+
+// connectAPIServer answers POST /integrations:connect with a created session of
+// the given flow, recording the body, and the status poll with statusBody
+// (counting polls).
+func connectAPIServer(t *testing.T, flow, statusBody string, seen *[]byte, polls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/integrations:connect":
+			*seen, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"session_id":"cs_api","approval_url":"https://one.example/app/agents?approve=cs_api",`+
+				`"poll_token":"pt_api","resolved_flow":%q}`, flow)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/connect-sessions/cs_api/status"):
+			*polls++
+			_, _ = w.Write([]byte(statusBody))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestConnect_APITargetWireShapeAndHumanEntryAdvice(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "manual_api_key", `{"status":"pending"}`, &seen, &polls)
+	defer srv.Close()
+
+	rules := `[{"effect":"allow","methods":["GET"],"path":"/v1/charges","match_mode":"exact"}]`
+	out, err := runConnectTree(t, srv.URL, "connect", "--api", "stripe-com/stripe-com-api/2024-06-20",
+		"--auth-type", "api_key", "--rules", rules, "--reason", "list charges")
+	if err != nil {
+		t.Fatalf("connect --api: %v\n%s", err, out)
+	}
+
+	var wire map[string]any
+	if err := json.Unmarshal(seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	if _, has := wire["vendor"]; has {
+		t.Errorf("vendor rode the wire with --api (%v) — the route takes exactly one target", wire["vendor"])
+	}
+	api, _ := wire["api"].(map[string]any)
+	if api["vendor"] != "stripe-com" || api["name"] != "stripe-com-api" || api["version"] != "2024-06-20" {
+		t.Errorf("api = %v, want the parsed vendor/name/version", wire["api"])
+	}
+	if wire["auth_type"] != "api_key" || wire["reason"] != "list charges" {
+		t.Errorf("wire body = %v, want auth_type api_key + reason", wire)
+	}
+	if got, _ := wire["requested_permission_rules"].([]any); len(got) != 1 {
+		t.Errorf("requested_permission_rules = %v, want the one --rules entry", wire["requested_permission_rules"])
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, out)
+	}
+	step, _ := doc["next_step"].(string)
+	if !strings.Contains(step, "end your turn") || !strings.Contains(step, "jentic whoami") {
+		t.Errorf("next_step %q must say relay, end your turn, check whoami later", step)
+	}
+	if strings.Contains(out, "pt_api") {
+		t.Errorf("poll_token leaked into the envelope\n%s", out)
+	}
+}
+
+// A human typing a key can take hours: --wait without an explicit --timeout
+// renders the pending envelope at once instead of blocking the agent's turn.
+func TestConnect_WaitOnHumanEntryFlowReturnsPendingWithoutPolling(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "awaiting_app", `{"status":"pending"}`, &seen, &polls)
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait")
+	if err != nil {
+		t.Fatalf("connect --api --wait: %v\n%s", err, out)
+	}
+	if polls != 0 {
+		t.Errorf("polls = %d, want no status poll for a human-entry flow without --timeout", polls)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, out)
+	}
+	if doc["status"] != "pending" || doc["resolved_flow"] != "awaiting_app" {
+		t.Errorf("envelope = %v, want status pending for awaiting_app", doc)
+	}
+}
+
+// A rejection arrives on /status as failed + error_code rejected: the agent
+// must not ask again and must tell its user.
+func TestConnect_WaitRejectedOutcomeSaysDoNotAskAgain(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "manual_bearer", `{"status":"failed","error_code":"rejected"}`, &seen, &polls)
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait", "--timeout", "5s")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("rejected session returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if polls == 0 {
+		t.Errorf("an explicit --timeout must still poll a human-entry flow")
+	}
+	if coded.Code != ux.CodeBrokerDenied {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeBrokerDenied)
+	}
+	if !strings.Contains(coded.Msg, "rejected") || !strings.Contains(coded.Actionable, "Do not ask again") {
+		t.Errorf("rejection must say so and say not to ask again: msg=%q actionable=%q", coded.Msg, coded.Actionable)
+	}
+}
+
+func TestConnect_WaitTerminalOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		status, code, wantCode, wantStep string
+	}{
+		{`{"status":"failed","error_code":"cancelled"}`, "cancelled", ux.CodeResolveFailed, "still want"},
+		{`{"status":"failed","error_code":"scheme_changed"}`, "scheme_changed", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
+		{`{"status":"expired"}`, "", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
+		{`{"status":"failed","error_code":"vendor_error"}`, "vendor_error", ux.CodeBrokerDenied, "dashboard"},
+	} {
+		t.Run(valueOr(tc.code, "expired"), func(t *testing.T) {
+			withXDG(t)
+			var seen []byte
+			polls := 0
+			srv := connectAPIServer(t, "manual_basic", tc.status, &seen, &polls)
+			defer srv.Close()
+
+			_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait", "--timeout", "5s")
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				t.Fatalf("terminal outcome returned %T (%v), want *ux.CodedError", err, err)
+			}
+			if coded.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", coded.Code, tc.wantCode)
+			}
+			if !strings.Contains(coded.Actionable, tc.wantStep) {
+				t.Errorf("actionable %q must contain %q", coded.Actionable, tc.wantStep)
+			}
+		})
+	}
+}
+
+// A 403 on the poll means the session ended or a newer request for the same
+// target replaced this token (dedupe rotation) — the CLI cannot tell which.
+func TestConnect_WaitForbiddenPollSaysEndedOrReplaced(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"session_id":"cs_r","approval_url":"https://one.example/c/r","poll_token":"pt_r","resolved_flow":"authorization_code"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"invalid_poll_token","detail":"invalid poll_token"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "github", "--wait")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("403 poll returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if !strings.Contains(coded.Msg, "replaced") || !strings.Contains(coded.Actionable, "jentic whoami") {
+		t.Errorf("msg=%q actionable=%q must name the replaced case and the whoami check", coded.Msg, coded.Actionable)
+	}
+}
+
+func TestConnect_TargetArgumentErrors(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("an argument error must never reach the wire")
+	}))
+	defer srv.Close()
+
+	for name, args := range map[string][]string{
+		"no target":          {"connect"},
+		"both targets":       {"connect", "github", "--api", "acme/acme-api/v1"},
+		"two-part api":       {"connect", "--api", "acme/acme-api"},
+		"auth-type no api":   {"connect", "github", "--auth-type", "api_key"},
+		"overlong auth-type": {"connect", "--api", "acme/acme-api/v1", "--auth-type", strings.Repeat("x", 256)},
+		"rules not a list":   {"connect", "--api", "acme/acme-api/v1", "--rules", `{"effect":"allow"}`},
+		"rules bad effect":   {"connect", "--api", "acme/acme-api/v1", "--rules", `[{"effect":"maybe"}]`},
+		"rules unknown key":  {"connect", "--api", "acme/acme-api/v1", "--rules", `[{"effect":"allow","pattern":".*"}]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runConnectTree(t, srv.URL, args...)
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+				t.Fatalf("%v returned %T (%v), want MISSING_ARGUMENT", args, err, err)
+			}
+		})
+	}
+}
+
+// The API-target error codes map to coded errors whose actionable step is the
+// lane's recovery: retry with --auth-type, import the API, report once, or do
+// not ask again.
+func TestConnect_APITargetErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		body     string
+		wantCode string
+		wantStep string
+	}{
+		{
+			http.StatusBadRequest, `{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`,
+			ux.CodeResolveFailed, "--auth-type",
+		},
+		{
+			http.StatusUnprocessableEntity, `{"type":"auth_type_not_declared","detail":"nope","options":["api_key"]}`,
+			ux.CodeResolveFailed, "api_key",
+		},
+		{http.StatusNotFound, `{"type":"unknown_api","detail":"not found"}`, ux.CodeResolveFailed, "jentic catalog import"},
+		{http.StatusNotFound, `{"type":"manual_flows_disabled","detail":"off"}`, ux.CodeBrokerDenied, "Report the gap"},
+		{http.StatusConflict, `{"type":"no_declared_scheme","detail":"none"}`, ux.CodeBrokerDenied, "Do not retry"},
+		{
+			http.StatusConflict, `{"type":"host_variable_not_pinned","detail":"x","variables":["region"]}`,
+			ux.CodeBrokerDenied, "enum",
+		},
+		{http.StatusUnprocessableEntity, `{"type":"reserved_auth_field","detail":"Host"}`, ux.CodeBrokerDenied, "operator"},
+		{
+			http.StatusServiceUnavailable, `{"type":"security_schemes_lookup_unavailable","detail":"x"}`,
+			ux.CodeBrokerDenied, "registry",
+		},
+		{
+			http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap","scope":"agent","limit":10}`,
+			ux.CodeBrokerDenied, "Do not open more",
+		},
+		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "Do not ask again"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			withXDG(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1")
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				t.Fatalf("returned %T (%v), want *ux.CodedError", err, err)
+			}
+			if coded.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", coded.Code, tc.wantCode)
+			}
+			if !strings.Contains(coded.Actionable, tc.wantStep) {
+				t.Errorf("actionable %q must contain %q", coded.Actionable, tc.wantStep)
+			}
+		})
+	}
+}
+
+func TestConnect_AuthTypeRequiredListsOptions(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if !strings.Contains(coded.Actionable, "api_key, oauth2") ||
+		!strings.Contains(coded.Actionable, "jentic connect --api acme/acme-api/v1 --auth-type") {
+		t.Errorf("actionable %q must list the options and the exact re-run", coded.Actionable)
+	}
+	if opts, _ := coded.Details["options"].([]string); len(opts) != 2 {
+		t.Errorf("details.options = %v, want both declared schemes", coded.Details["options"])
+	}
+}
