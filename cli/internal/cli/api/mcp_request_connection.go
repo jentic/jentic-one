@@ -111,7 +111,7 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 		s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
-	body := control.IntegrationsConnectRequest{Vendor: vendor}
+	body := control.IntegrationsConnectRequest{Vendor: &vendor}
 	if len(scopes) > 0 {
 		body.RequestedScopes = &scopes
 	}

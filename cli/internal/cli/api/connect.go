@@ -111,7 +111,8 @@ func newConnectCmd(a *app) *cobra.Command {
 			if err != nil {
 				return reportCoded(aud, err)
 			}
-			body := control.IntegrationsConnectRequest{Vendor: args[0]}
+			vendor := args[0]
+			body := control.IntegrationsConnectRequest{Vendor: &vendor}
 			if len(scopes) > 0 {
 				body.RequestedScopes = &scopes
 			}
