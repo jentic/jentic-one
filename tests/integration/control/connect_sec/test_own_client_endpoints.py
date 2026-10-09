@@ -175,3 +175,26 @@ async def test_approver_endpoints_are_the_ones_used(env: Context) -> None:
         "https://idp.approver.example/authorize",
         "https://idp.approver.example/token",
     )
+
+
+async def test_broker_egress_allowlist_does_not_open_the_approvers_endpoints(
+    env: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control-side OAuth endpoints use the strict policy, matching the token exchange.
+
+    The broker's allowlist covers where agents' API calls may go; it never lets
+    the approver's client secret be posted to a private address.
+    """
+    monkeypatch.setattr(env.config.broker.egress, "allowed_private_subnets", ["10.0.0.0/8"])
+    await import_spec(env, _HOSTILE_OAUTH)
+    created = await connect(env, requested_scopes=["read"])
+    async with client(env, OWNER) as owner:
+        refused = await owner.post(
+            f"/connect-sessions/{created.session_id}:confirm",
+            json=_body(
+                await digest(env, created.session_id),
+                authorize_url="https://10.1.2.3/authorize",
+                token_url="https://10.1.2.3/token",
+            ),
+        )
+    assert (refused.status_code, refused.json()["type"]) == (400, "own_oauth_client_invalid")
