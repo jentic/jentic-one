@@ -32,6 +32,34 @@ _DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-en
 # match, failing the request before it reaches the upstream.
 _INBOUND_FRAMING_HEADERS: frozenset[str] = frozenset({"content-length"})
 
+# Request headers an async (``Prefer: respond-async``) execution keeps for its
+# worker run. The job payload sits in the admin DB, so this is an explicit
+# allow-list of headers that describe the body, the response the caller wants,
+# and the API version a vendor requires — never the caller's credentials,
+# cookies, hop-by-hop or broker headers. The run re-injects upstream
+# credentials itself.
+REPLAY_HEADERS: frozenset[str] = frozenset(
+    {
+        "accept",
+        "accept-language",
+        "content-encoding",
+        "content-language",
+        "content-type",
+        "if-match",
+        "if-modified-since",
+        "if-none-match",
+        "if-unmodified-since",
+        # Vendor API version headers, several of them required on every call.
+        "anthropic-version",
+        "api-version",
+        "intercom-version",
+        "notion-version",
+        "stripe-version",
+        "x-api-version",
+        "x-github-api-version",
+    }
+)
+
 
 def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
     """Rebuild the upstream URL from the raw ASGI scope, byte-exact.
@@ -78,6 +106,15 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     }
     out.update(injected)
     return out
+
+
+def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:
+    """The inbound headers in :data:`REPLAY_HEADERS`, keyed lower-case.
+
+    What an async execution's job payload keeps so its run sends the body as
+    the caller described it (``Content-Type`` above all).
+    """
+    return {key.lower(): value for key, value in inbound.items() if key.lower() in REPLAY_HEADERS}
 
 
 def passthrough_response_headers(upstream: Mapping[str, str]) -> dict[str, str]:
