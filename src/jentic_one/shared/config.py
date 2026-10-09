@@ -1745,7 +1745,7 @@ class ServerConfig(BaseModel):
     Every absolute URL the app builds for external consumption on the
     control/auth surfaces — the OAuth connect ``redirect_uri``, the OIDC issuer
     / JWT-Bearer audience, the DCR ``registration_client_uri``, the SPA login
-    callback, and access-request approval links — falls back to this when its
+    callback, and connect-session approval links — falls back to this when its
     own more specific knob is unset. Explicit per-field values still win
     (needed behind a reverse proxy that fronts multiple surfaces on distinct
     origins). The broker's ``jobs_api_base_url`` / ``account_linking_base_url``
