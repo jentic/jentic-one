@@ -181,7 +181,8 @@ async def test_unpinned_host_variable_appearing_after_create_fails_the_confirm(
 )
 async def test_any_host_position_variable_without_enum_is_refused(env: Context, url: str) -> None:
     name = url[url.index("{") + 1 : url.index("}")]
-    default = {"port": "8443", "scheme": "https", "base": "https://api.vault.example"}.get(name, "x")
+    defaults = {"port": "8443", "scheme": "https", "base": "https://api.vault.example"}
+    default = defaults.get(name, "x")
     await import_spec(
         env, KEY_SCHEME, servers=[{"url": url, "variables": {name: {"default": default}}}]
     )
