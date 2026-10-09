@@ -210,11 +210,18 @@ export function SheetPrimitive({
 		}
 	}, [animationState]);
 
+	// The focus to hand back on close: whatever held it as the sheet began to
+	// enter. Keyed on `animationState` alone — a host that swaps `initialFocus`
+	// mid-entrance (a tab switch) must not re-capture, or the return target
+	// becomes a control inside this sheet, gone once it unmounts.
 	useEffect(() => {
-		if (animationState === 'entering') {
-			previousFocusRef.current = document.activeElement as HTMLElement;
-		}
+		if (animationState !== 'entering') return;
+		const active = document.activeElement as HTMLElement | null;
+		if (sheetRef.current?.contains(active)) return;
+		previousFocusRef.current = active;
+	}, [animationState]);
 
+	useEffect(() => {
 		if (animationState === 'open') {
 			const timer = setTimeout(() => {
 				// Fires well after the sheet is usable: anything already focused inside it
