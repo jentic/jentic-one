@@ -30,6 +30,7 @@ from pydantic import SecretStr
 from sqlalchemy import delete, select, text, update
 
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.admin.core.schema.events import Event
 from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
@@ -105,6 +106,7 @@ from jentic_one.shared.config import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.events import EventType
 from jentic_one.shared.web.deps import resolve_identity
 from jentic_one.shared.web.errors import request_validation_error_handler
 
@@ -235,6 +237,7 @@ async def _wipe(ctx: Context) -> None:
         await session.execute(text("DELETE FROM agents WHERE id LIKE 'agnt_apitgt_%'"))
         await session.execute(text("DELETE FROM users WHERE id LIKE 'usr_apitgt_%'"))
         await session.execute(delete(AuditEntry))
+        await session.execute(delete(Event).where(Event.type == EventType.CONNECT_SESSION_CREATED))
         await session.commit()
 
 
@@ -398,6 +401,31 @@ async def test_connect_picks_the_declared_static_scheme(
         _NAME,
         _VERSION,
     )
+
+
+async def test_agent_api_connect_emits_the_rail_event(env: Context) -> None:
+    """An agent's API-target request is announced on the activity rail like a
+    vendor connect: informational, the agent as subject, never the poll token."""
+    await _import(env, _KEY_SCHEME)
+    created = await _connect(env)
+    async with env.admin_db.session() as session:
+        events = list(
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.CONNECT_SESSION_CREATED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(events) == 1
+    (event,) = events
+    assert event.requires_action is False
+    assert event.created_by == _AGENT_ID
+    assert event.summary == f"Agent '{_AGENT_ID}' asked to connect '{_VENDOR}/{_NAME}'"
+    assert event.data is not None
+    assert event.data["session_id"] == created.session_id
+    assert created.poll_token not in f"{event.summary} {event.detail} {event.data}"
 
 
 async def test_connect_needs_auth_type_when_several_schemes_are_declared(env: Context) -> None:

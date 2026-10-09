@@ -1196,6 +1196,7 @@ class ConnectSessionService:
                 "credential_id": row.credential_id,
             },
         )
+        await self._emit_session_created(row, vendor_display_name=f"{view.vendor}/{view.name}")
         return CreatedSession(
             session_id=row.id,
             approval_url=self._approval_url_for(row.id),
