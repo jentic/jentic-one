@@ -13,6 +13,7 @@ import {
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
+import { useOpenConnectRequests } from '@/shared/credentials/api';
 import { Toaster } from '@/shared/ui';
 import { AuthProvider } from '@/shared/auth';
 import {
@@ -26,7 +27,9 @@ import { dismissFirstRun } from '@/modules/agents/lib/firstRun';
 import {
 	makeMockCredential,
 	resetApisStore,
+	resetConnectSessionsStore,
 	resetCredentialsStore,
+	seedMockAgentConnectSession,
 } from '@/shared/credentials/mocks/handlers';
 import {
 	CredentialType,
@@ -2159,5 +2162,123 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 			expect(rect.left).toBeGreaterThanOrEqual(0);
 			expect(rect.right).toBeLessThanOrEqual(390);
 		}
+	});
+});
+
+let inboxRead = false;
+
+/** Reads the open connect requests the way the attention inbox does. */
+function InboxReader() {
+	const requests = useOpenConnectRequests();
+	if (requests.data) inboxRead = true;
+	return null;
+}
+
+describe('AgentsPage — agents waiting on a connect request', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+		seedComposedStores();
+		resetOrphanPurgeAttemptsForTest();
+		resetConnectSessionsStore();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+	});
+
+	function waitingSection() {
+		return screen.findByRole('region', { name: 'Waiting for you' });
+	}
+
+	it('shows nothing while no agent is waiting', async () => {
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+	});
+
+	it("collapses an agent's open requests into one row, with a Review link per request", async () => {
+		const github = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'github',
+			created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+		});
+		const slack = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'slack',
+			state: 'polling',
+			created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+		});
+		renderPage();
+
+		const section = await waitingSection();
+		const rows = within(section).getAllByRole('listitem');
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toHaveTextContent('support-agent');
+		expect(rows[0]).toHaveTextContent('wants to connect github and slack');
+		expect(rows[0]).toHaveTextContent(/waiting 20m/);
+		const links = within(rows[0]).getAllByRole('link');
+		expect(links.map((l) => l.textContent)).toEqual([
+			'Review github for support-agent',
+			'Review slack for support-agent',
+		]);
+		expect(links[0].getAttribute('href')).toContain(`approve=${github.session_id}`);
+		expect(links[1].getAttribute('href')).toContain(`approve=${slack.session_id}`);
+		for (const link of links) expect(link.getAttribute('href')).not.toContain('poll_token');
+		await checkA11y(section);
+	});
+
+	it('lists requests only to a viewer who may approve them', async () => {
+		seedMockAgentConnectSession({ agent_id: 'agnt_active_1', vendor_key: 'github' });
+		// An owner holding credentials:write but not agents:write can list the
+		// request but not open it, so it is not waiting for them.
+		// The inbox reads the same query for any credentials reader, so the
+		// cache holds the request even though this section never fetches it.
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read']);
+		const { unmount } = renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<InboxReader />
+			</AuthProvider>,
+		);
+		await screen.findAllByText('inbox-triage-bot');
+		await waitFor(() => expect(inboxRead).toBe(true));
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+		unmount();
+
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read', 'agents:write']);
+		renderPage('/', { withAuth: true });
+		expect(await waitingSection()).toHaveTextContent('wants to connect github');
+	});
+
+	it('opens the request token-less from its Review link and strips the param', async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'github',
+		});
+		const user = userEvent.setup();
+		// Another agent is selected; the link selects the requesting one.
+		renderPage('/?agent=agnt_pending_2');
+
+		const section = await waitingSection();
+		await user.click(within(section).getByRole('link', { name: /Review support-agent/ }));
+
+		const dialog = await screen.findByRole('dialog', { name: /^Approve integration$/ });
+		// The review read succeeded with no poll token (the mock admits only
+		// the owner path without one).
+		expect(
+			await within(dialog).findByText(/an agent is asking to connect/i),
+		).toBeInTheDocument();
+		await waitFor(() => {
+			const params = new URLSearchParams(
+				screen.getByTestId('location-search').textContent ?? '',
+			);
+			expect(params.has('approve')).toBe(false);
+			expect(params.get('agent')).toBe('agnt_active_1');
+		});
+		expect(seeded.poll_token).toBeTruthy();
 	});
 });

@@ -142,8 +142,10 @@ interface CreateCredentialFlowProps {
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
 	 * shows the agent-requested scopes for the human to review + confirm.
+	 * `pollToken` is set only for an older link that still carries one; the
+	 * agent's owner or an org admin approves without it.
 	 */
-	approvalSession?: { sessionId: string; pollToken: string };
+	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
 	 * When set, the vendor connect opens with this agent locked in as the
 	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the

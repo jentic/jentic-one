@@ -1340,10 +1340,11 @@ async def handle_request_connection(
 
     Create-only (theme-7 Phase 1b): starts a connect session for a registry
     vendor and returns ``{session_id, approval_url, resolved_flow}`` plus the
-    operator-relay instruction. ``poll_token`` is not surfaced as a separate
-    field — this surface serves no poll leg (the recovery loop is relay
-    approval_url → operator approves → confirm via whoami → retry); it still
-    rides the approval_url's query string, which the approving human needs. ``agent_id``
+    operator-relay instruction. ``poll_token`` is not surfaced — this surface
+    serves no poll leg (the recovery loop is relay approval_url → operator
+    approves → confirm via whoami → retry), and the approval_url carries only
+    the session id: the agent's owner or ``org:admin`` approves without the
+    token. ``agent_id``
     is never taken from arguments: the caller *is* the agent (the route
     refuses a supplied agent_id with 403 for the same reason). Like the route,
     it forwards ``oauth_app_registration_id``, the validated

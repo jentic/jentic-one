@@ -170,6 +170,7 @@ class SessionSummary:
     connected_as: str | None
     error_code: str | None
     created_at: datetime
+    credential_id: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -500,7 +501,7 @@ class ConnectSessionService:
                 created_by=initiator_actor_id,
             )
 
-        approval_url = self._approval_url_for(row.id, poll_token)
+        approval_url = self._approval_url_for(row.id)
         _logger.info(
             "connect_session.created",
             session_id=row.id,
@@ -560,22 +561,22 @@ class ConnectSessionService:
             return _session_app_from_registration(self._ctx, resolved.registration)
         return _session_app_from_flow(resolved.flow)
 
-    def _approval_url_for(self, session_id: str, poll_token: str) -> str:
+    def _approval_url_for(self, session_id: str) -> str:
         """Build the human-facing approval URL for an agent-initiated session.
 
-        Lands on the Agents page (``/app/agents``) with the session id and poll
-        token as query params; the SPA detects the ``approve`` param, opens the
-        credential inventory and auto-opens the credential dialog into the
-        vendor-approval flow. The poll token rides along because the status
-        endpoint (RFC-8628 poller) is gated by the token — the human owner needs
-        it to observe completion.
+        Lands on the Agents page (``/app/agents``) with the session id as the
+        ``approve`` query param; the SPA detects it, opens the credential
+        inventory and auto-opens the credential dialog into the vendor-approval
+        flow. The URL carries no ``poll_token``: the target agent's owner and
+        ``org:admin`` review, poll, confirm and cancel without it, so the token
+        stays with the agent and never rides in a browser URL.
 
         The URL is relayed out-of-band (CLI output, MCP tool result), so it must
         be absolute even with no public URL configured — ``resolved_auth_base_url``
         falls back to ``bind_origin`` rather than yielding a bare path.
         """
         base = resolved_auth_base_url(self._ctx.config).rstrip("/")
-        return f"{base}/app/agents?approve={session_id}&poll_token={poll_token}"
+        return f"{base}/app/agents?approve={session_id}"
 
     # ---- review data ------------------------------------------------------
 
@@ -711,6 +712,7 @@ class ConnectSessionService:
             connected_as=row.connected_as,
             error_code=row.error_code,
             created_at=row.created_at,
+            credential_id=row.credential_id,
         )
 
     def _vendor_display_name(self, vendor_key: str, registration_name: str | None) -> str:

@@ -528,9 +528,11 @@ export {
 } from './apis-hooks';
 
 export {
+	connectRequestsKey,
 	useAgentsForPicker,
 	useConfirmConnectSession,
 	useConnectSession,
+	useOpenConnectRequests,
 	usePollConnectSessionStatus,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
@@ -569,6 +571,7 @@ export { jobSucceeded, pollJobToTerminal } from './apis-hooks';
 export type {
 	ApiResponse,
 	ApiListResponse,
+	ConnectSessionSummaryResponse,
 	CatalogEntryResponse,
 	CatalogListResponse,
 	ProviderDiscoveryResponse,
