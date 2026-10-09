@@ -30,6 +30,7 @@ from jentic_one.control.services.integrations.errors import (
     InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
     NoOpForFlowError,
     OAuthAppChangedError,
     ScopeValidationError,
@@ -92,6 +93,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
     InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
     OAuthAppChangedError: (409, "connect_session_oauth_app_changed"),
+    ManualFlowsDisabledError: (404, "manual_flows_disabled"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 

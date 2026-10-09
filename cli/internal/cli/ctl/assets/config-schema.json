@@ -371,9 +371,34 @@
       "title": "ConnectConfig",
       "type": "object"
     },
+    "ControlConnectConfig": {
+      "description": "Agent connect-session settings on the control surface.",
+      "properties": {
+        "manual_flows_enabled": {
+          "default": false,
+          "description": "Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. Not usable in this release: leave it off. Once usable, turn it on only after every control replica runs a release that understands these sessions.",
+          "title": "Manual Flows Enabled",
+          "type": "boolean"
+        },
+        "manual_flows_ttl_hours": {
+          "default": 72,
+          "description": "Hours an API-target connect session (a human-entered credential, or an OAuth API waiting for an app) stays open before it expires. Vendor OAuth sessions keep their fixed 30-minute lifetime.",
+          "minimum": 1,
+          "title": "Manual Flows Ttl Hours",
+          "type": "integer"
+        }
+      },
+      "title": "ControlConnectConfig",
+      "type": "object"
+    },
     "ControlSurfaceConfig": {
-      "description": "Control surface configuration.\n\nEmpty since theme 7 removed the access-request subsystem (its\n``access_requests.ttl_days``/``canonical_base_url`` knobs). The section\nstays so a ``control:`` key in existing YAML keeps validating and future\ncontrol-surface knobs have a home; unknown subkeys are ignored.",
-      "properties": {},
+      "description": "Control surface configuration.\n\nUnknown subkeys are ignored, so a ``control:`` section written for another\nrelease keeps validating.",
+      "properties": {
+        "connect": {
+          "$ref": "#/$defs/ControlConnectConfig",
+          "description": "Agent connect-session settings."
+        }
+      },
       "title": "ControlSurfaceConfig",
       "type": "object"
     },
