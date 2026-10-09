@@ -173,6 +173,8 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 			screen.getByText('Need to list charges for the monthly report.'),
 		).toBeInTheDocument();
 		expect(screen.getByText(/^Owner/)).toBeInTheDocument();
+		// "Owner" names the role; no "User" type prefix in front of the name.
+		expect(screen.getByText(/^Owner/)).not.toHaveTextContent(/^Owner\s*User\b/);
 		// A manual session has no scopes to pick.
 		expect(screen.queryByText('What can this agent do?')).not.toBeInTheDocument();
 		await checkA11y(container);
