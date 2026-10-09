@@ -467,6 +467,15 @@ _BOUND_AGENTS_LIMIT = 200
 # ---------------------------------------------------------------------------
 
 
+@dataclass(slots=True, frozen=True)
+class _CapScope:
+    """Whose open sessions a new session counts against."""
+
+    agent_id: str | None
+    owner_id: str | None
+    owned_agent_ids: list[str]
+
+
 def _state_secret(ctx: Context) -> str:
     return ctx.config.credentials.connect.state_secret.get_secret_value()
 
@@ -901,7 +910,7 @@ class ConnectSessionService:
             reused = await self._reuse_open_session(_find_open)
             if reused is not None:
                 return reused
-        await self._check_open_session_caps(agent_id, initiator_actor_id)
+        cap_scope = await self._check_open_session_caps(agent_id, initiator_actor_id)
 
         session_app = self._session_app_for(resolved)
 
@@ -927,6 +936,7 @@ class ConnectSessionService:
 
         try:
             async with self._ctx.control_db.transaction() as session:
+                await self._enforce_open_session_caps(session, cap_scope)
                 credential = await CredentialRepository.create(
                     session,
                     type=handler.stored_type.value,
@@ -1077,7 +1087,7 @@ class ConnectSessionService:
             reused = await self._reuse_open_session(_find_open)
             if reused is not None:
                 return reused
-        await self._check_open_session_caps(agent_id, initiator_actor_id)
+        cap_scope = await self._check_open_session_caps(agent_id, initiator_actor_id)
 
         manual = manual_handler_for_scheme(scheme.kind)
         oauth_source: tuple[str, ResolvedVendorSource] | None = None
@@ -1131,6 +1141,7 @@ class ConnectSessionService:
         poll_token = secrets.token_urlsafe(32)
         try:
             async with self._ctx.control_db.transaction() as session:
+                await self._enforce_open_session_caps(session, cap_scope)
                 credential = await CredentialRepository.create(
                     session,
                     type=stored_type.value,
@@ -1296,16 +1307,21 @@ class ConnectSessionService:
         retry_after = max(1, math.ceil((ended + cooldown - now).total_seconds()))
         raise RecentlyRejectedError(retry_after)
 
-    async def _check_open_session_caps(self, agent_id: str | None, initiator_actor_id: str) -> None:
+    async def _check_open_session_caps(
+        self, agent_id: str | None, initiator_actor_id: str
+    ) -> _CapScope | None:
         """Refuse a new session past the per-agent or per-owner open-session cap.
 
         Enforced while ``manual_flows_enabled`` is on. The owner is the
         agent's owner, or the initiating user when no agent is named; an
-        owner's count covers their own sessions and their agents'.
+        owner's count covers their own sessions and their agents'. This is
+        the early refusal; :meth:`_enforce_open_session_caps` repeats the
+        count under a lock inside the creating transaction, so concurrent
+        asks cannot all pass. Returns the scope that re-check needs (``None``
+        when the caps are off).
         """
         if not self._manual_flows_enabled:
-            return
-        cfg = self._ctx.config.control.connect
+            return None
         owner_id: str | None = None
         owned: list[str] = []
         async with self._ctx.admin_db.session() as admin_session:
@@ -1318,17 +1334,41 @@ class ConnectSessionService:
                 owned = await PrerequisiteRepository.list_agent_ids_owned_by(
                     admin_session, owner_id=owner_id
                 )
+        scope = _CapScope(agent_id=agent_id, owner_id=owner_id, owned_agent_ids=owned)
         async with self._ctx.control_db.session() as session:
-            if agent_id is not None:
-                per_agent = await ConnectSessionRepository.count_open(session, agent_ids=[agent_id])
-                if per_agent >= cfg.max_open_sessions_per_agent:
-                    raise TooManyOpenSessionsError("agent", cfg.max_open_sessions_per_agent)
-            if owner_id is not None:
-                per_owner = await ConnectSessionRepository.count_open(
-                    session, agent_ids=owned, initiator_actor_id=owner_id
-                )
-                if per_owner >= cfg.max_open_sessions_per_owner:
-                    raise TooManyOpenSessionsError("owner", cfg.max_open_sessions_per_owner)
+            await self._count_against_caps(session, scope)
+        return scope
+
+    async def _enforce_open_session_caps(self, session: Any, scope: _CapScope | None) -> None:
+        """Re-count the caps inside the creating transaction, serialised per owner.
+
+        Every creation for the same owner (or ownerless agent) takes the same
+        transaction-scoped lock first, so the count and the insert are atomic
+        with respect to each other. SQLite serialises write transactions
+        already (``BEGIN IMMEDIATE``).
+        """
+        if scope is None:
+            return
+        lock_key = scope.owner_id or scope.agent_id
+        if lock_key is None:
+            return
+        await ConnectSessionRepository.acquire_open_session_cap_lock(session, lock_key)
+        await self._count_against_caps(session, scope)
+
+    async def _count_against_caps(self, session: Any, scope: _CapScope) -> None:
+        cfg = self._ctx.config.control.connect
+        if scope.agent_id is not None:
+            per_agent = await ConnectSessionRepository.count_open(
+                session, agent_ids=[scope.agent_id]
+            )
+            if per_agent >= cfg.max_open_sessions_per_agent:
+                raise TooManyOpenSessionsError("agent", cfg.max_open_sessions_per_agent)
+        if scope.owner_id is not None:
+            per_owner = await ConnectSessionRepository.count_open(
+                session, agent_ids=scope.owned_agent_ids, initiator_actor_id=scope.owner_id
+            )
+            if per_owner >= cfg.max_open_sessions_per_owner:
+                raise TooManyOpenSessionsError("owner", cfg.max_open_sessions_per_owner)
 
     def _session_app_for(self, resolved: ResolvedVendorSource) -> SessionApp:
         """Build the session's OAuth-app material from its resolved source.

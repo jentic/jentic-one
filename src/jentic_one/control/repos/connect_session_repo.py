@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -269,6 +269,21 @@ class ConnectSessionRepository:
         result = await session.execute(stmt)
         await session.flush()
         return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def acquire_open_session_cap_lock(session: AsyncSession, owner_key: str) -> None:
+        """Serialise open-session cap checks for one owner until the transaction ends.
+
+        PostgreSQL: a transaction-scoped advisory lock keyed on ``owner_key``.
+        SQLite: a no-op; its write transactions are already serial
+        (``BEGIN IMMEDIATE``).
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect == "postgresql":
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"connect_session_cap:{owner_key}"},
+            )
 
     @staticmethod
     async def count_open(
