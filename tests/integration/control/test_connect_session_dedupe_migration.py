@@ -91,13 +91,12 @@ async def test_dedupe_migration_handles_preexisting_duplicates(
 
     await asyncio.to_thread(command.upgrade, cfg, "head")
     async with control_db.session() as session:
-        keys = dict(
-            (
-                await session.execute(
-                    text("SELECT id, dedupe_key FROM connect_sessions WHERE id LIKE 'cs_dd_%'")
-                )
-            ).all()
-        )
+        rows = (
+            await session.execute(
+                text("SELECT id, dedupe_key FROM connect_sessions WHERE id LIKE 'cs_dd_%'")
+            )
+        ).all()
+        keys: dict[str, str | None] = {row[0]: row[1] for row in rows}
         outcomes = (
             await session.execute(
                 text(
