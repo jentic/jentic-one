@@ -339,6 +339,7 @@ def _call_env(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> CallEnv:
         credential=credential,
         base_url=state.get("mcp_base_url", ""),
         session_id=state.get("mcp_session_id"),
+        security_schemes_lookup=state.get("mcp_security_schemes_lookup"),
     )
 
 
@@ -639,6 +640,12 @@ class McpMount:
         state["mcp_credential"] = credential
         state["mcp_base_url"] = deployment_base_url(self.ctx.config, request)
         state["mcp_session_id"] = valid_session_id_or_none(request.headers.get(SESSION_ID_HEADER))
+        # The connect route's registry seam (control/web/deps.py):
+        # request_connection threads the same process-level lookup into
+        # ConnectSessionService for registry-API targets.
+        state["mcp_security_schemes_lookup"] = getattr(
+            self.parent_app.state, "security_schemes_lookup", None
+        )
 
     async def _buffered_body(self, receive: Receive) -> bytes | None:
         """Read the full request body (``None`` when it exceeds the bound)."""
