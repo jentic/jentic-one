@@ -12,12 +12,14 @@ import {
 	XCircle,
 } from 'lucide-react';
 import {
+	ActorLabel,
 	ActorStatusBadge,
 	AgentBadge,
 	AppLink,
 	Badge,
 	Button,
 	Checkbox,
+	ConfirmDialog,
 	CopyButton,
 	ErrorAlert,
 	Input,
@@ -37,6 +39,7 @@ import {
 	useConfirmConnectSession,
 	useConnectSession,
 	usePollConnectSessionStatus,
+	useRejectConnectSession,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendorOperations,
@@ -45,15 +48,39 @@ import {
 	cancelConnectSession,
 	cancelConnectSessionOnUnload,
 } from '@/shared/credentials/api/vendors-client';
+import { useProviders } from '@/shared/credentials/api';
+import {
+	ApiTargetDetails,
+	ConfirmBlockedNotice,
+	ConnectMethodField,
+	OwnOAuthClientStep,
+	SecretEntryStep,
+	buildMethodOptions,
+	parseMethodKey,
+	secretStepSubtitle,
+	type EnteredOAuthClient,
+	type EnteredSecret,
+} from '@/shared/credentials/components/ConnectReviewParts';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
 	DefaultRulePreviewRow,
 	RuleListEditor,
 } from '@/shared/credentials/components/RuleListEditor';
+import {
+	confirmBlockedReason,
+	describeConfirmError,
+	isAwaitingApp,
+	schemeSummary,
+	secretKindOf,
+	secretNoun,
+} from '@/shared/credentials/lib/connectReview';
 import { isHttpsVendorUrl, openVendorUrl } from '@/shared/credentials/lib/safe-navigation';
+import { useSharedAppSurface } from '@/shared/credentials/lib/sharedAppSurface';
 import type {
 	AuthCodeConfirmResponse,
 	ConfirmResponse,
+	ConfirmSessionBody,
+	ConfirmSessionResponse,
 	DeviceAuthorizationConfirmResponse,
 	PermissionRule,
 	ReviewScope,
@@ -75,6 +102,11 @@ import type {
  *    `pollToken` is optional: the approval URL carries only the session id, and
  *    the backend authorises the agent's owner / an org admin without it. An
  *    older link that still carries a token keeps working for its holder.
+ *    Beyond a vendor sign-in, approve mode resolves `manual_*` sessions (the
+ *    approver types the API key / token / password), `awaiting_app` sessions
+ *    (the approver's own OAuth client, or a shared app where the host offers
+ *    one), and binding a credential the approver already holds. "Not now"
+ *    closes with no server call; "Reject" is the explicit `:reject`.
  *
  * Both variants share the awaiting (device code + polling) and terminal
  * (success / failure) steps.
@@ -442,6 +474,11 @@ function VendorSelfConnectFlow({
 				permission_rules: finalRules,
 				agent_id: agentId,
 			});
+			// A vendor session's OAuth confirm always answers with a vendor
+			// challenge; the other result kinds belong to approve mode.
+			if (result.kind !== 'device_authorization' && result.kind !== 'authorization_code') {
+				return;
+			}
 			phaseRef.current = 'awaiting';
 			setChallenge(result);
 			setPhase('awaiting');
@@ -772,6 +809,20 @@ function approvalLoadError(error: unknown): string {
 	return (error as Error | null)?.message ?? 'The approval link is no longer valid.';
 }
 
+/** The approve dialog's steps; `secret` / `own_client` collect what `:confirm` sends last. */
+type ApprovePhase = Phase | 'secret' | 'own_client';
+
+/** A step's inline error after a failed `:confirm`, shown on the step it names. */
+interface StepError {
+	phase: ApprovePhase;
+	message: string;
+}
+
+/** How the session ended inside the dialog, when `:confirm` (not `/status`) decided it. */
+type LocalOutcome =
+	| { status: 'connected'; credentialId: string; reauthorizeUrl?: string }
+	| { status: 'failed'; message: string };
+
 function VendorApproveFlow({
 	sessionId,
 	pollToken,
@@ -793,25 +844,46 @@ function VendorApproveFlow({
 	// 403 as "this request isn't open to you".
 	const sessionQuery = useConnectSession(sessionId, pollToken);
 	const agents = useAgentsForPicker();
+	const providers = useProviders();
+	const sharedAppSurface = useSharedAppSurface();
 	const queryClient = useQueryClient();
 
 	const [selectedScopes, setSelectedScopes] = useState<Set<string> | null>(null);
-	const [phase, setPhase] = useState<Phase>('configure');
+	const [phase, setPhase] = useState<ApprovePhase>('configure');
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	const [methodValue, setMethodValue] = useState<string>('primary');
+	const [stepError, setStepError] = useState<StepError | null>(null);
+	const [outcome, setOutcome] = useState<LocalOutcome | null>(null);
+	const [rejectOpen, setRejectOpen] = useState(false);
 
 	const confirmMutation = useConfirmConnectSession(sessionId, pollToken);
 	const cancelMutation = useCancelConnectSession();
-	const phaseRef = useRef<Phase>('configure');
+	const rejectMutation = useRejectConnectSession();
+	const phaseRef = useRef<ApprovePhase>('configure');
 
 	const session: ReviewSession | undefined = sessionQuery.data;
 	const scopes: ReviewScope[] = useMemo(() => session?.scopes ?? [], [session]);
+	const secretKind = session ? secretKindOf(session.resolved_flow) : null;
+	const awaitingApp = session ? isAwaitingApp(session) : false;
+	const candidates = useMemo(() => session?.existing_credentials ?? [], [session]);
+	const requestedScopes = useMemo(() => session?.requested_scopes ?? [], [session]);
+	// The shared-app option needs the host's surface and an app-less OAuth API.
+	const offerSharedApp = awaitingApp && sharedAppSurface != null;
+	const method = parseMethodKey(methodValue);
 
-	// Cancel-on-unmount mirror of the self-flow: if the user closes
-	// the approval dialog mid-confirm, the pending credential +
-	// session must be cleaned up server-side. See
-	// ``VendorSelfConnectFlow`` for why we fire the raw client
-	// instead of the mutation.
+	const goToPhase = (next: ApprovePhase): void => {
+		phaseRef.current = next;
+		setPhase(next);
+	};
+
+	// Cancel-on-unmount mirror of the self-flow: if the user closes the
+	// approval dialog while the vendor sign-in is under way, the pending
+	// credential + session must be cleaned up server-side. That is a
+	// cancel (`cancelled`), never a reject. Closing it before confirming
+	// sends nothing: the request stays open for later. See
+	// ``VendorSelfConnectFlow`` for why we fire the raw client instead of
+	// the mutation.
 	useEffect(() => {
 		return () => {
 			if (phaseRef.current !== 'awaiting') return;
@@ -831,17 +903,34 @@ function VendorApproveFlow({
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
 	}, [sessionId, pollToken]);
 
-	const handleCancel = (): void => {
-		// Both configure- and awaiting-phase cancels must cancel the
-		// server-side session. Without this the ``created`` session sits
-		// pending until the TTL scanner reaps it (~30 min) and the
-		// initiating agent's ``/status`` poll keeps reporting ``pending``
-		// on an explicit human refusal.
-		if (phase === 'awaiting' || phase === 'configure') {
-			cancelMutation.mutate({ sessionId, pollToken });
-			phaseRef.current = 'terminal';
-		}
+	// "Not now": close and leave the request open — no server call, so the
+	// agent keeps waiting and the request stays in the inbox.
+	const handleNotNow = (): void => {
 		onBack();
+	};
+
+	// Cancel while the vendor sign-in is under way: the session already left
+	// `created`, so it is cancelled server-side (as an unmount would).
+	const handleCancelSignIn = (): void => {
+		cancelMutation.mutate({ sessionId, pollToken });
+		phaseRef.current = 'terminal';
+		onBack();
+	};
+
+	const handleReject = async (): Promise<void> => {
+		try {
+			await rejectMutation.mutateAsync({ sessionId });
+			setRejectOpen(false);
+			phaseRef.current = 'terminal';
+			toast({
+				title: 'Request rejected',
+				description: "The agent is told it was rejected and won't ask again for a while.",
+				variant: 'success',
+			});
+			onDone();
+		} catch {
+			// surfaced in the confirm dialog below.
+		}
 	};
 
 	// Seed selection from what the agent + defaults pre-selected on the session.
@@ -854,6 +943,40 @@ function VendorApproveFlow({
 			new Set(scopes.filter((s) => s.default || s.requested).map((s) => s.name)),
 		);
 	}, [session, scopes, selectedScopes]);
+
+	const methodOptions = useMemo(() => {
+		if (!session) return [];
+		const display = session.vendor_display_name;
+		const primary = awaitingApp
+			? {
+					label: 'Bring your own OAuth client',
+					description: `Use an OAuth app you registered with ${display}: its client ID, secret and endpoints.`,
+				}
+			: secretKind
+				? {
+						label: `Enter a new ${secretNoun(secretKind)}`,
+						description: `Connect a new credential for ${display}, bound only to this agent.`,
+					}
+				: {
+						label: `Sign in to ${display}`,
+						description: 'Connect a new credential with the scopes you pick below.',
+					};
+		return buildMethodOptions({
+			primaryLabel: primary.label,
+			primaryDescription: primary.description,
+			sharedApp: offerSharedApp,
+			candidates,
+			requestedScopes,
+		});
+	}, [session, awaitingApp, secretKind, offerSharedApp, candidates, requestedScopes]);
+
+	// A reload can drop the picked option (the credential went away, or the
+	// session left `awaiting_app`): fall back to the session's own flow.
+	useEffect(() => {
+		if (methodOptions.length === 0) return;
+		const picked = methodOptions.find((o) => o.value === methodValue);
+		if (!picked || picked.disabled) setMethodValue('primary');
+	}, [methodOptions, methodValue]);
 
 	const polling = usePollConnectSessionStatus(sessionId, pollToken, {
 		enabled: phase === 'awaiting',
@@ -877,8 +1000,7 @@ function VendorApproveFlow({
 		// "session gone → terminal").
 		const err = polling.error as { status?: number } | undefined;
 		if (err?.status === 403) {
-			phaseRef.current = 'terminal';
-			setPhase('terminal');
+			goToPhase('terminal');
 			// The request is no longer open: drop it from the waiting signals.
 			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			return;
@@ -886,8 +1008,7 @@ function VendorApproveFlow({
 		if (!polling.data) return;
 		const status = polling.data.status;
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
-			phaseRef.current = 'terminal';
-			setPhase('terminal');
+			goToPhase('terminal');
 			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			if (status === 'connected') {
 				toast({
@@ -913,37 +1034,168 @@ function VendorApproveFlow({
 
 	// Continue on the review page — no backend call, just move to rules.
 	// Rules seed from the agent's ``requested_permission_rules`` when the
-	// agent supplied any (those are agent-authored, not client-guessed);
-	// otherwise the list stays empty and the empty-state fallback kicks
-	// in at ``:confirm`` time, same as the self flow.
+	// agent supplied any (for an API target, the minimal rule that allows
+	// the denied operation); otherwise the list starts empty.
 	const goToRules = (): void => {
+		setStepError(null);
 		setRules((prev) => {
 			if (prev !== null) return prev;
 			return session?.requested_permission_rules ?? [];
 		});
-		setPhase('rules');
+		goToPhase('rules');
 	};
 
-	// Continue on the rules page — fires ``:confirm`` with the user's
-	// finalised rules (session already exists in approve mode).
-	const approve = async (finalRules: PermissionRule[]) => {
-		const chosen = Array.from(selectedScopes ?? []);
+	/** The review the approver saw, echoed so the server can refuse a stale one. */
+	const reviewed = (finalRules: PermissionRule[]) => ({
+		permission_rules: finalRules,
+		expected_agent_id: session?.agent?.agent_id ?? null,
+		digest: session?.digest ?? '',
+	});
+
+	const afterFailedConfirm = (err: unknown, from: ApprovePhase): void => {
+		const copy = describeConfirmError(err);
+		if (copy.action === 'ended') {
+			setOutcome({ status: 'failed', message: copy.message });
+			goToPhase('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+			return;
+		}
+		if (copy.action === 'reload') {
+			// What was reviewed changed: re-read it and send the approver back
+			// to the review, with the reason on top.
+			void sessionQuery.refetch();
+			setStepError({ phase: 'configure', message: copy.message });
+			goToPhase('configure');
+			return;
+		}
+		if (copy.action === 'rules') {
+			setStepError({ phase: 'rules', message: copy.message });
+			goToPhase('rules');
+			return;
+		}
+		setStepError({ phase: from, message: copy.message });
+	};
+
+	/**
+	 * Send ``:confirm``. A body carrying a secret is cleared from the mutation
+	 * state as soon as the call settles, so it is not kept as ``variables``.
+	 */
+	const sendConfirm = async (
+		body: ConfirmSessionBody,
+		from: ApprovePhase,
+		carriesSecret: boolean,
+	): Promise<ConfirmSessionResponse | null> => {
+		setStepError(null);
 		try {
-			const result = await confirmMutation.mutateAsync({
-				confirmed_scopes: chosen,
-				permission_rules: finalRules,
-			});
-			setChallenge(result);
-			phaseRef.current = 'awaiting';
-			setPhase('awaiting');
-			// Vendor-supplied URL — https-only guard mirrors ``startFlow``.
-			if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
-				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
-			}
-		} catch {
-			// surfaced via ErrorAlert below.
+			return await confirmMutation.mutateAsync(body);
+		} catch (err) {
+			afterFailedConfirm(err, from);
+			return null;
+		} finally {
+			if (carriesSecret) confirmMutation.reset();
 		}
 	};
+
+	const finishConnected = (credentialId: string, reauthorizeUrl?: string): void => {
+		setOutcome({ status: 'connected', credentialId, reauthorizeUrl });
+		goToPhase('terminal');
+		void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
+		void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+		toast({
+			title: `Connected to ${session?.vendor_display_name ?? 'the integration'}`,
+			variant: 'success',
+		});
+	};
+
+	const startVendorChallenge = (result: ConfirmResponse): void => {
+		setChallenge(result);
+		goToPhase('awaiting');
+		// Vendor-supplied URL — https-only guard mirrors ``startFlow``.
+		if (result.kind === 'authorization_code' && isHttpsVendorUrl(result.authorize_url)) {
+			openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
+		}
+	};
+
+	const handleResult = (result: ConfirmSessionResponse | null): void => {
+		if (!result) return;
+		if (result.kind === 'connected') {
+			finishConnected(result.credential_id);
+			return;
+		}
+		if (result.kind === 'reauthorize') {
+			finishConnected(result.credential_id, result.authorize_url);
+			if (isHttpsVendorUrl(result.authorize_url)) {
+				openVendorUrl(result.authorize_url, '_blank', 'noopener,noreferrer');
+			}
+			return;
+		}
+		startVendorChallenge(result);
+	};
+
+	// Continue on the rules page. The session's own OAuth flow and an
+	// existing credential confirm here; a typed secret or an own OAuth
+	// client is collected on the next step, last, right before it is sent.
+	const afterRules = async (finalRules: PermissionRule[]): Promise<void> => {
+		setStepError(null);
+		setRules(finalRules);
+		if (method.kind === 'existing' || method.kind === 'reauthorize') {
+			handleResult(
+				await sendConfirm(
+					{
+						kind: method.kind === 'existing' ? 'existing_credential' : 'reauthorize',
+						credential_id: method.credentialId,
+						...reviewed(finalRules),
+					},
+					'rules',
+					false,
+				),
+			);
+			return;
+		}
+		if (secretKind) {
+			goToPhase('secret');
+			return;
+		}
+		if (awaitingApp) {
+			goToPhase('own_client');
+			return;
+		}
+		handleResult(
+			await sendConfirm(
+				{
+					confirmed_scopes: Array.from(selectedScopes ?? []),
+					...reviewed(finalRules),
+				},
+				'rules',
+				false,
+			),
+		);
+	};
+
+	const submitSecret = async (secret: EnteredSecret): Promise<void> => {
+		handleResult(await sendConfirm({ ...secret, ...reviewed(rules ?? []) }, 'secret', true));
+	};
+
+	const submitOwnClient = async (client: EnteredOAuthClient): Promise<void> => {
+		handleResult(
+			await sendConfirm(
+				{
+					kind: 'own_oauth_client',
+					client_id: client.clientId,
+					client_secret: client.clientSecret,
+					authorize_url: client.authorizeUrl || null,
+					token_url: client.tokenUrl || null,
+					confirmed_scopes: Array.from(selectedScopes ?? []),
+					...reviewed(rules ?? []),
+				},
+				'own_client',
+				true,
+			),
+		);
+	};
+
+	const errorFor = (step: ApprovePhase): string | null =>
+		stepError?.phase === step ? stepError.message : null;
 
 	if (sessionQuery.isLoading) {
 		return (
@@ -953,7 +1205,7 @@ function VendorApproveFlow({
 			</div>
 		);
 	}
-	if (sessionQuery.error || !session) {
+	if ((sessionQuery.error || !session) && phase !== 'terminal') {
 		return (
 			<div className="space-y-4">
 				<ErrorAlert message={approvalLoadError(sessionQuery.error)} />
@@ -967,11 +1219,31 @@ function VendorApproveFlow({
 	}
 
 	const display: VendorDisplay = {
-		displayName: session.vendor_display_name,
-		iconKey: session.vendor_key,
+		displayName: session?.vendor_display_name ?? 'the integration',
+		iconKey: session?.vendor_key ?? '',
 	};
+	const boundAgentId = session?.agent?.agent_id ?? session?.requested_by_actor_id ?? null;
 
 	if (phase === 'terminal') {
+		if (outcome) {
+			return (
+				<TerminalStep
+					display={display}
+					status={outcome.status}
+					connectedAs={null}
+					errorCode={null}
+					failureMessage={outcome.status === 'failed' ? outcome.message : undefined}
+					credentialId={outcome.status === 'connected' ? outcome.credentialId : null}
+					renderPostConnect={renderPostConnect}
+					boundAgentId={boundAgentId}
+					onDone={onDone}
+				>
+					{outcome.status === 'connected' && outcome.reauthorizeUrl && (
+						<ReauthorizeNotice display={display} url={outcome.reauthorizeUrl} />
+					)}
+				</TerminalStep>
+			);
+		}
 		return (
 			<TerminalStep
 				display={display}
@@ -980,11 +1252,13 @@ function VendorApproveFlow({
 				errorCode={polling.data?.error_code ?? null}
 				credentialId={polling.data?.credential_id ?? null}
 				renderPostConnect={renderPostConnect}
-				boundAgentId={session.requested_by_actor_id}
+				boundAgentId={boundAgentId}
 				onDone={onDone}
 			/>
 		);
 	}
+
+	if (!session) return null;
 
 	if (phase === 'awaiting' && challenge) {
 		return (
@@ -992,10 +1266,12 @@ function VendorApproveFlow({
 				display={display}
 				challenge={challenge}
 				status={polling.data?.status ?? 'pending'}
-				onCancel={handleCancel}
+				onCancel={handleCancelSignIn}
 			/>
 		);
 	}
+
+	const apiTarget = session.target_kind === 'api';
 
 	if (phase === 'rules') {
 		return (
@@ -1004,18 +1280,78 @@ function VendorApproveFlow({
 				requestedRules={session.requested_permission_rules ?? []}
 				currentRules={rules ?? []}
 				onChange={setRules}
-				onBack={(): void => setPhase('configure')}
-				onContinue={(finalRules: PermissionRule[]) => void approve(finalRules)}
+				onBack={(): void => goToPhase('configure')}
+				onContinue={(finalRules: PermissionRule[]) => void afterRules(finalRules)}
 				submitting={confirmMutation.isPending}
-				error={(confirmMutation.error as Error | null) ?? null}
+				error={errorFor('rules')}
 				apiReference={session.api_reference}
+				// An API target always takes the approver's own rules: an
+				// empty list would be default deny, and no fallback rule is
+				// added on their behalf.
+				requireRule={apiTarget}
+			/>
+		);
+	}
+
+	if (phase === 'secret' && secretKind) {
+		const fieldHint =
+			session.scheme && secretKind === 'api_key'
+				? `Sent as ${schemeSummary(session.scheme)}.`
+				: null;
+		return (
+			<SecretEntryStep
+				header={
+					<VendorHeader
+						display={display}
+						subtitle={secretStepSubtitle(secretKind, display.displayName)}
+					/>
+				}
+				kind={secretKind}
+				fieldHint={fieldHint}
+				submitting={confirmMutation.isPending}
+				error={errorFor('secret')}
+				onBack={(): void => goToPhase('rules')}
+				onSubmit={(secret): void => void submitSecret(secret)}
+			/>
+		);
+	}
+
+	if (phase === 'own_client') {
+		const callbackUrl =
+			providers.data?.providers?.find((p) => p.id === 'direct_oauth2')?.callback_url ?? null;
+		return (
+			<OwnOAuthClientStep
+				header={
+					<VendorHeader
+						display={display}
+						subtitle={`Enter the OAuth app you registered with ${display.displayName}.`}
+					/>
+				}
+				callbackUrl={callbackUrl}
+				submitting={confirmMutation.isPending}
+				error={errorFor('own_client')}
+				onBack={(): void => goToPhase('rules')}
+				onSubmit={(client): void => void submitOwnClient(client)}
 			/>
 		);
 	}
 
 	const agentList = agents.data?.data ?? [];
-	const agent = agentList.find((a) => a.id === session.requested_by_actor_id);
+	const agent = agentList.find((a) => a.id === boundAgentId);
 	const currentSelection = selectedScopes ?? new Set<string>();
+	const canConfirm = session.can_confirm;
+	// The chooser shows when there is more than the session's own flow to
+	// pick from — and always for `awaiting_app`, whose own flow is the
+	// approver's OAuth client rather than a plain sign-in.
+	const showChooser = canConfirm && (methodOptions.length > 1 || awaitingApp);
+	const showScopes = method.kind === 'primary' && !secretKind;
+	const continueDisabled =
+		!canConfirm ||
+		method.kind === 'shared_app' ||
+		(method.kind === 'primary' &&
+			!secretKind &&
+			scopes.length > 0 &&
+			currentSelection.size === 0);
 
 	return (
 		<div className="space-y-5">
@@ -1024,38 +1360,155 @@ function VendorApproveFlow({
 				subtitle={`An agent is asking to connect to ${display.displayName} on your behalf.`}
 			/>
 
+			{errorFor('configure') && <ErrorAlert message={errorFor('configure') ?? ''} />}
+
 			<AgentRequestCard
-				agent={agent}
-				actorId={session.requested_by_actor_id}
+				agent={
+					agent ??
+					(session.agent?.name
+						? { id: session.agent.agent_id, name: session.agent.name }
+						: undefined)
+				}
+				actorId={boundAgentId ?? session.requested_by_actor_id}
+				ownerId={session.agent?.owner_id ?? null}
 				reason={session.reason}
 				loading={agents.isLoading}
 			/>
 
-			<ScopeChooseField
-				loading={false}
-				error={null}
-				scopes={reviewScopesToCatalog(scopes)}
-				selected={currentSelection}
-				onToggle={toggleScope}
-				agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
-			/>
+			{apiTarget && <ApiTargetDetails session={session} />}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
-				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
-					Cancel
-				</Button>
+			{!canConfirm && <ConfirmBlockedNotice reason={confirmBlockedReason(session)} />}
+
+			{awaitingApp && canConfirm && (
+				<p className="text-muted-foreground text-xs">
+					{display.displayName} uses OAuth, and there is no OAuth app to connect through
+					yet.
+				</p>
+			)}
+
+			{showChooser && (
+				<ConnectMethodField
+					options={methodOptions}
+					value={methodValue}
+					onChange={(v): void => {
+						setStepError(null);
+						setMethodValue(v);
+					}}
+				/>
+			)}
+
+			{canConfirm && method.kind === 'shared_app' && sharedAppSurface && (
+				<div className="bg-surface-inset rounded-lg p-3">
+					{sharedAppSurface.renderRegister({
+						api: session.api_reference,
+						displayName: display.displayName,
+						onRegistered: (): void => {
+							setMethodValue('primary');
+							void sessionQuery.refetch();
+						},
+					})}
+				</div>
+			)}
+
+			{canConfirm && showScopes && (
+				<ScopeChooseField
+					loading={false}
+					error={null}
+					scopes={reviewScopesToCatalog(scopes)}
+					selected={currentSelection}
+					onToggle={toggleScope}
+					agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
+				/>
+			)}
+
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
+				<div className="flex items-center gap-1">
+					<Button type="button" variant="ghost" size="sm" onClick={handleNotNow}>
+						{canConfirm ? 'Not now' : 'Close'}
+					</Button>
+					{canConfirm && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="text-danger hover:text-danger"
+							onClick={(): void => {
+								rejectMutation.reset();
+								setRejectOpen(true);
+							}}
+						>
+							Reject
+						</Button>
+					)}
+				</div>
+				{canConfirm && (
+					<Button
+						type="button"
+						variant="primary"
+						onClick={goToRules}
+						// Scope-less vendors proceed with the vendor's defaults —
+						// only gate on an empty selection when there are scopes
+						// to choose from.
+						disabled={continueDisabled}
+					>
+						Continue
+					</Button>
+				)}
+			</div>
+
+			<ConfirmDialog
+				open={rejectOpen}
+				title="Reject this request?"
+				body={
+					<div className="space-y-2">
+						<p>
+							The agent is told its request for {display.displayName} was rejected,
+							and it can&apos;t ask again for this API for a while. To decide later
+							instead, close this and choose Not now.
+						</p>
+						{rejectMutation.error && (
+							<ErrorAlert
+								message={
+									(rejectMutation.error as { status?: number }).status === 403
+										? "This request is no longer open, or it isn't yours to reject."
+										: rejectMutation.error.message
+								}
+							/>
+						)}
+					</div>
+				}
+				confirmLabel="Reject request"
+				pending={rejectMutation.isPending}
+				onConfirm={(): void => void handleReject()}
+				onClose={(): void => setRejectOpen(false)}
+			/>
+		</div>
+	);
+}
+
+/** After a re-authorize: the agent is bound; the vendor consent for more scopes runs on. */
+function ReauthorizeNotice({ display, url }: { display: VendorDisplay; url: string }) {
+	return (
+		<div className="space-y-3">
+			<p className="text-muted-foreground text-center text-sm">
+				Finish granting the extra scopes in the {display.displayName} window. Until you do,
+				calls that need them still fail.
+			</p>
+			{isHttpsVendorUrl(url) ? (
 				<Button
 					type="button"
-					variant="primary"
-					onClick={goToRules}
-					// Scope-less vendors proceed with the vendor's defaults —
-					// only gate on an empty selection when there are scopes
-					// to choose from.
-					disabled={scopes.length > 0 && currentSelection.size === 0}
+					variant="secondary"
+					className="w-full"
+					onClick={(): void => {
+						openVendorUrl(url, '_blank', 'noopener,noreferrer');
+					}}
 				>
-					Continue
+					<ExternalLink className="h-4 w-4" />
+					Open {display.displayName}
 				</Button>
-			</div>
+			) : (
+				<UnsafeVendorUrlNotice />
+			)}
 		</div>
 	);
 }
@@ -1089,6 +1542,7 @@ function RulesStep({
 	submitting,
 	error,
 	apiReference,
+	requireRule = false,
 }: {
 	display: VendorDisplay;
 	// Rules the initiating agent supplied on ``:connect``. Empty in the
@@ -1103,7 +1557,12 @@ function RulesStep({
 	onBack: () => void;
 	onContinue: (finalRules: PermissionRule[]) => void;
 	submitting: boolean;
-	error: Error | null;
+	error: Error | string | null;
+	/**
+	 * Require at least one authored rule: no ``Allow GET /`` fallback is
+	 * previewed or sent, and Continue stays disabled on an empty list.
+	 */
+	requireRule?: boolean;
 	// Where the vendor's OpenAPI lives. Null in the self-flow before
 	// ``:connect`` fires; ``version`` null while the import is queued.
 	// The operation-impact preview shows a skeleton until both are set
@@ -1111,12 +1570,13 @@ function RulesStep({
 	apiReference: { vendor: string; name: string | null; version: string | null } | null;
 }) {
 	const isEmpty = currentRules.length === 0;
+	const fallback = isEmpty && !requireRule;
 
 	// Operation-impact preview: when the user has authored no rules,
 	// preview against the confirm-time fallback so they see what
 	// leaving the list empty actually grants. When they've authored
 	// rules, preview against those exactly.
-	const previewRules = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+	const previewRules = fallback ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
 
 	// Fetch ops once at the rules-page level and thread the result down.
 	// React-Query dedupes by query key so ``OperationImpactPreview``'s
@@ -1133,7 +1593,8 @@ function RulesStep({
 	}, [opsQuery.data]);
 
 	const handleContinue = (): void => {
-		const final = isEmpty ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
+		if (isEmpty && requireRule) return;
+		const final = fallback ? [DEFAULT_ALLOW_GET_RULE] : currentRules;
 		onContinue(final);
 	};
 
@@ -1147,9 +1608,11 @@ function RulesStep({
 			<div className="space-y-2">
 				<Label>Permission rules</Label>
 				<p className="text-muted-foreground text-xs">
-					{isEmpty
+					{fallback
 						? "We'll allow all read operations (GET) unless you set your own rules. Continue to accept, or add custom rules below."
-						: 'First-match-wins. Requests that match no rule are denied.'}
+						: isEmpty
+							? "Add at least one rule. With no rules the agent can't call anything on this API."
+							: 'First-match-wins. Requests that match no rule are denied.'}
 				</p>
 				<RuleListEditor
 					rules={currentRules}
@@ -1158,7 +1621,11 @@ function RulesStep({
 					opTemplates={pathSuggestions}
 					opsLoaded={pathSuggestions.length > 0}
 					requestedRules={requestedRules}
-					emptyStateContent={<DefaultRulePreviewRow rule={DEFAULT_ALLOW_GET_RULE} />}
+					emptyStateContent={
+						requireRule ? undefined : (
+							<DefaultRulePreviewRow rule={DEFAULT_ALLOW_GET_RULE} />
+						)
+					}
 				/>
 			</div>
 
@@ -1182,8 +1649,9 @@ function RulesStep({
 					variant="primary"
 					onClick={handleContinue}
 					loading={submitting}
+					disabled={isEmpty && requireRule}
 				>
-					{isEmpty ? 'Skip & continue' : 'Continue'}
+					{fallback ? 'Skip & continue' : 'Continue'}
 				</Button>
 			</div>
 		</div>
@@ -1260,11 +1728,14 @@ function EditableVendorHeader({
 function AgentRequestCard({
 	agent,
 	actorId,
+	ownerId = null,
 	reason,
 	loading,
 }: {
 	agent: { id: string; name: string; description?: string | null } | undefined;
 	actorId: string;
+	/** The agent's owner, from the review (server data); null when unclaimed or unknown. */
+	ownerId?: string | null;
 	// Free-text ``reason`` the agent supplied on ``POST /integrations:connect``
 	// — the single piece of context that justifies the whole review page.
 	// Rendered as a distinct block below the agent identity so the human sees
@@ -1293,6 +1764,11 @@ function AgentRequestCard({
 						{actorId}
 					</p>
 				</div>
+				{ownerId && (
+					<p className="text-muted-foreground shrink-0 text-xs">
+						Owner <ActorLabel actorId={ownerId} actorType="user" />
+					</p>
+				)}
 			</div>
 			{reason && (
 				<div className="bg-surface-inset rounded-lg px-3 py-2">
@@ -1602,11 +2078,17 @@ function TerminalStep({
 	renderPostConnect,
 	onDone,
 	onRetry,
+	failureMessage,
+	children,
 }: {
 	display: VendorDisplay;
 	status: string;
 	connectedAs: string | null;
 	errorCode: string | null;
+	/** Plain-words reason for a failure the dialog itself observed (e.g. on `:confirm`). */
+	failureMessage?: string;
+	/** Extra content under the outcome (e.g. the re-authorize follow-up). */
+	children?: ReactNode;
 	// The credential id the successful connect wrote — from
 	// ``/status.credential_id``. Handed to ``renderPostConnect`` for
 	// the "bind to more agents" CTA. ``null`` when the flow failed or
@@ -1641,20 +2123,27 @@ function TerminalStep({
 							? `Connected to ${display.displayName}`
 							: status === 'expired'
 								? 'The code expired'
-								: 'Sign-in failed'}
+								: failureMessage
+									? "This request can't be approved"
+									: 'Sign-in failed'}
 					</p>
 					{success && connectedAs && (
 						<p className="text-muted-foreground mt-1 text-sm">
 							Signed in as <span className="font-mono">{connectedAs}</span>
 						</p>
 					)}
-					{!success && errorCode && (
+					{!success && failureMessage && (
+						<p className="text-muted-foreground mt-1 text-sm">{failureMessage}</p>
+					)}
+					{!success && !failureMessage && errorCode && (
 						<p className="text-muted-foreground mt-1 text-xs">
 							Reason: <span className="font-mono">{errorCode}</span>
 						</p>
 					)}
 				</div>
 			</div>
+
+			{children}
 
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
