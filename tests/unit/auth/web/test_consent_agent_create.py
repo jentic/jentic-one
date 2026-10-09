@@ -23,8 +23,10 @@ from urllib.parse import unquote
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.auth.core.idp.adapter import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, PendingAgentRef
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
 from jentic_one.auth.web.errors import service_error_handler
@@ -37,6 +39,7 @@ from jentic_one.auth.web.flow import (
     sign_payload,
     state_signing_key,
     verify_payload,
+    write_idp_consent_handle,
 )
 from jentic_one.auth.web.routers import authorize, local_login
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig
@@ -1207,3 +1210,84 @@ def test_agent_status_key_is_purpose_derived() -> None:
             verify_payload(
                 forged, agent_status_signing_key(ctx), purpose="agent-status", max_age=300
             )
+
+
+# ---------- hosted_domain survives the consent-handle round trip ----------
+
+
+def _write_workspace_handle(client: TestClient) -> str:
+    """Write a handle through the real IdP-callback writer, carrying the Google
+    Workspace ``hd`` claim an admission-policy hard gate reads."""
+    request = Request({"type": "http", "app": client.app})
+    claims = IdpClaims(
+        external_subject="ext-create-1",
+        email="newbie@jentic.com",
+        email_verified=True,
+        first_name="New",
+        last_name="User",
+        hosted_domain="jentic.com",
+    )
+    return asyncio.run(
+        write_idp_consent_handle(
+            request,
+            claims=claims,
+            redirect_uri=_REDIRECT_URI,
+            original_state="xyz",
+            client_id=_CLIENT_ID,
+            code_challenge="challenge",
+            scope="openid apis:read",
+            nonce=None,
+            oauth_client=_client_view(),
+        )
+    )
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_consent_approve_provisions_with_hosted_domain(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    client, _backend, _ctx = _make_app()
+    handle = _write_workspace_handle(client)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id=None)
+    mock_authorize_cls.return_value = svc
+
+    resp = client.post(
+        "/oauth/consent",
+        data={"consent_token": handle, "action": "approve"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code in (302, 303)
+    assert svc.provision_from_claims.await_args.args[0].hosted_domain == "jentic.com"
+
+
+@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_agent_create_provisions_with_hosted_domain(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_agent_svc_cls: MagicMock,
+) -> None:
+    client, _backend, ctx = _make_app()
+    handle = _write_workspace_handle(client)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id=None, agents=[])
+    mock_authorize_cls.return_value = svc
+    mock_agent_svc_cls.return_value = _mock_agent_svc()
+
+    resp = client.post(
+        "/oauth/consent/agent",
+        data={
+            "consent_token": handle,
+            "create_state": _mint_blob(ctx, handle=handle),
+            "agent_name": "first",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert svc.provision_from_claims.await_args.args[0].hosted_domain == "jentic.com"

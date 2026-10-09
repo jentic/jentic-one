@@ -1664,12 +1664,17 @@ def _claims_from_params(params: dict[str, object]) -> IdpClaims | None:
     claims_data = params.get("claims")
     if not isinstance(claims_data, dict):
         return None
+    # ``hosted_domain`` must survive the round trip: admission-policy hard gates
+    # (e.g. Google Workspace ``hd``) read it, and a handle rebuilt without it
+    # rejects every Workspace user. Handles that predate the field read None.
+    hosted_domain = claims_data.get("hosted_domain")
     return IdpClaims(
         external_subject=str(claims_data.get("external_subject") or ""),
         email=str(claims_data.get("email") or ""),
         email_verified=parse_email_verified(claims_data.get("email_verified")),
         first_name=str(claims_data.get("first_name") or ""),
         last_name=str(claims_data.get("last_name") or ""),
+        hosted_domain=str(hosted_domain) if hosted_domain else None,
     )
 
 
@@ -2206,7 +2211,7 @@ async def consent_submit(
         logger.info("oauth_consent_denied", client_id=client_id, email=deny_email)
         return _error_redirect(redirect_uri, "access_denied", original_state)
 
-    claims_data = params.get("claims")
+    idp_claims = _claims_from_params(params)
     local_user_id = params.get("local_user_id")
     if local_user_id:
         # Local-login rejoin (#1276): the user authenticated against the
@@ -2214,19 +2219,10 @@ async def consent_submit(
         # nothing to provision and the Deny-leaves-no-residue contract holds
         # trivially (login never creates rows).
         user_id = str(local_user_id)
-    elif not isinstance(claims_data, dict):
+    elif idp_claims is None:
         logger.warning("oauth_consent_missing_claims", client_id=client_id)
         return RedirectResponse(url="/error?error=invalid_consent", status_code=302)
     else:
-        hosted_domain_raw = claims_data.get("hosted_domain")
-        idp_claims = IdpClaims(
-            external_subject=str(claims_data.get("external_subject") or ""),
-            email=str(claims_data.get("email") or ""),
-            email_verified=parse_email_verified(claims_data.get("email_verified")),
-            first_name=str(claims_data.get("first_name") or ""),
-            last_name=str(claims_data.get("last_name") or ""),
-            hosted_domain=str(hosted_domain_raw) if hosted_domain_raw else None,
-        )
         try:
             user_id = await authorize_svc.provision_from_claims(idp_claims)
         except UserNotAdmittedError:
