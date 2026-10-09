@@ -109,9 +109,9 @@ export function FirstAgentLanding({
 					transition={{ layout: morph }}
 					aria-labelledby={titleId}
 					data-testid="first-agent-card"
-					// The app's tonal card (as `Card`): raised by its fill, no edge,
-					// glow or tint; fields and chips inside step up one tone.
-					className="bg-surface-1 animate-rise relative min-w-0 flex-1 rounded-lg px-[22px] pt-5 pb-4 [--field-bg:var(--surface-field)]"
+					// The fleet's agent card surface: `surface-1` with the panel radius
+					// and a hairline edge; fields and chips inside step up one tone.
+					className="bg-surface-1 border-hairline-field rounded-panel animate-rise relative min-w-0 flex-1 border px-4 pt-4 pb-4 [--field-bg:var(--surface-field)] sm:px-5 sm:pt-5"
 				>
 					<RegisterFlow
 						baseId={baseId}
@@ -263,17 +263,17 @@ function ManualCard({ onCreateAgent }: { onCreateAgent: () => void }) {
 	return (
 		<section
 			aria-labelledby={headingId}
-			className="bg-surface-1 animate-rise flex w-full flex-col items-start rounded-lg px-[22px] py-5 [--field-bg:var(--surface-field)] [animation-delay:80ms]"
+			className="bg-surface-1 border-hairline-field rounded-panel animate-rise flex w-full flex-col items-start border px-4 py-4 [--field-bg:var(--surface-field)] [animation-delay:80ms] sm:px-5 sm:py-5"
 		>
 			<span
 				aria-hidden="true"
-				className="text-foreground-sub bg-surface-tonal grid h-[30px] w-[30px] place-items-center rounded-lg"
+				className="text-foreground-sub bg-surface-tonal grid h-11 w-11 place-items-center rounded-full"
 			>
-				<Pencil className="h-3.5 w-3.5" />
+				<Pencil className="h-[18px] w-[18px]" />
 			</span>
 			<h2
 				id={headingId}
-				className="font-heading text-foreground mt-3 text-[15px] font-semibold"
+				className="font-heading text-foreground-name mt-3.5 text-[17px] leading-6 font-semibold tracking-[-0.01em]"
 			>
 				Prefer to set it up yourself?
 			</h2>
@@ -286,11 +286,11 @@ function ManualCard({ onCreateAgent }: { onCreateAgent: () => void }) {
 				{MANUAL_STEPS.map(({ icon: Icon, title, detail }) => (
 					<li
 						key={title}
-						className="bg-surface-tonal rounded-field grid grid-cols-[28px_1fr] items-center gap-x-3 px-3.5 py-2.5 text-[13px]"
+						className="border-hairline-field rounded-field grid grid-cols-[28px_1fr] items-center gap-x-3 border px-3.5 py-2.5 text-[13px]"
 					>
 						<span
 							aria-hidden="true"
-							className="bg-surface-field text-foreground-sub row-span-2 grid h-7 w-7 place-items-center rounded-full"
+							className="bg-surface-tonal text-foreground-sub row-span-2 grid h-7 w-7 place-items-center rounded-full"
 						>
 							<Icon className="h-3.5 w-3.5" />
 						</span>
