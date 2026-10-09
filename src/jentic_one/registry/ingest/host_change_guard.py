@@ -43,6 +43,10 @@ def may_approve_host_change(permissions: list[str] | None) -> bool:
 async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, version: str) -> bool:
     """True when any credential covering the API is bound to an agent.
 
+    An open connect session that targets the API counts as bound: the human
+    approving it enters a secret for the hosts pinned when the session opened,
+    so a host change during that window must be held for an operator too.
+
     Fails closed: if this process cannot reach the control or admin database,
     or a lookup errors, the API is treated as bound so the change is held.
     """
@@ -50,6 +54,10 @@ async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, ver
         return True
     try:
         async with ctx.control_db.session() as session:
+            if await CredentialBindingPresenceRepository.any_open_api_target_session(
+                session, vendor=vendor, name=name, version=version
+            ):
+                return True
             credential_ids = await CredentialBindingPresenceRepository.covering_credential_ids(
                 session, vendor=vendor, name=name, version=version
             )

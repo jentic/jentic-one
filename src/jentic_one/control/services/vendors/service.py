@@ -26,6 +26,7 @@ source (NULL = config) and later steps re-open exactly that source.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -260,6 +261,61 @@ class VendorRegistryService:
         if cfg is not None and preferred_flow is not None:
             raise UnsupportedFlowError(vendor_key, preferred_flow)
         raise UnknownVendorError(vendor_key)
+
+    async def resolve_api_source(
+        self,
+        covers: Callable[[str], bool],
+        *,
+        registration_id: str | None = None,
+        preferred_flow: str | None = None,
+    ) -> tuple[str, ResolvedVendorSource] | None:
+        """Find the OAuth app for a registry API, as ``(vendor key, source)``.
+
+        ``covers`` decides whether a catalog api_id (a config entry's
+        ``vendor``, a registration's ``catalog_api_id``) is the API. Same
+        precedence as a vendor connect: the pinned registration (refused when
+        it does not cover the API), then the first config entry covering it,
+        then the single active registration covering it. Several matching
+        registrations raise :class:`AmbiguousVendorError`; no match returns
+        ``None`` (the session waits for an app).
+        """
+        if registration_id is not None:
+            registration = await self._registrations.get_by_id(registration_id)
+            if registration is None or not covers(registration.catalog_api_id):
+                raise InvalidOAuthAppRegistrationError(
+                    registration_id, "does not exist or does not cover the API"
+                )
+            key = registration.api_vendor
+            source = await self.resolve_connect_source(
+                key, registration_id=registration_id, preferred_flow=preferred_flow
+            )
+            return key, source
+
+        for key, cfg in self._config.entries.items():
+            if not covers(cfg.vendor):
+                continue
+            if preferred_flow is not None and not any(f.kind == preferred_flow for f in cfg.flows):
+                continue
+            return key, ResolvedVendorSource(
+                entry=cfg, flow=self._pick_flow(key, cfg, preferred_flow), registration=None
+            )
+
+        candidates = [
+            r
+            for r in await self._registrations.list_active()
+            if covers(r.catalog_api_id)
+            and (preferred_flow is None or r.flow_kind == preferred_flow)
+        ]
+        if len(candidates) > 1:
+            raise AmbiguousVendorError(
+                candidates[0].api_vendor, preferred_flow, [r.id for r in candidates]
+            )
+        if not candidates:
+            return None
+        registration = candidates[0]
+        return registration.api_vendor, self._from_registration(
+            registration.api_vendor, registration, preferred_flow
+        )
 
     async def resolve_session_source(
         self,

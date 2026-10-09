@@ -30,6 +30,7 @@ from sqlalchemy import delete, select, text, update
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.schemas.events import EventFilter
+from jentic_one.control.core.schema.connect_session_outcomes import ConnectSessionOutcome
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -38,6 +39,9 @@ from jentic_one.control.core.schema.device_authorization_credentials import (
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository
+from jentic_one.control.repos.connect_session_outcome_repo import (
+    ConnectSessionOutcomeRepository,
+)
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.service import CredentialService
@@ -45,6 +49,7 @@ from jentic_one.control.services.credentials.state import StateReplayedError
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.connect_session_service import (
+    ApiTarget,
     AuthCodeConfirmResult,
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
@@ -53,8 +58,12 @@ from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
+    ConfirmKindMismatchError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
+    OAuthAppChangedError,
+    SecuritySchemesLookupUnavailableError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
@@ -74,6 +83,7 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
@@ -102,6 +112,7 @@ _AGENT_IDENTITY = Identity(
 async def clean_session_tables(control_db: DatabaseSession) -> AsyncGenerator[None, None]:
     """Reset every table this test file writes to, before and after."""
     tables = (
+        ConnectSessionOutcome,
         ConnectSession,
         OAuthToken,
         OAuthClientCredential,
@@ -528,6 +539,13 @@ async def test_mark_terminal_from_callback_deletes_credential_and_cascades_sessi
         # Credential gone. The SPA polling ``/status`` will 404 on the
         # next tick and transition to terminal-failed.
         assert await CredentialRepository.get_by_id(session, credential_id) is None
+        # The outcome outlives the session row.
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("failed", "callback_error")
+    assert outcome.poll_token_hash == hash_secret(created.poll_token)
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +772,16 @@ async def test_complete_from_callback_vaults_token_and_marks_connected(
         # will actually inject tokens for it. Missing this = silently
         # broken execution.
         assert credential.state == "connected"
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("connected", None)
+    assert (outcome.agent_id, outcome.target_kind, outcome.vendor) == (
+        _AGENT_ID,
+        "vendor",
+        "testauth",
+    )
 
 
 async def test_complete_from_callback_refuses_state_replay(
@@ -1135,6 +1163,13 @@ async def test_expire_stale_sessions_sweeps_abandoned_sessions_and_credentials(
         fresh_row = await ConnectSessionRepository.get_by_id(session, fresh.session_id)
         assert fresh_row is not None
         assert fresh_row.state == "created"
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(session, stale.session_id)
+        assert outcome is not None
+        assert outcome.outcome == "expired"
+        assert (
+            await ConnectSessionOutcomeRepository.get_by_session_id(session, fresh.session_id)
+            is None
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1717,3 +1752,345 @@ async def test_user_started_session_emits_no_rail_event(
         vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
     )
     assert await _session_created_events(integration_context) == []
+
+
+# ---------------------------------------------------------------------------
+# Target kinds, ``awaiting_app`` and terminal outcomes
+# ---------------------------------------------------------------------------
+
+
+async def _seed_api_session(
+    ctx: Context,
+    *,
+    state: str = "created",
+    resolved_flow: str = "manual_api_key",
+    agent_id: str | None = _AGENT_ID,
+    api_version: str = "1.0.0",
+    poll_token: str = "api-poll-token",
+) -> str:
+    """Write an ``api``-target session and its pending credential directly.
+
+    No code path creates one while ``control.connect.manual_flows_enabled`` is
+    off, so the rows are seeded through the repositories.
+    """
+    async with ctx.control_db.transaction() as session:
+        credential = await CredentialRepository.create(
+            session,
+            type="api_key",
+            name="Example API",
+            api_vendor="example-com",
+            api_name="example",
+            api_version=api_version,
+            created_by=_AGENT_ID,
+            state="pending",
+        )
+        row = await ConnectSessionRepository.create(
+            session,
+            credential_id=credential.id,
+            target_kind="api",
+            vendor="example-com",
+            agent_id=agent_id,
+            initiator_actor_id=_AGENT_ID,
+            state=state,
+            resolved_flow=resolved_flow,
+            poll_token_hash=hash_secret(f"{poll_token}-{api_version}-{state}"),
+            created_by=_AGENT_ID,
+        )
+        await ConnectSessionRepository.update_fields(
+            session,
+            row.id,
+            api_name="example",
+            api_version=api_version,
+            scheme_type="apiKey",
+            scheme_location="header",
+            scheme_field_name="X-Api-Key",
+            pinned_hosts=["api.example.com"],
+        )
+        return row.id
+
+
+async def test_existing_sessions_default_to_vendor_targets(
+    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    assert row.target_kind == "vendor"
+    assert (row.api_name, row.api_version, row.scheme_type, row.pinned_hosts) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+async def test_create_session_refuses_api_target_while_gate_is_off(
+    integration_context: Context,
+    clean_session_tables: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    target = ApiTarget(vendor="example-com", name="example", version="1.0.0")
+    assert ctx.config.control.connect.manual_flows_enabled is False
+    with pytest.raises(ManualFlowsDisabledError):
+        await svc.create_session(
+            vendor_key="example-com",
+            agent_id=_AGENT_ID,
+            initiator_actor_id=_AGENT_ID,
+            api_target=target,
+        )
+    # With the gate on, a process that cannot read the registry refuses too.
+    monkeypatch.setattr(ctx.config.control.connect, "manual_flows_enabled", True)
+    with pytest.raises(SecuritySchemesLookupUnavailableError):
+        await svc.create_session(
+            vendor_key="example-com",
+            agent_id=_AGENT_ID,
+            initiator_actor_id=_AGENT_ID,
+            api_target=target,
+        )
+    async with ctx.control_db.session() as session:
+        assert (await session.execute(text("SELECT COUNT(*) FROM connect_sessions"))).scalar() == 0
+
+
+async def test_vendor_entry_reads_refuse_api_targets(
+    integration_context: Context,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    session_id = await _seed_api_session(ctx)
+    # An API target's review reads the registry; without the seam it refuses.
+    with pytest.raises(SecuritySchemesLookupUnavailableError):
+        await svc.get_review_data(session_id, poll_token=None, identity=_ADMIN_IDENTITY)
+    # The OAuth confirm body does not apply to a manual_* session.
+    with pytest.raises(ConfirmKindMismatchError):
+        await svc.confirm(
+            session_id,
+            poll_token=None,
+            confirmed_scopes=[],
+            permission_rules=[],
+            identity=_ADMIN_IDENTITY,
+        )
+    # The refusal leaves the session untouched.
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+    assert row is not None
+    assert row.state == "created"
+
+    # The list never resolves an API target as a vendor-registry key.
+    page = await svc.list_all(identity=_ADMIN_IDENTITY)
+    (summary,) = [s for s in page.data if s.session_id == session_id]
+    assert summary.vendor_display_name == "example-com/example"
+
+
+async def test_awaiting_app_reports_pending_and_cancels_as_cancelled(
+    integration_context: Context,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    session_id = await _seed_api_session(ctx, state="awaiting_app", resolved_flow="awaiting_app")
+    status = await svc.get_status(session_id, poll_token=None, identity=_ADMIN_IDENTITY)
+    assert status.status == "pending"
+
+    await svc.cancel_session(session_id, poll_token=None, identity=_ADMIN_IDENTITY)
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.get_by_id(session, session_id) is None
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(session, session_id)
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("cancelled", "cancelled")
+    assert (outcome.target_kind, outcome.vendor, outcome.api_name, outcome.api_version) == (
+        "api",
+        "example-com",
+        "example",
+        "1.0.0",
+    )
+
+
+async def test_cancel_records_one_cancelled_outcome(
+    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    await svc.cancel_session(
+        created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+    )
+    # The session is gone, so a repeat cancel is refused and writes nothing.
+    with pytest.raises(InvalidPollTokenError):
+        await svc.cancel_session(
+            created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+        )
+    async with ctx.control_db.session() as session:
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+        count = (
+            await session.execute(text("SELECT COUNT(*) FROM connect_session_outcomes"))
+        ).scalar()
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code, outcome.created_by) == (
+        "cancelled",
+        "cancelled",
+        _USER_ID,
+    )
+    assert count == 1
+
+
+async def test_app_change_records_a_failed_outcome(
+    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    # The config entry the session was created against goes away.
+    del ctx.config.vendors.entries["testauth"]
+    with pytest.raises(OAuthAppChangedError):
+        await svc.get_review_data(
+            created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+        )
+    async with ctx.control_db.session() as session:
+        outcome = await ConnectSessionOutcomeRepository.get_by_session_id(
+            session, created.session_id
+        )
+    assert outcome is not None
+    assert (outcome.outcome, outcome.error_code) == ("failed", "oauth_app_changed")
+
+
+async def test_sweep_uses_the_manual_ttl_for_non_oauth_flows(
+    integration_context: Context,
+    seed_test_vendors: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    oauth = await svc.create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    manual_young = await _seed_api_session(ctx, api_version="1.0.0")
+    manual_old = await _seed_api_session(ctx, api_version="2.0.0")
+    ttl_hours = ctx.config.control.connect.manual_flows_ttl_hours
+    async with ctx.control_db.transaction() as session:
+        for session_id, age in (
+            (oauth.session_id, timedelta(hours=2)),
+            (manual_young, timedelta(hours=2)),
+            (manual_old, timedelta(hours=ttl_hours + 1)),
+        ):
+            await session.execute(
+                update(ConnectSession)
+                .where(ConnectSession.id == session_id)
+                .values(created_at=datetime.now(UTC) - age)
+            )
+
+    assert await svc.expire_stale_sessions() == 2
+
+    async with ctx.control_db.session() as session:
+        assert await ConnectSessionRepository.get_by_id(session, oauth.session_id) is None
+        assert await ConnectSessionRepository.get_by_id(session, manual_old) is None
+        young = await ConnectSessionRepository.get_by_id(session, manual_young)
+    assert young is not None
+    assert young.state == "created"
+
+
+async def test_sweep_drops_outcomes_past_retention(
+    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    old = await svc.create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    recent = await svc.create_session(
+        vendor_key="testauth", agent_id=None, initiator_actor_id=_USER_ID
+    )
+    for created in (old, recent):
+        await svc.cancel_session(
+            created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+        )
+    async with ctx.control_db.transaction() as session:
+        await session.execute(
+            update(ConnectSessionOutcome)
+            .where(ConnectSessionOutcome.session_id == old.session_id)
+            .values(ended_at=datetime.now(UTC) - timedelta(days=31))
+        )
+
+    await svc.expire_stale_sessions()
+
+    async with ctx.control_db.session() as session:
+        assert (
+            await ConnectSessionOutcomeRepository.get_by_session_id(session, old.session_id) is None
+        )
+        assert (
+            await ConnectSessionOutcomeRepository.get_by_session_id(session, recent.session_id)
+            is not None
+        )
+
+
+async def test_open_api_target_dedupe_index(
+    integration_context: Context, clean_session_tables: None
+) -> None:
+    ctx = integration_context
+    await _seed_api_session(ctx)
+    # A second open session for the same agent and API identity collides.
+    with pytest.raises(DatabaseIntegrityError):
+        await _seed_api_session(ctx, state="awaiting_app", poll_token="second")
+    # A different version, an ended session, or no agent does not.
+    await _seed_api_session(ctx, api_version="2.0.0")
+    await _seed_api_session(ctx, state="connected", poll_token="third")
+    await _seed_api_session(ctx, agent_id=None, poll_token="fourth")
+    await _seed_api_session(ctx, agent_id=None, poll_token="fifth")
+
+
+async def test_repeat_agent_vendor_ask_reuses_the_open_session(
+    integration_context: Context, seed_test_vendors: None, clean_session_tables: None
+) -> None:
+    # An agent asking again for the same vendor, app and scopes gets its open
+    # session back with a fresh poll token; the old token stops working.
+    # Asks with different scopes, and sessions a user starts, are separate.
+    svc = ConnectSessionService(integration_context)
+    first = await svc.create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["repo", "read:user"],
+    )
+    second = await svc.create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["read:user", "repo", "repo"],
+    )
+    assert second.session_id == first.session_id
+    assert second.approval_url == first.approval_url
+    assert second.poll_token != first.poll_token
+    with pytest.raises(InvalidPollTokenError):
+        await svc.get_status(
+            first.session_id, poll_token=first.poll_token, identity=_AGENT_IDENTITY
+        )
+    status = await svc.get_status(
+        first.session_id, poll_token=second.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "pending"
+
+    other_scopes = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    assert other_scopes.session_id != first.session_id
+    user_started = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    user_again = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    assert user_started.session_id != user_again.session_id

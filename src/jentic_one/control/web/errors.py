@@ -25,15 +25,34 @@ from jentic_one.control.services.integrations.device_authorization import (
 from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
+    AuthTypeNotDeclaredError,
+    AuthTypeRequiredError,
     ConfirmationForbiddenError,
+    ConfirmKindMismatchError,
     ConnectSessionServiceError,
+    ExistingCredentialNotFoundError,
+    InsufficientGrantedScopesError,
     InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
+    NoDeclaredSchemeError,
     NoOpForFlowError,
     OAuthAppChangedError,
+    OwnClientInvalidError,
+    ReauthorizeUnavailableError,
+    RecentlyRejectedError,
+    ReservedAuthFieldError,
+    ReviewStaleError,
+    RulesRequiredError,
+    SchemeChangedError,
     ScopeValidationError,
+    SecuritySchemesLookupUnavailableError,
+    ServersChangedError,
     SessionNotFoundError,
+    TooManyOpenSessionsError,
+    UnknownApiError,
+    UnpinnedServerHostError,
 )
 from jentic_one.control.services.oauth_app_registrations.errors import (
     InvalidOAuthAppRegistrationInputError,
@@ -92,6 +111,25 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
     InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
     OAuthAppChangedError: (409, "connect_session_oauth_app_changed"),
+    ManualFlowsDisabledError: (404, "manual_flows_disabled"),
+    UnknownApiError: (404, "unknown_api"),
+    SecuritySchemesLookupUnavailableError: (503, "security_schemes_lookup_unavailable"),
+    AuthTypeRequiredError: (400, "auth_type_required"),
+    AuthTypeNotDeclaredError: (422, "auth_type_not_declared"),
+    NoDeclaredSchemeError: (409, "no_declared_scheme"),
+    ReservedAuthFieldError: (422, "reserved_auth_field"),
+    UnpinnedServerHostError: (409, "host_variable_not_pinned"),
+    SchemeChangedError: (409, "scheme_changed"),
+    ServersChangedError: (409, "servers_changed"),
+    ReviewStaleError: (409, "review_stale"),
+    RulesRequiredError: (422, "rules_required"),
+    ConfirmKindMismatchError: (400, "confirm_kind_mismatch"),
+    TooManyOpenSessionsError: (429, "too_many_open_sessions"),
+    RecentlyRejectedError: (429, "recently_rejected"),
+    ExistingCredentialNotFoundError: (404, "existing_credential_not_found"),
+    InsufficientGrantedScopesError: (409, "insufficient_granted_scopes"),
+    ReauthorizeUnavailableError: (409, "reauthorize_unavailable"),
+    OwnClientInvalidError: (400, "own_oauth_client_invalid"),
     ConnectSessionServiceError: (500, "connect_session_error"),
 }
 
@@ -104,15 +142,34 @@ _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
 def _connect_session_response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
+    # Structured extensions — all server data (scheme names, scope names,
+    # limits), never echoed request input.
+    extra: dict[str, object] = {}
+    headers: dict[str, str] = {}
     if isinstance(exc, ScopeValidationError):
-        content: dict[str, object] = json.loads(bytes(response.body))
-        content["unknown_scopes"] = exc.unknown
-        return JSONResponse(
-            status_code=status_code,
-            content=content,
-            media_type="application/problem+json",
-        )
-    return response
+        extra["unknown_scopes"] = exc.unknown
+    elif isinstance(exc, AuthTypeRequiredError | AuthTypeNotDeclaredError):
+        extra["options"] = exc.options
+    elif isinstance(exc, InsufficientGrantedScopesError):
+        extra["missing_scopes"] = exc.missing
+    elif isinstance(exc, UnpinnedServerHostError):
+        extra["variables"] = exc.variables
+    elif isinstance(exc, TooManyOpenSessionsError):
+        extra.update(scope=exc.scope, limit=exc.limit)
+    elif isinstance(exc, ConfirmKindMismatchError):
+        extra["allowed_kinds"] = exc.allowed
+    elif isinstance(exc, RecentlyRejectedError):
+        headers["Retry-After"] = str(exc.retry_after_seconds)
+    if not extra and not headers:
+        return response
+    content: dict[str, object] = json.loads(bytes(response.body))
+    content.update(extra)
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        media_type="application/problem+json",
+        headers=headers or None,
+    )
 
 
 connect_session_error_handler = make_service_error_handler(
