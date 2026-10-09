@@ -65,9 +65,26 @@ The agent shows the user `approval.review_url`, then polls
 | `cancelled` | Withdrawn by the agent | — |
 
 An identical call while one is pending joins the existing hold (same
-`job_id`) instead of filing another. Each agent may have at most
-`execution_approvals.max_pending_per_agent` pending approvals; past that a held
-call is refused with **403** `approval_pending_limit_reached`.
+`job_id`) instead of filing another, even when the agent is at its cap. Each
+agent may have at most `execution_approvals.max_pending_per_agent` pending
+approvals; past that a new held call is refused with **403**
+`approval_pending_limit_reached`.
+
+The held run sends the request as the agent did: its body, `Content-Type`,
+`Accept`, conditional (`If-*`) and API version headers (`Notion-Version`,
+`Stripe-Version`, `X-GitHub-Api-Version`, any `<name>-Version`). The agent's
+own credentials and other headers are not kept; the run injects the bound
+credential itself.
+
+### From the CLI (`jentic execute`)
+
+`jentic execute` prints the held envelope as its data, shows the review link
+on stderr and exits **3** (`TIMEOUT_PENDING`). `jentic jobs wait <job_id>`
+then waits for the decision and prints the outcome exactly as `execute`
+prints a call that ran at once: the upstream response (exit 0) or the denial
+or expiry (exit 2). `jentic execute --wait [--timeout 10m]` does both in one
+command. Neither re-sends the call; either exits 3 again if the call is still
+held when the timeout lapses.
 
 ### Over MCP (`/mcp` and `jentic mcp`)
 
