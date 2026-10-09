@@ -10,12 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.shared.db.utils import db_now
 
 _PENDING = "pending"
 
 
 class ExecutionApprovalRepository:
     """Data access for execution approvals."""
+
+    @staticmethod
+    async def now(session: AsyncSession) -> datetime:
+        """The database clock — the one ``expires_at`` was set from at filing."""
+        return await db_now(session)
 
     @staticmethod
     async def get_by_id(

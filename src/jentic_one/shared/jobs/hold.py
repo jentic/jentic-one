@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode
 
@@ -24,6 +24,7 @@ from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.admin.repos.audit_repo import AuditRepository
+from jentic_one.shared.db.utils import db_now
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
 from jentic_one.shared.models.audit import AuditAction, AuditTargetType
@@ -238,7 +239,9 @@ async def file_hold(
     if existing is not None:
         return await _joined(session, existing)
 
-    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    # The database clock: the decide path and the expiry sweep compare
+    # against it too, wherever they run.
+    expires_at = await db_now(session) + timedelta(seconds=ttl_seconds)
     try:
         async with session.begin_nested():
             job: Any = Job(
@@ -399,14 +402,19 @@ def _filer_actor_type(agent_id: str) -> str:
         return ActorType.AGENT.value
 
 
-async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime) -> int:
+async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime | None = None) -> int:
     """Expire every pending approval past ``expires_at`` and fail its held job.
+
+    ``now`` defaults to the database clock (:func:`db_now`), the clock the
+    filing broker set ``expires_at`` from.
 
     Runs in the caller's transaction, so each approval, its job, its audit
     entry and its ``execution.approval_expired`` event settle together. The
     audit entry is attributed to the agent that filed the hold (there is no
     system actor) with a ``system`` origin. Returns the number expired.
     """
+    if now is None:
+        now = await db_now(session)
     result = await session.execute(
         update(ExecutionApproval)
         .where(

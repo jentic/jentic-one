@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -147,8 +147,8 @@ class ExecutionApprovalService:
         approve = body.decision == ApprovalDecision.APPROVE
         new_state = ExecutionApprovalState.APPROVED if approve else ExecutionApprovalState.DENIED
         filters = build_access_filters(identity, ExecutionApproval)
-        now = datetime.now(UTC)
         async with self._ctx.admin_db.transaction() as session:
+            now = await ExecutionApprovalRepository.now(session)
             visible = await ExecutionApprovalRepository.get_by_id(
                 session, approval_id, filters=filters
             )
@@ -240,8 +240,8 @@ class ExecutionApprovalService:
         ``ExecutionApprovalAlreadyDecidedError``. The withdrawal is
         audit-logged and emits ``execution.approval_withdrawn``.
         """
-        now = datetime.now(UTC)
         async with self._ctx.admin_db.transaction() as session:
+            now = await ExecutionApprovalRepository.now(session)
             row = await ExecutionApprovalRepository.get_by_id(session, approval_id)
             if row is None or row.created_by != identity.sub:
                 raise ExecutionApprovalNotFoundError(approval_id)

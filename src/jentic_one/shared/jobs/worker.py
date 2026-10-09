@@ -384,7 +384,7 @@ class WorkerLoop:
             # Pending approvals past their TTL expire and fail their held jobs
             # with a permission-denied result, each pair in one transaction.
             async with self._db.transaction() as session:
-                expired = await expire_lapsed_approvals(session, now=datetime.now(UTC))
+                expired = await expire_lapsed_approvals(session)
             if expired:
                 logger.info("approval_expiry_sweep_expired", count=expired)
 
