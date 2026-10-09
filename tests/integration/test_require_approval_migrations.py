@@ -183,11 +183,10 @@ async def test_admin_round_trip_cancels_held_jobs(
 
     assert "execution_approvals" not in await _table_names(admin_db)
     async with admin_db.session() as session:
-        rows = dict(
-            (
-                await session.execute(text("SELECT id, status FROM jobs WHERE id LIKE 'job_mrt_%'"))
-            ).all()
+        result = await session.execute(
+            text("SELECT id, status FROM jobs WHERE id LIKE 'job_mrt_%'")
         )
+        rows: dict[str, str] = {str(r[0]): str(r[1]) for r in result.all()}
     assert rows == {"job_mrt_held": "cancelled", "job_mrt_done": "completed"}
 
     await asyncio.to_thread(command.upgrade, cfg, "head")

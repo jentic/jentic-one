@@ -233,7 +233,7 @@ async def test_forged_or_foreign_request_state_is_refused(
 
 
 def test_front_door_selection() -> None:
-    url = {"elicitation": {"url": {}}}
+    url: dict[str, Any] = {"elicitation": {"url": {}}}
     assert approvals.front_door({}, _MODERN) == approvals.FRONT_DOOR_HELD_RESULT
     assert approvals.front_door({"elicitation": {}}, _MODERN) == approvals.FRONT_DOOR_HELD_RESULT
     assert (
