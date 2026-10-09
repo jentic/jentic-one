@@ -50,6 +50,7 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.connect_service import ConnectService
+from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectRequest,
@@ -296,6 +297,7 @@ class ExistingCredentialView:
 
     credential_id: str
     name: str
+    #: The wire type, as ``GET /credentials`` reports it (``oauth2``, ``api_key``, ...).
     type: str
     granted_scopes: list[str] | None
     missing_scopes: list[str] | None
@@ -1595,7 +1597,7 @@ class ConnectSessionService:
                     ExistingCredentialView(
                         credential_id=credential.id,
                         name=credential.name,
-                        type=credential.type,
+                        type=to_wire(StoredCredentialType(credential.type)).value,
                         granted_scopes=granted,
                         missing_scopes=missing,
                         other_bound_agent_ids=others,
@@ -1608,7 +1610,7 @@ class ConnectSessionService:
                     ExistingCredentialView(
                         credential_id=credential.id,
                         name=credential.name,
-                        type=credential.type,
+                        type=to_wire(StoredCredentialType(credential.type)).value,
                         granted_scopes=None,
                         missing_scopes=None,
                         other_bound_agent_ids=others,

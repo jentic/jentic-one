@@ -1070,6 +1070,9 @@ async def test_bind_an_existing_static_credential(env: Context) -> None:
         True,
         None,
     )
+    # The wire type, as the credentials API reports it.
+    assert candidate.type == "api_key"
+
     pending = (await _row(env, created.session_id)).credential_id  # type: ignore[union-attr]
 
     result = await _confirm_existing(env, created.session_id, existing)
@@ -1093,6 +1096,7 @@ async def test_granted_scope_check_for_an_existing_oauth_credential(env: Context
     review = await _svc(env).get_review_data(created.session_id, poll_token=None, identity=_OWNER)
     views = {c.credential_id: c for c in review.existing_credentials}
     assert views[wide].can_bind and views[wide].missing_scopes == []
+    assert views[wide].type == views[narrow].type == "oauth2"
     assert not views[narrow].can_bind and views[narrow].missing_scopes == ["write"]
     assert views[narrow].can_reauthorize is True
 
