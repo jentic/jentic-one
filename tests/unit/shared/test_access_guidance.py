@@ -194,3 +194,19 @@ def test_connect_target_nothing_covers_returns_none() -> None:
         is None
     )
     assert connect_target(VendorRegistryConfig(), [], vendor="acme", name="widgets") is None
+
+
+def test_connect_target_pins_a_registration_for_the_catalog_imported_identity() -> None:
+    """One shared app for ``googleapis.com/gmail`` covers the API its catalog
+    import registers (``googleapis-com/gmail``), so the directive pins it."""
+    target = connect_target(
+        VendorRegistryConfig(),
+        [_GMAIL, _DRIVE],
+        vendor="googleapis-com",
+        name="gmail",
+        version="v1",
+    )
+    assert target == ConnectTarget(vendor_key="google", registration_id="oar_gmail")
+    assert not catalog_api_id_covers(
+        "googleapis.com/drive", vendor="googleapis-com", name="gmail", version="v1"
+    )
