@@ -10,7 +10,8 @@
 # MCP mount + job worker); the standalone broker (JENTIC__APPS=broker) runs
 # its own worker and is what the agents call. Ports (override via env): app
 # 55521, broker 55522, upstream 55523, Postgres 55520 (container pg-ask-tier).
-# State lives in $E2E_DIR (default /tmp/ask-e2e).
+# State lives in $E2E_DIR (default /tmp/ask-e2e). APPROVAL_TTL_S shortens the
+# approval window (default 24 h) for the UI spec's expiry case.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -21,6 +22,7 @@ APP_PORT="${APP_PORT:-55521}"
 BROKER_PORT="${BROKER_PORT:-55522}"
 UPSTREAM_PORT="${UPSTREAM_PORT:-55523}"
 DB="${E2E_DB:-jentic_ask}"
+APPROVAL_TTL_S="${APPROVAL_TTL_S:-86400}"
 mkdir -p "$E2E_DIR"
 
 psql_c() { docker exec -i "$PG_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 "$@"; }
@@ -98,6 +100,7 @@ ingest:
     allowed_private_subnets: ["127.0.0.0/8"]
 execution_approvals:
   max_pending_per_agent: 3
+  ttl_seconds: $APPROVAL_TTL_S
 worker:
   # Short enough that the worker-crash scenario reclaims its job quickly.
   visibility_timeout_s: 20
