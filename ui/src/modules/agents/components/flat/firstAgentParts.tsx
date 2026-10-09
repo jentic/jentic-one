@@ -164,6 +164,8 @@ export function RegisterCommand({
 	const nameError = agentNameError(name);
 	const target = useRegisterTarget();
 	const tokens = registerCommandTokens({ ...target, name: commandName });
+	// Approving needs `agents:write` (or `org:admin`): anyone else is told who does.
+	const canApprove = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div>
@@ -179,7 +181,11 @@ export function RegisterCommand({
 					</span>
 				}
 				title="Let your agent register itself"
-				detail="Run one command where your agent runs. It signs up with its own key and shows up here for you to approve."
+				detail={
+					canApprove
+						? 'Run one command where your agent runs. It signs up with its own key and shows up here for you to approve.'
+						: 'Run one command where your agent runs. It signs up with its own key and shows up here, pending until someone who can manage agents approves it.'
+				}
 				badge={
 					surface === 'landing' ? (
 						// Glyph and word, as the app marks a state — no pill.
@@ -359,6 +365,8 @@ export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
 // ---------------------------------------------------------------------------
 
 const STEPS: Array<{
+	/** Names the approval step, which reads differently for a viewer who cannot approve. */
+	id?: 'approve';
 	icon: LucideIcon;
 	title: string;
 	detail: string | Record<RegisterSurface, string>;
@@ -372,9 +380,22 @@ const STEPS: Array<{
 			panel: 'And in your fleet, with no access',
 		},
 	},
-	{ icon: CircleCheck, title: 'You approve it', detail: 'Then it can authenticate' },
+	{
+		id: 'approve',
+		icon: CircleCheck,
+		title: 'You approve it',
+		detail: 'Then it can authenticate',
+	},
 	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
 ];
+
+/** The approval step for a viewer who cannot approve. */
+const APPROVED_BY_OTHERS: (typeof STEPS)[number] = {
+	id: 'approve',
+	icon: CircleCheck,
+	title: 'It gets approved',
+	detail: 'By someone who can manage agents',
+};
 
 type StepState = 'done' | 'current' | 'upcoming';
 
@@ -411,6 +432,11 @@ export function Stepper({
 	surface?: RegisterSurface;
 }) {
 	const inPanel = surface === 'panel';
+	// The approval step names who approves: the viewer only with `agents:write`.
+	const canApprove = useCanAccess(AGENTS_WRITE);
+	const steps = canApprove
+		? STEPS
+		: STEPS.map((step) => (step.id === 'approve' ? APPROVED_BY_OTHERS : step));
 	const states = STEP_STATES[phase];
 	const fills = SEGMENT_FILL[phase];
 	// Below the breakpoint the steps stack (marker beside the words); at it
@@ -424,7 +450,7 @@ export function Stepper({
 				inPanel ? '@[40rem]:grid-cols-4 @[40rem]:gap-x-3' : 'sm:grid-cols-4 sm:gap-x-3',
 			)}
 		>
-			{STEPS.map(({ icon: Icon, title, detail }, i) => {
+			{steps.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
 				const fill = i > 0 ? fills[i - 1] : 0;
 				// A connector that starts filling in this phase waits for the one

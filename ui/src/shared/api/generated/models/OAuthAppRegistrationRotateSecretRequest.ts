@@ -3,10 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Request body for acknowledging an event.
+ * Rotate the client secret on an auth-code registration.
  */
-export type EventAcknowledgeRequest = {
-    acknowledged: boolean;
-    note?: (string | null);
+export type OAuthAppRegistrationRotateSecretRequest = {
+    client_secret: string;
 };
 

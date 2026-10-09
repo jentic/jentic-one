@@ -184,6 +184,7 @@ func isSensitiveKey(key string) bool { return ux.IsSensitiveKey(key) }
 // secret value.
 var sensitiveSweepAllowlist = map[string]bool{
 	"has_api_key":          true, // presence flag, not the key
+	"has_client_secret":    true, // presence flag on OAuthAppRegistrationResponse, not the secret
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
 }

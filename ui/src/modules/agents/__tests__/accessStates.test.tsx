@@ -4,7 +4,9 @@
  * - `?agent=<id>` for an agent the caller's roster does not hold (another
  *   user's, or none) reads "Agent not found" and selects nothing, instead of
  *   quietly showing a different agent.
- * - A refused roster read (no `agents:read`) reads "No access to agents",
+ *   An empty roster reads the same for such a link, not the first-agent landing.
+ * - A caller known to lack `agents:read` reads "No access to agents" without
+ *   the roster being requested; a refused roster read (403) reads the same,
  *   never the server's raw "This action requires one of: agents:read".
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -24,7 +26,11 @@ import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { AuthProvider } from '@/shared/auth';
 import { Toaster } from '@/shared/ui';
-import { resetAgentsStore, seedExtraAgents } from '@/modules/agents/mocks/handlers';
+import {
+	clearAgentsStore,
+	resetAgentsStore,
+	seedExtraAgents,
+} from '@/modules/agents/mocks/handlers';
 import { resetApisStore, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
@@ -198,7 +204,118 @@ describe('?agent= for an agent the caller cannot see', () => {
 	});
 });
 
+describe('?agent= on an empty roster', () => {
+	it.each([
+		['admin', ['org:admin']],
+		['member with defaults', MEMBER_DEFAULTS],
+		['member without agents:write', without('agents:write')],
+	] as const)(
+		'%s: reads "Agent not found", not the first-agent landing',
+		async (_label, permissions) => {
+			clearAgentsStore();
+			seedViewer(permissions);
+			const { container } = renderPage('/?agent=agnt_someone_elses');
+
+			const notFound = await screen.findByTestId('agent-not-found');
+			expect(within(notFound).getByText('Agent not found')).toBeInTheDocument();
+			expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+			expect(screen.getByTestId('location-search')).toHaveTextContent(
+				'agent=agnt_someone_elses',
+			);
+			await settleAnimations(container);
+			await checkA11y(container);
+		},
+	);
+
+	it('holds the landing while the id is checked', async () => {
+		clearAgentsStore();
+		seedViewer(MEMBER_DEFAULTS);
+		let release: () => void = () => {};
+		const held = new Promise<void>((r) => (release = r));
+		let reads = 0;
+		worker.use(
+			http.get('/agents', async ({ request }) => {
+				if (new URL(request.url).searchParams.has('status')) return undefined;
+				reads += 1;
+				if (reads === 2) await held;
+				return undefined;
+			}),
+		);
+		renderPage('/?agent=agnt_someone_elses');
+
+		await waitFor(() => expect(reads).toBe(2));
+		expect(screen.queryByTestId('agents-empty-landing')).toBeNull();
+		expect(screen.queryByTestId('agent-not-found')).toBeNull();
+		release();
+		expect(await screen.findByTestId('agent-not-found')).toBeInTheDocument();
+	});
+
+	it('"Show my agents" drops the link and brings the landing back', async () => {
+		const user = userEvent.setup();
+		clearAgentsStore();
+		seedViewer(MEMBER_DEFAULTS);
+		renderPage('/?agent=agnt_someone_elses');
+
+		await user.click(
+			within(await screen.findByTestId('agent-not-found')).getByRole('button', {
+				name: 'Show my agents',
+			}),
+		);
+		expect(await screen.findByTestId('agents-empty-landing')).toBeInTheDocument();
+		expect(screen.queryByTestId('agent-not-found')).toBeNull();
+		expect(screen.getByTestId('location-search')).not.toHaveTextContent('agent=');
+	});
+
+	it('an empty roster without ?agent= still shows the landing', async () => {
+		clearAgentsStore();
+		seedViewer(MEMBER_DEFAULTS);
+		renderPage('/');
+
+		expect(await screen.findByTestId('agents-empty-landing')).toBeInTheDocument();
+		expect(screen.queryByTestId('agent-not-found')).toBeNull();
+	});
+});
+
 describe('a caller without agents:read', () => {
+	it.each([
+		['no agents permission', without('agents:read', 'agents:write')],
+		['only owner:agents:read', ['owner:agents:read', 'audit:read']],
+	] as const)(
+		'%s: reads "No access to agents" without requesting the roster',
+		async (_label, permissions) => {
+			seedViewer(permissions);
+			const agentReads: string[] = [];
+			worker.events.on('request:start', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.pathname === '/agents') agentReads.push(url.search);
+			});
+			renderPage('/?agent=agnt_active_1');
+
+			expect(await screen.findByText('No access to agents')).toBeInTheDocument();
+			// Long enough for any roster or pending-agents read to have gone out.
+			await new Promise((r) => setTimeout(r, 500));
+			expect(agentReads).toEqual([]);
+			expect(screen.queryByTestId('agent-not-found')).toBeNull();
+		},
+	);
+
+	it('with the permissions unknown, a refused roster read still reads "No access to agents"', async () => {
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json(
+					{ detail: 'This action requires one of: agents:read' },
+					{ status: 403 },
+				),
+			),
+		);
+		// No AuthProvider: the viewer is unknown, so the request goes out and the
+		// server's answer decides.
+		renderWithProviders(<AgentsPage />, { route: '/' });
+
+		expect(await screen.findByText('No access to agents')).toBeInTheDocument();
+		expect(screen.queryByText(/This action requires one of/)).toBeNull();
+	});
+
 	it('reads "No access to agents", not the raw server reason', async () => {
 		seedViewer(without('agents:read', 'agents:write'));
 		worker.use(

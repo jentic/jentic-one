@@ -26,16 +26,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import {
-	ArrowUp,
-	BellRing,
-	CheckCircle2,
-	ChevronDown,
-	ChevronRight,
-	Pause,
-	Play,
-	ShieldX,
-} from 'lucide-react';
+import { ArrowUp, BellRing, ChevronDown, ChevronRight, Pause, Play, ShieldX } from 'lucide-react';
 import { ActorLabel, Button, EmptyState, ErrorAlert, SkeletonRows } from '@/shared/ui';
 import { useCanReadEvents } from '@/shared/auth';
 import {
@@ -58,7 +49,6 @@ import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	EventSeverity,
 	isMonitorAccessDenied,
-	useAcknowledgeEvent,
 	useEventFeed,
 	useEventStream,
 	type EventResponse,
@@ -149,7 +139,6 @@ export function ActivityFeed() {
 			severity:
 				statusFilter === 'failed' ? [EventSeverity.ERROR, EventSeverity.CRITICAL] : null,
 			requiresAction: statusFilter === 'action' ? true : null,
-			acknowledged: statusFilter === 'action' ? false : null,
 		}),
 		[filters.from, filters.to, filters.actorId, filters.actorType, statusFilter],
 	);
@@ -206,11 +195,9 @@ export function ActivityFeed() {
 					!isRetiredEventType(e.type) &&
 					// A backend (or mock) that replays backlog on connect must not
 					// resurface old rows as "new".
-					Date.parse(e.created_at) >= streamFloor &&
-					// The stream can't filter on acknowledged; Needs action can.
-					!(params.acknowledged === false && e.acknowledged),
+					Date.parse(e.created_at) >= streamFloor,
 			),
-		[stream.events, params.acknowledged, streamFloor],
+		[stream.events, streamFloor],
 	);
 
 	// Reveal new arrivals immediately while it's safe to insert.
@@ -238,29 +225,16 @@ export function ActivityFeed() {
 		shellScroller().scrollTo({ top: 0, behavior: 'smooth' });
 	};
 
-	// Acks flip locally at once; the refetched history confirms them.
-	const acknowledge = useAcknowledgeEvent();
-	const [ackedIds, setAckedIds] = useState<ReadonlySet<string>>(() => new Set());
-	const pendingAckId = acknowledge.isPending ? acknowledge.variables : null;
-	const onAcknowledge = (eventId: string) =>
-		acknowledge.mutate(eventId, {
-			onSuccess: () => setAckedIds((prev) => new Set(prev).add(eventId)),
-		});
-
 	const events = useMemo(() => {
-		// History wins a dedupe: after an acknowledge it's the fresher copy.
+		// History wins a dedupe: it's the server-confirmed copy.
 		const byId = new Map<string, EventResponse>();
 		for (const e of liveEvents) if (revealed.has(e.event_id)) byId.set(e.event_id, e);
 		for (const e of historyEvents) byId.set(e.event_id, e);
 		return [...byId.values()]
 			.filter((e) => !isRetiredEventType(e.type))
-			.map((e) => {
-				const ev = adaptEvent(e);
-				return ackedIds.has(ev.id) ? { ...ev, acknowledged: true } : ev;
-			})
-			.filter((ev) => !(params.acknowledged === false && ev.acknowledged))
+			.map(adaptEvent)
 			.sort((a, b) => b.tsMs - a.tsMs);
-	}, [liveEvents, historyEvents, revealed, ackedIds, params.acknowledged]);
+	}, [liveEvents, historyEvents, revealed]);
 
 	const days = useMemo(() => buildDays(events, Date.now()), [events]);
 	const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
@@ -339,8 +313,6 @@ export function ActivityFeed() {
 			nested={nested}
 			active={openKey != null && openKey === detailKey(recordFor(ev))}
 			onOpen={() => openEvent(ev)}
-			onAcknowledge={() => onAcknowledge(ev.id)}
-			acknowledging={pendingAckId === ev.id}
 		/>
 	);
 
@@ -378,7 +350,6 @@ export function ActivityFeed() {
 				<LogList
 					ariaLabel="Activity feed"
 					columns={{ actor: 'Who', subject: 'Area', detail: '' }}
-					actionWidth="7.5rem"
 					header={liveBar}
 					footer={loadOlder}
 				>
@@ -408,7 +379,7 @@ export function ActivityFeed() {
 							title={filtered ? 'Nothing matches' : 'No activity yet'}
 							description={
 								statusFilter === 'action'
-									? 'Nothing is waiting on you. Failures and approvals that need a decision show up here.'
+									? 'No flagged events in this window. Events that asked for a human — failures, approvals, upstream updates — show up here; each links to where its current state lives.'
 									: filtered
 										? 'No events match the current filters in this window.'
 										: 'Calls, jobs, approvals and alerts will stream in here as they happen.'
@@ -517,36 +488,17 @@ function LiveIndicator({ status, paused }: { status: LiveStreamStatus; paused: b
 function FeedRow({
 	ev,
 	onOpen,
-	onAcknowledge,
-	acknowledging,
 	active,
 	nested,
 }: {
 	ev: StreamEvent;
 	onOpen: () => void;
-	onAcknowledge: () => void;
-	acknowledging: boolean;
 	active?: boolean;
 	nested?: boolean;
 }) {
 	const tone = eventTone(ev);
 	const action =
-		ev.requiresAction && !ev.acknowledged ? (
-			<Button
-				variant="tonal"
-				size="xs"
-				onClick={onAcknowledge}
-				loading={acknowledging}
-				disabled={acknowledging}
-			>
-				Acknowledge
-			</Button>
-		) : ev.requiresAction && ev.acknowledged ? (
-			<span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-				<CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-				<span className="max-sm:sr-only">Acknowledged</span>
-			</span>
-		) : recordFor(ev) || primaryDestinationFor(ev) ? (
+		recordFor(ev) || primaryDestinationFor(ev) ? (
 			<ChevronRight className="text-foreground-faint h-4 w-4" aria-hidden="true" />
 		) : null;
 
@@ -571,7 +523,6 @@ function FeedRow({
 			action={action}
 			label={ev.title}
 			active={active}
-			muted={ev.acknowledged}
 			nested={nested}
 			onOpen={onOpen}
 		/>

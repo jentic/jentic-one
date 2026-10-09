@@ -36,7 +36,7 @@ const KIND_LABEL = STREAM_KIND_LABEL;
 type Toast = StreamEvent & { addedAt: number; assertive: boolean };
 
 export function ToastHost() {
-	const { latest, acknowledge } = useAgentStream();
+	const { latest } = useAgentStream();
 	const navigate = useNavigate();
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
@@ -119,16 +119,9 @@ export function ToastHost() {
 	}
 
 	function handleAction(toast: Toast, action: InlineActionSpec) {
-		if (action.href && !action.acknowledges) {
-			const target = action.href(toast);
-			if (target) navigate(target);
-			dismiss(toast.id);
-			return;
-		}
-		if (action.acknowledges) {
-			void acknowledge(toast.id);
-			dismiss(toast.id);
-		}
+		const target = action.href ? action.href(toast) : null;
+		if (target) navigate(target);
+		dismiss(toast.id);
 	}
 
 	if (toasts.length === 0) return null;

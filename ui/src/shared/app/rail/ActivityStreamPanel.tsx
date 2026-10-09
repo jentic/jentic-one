@@ -77,14 +77,9 @@ export function ActivityStreamPanel({
 	}
 
 	function handleAction(eventId: string, action: InlineAction) {
-		// Pure navigation actions: navigate, skip the RPC.
-		if (action.href && !action.acknowledges) {
-			const ev = events.find((e) => e.id === eventId);
-			const target = ev ? action.href(ev) : null;
-			if (target) navigate(target);
-			return;
-		}
-		if (action.acknowledges) void stream?.acknowledge(eventId);
+		const ev = events.find((e) => e.id === eventId);
+		const target = ev && action.href ? action.href(ev) : null;
+		if (target) navigate(target);
 	}
 
 	return (

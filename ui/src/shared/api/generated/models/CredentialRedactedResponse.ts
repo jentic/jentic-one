@@ -41,6 +41,14 @@ export type CredentialRedactedResponse = {
      */
     name: string;
     /**
+     * Id of the shared ``oauth_app_registrations`` row this credential was minted through, if any. Null for legacy embedded OAuth credentials and every non-OAuth type.
+     */
+    oauth_app_registration_id?: (string | null);
+    /**
+     * Admin-facing name of the shared OAuth app registration this credential was minted through. Null when the credential is not backed by a shared registration.
+     */
+    oauth_app_registration_name?: (string | null);
+    /**
      * Credential provider; 'static' for stored secrets.
      */
     provider: string;

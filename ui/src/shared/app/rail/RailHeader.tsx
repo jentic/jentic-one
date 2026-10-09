@@ -26,7 +26,7 @@ export type RailHeaderProps = {
 	filter: ReactNode;
 	failuresOnly: boolean;
 	onToggleFailuresOnly: () => void;
-	/** Unacknowledged failures under the current lens. */
+	/** Recent failures (in the loaded feed) under the current lens. */
 	failureCount: number;
 	onLoadOlder: () => void;
 	canLoadOlder?: boolean;
@@ -190,7 +190,7 @@ export function RailHeader({
 					{failureCount > 0 && (
 						<span
 							className="bg-danger/20 text-danger rounded-full px-1.5 text-[10px] leading-4 font-semibold tabular-nums"
-							aria-label={`${failureCount} unacknowledged`}
+							aria-label={`${failureCount} recent`}
 						>
 							{failureCount > 99 ? '99+' : failureCount}
 						</span>

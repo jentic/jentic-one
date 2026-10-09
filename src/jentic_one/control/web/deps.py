@@ -10,6 +10,9 @@ from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
 from jentic_one.control.services.mcp.service import McpService
+from jentic_one.control.services.oauth_app_registrations.service import (
+    OAuthAppRegistrationService,
+)
 from jentic_one.control.services.vendors.service import VendorRegistryService
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
@@ -36,6 +39,13 @@ def get_vendor_registry_service(
 ) -> VendorRegistryService:
     """Resolve a VendorRegistryService from the request context."""
     return VendorRegistryService(ctx)
+
+
+def get_oauth_app_registration_service(
+    ctx: Context = Depends(get_ctx),
+) -> OAuthAppRegistrationService:
+    """Resolve an OAuthAppRegistrationService from the request context."""
+    return OAuthAppRegistrationService(ctx)
 
 
 def get_connect_session_service(

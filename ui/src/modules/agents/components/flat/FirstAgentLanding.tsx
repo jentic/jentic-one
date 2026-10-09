@@ -4,8 +4,9 @@
  *
  * Two routes in, side by side: the primary card has the agent register itself
  * (`jentic register`); the secondary card is manual creation, in the New
- * agent panel's "Create here" tab. Below them, a faint tonal preview of the
- * fleet view with an empty slot for the first agent.
+ * agent panel's "Create here" tab, offered only with `agents:write` (or
+ * `org:admin`). Below them, a faint tonal preview of the fleet view with an
+ * empty slot for the first agent.
  *
  * The parent polls (and the event stream invalidates) the agents list while
  * this is on screen and passes the registered agent in as `agent`. The card
@@ -38,6 +39,7 @@ import {
 import { KeyRound, Pencil, Plus, UserRound } from 'lucide-react';
 import { Button, McpIcon } from '@/shared/ui';
 import { useMediaQuery } from '@/shared/hooks';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import type { AgentEntity } from '@/modules/agents/api';
 import { EASE_OUT_SOFT, GhostFleet } from '@/modules/agents/components/flat/GhostFleet';
 import { RegisterFlow, registerFlowTitleId } from '@/modules/agents/components/flat/RegisterFlow';
@@ -100,6 +102,7 @@ export function FirstAgentLanding({
 	const [mountPhase] = useState(phase);
 	const baseId = useId();
 	const titleId = registerFlowTitleId(baseId, agent);
+	const canCreate = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div data-testid="agents-empty-landing" data-phase={phase} className="relative">
@@ -135,7 +138,7 @@ export function FirstAgentLanding({
 				</motion.section>
 
 				<AnimatePresence initial={false}>
-					{phase === 'listening' && (
+					{phase === 'listening' && canCreate && (
 						<ManualSlot key="manual" wide={wide} reducedMotion={reducedMotion}>
 							<ManualCard onCreateAgent={onCreateAgent} />
 						</ManualSlot>

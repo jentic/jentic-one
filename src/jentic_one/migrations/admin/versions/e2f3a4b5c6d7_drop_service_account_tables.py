@@ -25,8 +25,9 @@ reliably reach, and it uses application code). This revision then:
 4. **Scope-data sweep.** The retired ``service-accounts:read`` /
    ``service-accounts:write`` / ``owner:service-accounts:read`` strings are
    purged from every stored grant/token surface, exactly like the theme-5
-   6b sweep (``d1e2f3a4b5c6``): scalar grant rows are deleted, JSON arrays
-   and the space-separated ``authorization_codes.scopes`` are rewritten
+   6b sweep (``d1e2f3a4b5c6``): scalar grant rows are deleted, scope arrays
+   (JSON, or ``VARCHAR[]`` for ``oauth_clients.allowed_scopes`` on
+   PostgreSQL) and the space-separated ``authorization_codes.scopes`` are rewritten
    in Python, LIKE-prefiltered so unaffected rows are never touched.
 5. **Drop** ``service_account_migration_acks`` (the retired 0.40
    acknowledgement sentinel), ``service_account_credentials`` and
@@ -83,6 +84,11 @@ _JSON_SCOPE_TABLES = (
     ("oauth_client_grants", "scopes"),
     ("oauth_clients", "allowed_scopes"),
 )
+
+#: Columns among ``_JSON_SCOPE_TABLES`` that are a native ``VARCHAR[]`` on
+#: PostgreSQL (``aa6b7c8d9e0f``) rather than JSONB. SQLite stores them as
+#: JSON like the rest.
+_PG_ARRAY_COLUMNS = frozenset({("oauth_clients", "allowed_scopes")})
 
 _LOCK_SQL = "LOCK TABLE service_accounts, service_account_credentials IN SHARE ROW EXCLUSIVE MODE"
 
@@ -191,8 +197,14 @@ def _sweep_json_tables(bind: sa.engine.Connection) -> None:
             sa.text(f"SELECT id, {column} AS scopes FROM {table} WHERE {probe} LIKE :probe"),
             {"probe": _RETIRED_SCOPE_PROBE},
         ).all()
-        assignment = f"{column} = CAST(:scopes AS JSONB)" if pg else f"{column} = :scopes"
-        update = sa.text(f"UPDATE {table} SET {assignment} WHERE id = :id")
+        pg_array = pg and (table, column) in _PG_ARRAY_COLUMNS
+        if pg_array:
+            update = sa.text(f"UPDATE {table} SET {column} = :scopes WHERE id = :id").bindparams(
+                sa.bindparam("scopes", type_=sa.ARRAY(sa.String()))
+            )
+        else:
+            assignment = f"{column} = CAST(:scopes AS JSONB)" if pg else f"{column} = :scopes"
+            update = sa.text(f"UPDATE {table} SET {assignment} WHERE id = :id")
         for row in rows:
             scopes = _parse_scopes(row.scopes)
             if scopes is None:
@@ -200,7 +212,7 @@ def _sweep_json_tables(bind: sa.engine.Connection) -> None:
             kept = [scope for scope in scopes if scope not in _RETIRED_SCOPES]
             if kept == scopes:
                 continue
-            bind.execute(update, {"id": row.id, "scopes": json.dumps(kept)})
+            bind.execute(update, {"id": row.id, "scopes": kept if pg_array else json.dumps(kept)})
 
 
 def _sweep_authorization_codes(bind: sa.engine.Connection) -> None:

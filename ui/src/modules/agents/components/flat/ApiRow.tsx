@@ -81,10 +81,14 @@ interface ApiRowProps {
 	onManage?: () => void;
 	/** Open the access sheet focused on its rules editor (the Blocked fix). */
 	onOpenRules?: () => void;
-	/** Pause this binding (reversible — rules survive). */
-	onSuspend: () => void;
-	/** Lift a suspension on this binding. */
-	onResume: () => void;
+	/** Pause this binding (reversible — rules survive). Omitted when the viewer
+	 * may not manage the agent's bindings: the row then offers no pause. */
+	onSuspend?: () => void;
+	/** Lift a suspension on this binding. Omitted like `onSuspend`. */
+	onResume?: () => void;
+	/** Whether to offer "Finish connecting" for a binding awaiting sign-in. Off
+	 * for a viewer who may not write credentials, matching the sidebar. */
+	canConnect?: boolean;
 	/** A suspend/resume on THIS row's credential is in flight. */
 	bindingPending: boolean;
 	/** Whether the AGENT this row belongs to is serving traffic. */
@@ -132,6 +136,7 @@ export const ApiRow = memo(function ApiRow({
 	accountCount = 1,
 	pinned = false,
 	onTogglePin,
+	canConnect = true,
 }: ApiRowProps) {
 	const reducedMotion = useReducedMotionConfig();
 	const status = deriveTileStatus({
@@ -403,7 +408,7 @@ export const ApiRow = memo(function ApiRow({
 										{summary}
 									</p>
 								)}
-								{tile.suspended && (
+								{tile.suspended && onResume && (
 									// Above the overlay, on the summary's own line (so the row
 									// keeps its height): a paused binding's one-step way back.
 									<Tooltip
@@ -437,7 +442,7 @@ export const ApiRow = memo(function ApiRow({
 								)}
 							</div>
 						)}
-						{tile.awaitingConsent && (
+						{tile.awaitingConsent && canConnect && (
 							// Above the overlay: the fix for an unfinished sign-in.
 							<Button
 								variant="tonal"

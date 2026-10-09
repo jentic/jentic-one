@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 from alembic import command
-from sqlalchemy import inspect, text
+from sqlalchemy import insert, inspect, text
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.services.toolkit_export import (
@@ -123,8 +123,10 @@ async def _seed(control_db: DatabaseSession, admin_db: DatabaseSession) -> None:
             ),
             {"active": False},
         )
-        session.add(
-            Credential(
+        # Core insert (not ``session.add``): renders only the given columns,
+        # so it works on the downgraded schema, which lacks later columns.
+        await session.execute(
+            insert(Credential).values(
                 id="cred_extest_1",
                 type="token_value",
                 name="ex-cred",

@@ -214,7 +214,7 @@ JWKS, then RFC 7523 JWT-bearer assertions exchanged at
   | `evt_` | Event | ULID-shaped. |
   | `op_` | Registered operation | |
   | `rev_` | API revision | ULID-shaped. |
-  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |
+  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `decided_by` and similar audit references. |
   | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |
   | `areq_` | Access request (retired) | Retired (theme 7): the access-request flow is gone. Ids still appear in stored audit/event records. |
   | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |
@@ -493,8 +493,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "subject it is about (for example the owner of the credential or the agent "
             "concerned), to the human owner of either when that is an agent, and to "
             "`org:admin`; system events with no subject are visible only to `org:admin`. To "
-            "any other caller an event is indistinguishable from a missing one (`404`), "
-            "including on acknowledgement."
+            "any other caller an event is indistinguishable from a missing one (`404`)."
         ),
     },
     {
@@ -663,6 +662,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "OAuth App Registrations",
+        "description": (
+            "Admin-managed OAuth application registrations that end users on the "
+            "instance can SSO through. Each row holds a client_id, endpoints, and "
+            "(for authorization-code flows) an encrypted client secret. Registrations "
+            "are per-vendor and per-flow-kind; users then start a connect session "
+            "against a registration to mint their own tokens."
+        ),
+    },
+    {
         "name": "MCP",
         "description": (
             "MCP (Model Context Protocol) transport reporting. The `jentic mcp` stdio "
@@ -714,6 +723,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Monitoring",
             "Configuration",
             "OAuth Clients",
+            "OAuth App Registrations",
         ],
     },
     {
@@ -917,6 +927,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/admin/oauth-grants"), "OAuth"),
     # Anonymous DCR front door — before the broader ^/oauth rule below.
     (re.compile(r"^/oauth-clients"), "OAuth Clients"),
+    # Admin-managed shared OAuth application registrations — before ^/oauth.
+    (re.compile(r"^/oauth-app-registrations"), "OAuth App Registrations"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
     (re.compile(r"^/oauth"), "OAuth"),

@@ -12,6 +12,12 @@ export { getToken, setToken, clearToken, subscribeToken } from '@/shared/api/tok
 // Health (deploy-mode aware).
 export { getHealth } from '@/shared/api/health';
 
+// The configured client and its raw request, for endpoints the generated
+// services do not cover. Downstream UI overlays built on this app import them
+// from the facade, so they stay exported even when no module here uses them.
+export { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
+export { request as apiRequest } from '@/shared/api/generated/core/request';
+
 // Generated typed services (regenerate with `npm run codegen`), one per API tag.
 export { UsersService } from '@/shared/api/generated/services/UsersService';
 export { EventsService } from '@/shared/api/generated/services/EventsService';
@@ -48,7 +54,7 @@ export type { AgentListResponse } from '@/shared/api/generated/models/AgentListR
 // behind the facade like every other module.
 export type { EventResponse } from '@/shared/api/generated/models/EventResponse';
 export type { EventListResponse } from '@/shared/api/generated/models/EventListResponse';
-export type { EventAcknowledgeRequest } from '@/shared/api/generated/models/EventAcknowledgeRequest';
+export type { EventLinks } from '@/shared/api/generated/models/EventLinks';
 export { EventSeverity } from '@/shared/api/generated/models/EventSeverity';
 
 // Discover (catalog) slice — services + models.
@@ -226,6 +232,20 @@ export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/
 export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
+export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
+
+// OAuth App Registrations — admin-managed shared OAuth applications that
+// users on this instance SSO through. The registrations service + its
+// request/response models are exposed here for the module's api tier;
+// views still go through the module's own hooks. Append-only.
+export { OAuthAppRegistrationsService } from '@/shared/api/generated/services/OAuthAppRegistrationsService';
+export { OAuthAppRegistrationFlowKind } from '@/shared/api/generated/models/OAuthAppRegistrationFlowKind';
+export type { OAuthAppRegistrationResponse } from '@/shared/api/generated/models/OAuthAppRegistrationResponse';
+export type { OAuthAppRegistrationListResponse } from '@/shared/api/generated/models/OAuthAppRegistrationListResponse';
+export type { OAuthAppRegistrationUpdateRequest } from '@/shared/api/generated/models/OAuthAppRegistrationUpdateRequest';
+export type { OAuthAppRegistrationRotateSecretRequest } from '@/shared/api/generated/models/OAuthAppRegistrationRotateSecretRequest';
+export type { AuthorizationCodeRegistrationCreateRequest } from '@/shared/api/generated/models/AuthorizationCodeRegistrationCreateRequest';
+export type { DeviceAuthorizationRegistrationCreateRequest } from '@/shared/api/generated/models/DeviceAuthorizationRegistrationCreateRequest';
 
 // Shared permission rule sets a direct binding can point at (the binding's
 // `rule_set_id`). Read here so a governed binding shows the set's rules — the

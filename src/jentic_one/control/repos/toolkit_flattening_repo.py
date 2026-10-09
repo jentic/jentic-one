@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only, raiseload
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -235,7 +236,19 @@ class FlatteningControlRepository:
 
     @staticmethod
     async def list_credentials(session: AsyncSession) -> list[Credential]:
-        result = await session.execute(select(Credential).order_by(Credential.id))
+        # Only the columns the flatten reads, and no relationship loads. The
+        # job runs against the pre-drop schema, before any later migration has
+        # added columns or related tables, so a full ORM load would fail there.
+        result = await session.execute(
+            select(Credential)
+            .options(
+                load_only(
+                    Credential.id, Credential.name, Credential.api_vendor, Credential.created_by
+                ),
+                raiseload("*"),
+            )
+            .order_by(Credential.id)
+        )
         return list(result.scalars().all())
 
     @staticmethod

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { QueryClient } from '@tanstack/react-query';
 import { worker } from '@/mocks/browser';
 import {
 	checkA11y,
@@ -45,9 +46,13 @@ import type {
  */
 
 const vendor = {
+	entry_id: 'github',
+	registration_id: null,
 	key: 'github',
 	vendor: 'github.com',
 	display_name: 'GitHub',
+	name: 'GitHub',
+	source: 'config' as const,
 	flow_kinds: ['device_authorization'],
 };
 
@@ -125,7 +130,11 @@ describe('VendorConnectFlow — self mode', () => {
 		);
 		// Vendor header comes from the ``vendor`` prop, so it's up
 		// immediately; scope data hydrates from the capabilities query.
-		expect(await screen.findByText('GitHub')).toBeInTheDocument();
+		// The vendor name renders as an editable input pre-filled with the
+		// display name.
+		expect((await screen.findByLabelText(/credential name/i)) as HTMLInputElement).toHaveValue(
+			'GitHub',
+		);
 		expect(await screen.findByText('repo')).toBeInTheDocument();
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
 		// Agent picker IS rendered — theme-5 landed on main and
@@ -303,6 +312,258 @@ describe('VendorConnectFlow — self mode', () => {
 		// this is the string the human types into the vendor page, so a
 		// regression here breaks the whole device-code UX.
 		expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
+	});
+
+	it('reports the created credential once and refreshes the agent bindings', async () => {
+		// ``:connect`` fires on Continue off the configure page and ``:confirm``
+		// on Continue off the rules page.
+		const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+		worker.use(
+			http.post('/integrations:connect', () =>
+				HttpResponse.json(
+					{
+						session_id: 'sess_1',
+						approval_url:
+							'https://example.com/app/agents?approve=sess_1&poll_token=tok',
+						poll_token: 'tok',
+						resolved_flow: 'device_authorization',
+					},
+					{ status: 201 },
+				),
+			),
+			// ``:connect`` returning triggers a ``GET /connect-sessions/{id}``
+			// (useConnectSession) so the rules page can read ``api_reference``.
+			http.get('/connect-sessions/sess_1', () =>
+				HttpResponse.json({
+					session_id: 'sess_1',
+					state: 'created',
+					vendor_key: 'github',
+					vendor_display_name: 'GitHub',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+				}),
+			),
+			http.post('/connect-sessions/sess_1\\:confirm', () =>
+				HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'ABCD-1234',
+					verification_uri: 'https://github.com/login/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 5,
+				}),
+			),
+			http.get('/connect-sessions/:id/status', () =>
+				HttpResponse.json({
+					status: 'connected',
+					connected_as: 'octocat',
+					credential_id: 'cred_new',
+					bound_scopes: null,
+					error_code: null,
+				}),
+			),
+		);
+
+		const onConnected = vi.fn();
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendor}
+				onConnected={onConnected}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		// Wait for both capabilities + session-id + agent choice (Continue
+		// is gated on all three). ``read:user`` proves the scope catalog
+		// hydrated; picking Scout satisfies the agent gate; the button
+		// un-disables when ``:connect`` also returns.
+		await screen.findByText('read:user');
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await user.click(
+			await screen.findByRole('button', { name: /(skip.*continue|^continue$)/i }),
+		);
+
+		await waitFor(() =>
+			expect(onConnected).toHaveBeenCalledWith({
+				credentialId: 'cred_new',
+				name: vendor.display_name,
+			}),
+		);
+		expect(onConnected).toHaveBeenCalledTimes(1);
+		// The connect bound the credential to Scout, so Scout's binding list
+		// (agent page, Add APIs tray) is refetched.
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ['agents', 'credential-bindings', 'agnt_1'],
+		});
+	});
+
+	it('threads a user-typed credential name through the :connect payload', async () => {
+		stubCapabilities();
+		let capturedBody: unknown = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = await request.json();
+				return HttpResponse.json({
+					session_id: 'sess_named',
+					approval_url: '/x',
+					poll_token: 'tok_named',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		const nameInput = await screen.findByLabelText(/credential name/i);
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub (personal)');
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub (personal)' });
+	});
+
+	it('sends the vendor display name as `name` when the field is left untouched', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_blank',
+					approval_url: '/x',
+					poll_token: 'tok_blank',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		// The input is pre-filled with the vendor display name so the
+		// payload always carries a ``name``. Sending the same string
+		// server-side is functionally equivalent to omitting it.
+		expect(capturedBody).toMatchObject({ vendor: 'github', name: 'GitHub' });
+	});
+
+	it('threads oauth_app_registration_id when the vendor prop carries one', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_pinned',
+					approval_url: '/x',
+					poll_token: 'tok_pinned',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		const vendorPinned = {
+			...vendor,
+			entry_id: 'oar_prod',
+			registration_id: 'oar_prod',
+			name: 'MyOrg Prod GitHub',
+			source: 'db' as const,
+		};
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendorPinned}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).toMatchObject({
+			vendor: 'github',
+			oauth_app_registration_id: 'oar_prod',
+		});
+	});
+
+	it('names the shared app on the configure step for admin-registered vendors', async () => {
+		stubCapabilities();
+		const vendorPinned = {
+			...vendor,
+			entry_id: 'oar_prod',
+			registration_id: 'oar_prod',
+			name: 'MyOrg Prod GitHub',
+			source: 'db' as const,
+		};
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendorPinned}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		expect(await screen.findByText('Shared app')).toBeInTheDocument();
+		expect(screen.getByText('via MyOrg Prod GitHub')).toBeInTheDocument();
+	});
+
+	it('shows no shared-app line for platform vendors', async () => {
+		stubCapabilities();
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
+	});
+
+	it('omits oauth_app_registration_id when the vendor prop has no registration', async () => {
+		stubCapabilities();
+		let capturedBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/integrations:connect', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					session_id: 'sess_cfg',
+					approval_url: '/x',
+					poll_token: 'tok_cfg',
+					resolved_flow: 'device_authorization',
+				});
+			}),
+		);
+		renderWithProviders(
+			<VendorConnectFlow mode="self" vendor={vendor} onBack={vi.fn()} onDone={vi.fn()} />,
+		);
+		const user = userEvent.setup();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(capturedBody).not.toBeNull());
+		expect(capturedBody).not.toHaveProperty('oauth_app_registration_id');
 	});
 });
 
@@ -972,14 +1233,16 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		expect(connectCalls).toBe(1);
 		await user.click(screen.getByRole('button', { name: /try again/i }));
 
-		// Back on the configure step, and a SECOND :connect fired — the old
-		// behaviour left Continue permanently disabled because the mount
-		// effect never re-ran and session stayed null.
+		// Back on the configure step, Continue re-enabled. Under the current
+		// design ``:connect`` fires from Continue-click (not on mount), so
+		// a fresh click on Continue after Try Again produces a SECOND
+		// ``:connect`` call — asserted below.
 		expect(await screen.findByText('read:user')).toBeInTheDocument();
-		await waitFor(() => expect(connectCalls).toBe(2));
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
 		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await waitFor(() => expect(connectCalls).toBe(2));
 	});
 
 	it('the no-agents empty state links to the Agents page and does not block Continue (M2)', async () => {

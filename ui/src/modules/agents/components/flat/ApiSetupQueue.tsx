@@ -65,6 +65,7 @@ import {
 } from '@/shared/credentials/lib/accessPresets';
 import { apiScopeReach } from '@/shared/credentials/lib/apiIdentity';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
+import type { ConnectedCredentialInfo } from '@/shared/credentials/components/VendorConnectFlow';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -390,8 +391,22 @@ export function ApiSetupQueue({
 		);
 	};
 
-	const retry = (key: string): void => setEntries((current) => retryEntry(current, key));
+	/** A vendor or shared-app sign-in from the form already bound the new
+	 * credential to this agent (its rules set in that flow), and the server
+	 * imported the catalog API at connect, so the row is simply added — no
+	 * access step, which would bind it a second time. */
+	const handleVendorConnected = (entry: QueueEntry, info: ConnectedCredentialInfo): void => {
+		setEntries((current) =>
+			patchEntry(current, entry.key, {
+				status: 'added',
+				error: undefined,
+				credentialId: info.credentialId,
+				credentialName: info.name,
+			}),
+		);
+	};
 
+	const retry = (key: string): void => setEntries((current) => retryEntry(current, key));
 	// A bind in flight has to land before the queue can hand its item back —
 	// reopening on it would bind the same credential again.
 	const busy = entries.some((e) => e.status === 'working');
@@ -588,6 +603,8 @@ export function ApiSetupQueue({
 					key={formEntry.key}
 					open
 					pinnedApi={formEntry.api}
+					preselectedAgentId={agentId}
+					onVendorConnected={(info): void => handleVendorConnected(formEntry, info)}
 					onClose={(): void => setFormKey(null)}
 					onCreated={(info): void => handleCreated(formEntry, info)}
 					back={onBack ? { label: 'Back to APIs', onBack: backFromForm } : undefined}

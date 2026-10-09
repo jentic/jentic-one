@@ -26,7 +26,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		},
 		links: {},
 		requiresAction: true,
-		acknowledged: false,
 		groupKey: 'catalog:catalog.update_available:',
 	};
 	return { ...base, ...partial };
@@ -48,7 +47,6 @@ describe('catalog/overlay stream kind (L5)', () => {
 			summary: 'Update available',
 			created_at: '2026-01-01T00:00:00Z',
 			requires_action: true,
-			acknowledged: false,
 			data: {
 				api_id: 'stripe.com',
 				vendor: 'stripe.com',
@@ -66,10 +64,9 @@ describe('catalog/overlay stream kind (L5)', () => {
 		expect(ev.tokens.version).toBe('1');
 	});
 
-	it('renders a Review action for a catalog.update_available event', () => {
+	it('links a catalog.update_available event to its API page', () => {
 		render(<RailEventRow ev={makeEvent({})} onAction={() => {}} />);
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'View API' })).toBeInTheDocument();
 	});
 
 	it('surfaces the conflict "why" hint for a catalog.update_conflicts_overlay event', () => {
@@ -80,7 +77,6 @@ describe('catalog/overlay stream kind (L5)', () => {
 			summary: 'Update conflicts with overlay',
 			created_at: '2026-01-01T00:00:00Z',
 			requires_action: true,
-			acknowledged: false,
 			data: {
 				api_id: 'stripe.com',
 				vendor: 'stripe.com',

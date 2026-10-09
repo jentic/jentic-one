@@ -39,6 +39,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 _logger = structlog.get_logger(__name__)
 
@@ -154,6 +155,8 @@ async def integrations_connect(
         ],
         preferred_flow=body.preferred_flow,
         reason=body.reason,
+        credential_name=body.name,
+        oauth_app_registration_id=body.oauth_app_registration_id,
     )
 
     return IntegrationsConnectResponse(
@@ -225,6 +228,7 @@ async def list_connect_sessions(
     "/connect-sessions/{session_id}",
     summary="Get review data for a connect session",
     response_model=None,
+    responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
     session_id: str,
@@ -283,6 +287,10 @@ async def get_connect_session(
     "/connect-sessions/{session_id}:confirm",
     summary="Confirm scopes + permissions and kick off the vendor flow",
     response_model=None,
+    responses=with_responses(
+        not_found(),
+        conflict("Session not awaiting confirmation, or its OAuth app changed"),
+    ),
 )
 async def confirm_connect_session(
     session_id: str,

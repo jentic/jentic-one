@@ -77,8 +77,11 @@ interface ApiRowRevealProps {
 	bindingPending: boolean;
 	onOpen: () => void;
 	onOpenRules: () => void;
-	onSuspend: () => void;
-	onResume: () => void;
+	/** Pause this binding. Omitted when the viewer may not manage the agent's
+	 * bindings (`agents:write`): the footer then offers no pause. */
+	onSuspend?: () => void;
+	/** Lift a suspension on this binding. Omitted like `onSuspend`. */
+	onResume?: () => void;
 }
 
 export function ApiRowReveal({
@@ -127,39 +130,41 @@ export function ApiRowReveal({
 						<Settings2 aria-hidden="true" className="h-3.5 w-3.5" />
 						Manage access
 					</Button>
-					{tile.suspended ? (
-						<Tooltip
-							content="Resume this binding — its rules are intact."
-							interactiveChild
-						>
-							<Button
-								variant="tonal"
-								size="xs"
-								loading={bindingPending}
-								onClick={onResume}
-								aria-label={`Resume ${tile.title} access`}
-							>
-								<PlayCircle aria-hidden="true" className="h-3.5 w-3.5" />
-								Resume
-							</Button>
-						</Tooltip>
-					) : (
-						<Tooltip
-							content="Pause this binding — reversible; rules survive and resume restores access."
-							interactiveChild
-						>
-							<Button
-								variant="tonal"
-								size="xs"
-								loading={bindingPending}
-								onClick={onSuspend}
-								aria-label={`Pause ${tile.title} access`}
-							>
-								<PauseCircle aria-hidden="true" className="h-3.5 w-3.5" />
-								Pause
-							</Button>
-						</Tooltip>
-					)}
+					{tile.suspended
+						? onResume && (
+								<Tooltip
+									content="Resume this binding — its rules are intact."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="xs"
+										loading={bindingPending}
+										onClick={onResume}
+										aria-label={`Resume ${tile.title} access`}
+									>
+										<PlayCircle aria-hidden="true" className="h-3.5 w-3.5" />
+										Resume
+									</Button>
+								</Tooltip>
+							)
+						: onSuspend && (
+								<Tooltip
+									content="Pause this binding — reversible; rules survive and resume restores access."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="xs"
+										loading={bindingPending}
+										onClick={onSuspend}
+										aria-label={`Pause ${tile.title} access`}
+									>
+										<PauseCircle aria-hidden="true" className="h-3.5 w-3.5" />
+										Pause
+									</Button>
+								</Tooltip>
+							)}
 				</div>
 			</footer>
 		</div>

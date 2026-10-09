@@ -30,14 +30,15 @@ The admin half of the deletion cut. Two pieces:
    grant/token surface: ``actor_scope_grants`` (one scope per row → rows
    deleted), ``user_permission_grants`` (same), and the array/string carriers
    ``access_tokens.scopes``, ``refresh_tokens.scopes``,
-   ``oauth_client_grants.scopes``, ``oauth_clients.allowed_scopes`` (JSON
-   arrays, rewritten minus the retired entries) and
+   ``oauth_client_grants.scopes``, ``oauth_clients.allowed_scopes`` (arrays,
+   rewritten minus the retired entries: JSON, except ``allowed_scopes``, a
+   native ``VARCHAR[]`` on PostgreSQL) and
    ``authorization_codes.scopes`` (space-separated string). Holding a retired
    scope has granted nothing since Phase 5b (``RETIRED_SCOPES`` is
    accept-and-ignore); this sweep removes the strings so the tolerance set
    itself can eventually retire. Array rewrites run in Python (dialect-safe
-   for Postgres JSONB and SQLite JSON-as-TEXT alike), prefiltered by a
-   LIKE probe so unaffected rows are never rewritten.
+   for Postgres JSONB and ``VARCHAR[]`` and SQLite JSON-as-TEXT alike),
+   prefiltered by a LIKE probe so unaffected rows are never rewritten.
 
 ``downgrade()`` recreates ``agent_toolkit_bindings`` empty in its final
 historical shape (post ``s8t9u0v1w2x3`` toolkit_id index, ``q6r7s8t9u0v1``
@@ -85,6 +86,11 @@ _JSON_SCOPE_TABLES = (
     ("oauth_client_grants", "scopes"),
     ("oauth_clients", "allowed_scopes"),
 )
+
+#: Columns among ``_JSON_SCOPE_TABLES`` that are a native ``VARCHAR[]`` on
+#: PostgreSQL (``aa6b7c8d9e0f``) rather than JSONB. SQLite stores them as
+#: JSON like the rest.
+_PG_ARRAY_COLUMNS = frozenset({("oauth_clients", "allowed_scopes")})
 
 _RUNBOOK = (
     "Run `jentic_one flatten-toolkits` on this release (then re-run it to "
@@ -211,8 +217,14 @@ def _sweep_json_tables(bind: sa.engine.Connection) -> None:
         rows = bind.execute(
             sa.text(f"SELECT id, {column} AS scopes FROM {table} WHERE {probe} LIKE '%toolkits%'")
         ).all()
-        assignment = f"{column} = CAST(:scopes AS JSONB)" if pg else f"{column} = :scopes"
-        update = sa.text(f"UPDATE {table} SET {assignment} WHERE id = :id")
+        pg_array = pg and (table, column) in _PG_ARRAY_COLUMNS
+        if pg_array:
+            update = sa.text(f"UPDATE {table} SET {column} = :scopes WHERE id = :id").bindparams(
+                sa.bindparam("scopes", type_=sa.ARRAY(sa.String()))
+            )
+        else:
+            assignment = f"{column} = CAST(:scopes AS JSONB)" if pg else f"{column} = :scopes"
+            update = sa.text(f"UPDATE {table} SET {assignment} WHERE id = :id")
         for row in rows:
             scopes = _parse_scopes(row.scopes)
             if scopes is None:
@@ -220,7 +232,7 @@ def _sweep_json_tables(bind: sa.engine.Connection) -> None:
             kept = [scope for scope in scopes if scope not in _RETIRED_SCOPES]
             if kept == scopes:
                 continue
-            bind.execute(update, {"id": row.id, "scopes": json.dumps(kept)})
+            bind.execute(update, {"id": row.id, "scopes": kept if pg_array else json.dumps(kept)})
 
 
 def _sweep_authorization_codes(bind: sa.engine.Connection) -> None:

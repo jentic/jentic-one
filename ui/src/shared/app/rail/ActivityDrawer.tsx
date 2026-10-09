@@ -1,6 +1,6 @@
 /**
  * ActivityDrawerButton — the Activity rail for viewports below `xl`, where the
- * docked rail is hidden. A top-bar button (with a red dot for unacknowledged
+ * docked rail is hidden. A top-bar button (with a red dot for recent
  * failures — counts are the Notifications bell's job) opens the SAME
  * `ActivityRailBody` in a right-side sheet.
  */
@@ -29,7 +29,7 @@ export function ActivityDrawerButton({ className }: { className?: string }) {
 
 	const label =
 		failureCount > 0
-			? `Activity (${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'})`
+			? `Activity (${failureCount} recent failure${failureCount === 1 ? '' : 's'})`
 			: 'Activity';
 
 	return (

@@ -41,7 +41,6 @@ def _make_event_view(
         severity=EventSeverity.INFO,
         summary="test event",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 6, 1, tzinfo=UTC),
         data=data or {},
     )
@@ -98,7 +97,6 @@ def test_actor_fields_present_in_response() -> None:
         severity=EventSeverity.INFO,
         summary="test event",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 6, 1, tzinfo=UTC),
         data={},
         actor_id="agt_abc",

@@ -6,9 +6,9 @@
  * before Monitor in src/mocks/handlers.ts), so rather than reorder the
  * handler table — which would swap the rail's and the Home page's data out
  * from under them — this APPENDS to that one store. Everything seeded here is
- * older than the rail's own three seeds and nothing waits on a human (no
- * unacknowledged `requires_action`), so the rail's newest rows, the bell
- * count and the Home inbox read exactly as before.
+ * older than the rail's own three seeds and the actionable ones fall outside the
+ * bell's recent window, so the rail's newest rows, the bell count and the Home
+ * inbox read exactly as before.
  *
  * Not seeded under Vitest: unit tests reset the store after each test and
  * expect only the rail's fixtures.
@@ -30,11 +30,8 @@ function call(i: number, sec: number, op: string, actor: string, failed = false)
 		summary: `Execution ${failed ? 'failed' : 'completed'}: ${op}`,
 		detail: failed ? 'upstream returned 502 Bad Gateway' : null,
 		created_at: ago(sec),
-		// A failure the operator already looked at — history, not an alert.
+		// An old failure — history, outside the bell's recent window.
 		requires_action: failed,
-		acknowledged: failed,
-		acknowledged_at: failed ? ago(sec - 5 * MIN) : null,
-		acknowledged_by: failed ? 'admin@local' : null,
 		trace_id: `tr_${id}`,
 		actor_id: actor,
 		actor_type: 'agent',
@@ -54,7 +51,7 @@ const MIX: Seed[] = [
 		event_id: 'evt_mix_cred_expiring',
 		type: 'credential.expiring_soon',
 		severity: 'warning',
-		summary: 'Credential expiring soon: Stripe (live)',
+		summary: "Credential 'Stripe (live)' is expiring soon",
 		detail: 'expires in 6 days',
 		created_at: ago(22 * MIN),
 		data: { credential_id: 'cred_stripe_live' },
@@ -129,9 +126,6 @@ const MIX: Seed[] = [
 		detail: 'spec is not valid OpenAPI 3.x',
 		created_at: ago(29 * HOUR),
 		requires_action: true,
-		acknowledged: true,
-		acknowledged_at: ago(28 * HOUR),
-		acknowledged_by: 'admin@local',
 		actor_id: 'usr_admin_1',
 		actor_type: 'user',
 		data: { job_id: 'job_exec_3' },
@@ -144,9 +138,6 @@ const MIX: Seed[] = [
 		summary: 'Agent registered: nightly-reporter',
 		created_at: ago(31 * HOUR),
 		requires_action: true,
-		acknowledged: true,
-		acknowledged_at: ago(30 * HOUR),
-		acknowledged_by: 'admin@local',
 		actor_id: 'nightly-reporter',
 		actor_type: 'agent',
 	},

@@ -20,6 +20,10 @@
  * gracefully with a type prefix + the raw `tk_…` / `sva_…` id rather than
  * trying — and failing — to resolve a name that the directory never holds.
  *
+ * An agent the caller may not see (the by-id lookup answers for it with no
+ * match — another user's agent, for a caller without `users:read`) renders as
+ * "Agent (not visible to you)" rather than a bare id; the id stays on hover.
+ *
  * Some attribution fields carry non-id SENTINELS rather than a KSUID — e.g.
  * `registered_by: "self"` (an agent self-registered via DCR). Those render as a
  * plain word ("Self") instead of a mono id-token, so they never masquerade as an
@@ -63,6 +67,9 @@ const ACTOR_SENTINEL_LABEL: Record<string, string> = {
 	[SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR]: 'Service-account migration',
 };
 
+/** The prefix every agent id carries. */
+const AGENT_ID_PREFIX = 'agnt_';
+
 /** A subtle type prefix for a known `actor_type`, or undefined otherwise. */
 function typePrefix(actorType: ActorType | string | null | undefined): string | undefined {
 	if (actorType == null) return undefined;
@@ -90,7 +97,7 @@ export function ActorLabel({ actorId, actorType, resolvedName, className }: Acto
 	const needsLookup =
 		resolvedName === undefined &&
 		!Object.prototype.hasOwnProperty.call(ACTOR_SENTINEL_LABEL, actorId);
-	const { resolve } = useActorDirectory(needsLookup ? [actorId] : []);
+	const { resolve, isHidden } = useActorDirectory(needsLookup ? [actorId] : []);
 	const name = resolvedName ?? resolve(actorId);
 	const typeLabel = typePrefix(actorType);
 
@@ -124,6 +131,18 @@ export function ActorLabel({ actorId, actorType, resolvedName, className }: Acto
 			<span className={className} title={actorId}>
 				<span className="font-mono">{actorId}</span>{' '}
 				<span className="text-muted-foreground">{RETIRED_SERVICE_ACCOUNT_SUFFIX}</span>
+			</span>
+		);
+	}
+
+	// An agent the lookup answered for without a match is outside what this caller
+	// may see: say so, rather than print an id that resolves to nothing for them.
+	const isAgent =
+		actorType === ActorType.AGENT || (actorType == null && actorId.startsWith(AGENT_ID_PREFIX));
+	if (isAgent && isHidden(actorId)) {
+		return (
+			<span className={className} title={actorId} data-testid="actor-label-hidden">
+				Agent <span className="text-muted-foreground">(not visible to you)</span>
 			</span>
 		);
 	}

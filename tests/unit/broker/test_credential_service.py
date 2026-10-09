@@ -341,6 +341,8 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
     assert kwargs["actor_id"] == "agent_42"
     assert kwargs["actor_type"] == ActorType.AGENT.value
     assert kwargs["credential_id"] == "cred_abc"
+    # The resolved row's name labels the access event summary.
+    assert kwargs["credential_name"] == "abc"
     assert kwargs["provider"] == "stripe"
     assert kwargs["wire_type"] == CredentialType.API_KEY.value
     assert kwargs["api_vendor"] == "stripe"
@@ -510,6 +512,9 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
     # Only an operator can fix an undecryptable credential, so the event must
     # be flagged actionable to surface in the Action Inbox — not just the rail.
     assert kwargs["requires_action"] is True
+    # The summary names the stored credential; the id stays in ``data``.
+    assert kwargs["summary"] == "Credential 'abc' cannot be decrypted for 'stripe'"
+    assert kwargs["data"] == {"credential_id": "cred_abc", "api_vendor": "stripe"}
 
 
 def _owned(resolved: ResolvedCredential, owner: str | None) -> ResolvedCredential:
@@ -600,6 +605,8 @@ async def test_health_events_name_the_credential_owner(
     assert kwargs["type"] == event_type
     assert kwargs["actor_id"] == "agent_42"
     assert kwargs["created_by"] == expected_created_by
+    if event_type == "credential.refresh_failed":
+        assert kwargs["summary"].startswith("Credential 'oauth' refresh failed")
 
 
 @pytest.mark.asyncio

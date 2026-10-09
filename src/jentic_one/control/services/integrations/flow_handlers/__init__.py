@@ -32,6 +32,7 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 
 __all__ = [
     "AuthCodeBeginResult",
@@ -40,6 +41,7 @@ __all__ = [
     "BeginResult",
     "DeviceAuthorizationBeginResult",
     "DeviceAuthorizationHandler",
+    "SessionApp",
     "StatusReport",
     "SuccessTokens",
     "handler_for",

@@ -3,7 +3,7 @@
  *
  * Before this hook, four surfaces each counted attention their own way (the
  * Notifications bell, the Agents nav badge, the rail's failure pill, Monitor's
- * "Unacknowledged" filter) and the bell double-counted a self-registered agent
+ * "Flagged" filter) and the bell double-counted a self-registered agent
  * (once as a pending agent, once as its `agent.self_registered` alert). Every
  * surface that shows an attention count or list now reads this hook, so the
  * numbers agree by construction.
@@ -13,13 +13,19 @@
  * reported as failed); a source that is read and fails is always reported:
  *   - agents awaiting approval      (`GET /agents?status=pending`, drained, `agents:read`)
  *   - OAuth clients awaiting review (`GET /admin/oauth-clients?approval_status=pending`, org:admin)
- *   - unacknowledged action events  (`GET /events?requires_action=true&acknowledged=false`,
+ *   - recent action events          (`GET /events?requires_action=true&from=<24h ago>`,
  *                                    `events:read`)
  *   - credentials whose OAuth sign-in never finished (joined from the credential list,
  *                                    `credentials:read` or `owner:credentials:read`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
- * client's registration) are dropped — the queue row is the actionable one.
+ * client's registration) are dropped — the queue row is the actionable one —
+ * as are catalog updates, whose current state lives on the Workspace page.
+ *
+ * Events are append-only history, so nothing clears an alert's
+ * `requires_action`; the alert source is bounded to the last
+ * {@link ALERT_WINDOW_MS} instead, so alerts age out of the inbox rather than
+ * accumulating forever.
  */
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -78,8 +84,21 @@ export const attentionKeys = {
 
 const REFETCH_MS = 45_000;
 
-/** Event types that duplicate a queue row — the queue row wins. */
-const MIRRORED_EVENT_TYPES = new Set(['agent.self_registered', 'oauth_client.registered']);
+/** How far back the alert source reads `requires_action` events. */
+export const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Event types the inbox skips. Registrations duplicate a live queue row (the
+ * queue row wins). A catalog update's outstanding-ness lives on the API's
+ * Workspace page, not in the event — listing it here would keep an adopted
+ * update counted until it aged out.
+ */
+const SKIPPED_EVENT_TYPES = new Set([
+	'agent.self_registered',
+	'oauth_client.registered',
+	'catalog.update_available',
+	'catalog.update_conflicts_overlay',
+]);
 
 export function useAttentionItems(): AttentionState {
 	// Optional-auth read (not `usePermission`) so shell chrome that mounts this
@@ -93,7 +112,11 @@ export function useAttentionItems(): AttentionState {
 	const events = useQuery({
 		queryKey: attentionKeys.events,
 		queryFn: () =>
-			EventsService.listEvents({ requiresAction: true, acknowledged: false, limit: 50 }),
+			EventsService.listEvents({
+				requiresAction: true,
+				from: new Date(Date.now() - ALERT_WINDOW_MS).toISOString(),
+				limit: 50,
+			}),
 		enabled: canReadEvents,
 		staleTime: 30_000,
 		refetchInterval: REFETCH_MS,
@@ -155,7 +178,7 @@ export function useAttentionItems(): AttentionState {
 		}
 
 		for (const event of events.data?.data ?? []) {
-			if (MIRRORED_EVENT_TYPES.has(event.type)) continue;
+			if (SKIPPED_EVENT_TYPES.has(event.type)) continue;
 			const severity = severityForWire(event.severity);
 			out.push({
 				key: `event:${event.event_id}`,

@@ -26,8 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # active or not. Deliberately NOT filtered on ``active``: an already-inactive
 # credential can be re-activated later, and its agent bindings must not come
 # back with it when the API it served has been deleted.
-_CREDENTIAL_IDS_FOR_API = text(
-    "SELECT id FROM credentials "
+_CREDENTIALS_FOR_API = text(
+    "SELECT id, name FROM credentials "
     "WHERE api_vendor = :api_vendor AND api_name = :api_name AND api_version = :api_version "
     "ORDER BY id"
 )
@@ -42,10 +42,12 @@ class ControlCredentialBoundaryRepository:
     """
 
     @staticmethod
-    async def credential_ids_for_api(
+    async def credentials_for_api(
         session: AsyncSession, *, api_vendor: str, api_name: str, api_version: str
-    ) -> list[str]:
-        """Ids of every credential stored for the exact API identity (any ``active``).
+    ) -> dict[str, str]:
+        """``{id: name}`` of every credential stored for the exact API identity (any ``active``).
+
+        Ordered by id. The name labels the binding-suspension event summaries.
 
         Wildcard-scoped credentials (a ``NULL`` name or version) are not
         returned: they cover other APIs of the vendor as well, so deleting one
@@ -53,11 +55,11 @@ class ControlCredentialBoundaryRepository:
         """
         rows = (
             await session.execute(
-                _CREDENTIAL_IDS_FOR_API,
+                _CREDENTIALS_FOR_API,
                 {"api_vendor": api_vendor, "api_name": api_name, "api_version": api_version},
             )
         ).all()
-        return [row[0] for row in rows]
+        return {row[0]: row[1] for row in rows}
 
     @staticmethod
     async def deactivate_credentials_for_api(

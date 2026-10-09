@@ -54,6 +54,9 @@ func (AuditListResponse) RequiredFields() []string { return []string{"data", "ha
 func (AuditResponse) RequiredFields() []string {
 	return []string{"action", "actor_type", "id", "occurred_at", "target_id", "target_type"}
 }
+func (AuthorizationCodeRegistrationCreateRequest) RequiredFields() []string {
+	return []string{"api_vendor", "authorize_url", "catalog_api_id", "client_id", "client_secret", "display_name", "flow_kind", "name", "token_url"}
+}
 func (BasicAuthCreateRequest) RequiredFields() []string {
 	return []string{"api", "name", "password", "type", "username"}
 }
@@ -104,14 +107,16 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
-func (DenyRequest) RequiredFields() []string             { return []string{"reason"} }
-func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
-func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
-func (EventAcknowledgeRequest) RequiredFields() []string { return []string{"acknowledged"} }
-func (EventLinks) RequiredFields() []string              { return []string{"self"} }
-func (EventListResponse) RequiredFields() []string       { return []string{"data", "has_more"} }
+func (DenyRequest) RequiredFields() []string { return []string{"reason"} }
+func (DeviceAuthorizationRegistrationCreateRequest) RequiredFields() []string {
+	return []string{"api_vendor", "authorization_endpoint", "catalog_api_id", "client_id", "display_name", "flow_kind", "name", "token_endpoint"}
+}
+func (EffectivePermission) RequiredFields() []string { return []string{"name"} }
+func (ErrorItem) RequiredFields() []string           { return []string{"detail"} }
+func (EventLinks) RequiredFields() []string          { return []string{"self"} }
+func (EventListResponse) RequiredFields() []string   { return []string{"data", "has_more"} }
 func (EventResponse) RequiredFields() []string {
-	return []string{"_links", "acknowledged", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
+	return []string{"_links", "created_at", "event_id", "requires_action", "severity", "summary", "type"}
 }
 func (ExecutionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ExecutionRecordLinks) RequiredFields() []string  { return []string{"self"} }
@@ -151,11 +156,20 @@ func (MeAgent) RequiredFields() []string {
 func (MeUser) RequiredFields() []string {
 	return []string{"admin", "email", "id", "must_change_password", "name", "permissions", "status"}
 }
-func (NoAuthCreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
-func (NoteApiReference) RequiredFields() []string             { return []string{"name", "vendor", "version"} }
-func (NoteCreateRequest) RequiredFields() []string            { return []string{"body", "resource"} }
-func (OAuth2CreateRequest) RequiredFields() []string          { return []string{"api", "name", "type"} }
-func (OAuth2UpdateRequest) RequiredFields() []string          { return []string{"type"} }
+func (NoAuthCreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
+func (NoteApiReference) RequiredFields() []string    { return []string{"name", "vendor", "version"} }
+func (NoteCreateRequest) RequiredFields() []string   { return []string{"body", "resource"} }
+func (OAuth2CreateRequest) RequiredFields() []string { return []string{"api", "name", "type"} }
+func (OAuth2UpdateRequest) RequiredFields() []string { return []string{"type"} }
+func (OAuthAppRegistrationListResponse) RequiredFields() []string {
+	return []string{"data", "has_more"}
+}
+func (OAuthAppRegistrationResponse) RequiredFields() []string {
+	return []string{"api_vendor", "catalog_api_id", "client_id", "created_at", "created_by", "dependent_credential_count", "display_name", "flow_kind", "has_client_secret", "id", "is_active", "name", "secret_last_rotated_at", "updated_at"}
+}
+func (OAuthAppRegistrationRotateSecretRequest) RequiredFields() []string {
+	return []string{"client_secret"}
+}
 func (OAuthApprovalDecisionRequest) RequiredFields() []string { return []string{"action", "state"} }
 func (OAuthApprovalStatusResponse) RequiredFields() []string  { return []string{"status"} }
 func (OAuthClientCreateRequest) RequiredFields() []string     { return []string{"name", "redirect_uris"} }
@@ -285,6 +299,6 @@ func (UserResponse) RequiredFields() []string {
 }
 func (VendorListResponse) RequiredFields() []string { return []string{"data"} }
 func (VendorSummaryResponse) RequiredFields() []string {
-	return []string{"display_name", "flow_kinds", "key", "vendor"}
+	return []string{"display_name", "entry_id", "flow_kinds", "key", "name", "source", "vendor"}
 }
 func (VersionResponse) RequiredFields() []string { return []string{"current", "update_available"} }

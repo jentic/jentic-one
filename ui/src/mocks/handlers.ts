@@ -11,6 +11,7 @@ import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/m
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 import { settingsHandlers } from '@/modules/settings/mocks/handlers';
+import { oauthAppRegistrationsHandlers } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 import { readLocalPreference } from '@/shared/lib/localPreference';
 
 /**
@@ -212,6 +213,8 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// OAuth app registrations: admin-managed shared OAuth apps.
+	...oauthAppRegistrationsHandlers,
 	// Extensibility seam: `handlers` is exported (not module-private) so a
 	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
 	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —

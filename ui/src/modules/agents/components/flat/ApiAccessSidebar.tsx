@@ -22,10 +22,16 @@ import {
 	ConfirmDialog,
 	TruncateWithTooltip,
 	Tooltip,
+	type DangerZoneAction,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import {
+	AGENTS_WRITE,
+	CREDENTIALS_WRITE,
+	useCanAccess,
+	useOptionalCurrentUser,
+} from '@/shared/auth';
 import { useCredentialAgents, useDeleteCredential } from '@/shared/credentials/api';
 import { useConnectAfterCreate } from '@/shared/credentials/components/useConnectAfterCreate';
 import {
@@ -169,6 +175,13 @@ export function ApiAccessSidebar({
 	const credentialReadOnly =
 		shown?.credentialCreatedBy !== undefined &&
 		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
+	// Pause, resume and unbind write the agent's bindings (`agents:write`); editing,
+	// deleting or connecting the credential and its binding rules need
+	// `credentials:write`. Either needs `org:admin` otherwise. Without them the
+	// sidebar reads the binding and offers no verb the server would refuse.
+	const canManageBinding = useCanAccess(AGENTS_WRITE);
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
+	const credentialLocked = credentialReadOnly || !canWriteCredentials;
 	const permissions = useAgentBindingPermissions(open ? agent.id : null, credentialId);
 	// What the broker evaluates: an attached rule set's rules, else the inline ones.
 	const effective = useAgentBindingEffectiveRules(open ? agent.id : null, credentialId);
@@ -301,6 +314,38 @@ export function ApiAccessSidebar({
 			? `added ${timeAgo(shown.credentialCreatedAt)}`
 			: null;
 
+	const dangerActions: DangerZoneAction[] = shown
+		? [
+				...(canManageBinding
+					? [
+							{
+								key: 'unbind',
+								title: 'Unbind from this agent',
+								description: `The binding and its rules are deleted for ${clipName(agent.name)} only — the credential survives for every other agent.`,
+								buttonLabel: 'Unbind from this agent',
+								ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
+								emphasis: 'outline' as const,
+							},
+						]
+					: []),
+				// Only the owner or an admin, holding `credentials:write`, can delete
+				// the credential itself.
+				...(credentialLocked
+					? []
+					: [
+							{
+								key: 'delete',
+								title: 'Delete credential everywhere',
+								description:
+									'Removes the credential org-wide — every agent bound to it loses access.',
+								buttonLabel: 'Delete credential',
+								ariaLabel: `Delete credential ${shown.credentialName} org-wide`,
+								emphasis: 'solid' as const,
+							},
+						]),
+			]
+		: [];
+
 	const suspendPending = unbind.isPending && unbind.variables?.purge !== true;
 	const unbindPending = unbind.isPending && unbind.variables?.purge === true;
 
@@ -341,7 +386,7 @@ export function ApiAccessSidebar({
 							{/* Suspend/resume lives HERE, not in the danger zone: pausing is safe (rules
 							    survive, resume restores access), so it sits with the status line. */}
 							<div className="flex shrink-0 items-center gap-1.5">
-								{shown.suspended ? (
+								{!canManageBinding ? null : shown.suspended ? (
 									<Tooltip
 										content="Resume this binding — rules survived; access is restored."
 										interactiveChild
@@ -408,14 +453,16 @@ export function ApiAccessSidebar({
 											this API fail until the connection completes.
 										</span>
 									</p>
-									<Button
-										size="sm"
-										loading={connecting}
-										onClick={() => void handleConnect()}
-									>
-										<ExternalLink className="h-4 w-4" />
-										Finish connecting
-									</Button>
+									{canWriteCredentials && (
+										<Button
+											size="sm"
+											loading={connecting}
+											onClick={() => void handleConnect()}
+										>
+											<ExternalLink className="h-4 w-4" />
+											Finish connecting
+										</Button>
+									)}
 								</div>
 							)}
 
@@ -447,7 +494,7 @@ export function ApiAccessSidebar({
 									</div>
 									{credentialReadOnly ? (
 										<SharedWithYouBadge />
-									) : (
+									) : credentialLocked ? null : (
 										<Button
 											size="xs"
 											variant="tonal"
@@ -529,7 +576,7 @@ export function ApiAccessSidebar({
 										isError={effective.isError}
 										onRetry={effective.refetch}
 										inlineRules={permissions.data}
-										canDetach={!credentialReadOnly}
+										canDetach={!credentialLocked}
 									/>
 								) : permissions.isPending ? (
 									<div role="status" aria-live="polite" aria-busy="true">
@@ -550,6 +597,12 @@ export function ApiAccessSidebar({
 										initialRules={permissions.data ?? []}
 										onDirtyChange={setRulesDirty}
 										apiReference={apiReference}
+										readOnly={credentialLocked}
+										readOnlyReason={
+											credentialReadOnly
+												? "Only the credential's owner or an org admin can change these rules."
+												: undefined
+										}
 									/>
 								)}
 								{/* What the SAVED rules let this agent reach, against the
@@ -580,40 +633,20 @@ export function ApiAccessSidebar({
 							</section>
 
 							{/* The two destructive verbs only — unbind (this agent) vs delete (org-wide).
-							    The shared card carries the danger styling; this wrapper names the region. */}
-							<section aria-label="Danger zone" data-testid="sidebar-danger-zone">
-								<DangerZone
-									pending={unbindPending || deleteCredential.isPending}
-									onAction={(key) => {
-										if (key === 'unbind') setUnbindOpen(true);
-										if (key === 'delete') setDeleteOpen(true);
-									}}
-									actions={[
-										{
-											key: 'unbind',
-											title: 'Unbind from this agent',
-											description: `The binding and its rules are deleted for ${clipName(agent.name)} only — the credential survives for every other agent.`,
-											buttonLabel: 'Unbind from this agent',
-											ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
-											emphasis: 'outline',
-										},
-										// Only the owner or an admin can delete the credential itself.
-										...(credentialReadOnly
-											? []
-											: [
-													{
-														key: 'delete',
-														title: 'Delete credential everywhere',
-														description:
-															'Removes the credential org-wide — every agent bound to it loses access.',
-														buttonLabel: 'Delete credential',
-														ariaLabel: `Delete credential ${shown.credentialName} org-wide`,
-														emphasis: 'solid' as const,
-													},
-												]),
-									]}
-								/>
-							</section>
+							    The shared card carries the danger styling; this wrapper names the region.
+							    A viewer who may do neither gets no danger zone at all. */}
+							{dangerActions.length > 0 && (
+								<section aria-label="Danger zone" data-testid="sidebar-danger-zone">
+									<DangerZone
+										pending={unbindPending || deleteCredential.isPending}
+										onAction={(key) => {
+											if (key === 'unbind') setUnbindOpen(true);
+											if (key === 'delete') setDeleteOpen(true);
+										}}
+										actions={dangerActions}
+									/>
+								</section>
+							)}
 						</ScrollFadeBody>
 					</div>
 				)}

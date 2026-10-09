@@ -366,7 +366,8 @@ describe('a governed binding on a credential shared with the viewer', () => {
 					first_name: 'View',
 					last_name: 'Er',
 					active: true,
-					permissions: [],
+					// A member: manages agents and credentials, but is not an org admin.
+					permissions: ['agents:read', 'agents:write', 'credentials:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,
