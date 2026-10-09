@@ -430,3 +430,147 @@ func TestMCPRequestConnection_TooManyScopesIsInvalidParams(t *testing.T) {
 		t.Fatalf("err = %v, want an invalid-params error naming the 100-scope bound", err)
 	}
 }
+
+// --- registry-API targets ------------------------------------------------------
+
+func TestMCPRequestConnection_APITargetForwardsIdentityAndAuthType(t *testing.T) {
+	for name, args := range map[string]string{
+		"object": `{"api":{"vendor":"stripe-com","name":"stripe-com-api","version":"2024-06-20"},"auth_type":"api_key"}`,
+		"slug":   `{"api":"stripe-com/stripe-com-api/2024-06-20","auth_type":"api_key"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cp := &connectControlPlane{
+				status: http.StatusCreated,
+				body:   `{"session_id":"cs_a","approval_url":"https://one.example/app/agents?approve=cs_a","poll_token":"pt_a","resolved_flow":"authorization_code"}`,
+			}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", args))
+			if err != nil || res.IsError {
+				t.Fatalf("handleRequestConnection: err=%v result=%s", err, toolResultText(res))
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(cp.seen, &wire); err != nil {
+				t.Fatalf("decode wire body: %v", err)
+			}
+			if _, has := wire["vendor"]; has {
+				t.Errorf("vendor rode the wire with an api target: %v", wire)
+			}
+			api, _ := wire["api"].(map[string]any)
+			if api["vendor"] != "stripe-com" || api["name"] != "stripe-com-api" || api["version"] != "2024-06-20" {
+				t.Errorf("api = %v, want the stripe identity", wire["api"])
+			}
+			if wire["auth_type"] != "api_key" {
+				t.Errorf("auth_type = %v, want api_key", wire["auth_type"])
+			}
+			// An OAuth flow keeps the relay → whoami instruction and no pointer.
+			payload := decodeToolJSON(t, res)
+			if _, has := payload["next_tool"]; has {
+				t.Errorf("next_tool = %v on an OAuth flow, want none", payload["next_tool"])
+			}
+		})
+	}
+}
+
+// A human enters the credential, which can take hours, and this surface has no
+// status tool: the result says end your turn and points next_tool at execute.
+func TestMCPRequestConnection_HumanEntryFlowPointsAtExecuteLater(t *testing.T) {
+	for _, flow := range []string{"manual_api_key", "awaiting_app"} {
+		t.Run(flow, func(t *testing.T) {
+			cp := &connectControlPlane{
+				status: http.StatusCreated,
+				body: fmt.Sprintf(`{"session_id":"cs_m","approval_url":"https://one.example/app/agents?approve=cs_m",`+
+					`"poll_token":"pt_secret","resolved_flow":%q}`, flow),
+			}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+				`{"api":"acme/acme-api/v1"}`))
+			if err != nil || res.IsError {
+				t.Fatalf("handleRequestConnection: err=%v result=%s", err, toolResultText(res))
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["next_tool"] != "execute" {
+				t.Errorf("next_tool = %v, want execute (retry the blocked call later)", payload["next_tool"])
+			}
+			if instruction, _ := payload["instruction"].(string); !strings.Contains(instruction, "end your turn") {
+				t.Errorf("instruction %q must say end your turn", instruction)
+			}
+			if strings.Contains(toolResultText(res), "pt_secret") {
+				t.Errorf("the poll token leaked into the result")
+			}
+		})
+	}
+}
+
+func TestMCPRequestConnection_TargetArgumentErrorsAreInvalidParams(t *testing.T) {
+	s := stampedTestMCPServer(t)
+	for name, args := range map[string]string{
+		"both targets":     `{"vendor":"github","api":"acme/acme-api/v1"}`,
+		"two-part slug":    `{"api":"acme/acme-api"}`,
+		"partial object":   `{"api":{"vendor":"acme","name":"acme-api"}}`,
+		"auth_type no api": `{"vendor":"github","auth_type":"api_key"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, err := s.handleRequestConnection(activeCtx("http://127.0.0.1:0"), callToolRequest("request_connection", args))
+			if res != nil || err == nil {
+				t.Fatalf("want a protocol error, got result=%v err=%v", res, err)
+			}
+		})
+	}
+}
+
+// The API-target error codes carry the same recovery as the CLI, in tool
+// vocabulary, plus the MCP next_tool.
+func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		status             int
+		body               string
+		wantCode, nextTool string
+		wantStep           string
+	}{
+		{
+			http.StatusBadRequest, `{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`,
+			ux.CodeResolveFailed, "request_connection", "auth_type set to one of them",
+		},
+		{http.StatusNotFound, `{"type":"unknown_api","detail":"not found"}`, ux.CodeResolveFailed, "search_catalog", "import_api"},
+		{http.StatusNotFound, `{"type":"manual_flows_disabled","detail":"off"}`, ux.CodeBrokerDenied, "", "Report the gap"},
+		{http.StatusConflict, `{"type":"no_declared_scheme","detail":"none"}`, ux.CodeBrokerDenied, "", "Do not retry"},
+		{
+			http.StatusConflict, `{"type":"host_variable_not_pinned","detail":"x","variables":["region"]}`,
+			ux.CodeBrokerDenied, "", "enum",
+		},
+		{http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap"}`, ux.CodeBrokerDenied, "", "Do not open more"},
+		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "", "Do not ask again"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			cp := &connectControlPlane{status: tc.status, body: tc.body, headers: map[string]string{"Retry-After": "3600"}}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+				`{"api":"acme/acme-api/v1"}`))
+			if err != nil || !res.IsError {
+				t.Fatalf("want a soft error: err=%v result=%v", err, res)
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != tc.wantCode {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], tc.wantCode)
+			}
+			if got, _ := payload["next_tool"].(string); got != tc.nextTool {
+				t.Errorf("next_tool = %q, want %q", got, tc.nextTool)
+			}
+			if payload["retryable"] != false {
+				t.Errorf("retryable = %v, want false", payload["retryable"])
+			}
+			if step, _ := payload["actionable_step"].(string); !strings.Contains(step, tc.wantStep) {
+				t.Errorf("actionable_step %q must contain %q", step, tc.wantStep)
+			}
+		})
+	}
+}

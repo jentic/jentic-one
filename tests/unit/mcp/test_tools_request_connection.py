@@ -22,10 +22,23 @@ import pytest
 from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
-from jentic_one.control.services.integrations.connect_session_service import CreatedSession
+from jentic_one.control.services.integrations.connect_session_service import (
+    ApiTarget,
+    CreatedSession,
+)
 from jentic_one.control.services.integrations.errors import (
+    AuthTypeNotDeclaredError,
+    AuthTypeRequiredError,
     InvalidOAuthAppRegistrationError,
+    ManualFlowsDisabledError,
+    NoDeclaredSchemeError,
     NoOpForFlowError,
+    RecentlyRejectedError,
+    ReservedAuthFieldError,
+    SecuritySchemesLookupUnavailableError,
+    TooManyOpenSessionsError,
+    UnknownApiError,
+    UnpinnedServerHostError,
 )
 from jentic_one.control.services.vendors.schemas import VendorEntry
 from jentic_one.control.services.vendors.service import (
@@ -55,6 +68,7 @@ def _env(
     actor_type: ActorType = ActorType.AGENT,
     sub: str = "agnt_1",
     catalog_auto_importer: Any = None,
+    security_schemes_lookup: Any = None,
 ) -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
@@ -67,6 +81,7 @@ def _env(
         base_url="https://auth.example.com",
         session_id=None,
         catalog_auto_importer=catalog_auto_importer,
+        security_schemes_lookup=security_schemes_lookup,
     )
 
 
@@ -81,25 +96,27 @@ class _FakeConnectSessionService:
     """ConnectSessionService stand-in: records create_session kwargs (or raises)."""
 
     calls: ClassVar[list[dict[str, Any]]] = []
-    importers: ClassVar[list[Any]] = []
+    seams: ClassVar[list[dict[str, Any]]] = []
     error: ClassVar[Exception | None] = None
+    created: ClassVar[CreatedSession] = _CREATED
 
-    def __init__(self, ctx: Any, catalog_auto_importer: Any = None) -> None:
+    def __init__(self, ctx: Any, **seams: Any) -> None:
         self._ctx = ctx
-        _FakeConnectSessionService.importers.append(catalog_auto_importer)
+        _FakeConnectSessionService.seams.append(seams)
 
     async def create_session(self, **kwargs: Any) -> CreatedSession:
         if _FakeConnectSessionService.error is not None:
             raise _FakeConnectSessionService.error
         _FakeConnectSessionService.calls.append(kwargs)
-        return _CREATED
+        return _FakeConnectSessionService.created
 
 
 @pytest.fixture(autouse=True)
 def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeConnectSessionService.calls = []
-    _FakeConnectSessionService.importers = []
+    _FakeConnectSessionService.seams = []
     _FakeConnectSessionService.error = None
+    _FakeConnectSessionService.created = _CREATED
     monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeConnectSessionService)
     # A fresh limiter per test: the module-level one is shared process state
     # and an earlier test's spend must never bleed into this one's budget.
@@ -192,6 +209,8 @@ async def test_success_returns_session_without_poll_token() -> None:
     (call,) = _FakeConnectSessionService.calls
     assert call == {
         "vendor_key": "github",
+        "api_target": None,
+        "auth_type": None,
         "agent_id": "agnt_1",  # the caller IS the agent — identity injected
         "initiator_actor_id": "agnt_1",
         "requested_scopes": ["repo"],
@@ -419,7 +438,9 @@ async def test_pin_rules_and_auto_importer_reach_create_session() -> None:
     assert call["requested_permission_rules"] == [
         {"effect": "allow", "methods": ["GET"], "path": "/gmail/.*", "match_mode": "regex"}
     ]
-    assert _FakeConnectSessionService.importers == [importer]
+    assert [seam["catalog_auto_importer"] for seam in _FakeConnectSessionService.seams] == [
+        importer
+    ]
 
 
 @pytest.mark.parametrize(
@@ -504,3 +525,136 @@ async def test_rate_limit_is_retryable_transport_error(
     assert payload["retryable"] is True
     assert payload["retry_after_s"] >= 0
     assert len(_FakeConnectSessionService.calls) == 1
+
+
+# ── registry-API targets (Go: the api / auth_type arms) ──────────────────────
+
+_STRIPE = {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}
+
+
+@pytest.mark.parametrize("api", [_STRIPE, "stripe-com/stripe-com-api/2024-06-20"])
+async def test_api_target_forwards_identity_auth_type_and_registry_seam(api: Any) -> None:
+    """``api`` (object or slug) and ``auth_type`` reach the service as the
+    route passes them, and the process's registry lookup is threaded in."""
+    lookup = object()
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"], security_schemes_lookup=lookup),
+        "request_connection",
+        {"api": api, "auth_type": "api_key", "reason": "list charges"},
+    )
+    assert not result.is_error, result.content
+
+    (call,) = _FakeConnectSessionService.calls
+    assert call["vendor_key"] == ""
+    assert call["api_target"] == ApiTarget(
+        vendor="stripe-com", name="stripe-com-api", version="2024-06-20"
+    )
+    assert call["auth_type"] == "api_key"
+    assert _FakeConnectSessionService.seams == [
+        {"catalog_auto_importer": None, "security_schemes_lookup": lookup}
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"vendor": "github", "api": _STRIPE},
+        {"api": "stripe-com/stripe-com-api"},
+        {"api": {"vendor": "stripe-com", "name": "stripe-com-api"}},
+        {"vendor": "github", "auth_type": "api_key"},
+        {"api": _STRIPE, "auth_type": "x" * 256},
+    ],
+)
+async def test_malformed_api_target_is_invalid_params(arguments: dict[str, Any]) -> None:
+    with pytest.raises(MCPError):
+        await tools_mod.handle_request_connection(_env(["credentials:connect"]), arguments)
+    assert _FakeConnectSessionService.calls == []
+
+
+@pytest.mark.parametrize("flow", ["manual_api_key", "manual_basic", "awaiting_app"])
+async def test_human_entry_flow_says_end_your_turn_and_retry_execute(flow: str) -> None:
+    """A human types the credential, which can take hours, and this surface
+    has no status tool: end the turn and retry execute later."""
+    _FakeConnectSessionService.created = CreatedSession(
+        session_id="cs_m",
+        approval_url="https://auth.example.com/app/agents?approve=cs_m",
+        poll_token="pt_secret",
+        resolved_flow=flow,
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"api": _STRIPE}
+    )
+    assert not result.is_error, result.content
+
+    payload = _payload(result)
+    assert payload["resolved_flow"] == flow
+    assert payload["next_tool"] == "execute"
+    assert "end your turn" in payload["instruction"]
+    assert "pt_secret" not in json.dumps(payload)
+
+
+async def test_oauth_flow_keeps_the_relay_instruction_without_next_tool() -> None:
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"api": _STRIPE}
+    )
+    payload = _payload(result)
+    assert "next_tool" not in payload
+    assert "end your turn" not in payload["instruction"]
+
+
+_TARGET = "stripe-com/stripe-com-api/2024-06-20"
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "next_tool", "needle"),
+    [
+        (ManualFlowsDisabledError(), "BROKER_DENIED", None, "Report the gap"),
+        (
+            UnknownApiError("stripe-com", "stripe-com-api", "2024-06-20"),
+            "RESOLVE_FAILED",
+            "search_catalog",
+            "import_api",
+        ),
+        (
+            AuthTypeRequiredError(["api_key", "oauth2"]),
+            "RESOLVE_FAILED",
+            "request_connection",
+            "api_key, oauth2",
+        ),
+        (
+            AuthTypeNotDeclaredError("digest", ["api_key"]),
+            "RESOLVE_FAILED",
+            "request_connection",
+            "auth_type",
+        ),
+        (
+            NoDeclaredSchemeError("stripe-com", "stripe-com-api", "2024-06-20"),
+            "BROKER_DENIED",
+            None,
+            "Do not retry",
+        ),
+        (UnpinnedServerHostError(["region"]), "BROKER_DENIED", None, "enum"),
+        (ReservedAuthFieldError("Host"), "BROKER_DENIED", None, "operator"),
+        (SecuritySchemesLookupUnavailableError(), "BROKER_DENIED", None, "registry"),
+        (TooManyOpenSessionsError("agent", 10), "BROKER_DENIED", None, "Do not open more"),
+        (RecentlyRejectedError(3600), "BROKER_DENIED", None, "Do not ask again"),
+    ],
+)
+async def test_api_target_errors_map_like_the_go_mount(
+    error: Exception, code: str, next_tool: str | None, needle: str
+) -> None:
+    _FakeConnectSessionService.error = error
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"api": _STRIPE}
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == code
+    assert payload.get("next_tool") == next_tool
+    assert payload["retryable"] is False
+    assert needle in payload["actionable_step"]
+    if isinstance(error, AuthTypeRequiredError):
+        assert payload["details"]["options"] == ["api_key", "oauth2"]
+    if isinstance(error, ManualFlowsDisabledError | NoDeclaredSchemeError):
+        assert _TARGET in payload["actionable_step"]
