@@ -62,11 +62,12 @@ from jentic_one.control.services.integrations.errors import (
     AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
+    ConfirmKindMismatchError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
     ManualFlowsDisabledError,
     OAuthAppChangedError,
-    UnsupportedTargetKindError,
+    SecuritySchemesLookupUnavailableError,
 )
 from jentic_one.control.services.integrations.flow_handlers.base import StatusReport
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
@@ -2054,9 +2055,9 @@ async def test_create_session_refuses_api_target_while_gate_is_off(
             initiator_actor_id=_AGENT_ID,
             api_target=target,
         )
-    # With the gate on, the API-target flows are still absent: an internal error.
+    # With the gate on, a process that cannot read the registry refuses too.
     monkeypatch.setattr(ctx.config.control.connect, "manual_flows_enabled", True)
-    with pytest.raises(UnsupportedTargetKindError):
+    with pytest.raises(SecuritySchemesLookupUnavailableError):
         await svc.create_session(
             vendor_key="example-com",
             agent_id=_AGENT_ID,
@@ -2075,9 +2076,11 @@ async def test_vendor_entry_reads_refuse_api_targets(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     session_id = await _seed_api_session(ctx)
-    with pytest.raises(UnsupportedTargetKindError):
+    # An API target's review reads the registry; without the seam it refuses.
+    with pytest.raises(SecuritySchemesLookupUnavailableError):
         await svc.get_review_data(session_id, poll_token=None, identity=_ADMIN_IDENTITY)
-    with pytest.raises(UnsupportedTargetKindError):
+    # The OAuth confirm body does not apply to a manual_* session.
+    with pytest.raises(ConfirmKindMismatchError):
         await svc.confirm(
             session_id,
             poll_token=None,
@@ -2260,16 +2263,45 @@ async def test_open_api_target_dedupe_index(
     await _seed_api_session(ctx, agent_id=None, poll_token="fifth")
 
 
-async def test_open_vendor_sessions_are_not_deduplicated(
+async def test_repeat_agent_vendor_ask_reuses_the_open_session(
     integration_context: Context, seed_test_vendors: None, clean_session_tables: None
 ) -> None:
-    # Repeat ``:connect`` calls for the same vendor and agent each open their
-    # own session; only API targets are deduplicated.
+    # An agent asking again for the same vendor, app and scopes gets its open
+    # session back with a fresh poll token; the old token stops working.
+    # Asks with different scopes, and sessions a user starts, are separate.
     svc = ConnectSessionService(integration_context)
     first = await svc.create_session(
-        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["repo", "read:user"],
     )
     second = await svc.create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["read:user", "repo", "repo"],
+    )
+    assert second.session_id == first.session_id
+    assert second.approval_url == first.approval_url
+    assert second.poll_token != first.poll_token
+    with pytest.raises(InvalidPollTokenError):
+        await svc.get_status(
+            first.session_id, poll_token=first.poll_token, identity=_AGENT_IDENTITY
+        )
+    status = await svc.get_status(
+        first.session_id, poll_token=second.poll_token, identity=_AGENT_IDENTITY
+    )
+    assert status.status == "pending"
+
+    other_scopes = await svc.create_session(
         vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
     )
-    assert first.session_id != second.session_id
+    assert other_scopes.session_id != first.session_id
+    user_started = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    user_again = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    assert user_started.session_id != user_again.session_id
