@@ -235,9 +235,10 @@ describe("the dock sheets' writes and Add APIs follow agents:write", () => {
 			expect(add).toBeEnabled();
 		} else {
 			expect(add).toBeDisabled();
+			// Beside the tree's button, and as the card button's Tooltip.
 			expect(
-				screen.getByText('Adding APIs needs permission to manage agents.'),
-			).toBeInTheDocument();
+				screen.getAllByText('Adding APIs needs permission to manage agents.').length,
+			).toBeGreaterThanOrEqual(1);
 		}
 	});
 });
