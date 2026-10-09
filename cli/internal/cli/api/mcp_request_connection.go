@@ -4,9 +4,9 @@ package api
 // leg of credential provisioning (theme-7 Phase 1b). It rides the same
 // generated-client seam the `jentic connect` verb uses
 // (POST /integrations:connect via IntegrationsConnectWithResponse): the tool
-// STARTS a connect session for a registry vendor and returns the
-// {session_id, approval_url, resolved_flow} the agent relays to its human
-// operator. It is deliberately create-only: approval always blocks on a human
+// STARTS a connect session for a registry vendor (or a registry API) and
+// returns the {session_id, approval_url, resolved_flow} the agent relays to
+// its human operator. It is deliberately create-only: approval always blocks on a human
 // in the browser, so the agent's loop is relay approval_url → operator
 // approves → confirm the new binding with whoami → retry the blocked call.
 // The poll_token is not a field of the tool result — the tool surface serves
@@ -29,11 +29,14 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// requestConnectionParams: vendor is the registry key; scopes/reason/rules
-// are the optional request shaping the approver reviews;
-// oauth_app_registration_id pins the shared OAuth app the user picked.
+// requestConnectionParams: vendor is the registry key and api a registry API
+// identity (exactly one of the two); auth_type picks among the API's declared
+// schemes; scopes/reason/rules are the optional request shaping the approver
+// reviews; oauth_app_registration_id pins the shared OAuth app the user picked.
 var requestConnectionParams = []paramSpec{
 	{name: "vendor", kind: paramString},
+	{name: "api", kind: paramJSON},
+	{name: "auth_type", kind: paramString},
 	{name: "requested_scopes", aliases: []string{"scopes"}, kind: paramStringList},
 	{name: "reason", kind: paramString},
 	{name: "oauth_app_registration_id", aliases: []string{"registration_id"}, kind: paramString},
@@ -45,7 +48,21 @@ var requestConnectionSchema = map[string]any{
 	"properties": map[string]any{
 		"vendor": map[string]any{
 			"type":        "string",
-			"description": "Vendor registry key, e.g. \"github\" (required). Only vendors in this deployment's connect registry work.",
+			"description": "Vendor registry key, e.g. \"github\". Only vendors in this deployment's connect registry work. Pass exactly one of vendor or api.",
+		},
+		"api": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"vendor":  map[string]any{"type": "string"},
+				"name":    map[string]any{"type": "string"},
+				"version": map[string]any{"type": "string"},
+			},
+			"required":    []string{"vendor", "name", "version"},
+			"description": "Registry API to connect a credential for, as the api.vendor/name/version inspect_operation reports (a \"vendor/name/version\" string also works) — for any API, not just registry vendors. A denial's agent_directive.parameters.connect.api fits as-is. Its spec decides the credential; a human enters it.",
+		},
+		"auth_type": map[string]any{
+			"type":        "string",
+			"description": "With api only: the declared scheme name or kind to use (api_key, bearer, basic, oauth2). Needed only when the spec declares several — the error then lists them.",
 		},
 		"requested_scopes": map[string]any{
 			"type":        "array",
@@ -76,7 +93,6 @@ var requestConnectionSchema = map[string]any{
 			"description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
 		},
 	},
-	"required": []string{"vendor"},
 }
 
 // requestConnectionInstruction is the operator-relay guidance stamped on every
@@ -85,6 +101,12 @@ var requestConnectionSchema = map[string]any{
 const requestConnectionInstruction = "Relay the approval_url to your human operator — they open it in " +
 	"their browser and approve (or reject) the connection; you cannot open it or approve it yourself. " +
 	"Once they confirm, call whoami to see the new credential binding, then retry the call that was blocked."
+
+// requestConnectionHumanEntryInstruction replaces requestConnectionInstruction
+// for a session a human finishes by entering a credential (or picking an
+// OAuth app): it can take hours, and this surface has no status tool, so the
+// agent ends its turn and retries execute later (next_tool).
+var requestConnectionHumanEntryInstruction = humanEntryNextStep("whoami")
 
 // connectResponse is the typed projection of the 201 body. Decoded from the
 // raw bytes (the generated JSON201 is untyped); poll_token is decoded but
@@ -149,9 +171,24 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 		return nil, invalidParams(err)
 	}
 	vendor, _ := args["vendor"].(string)
-	if vendor == "" {
-		return nil, invalidParams(errors.New(`request_connection requires "vendor": the vendor registry key, e.g. {"vendor": "github"}`))
+	var api *control.ApiTargetRequest
+	if raw, ok := args["api"].(json.RawMessage); ok {
+		if api, err = decodeConnectAPIArg(raw); err != nil {
+			return nil, invalidParams(err)
+		}
 	}
+	if (vendor == "") == (api == nil) {
+		return nil, invalidParams(errors.New(`request_connection requires exactly one of "vendor" (the vendor registry key, ` +
+			`e.g. {"vendor": "github"}) or "api" (e.g. {"api": {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}})`))
+	}
+	authType, _ := args["auth_type"].(string)
+	if authType != "" && api == nil {
+		return nil, invalidParams(errors.New(`auth_type applies to an "api" target only`))
+	}
+	if len(authType) > connectAuthTypeMax {
+		return nil, invalidParams(fmt.Errorf("auth_type must be at most %d characters, got %d", connectAuthTypeMax, len(authType)))
+	}
+	target := connectTargetLabel(vendor, api)
 	reason, _ := args["reason"].(string)
 	if len(reason) > connectReasonMax {
 		return nil, invalidParams(fmt.Errorf("reason must be at most %d characters, got %d", connectReasonMax, len(reason)))
@@ -172,10 +209,16 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	}
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
-		s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
+		s.logger.Warn("request_connection failed", "target", target, "error", redactedErr(err))
 		return s.softError(cctx, err), nil
 	}
-	body := control.IntegrationsConnectRequest{Vendor: &vendor}
+	body := control.IntegrationsConnectRequest{Api: api}
+	if api == nil {
+		body.Vendor = &vendor
+	}
+	if authType != "" {
+		body.AuthType = &authType
+	}
 	if len(scopes) > 0 {
 		body.RequestedScopes = &scopes
 	}
@@ -192,7 +235,7 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	// injects the caller's identity, and a supplied agent_id is refused (403).
 	resp, callErr := client.IntegrationsConnectWithResponse(cctx, body)
 	if err := apiErrorFor(resp, callErr); err != nil {
-		return s.requestConnectionError(cctx, client, vendor, err, connectRetryAfter(resp)), nil
+		return s.requestConnectionError(cctx, client, target, api != nil, err, connectRetryAfter(resp)), nil
 	}
 	var created connectResponse
 	if err := json.Unmarshal(resp.Body, &created); err != nil {
@@ -201,14 +244,19 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 			Msg:  "decode /integrations:connect response: " + err.Error(),
 		}), nil
 	}
-	s.logger.Info("request_connection", "vendor", vendor, "session_id", created.SessionID, "flow", created.ResolvedFlow)
-	return s.result(cctx, map[string]any{
+	s.logger.Info("request_connection", "target", target, "session_id", created.SessionID, "flow", created.ResolvedFlow)
+	payload := map[string]any{
 		"schema_version": mcpSchemaVersion,
 		"session_id":     created.SessionID,
 		"approval_url":   created.ApprovalURL,
 		"resolved_flow":  created.ResolvedFlow,
 		"instruction":    requestConnectionInstruction,
-	}), nil
+	}
+	if isHumanEntryFlow(created.ResolvedFlow) {
+		payload["instruction"] = requestConnectionHumanEntryInstruction
+		payload["next_tool"] = "execute"
+	}
+	return s.result(cctx, payload), nil
 }
 
 // connectRetryAfter extracts the Retry-After seconds the route stamps on its
@@ -228,6 +276,11 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 
 // requestConnectionError maps the route's failure surface onto the coded
 // taxonomy (§3.7 posture):
+//   - the API-target and session-cap codes (apiTargetCoded) — unknown_api,
+//     auth_type_required/auth_type_not_declared (retry with auth_type),
+//     manual_flows_disabled / no_declared_scheme / host_variable_not_pinned
+//     (report to the user), too_many_open_sessions / recently_rejected (do
+//     not ask again).
 //   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and
@@ -247,11 +300,15 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 //   - 503 (vendor not configured) — the vendor is registered but its OAuth
 //     client is not configured on this deployment: operator action.
 func (s *mcpServer) requestConnectionError(
-	ctx context.Context, client *control.ClientWithResponses, vendor string, err error, retryAfterS float64,
+	ctx context.Context, client *control.ClientWithResponses, target string, isAPI bool, err error, retryAfterS float64,
 ) *mcp.CallToolResult {
-	s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
+	vendor := target
+	s.logger.Warn("request_connection failed", "target", target, "error", redactedErr(err))
 	var he *HTTPError
 	if errors.As(err, &he) {
+		if coded, nextTool := apiTargetCoded(he, target, err, connectLane{mcp: true}); coded != nil {
+			return s.softErrorExtra(ctx, coded, nextTool, map[string]any{"retryable": false})
+		}
 		if isAmbiguousVendor(he) {
 			candidates := listVendorAppCandidates(ctx, client, vendor)
 			return s.softErrorNext(ctx, ambiguousVendorCoded(vendor, err, candidates,
@@ -272,13 +329,22 @@ func (s *mcpServer) requestConnectionError(
 					"then retry request_connection.",
 			})
 		case http.StatusBadRequest, http.StatusNotFound:
+			if isAPI {
+				return s.softErrorNext(ctx, &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg:  fmt.Sprintf("cannot start a connect session for API %s: %v", target, err),
+					Actionable: "Check the request against the error, then call request_connection again; " +
+						"if it keeps failing, report the gap to your human user.",
+				}, "whoami")
+			}
 			return s.softErrorNext(ctx, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
 				Actionable: "Pass a vendor registry key this deployment supports (e.g. \"github\"). " +
-					"If the vendor is not in the registry, this tool cannot connect it: find the API " +
-					"with search_catalog and ask your human operator to connect a credential for it " +
-					"in the dashboard instead.",
+					"For an API outside the registry, call request_connection with api set to its " +
+					"vendor/name/version instead (find it with search_catalog first); if this " +
+					"deployment does not take API connect requests, ask your human operator to " +
+					"connect a credential for it in the dashboard.",
 			}, "search_catalog")
 		case http.StatusForbidden:
 			return s.softError(ctx, &ux.CodedError{
@@ -325,20 +391,25 @@ func (s *mcpServer) connectToolSpecs() []mcpToolSpec {
 			tool: &mcp.Tool{
 				Name:  "request_connection",
 				Title: "Start connecting a vendor credential",
-				Description: "Start a connect session for a verified vendor when whoami shows no credential " +
-					"binding serving the API you need — the self-service leg of credential provisioning. " +
-					`Example: {"vendor": "github", "reason": "read open PRs to summarise them"}. Returns ` +
-					"{session_id, approval_url, resolved_flow}: relay the approval_url to your human " +
-					"operator — they approve the connection in their browser and confirm the scopes; you " +
-					"cannot open the URL or approve it yourself. Once they confirm, call whoami to see the " +
-					"new credential binding, then retry the blocked call. This tool only STARTS the flow " +
-					"and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes " +
-					"are flagged for the approver), requested_permission_rules (the binding rules you need; " +
-					"the approver reviews them) and a reason the approver will see. If several shared OAuth " +
-					"apps serve the vendor, the error lists them: ask your human user which one to use " +
-					"(choosing it is their call, not yours) and retry with its oauth_app_registration_id. Only vendors in the " +
-					"deployment's connect registry work; for any other API, ask your operator to connect a " +
-					"credential in the dashboard. Binding an EXISTING credential and scope grants stay " +
+				Description: "Start a connect session when whoami shows no credential binding serving the API " +
+					"you need — the self-service leg of credential provisioning. Name a verified vendor " +
+					`({"vendor": "github", "reason": "read open PRs to summarise them"}) or, for any other ` +
+					`registry API, the API itself ({"api": {"vendor": …, "name": …, "version": …}}, from ` +
+					"inspect_operation or a denial's parameters.connect.api). Returns {session_id, " +
+					"approval_url, resolved_flow}: relay the approval_url to your human operator — they " +
+					"approve the connection (or enter the API key) in their browser; you cannot open the URL " +
+					"or approve it yourself. This tool only STARTS the flow and never polls it. When a human " +
+					"must enter the credential (resolved_flow manual_* or awaiting_app) it can take hours: " +
+					"end your turn and retry execute later. Otherwise, once they confirm, call whoami to see " +
+					"the new credential binding, then retry the blocked call. Optionally pass auth_type " +
+					"(with api, when the spec declares several schemes), requested_scopes (vendor scope " +
+					"names; write scopes are flagged for the approver), requested_permission_rules (the " +
+					"binding rules you need; the approver reviews them) and a reason the approver will see. " +
+					"If several shared OAuth apps serve the vendor, the error lists them: ask your human " +
+					"user which one to use (choosing it is their call, not yours) and retry with its " +
+					"oauth_app_registration_id. If the deployment does not take API connect requests, the " +
+					"error says so: report the gap to your operator once. After a rejection, do not ask " +
+					"again — tell your user. Binding an EXISTING credential and scope grants stay " +
 					"operator actions.",
 				InputSchema: requestConnectionSchema,
 				Annotations: &mcp.ToolAnnotations{},

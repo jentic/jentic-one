@@ -1,11 +1,14 @@
 package api
 
-// connect.go is `jentic connect <vendor>`: the agent-initiable leg of
-// credential provisioning (theme-7 Phase 1b), the CLI twin of the
-// request_connection MCP tool. It starts a connect session over
-// POST /integrations:connect and prints the approval_url the agent relays to
-// its human operator; --wait polls the session's status until it connects or
-// ends (the poll_token capability rides GET /connect-sessions/{id}/status).
+// connect.go is `jentic connect <vendor>` / `jentic connect --api
+// <vendor/name/version>`: the agent-initiable leg of credential provisioning
+// (theme-7 Phase 1b), the CLI twin of the request_connection MCP tool. It
+// starts a connect session over POST /integrations:connect and prints the
+// approval_url the agent relays to its human operator; --wait polls the
+// session's status until it connects or ends (the poll_token capability rides
+// GET /connect-sessions/{id}/status). A session a human finishes by entering
+// a credential (resolved_flow manual_* or awaiting_app) can stay open for
+// hours, so --wait does not block on it unless --timeout is set explicitly.
 // Deliberately NOT fenced: connecting a credential is the agent's own
 // recovery surface — approval still blocks on a human in the browser.
 
@@ -31,20 +34,20 @@ import (
 // caller can retry the poll later — the session itself stays alive server-side.
 const connectWaitDefault = 5 * time.Minute
 
-// errConnectSessionEnded is the --wait poll's "session is gone" outcome. An
-// unhappy terminal (operator rejected, TTL expired, vendor error, cancelled)
-// deletes the pending credential and — by FK cascade — the session row, and
-// the status route answers a missing session with the same 403
-// invalid_poll_token as a wrong token (no enumeration oracle). The token was
-// minted by the create call moments earlier, so during --wait a 403 means the
-// session ended without connecting.
-var errConnectSessionEnded = errors.New("connect session ended without connecting")
+// errConnectSessionEnded is the --wait poll's "token no longer answers"
+// outcome. The status route reports a terminal outcome (rejected, expired,
+// cancelled, failed) against the token for a while after the session ends,
+// and answers a missing session or a stale token with the same 403
+// invalid_poll_token (no enumeration oracle). A repeat ask for the same target
+// returns the same session with a fresh token, so a 403 during --wait means
+// the session ended or a newer request replaced this token — the CLI cannot
+// tell which.
+var errConnectSessionEnded = errors.New("connect session ended or replaced by a newer request")
 
 // connectTerminalStatuses ends the --wait loop
 // (GET /connect-sessions/{id}/status: pending|polling|connected|failed|expired).
-// In practice only "connected" is observed — failed/expired sessions are
-// deleted (errConnectSessionEnded) — but a terminal row the route does report
-// still ends the loop.
+// A rejection arrives as failed with error_code "rejected", a cancel as failed
+// with error_code "cancelled".
 var connectTerminalStatuses = map[string]bool{
 	"connected": true,
 	"failed":    true,
@@ -65,25 +68,89 @@ func newConnectCmd(a *app) *cobra.Command {
 	var scopes []string
 	var reason string
 	var registration string
+	var apiRef string
+	var authType string
+	var rulesJSON string
 	var wait bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
-		Use:   "connect <vendor>",
-		Short: "Start connecting a credential for a registry vendor (a human approves it)",
-		Long: "connect starts a connect session for a verified vendor from the deployment's\n" +
-			"vendor registry (e.g. `jentic connect github`) and prints the approval_url.\n" +
-			"Relay that URL to your human operator: they approve the connection and its\n" +
-			"scopes in the browser — this command never completes an approval by itself.\n" +
+		Use:   "connect [<vendor>] [--api <vendor/name/version>]",
+		Short: "Start connecting a credential for a vendor or a registry API (a human approves it)",
+		Long: "connect starts a connect session and prints the approval_url. Name a verified\n" +
+			"vendor from the deployment's vendor registry (e.g. `jentic connect github`), or\n" +
+			"any registry API with --api <vendor/name/version> (where the deployment takes\n" +
+			"API connect requests): its spec decides the credential — pass --auth-type when\n" +
+			"it declares several schemes — and --rules proposes the permission rules you need.\n" +
+			"Relay the URL to your human operator: they approve the connection (or enter the\n" +
+			"API key) in the browser — this command never completes an approval by itself.\n" +
 			"Once they confirm, check your new binding with `jentic whoami` and retry the\n" +
 			"call that was blocked. --wait polls the session until it connects or ends\n" +
 			"(rejected, expired, or cancelled), printing the approval_url and heartbeats\n" +
-			"on stderr and a single JSON result on stdout.\n" +
+			"on stderr and a single JSON result on stdout. A session a human finishes by\n" +
+			"entering a credential can take hours: --wait returns at once for it unless\n" +
+			"--timeout is set — relay the URL, end your turn, and retry later.\n" +
 			"When several shared OAuth apps serve the vendor, the error lists them\n" +
 			"(details.candidates): ask your user which one to use and re-run with\n" +
 			"--registration <registration_id>. Choosing the app is your user's call.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			aud := ux.FromContext(cmd.Context())
+			var vendor string
+			if len(args) == 1 {
+				vendor = args[0]
+			}
+			if (vendor == "") == (apiRef == "") {
+				return reportCoded(aud, &ux.CodedError{
+					Code: ux.CodeMissingArgument,
+					Msg:  "connect needs exactly one target: a vendor key or --api <vendor/name/version>",
+					Actionable: "Pass a vendor registry key (`jentic connect github`) or a registry API " +
+						"(`jentic connect --api <vendor/name/version>`), not both.",
+				})
+			}
+			var api *control.ApiTargetRequest
+			if apiRef != "" {
+				parsed, err := parseConnectAPI(apiRef)
+				if err != nil {
+					return reportCoded(aud, &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        "--api: " + err.Error(),
+						Actionable: "Pass the API identity search or inspect reports, e.g. --api stripe-com/stripe-com-api/2024-06-20.",
+					})
+				}
+				api = parsed
+			}
+			if authType != "" && api == nil {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        "--auth-type applies to an --api target only",
+					Actionable: "Drop --auth-type, or connect the registry API with --api <vendor/name/version>.",
+				})
+			}
+			if len(authType) > connectAuthTypeMax {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("--auth-type must be at most %d characters, got %d", connectAuthTypeMax, len(authType)),
+					Actionable: "Pass a scheme name or kind the API's spec declares (api_key, bearer, basic, oauth2).",
+				})
+			}
+			var rules []control.PermissionRuleSchema
+			if rulesJSON != "" {
+				decoded, err := decodeConnectRules(json.RawMessage(rulesJSON))
+				if err != nil {
+					return reportCoded(aud, &ux.CodedError{
+						Code: ux.CodeMissingArgument,
+						Msg:  "--rules: " + err.Error(),
+						Actionable: `Pass a JSON list of rules, e.g. --rules '[{"effect":"allow","methods":["GET"],` +
+							`"path":"/v1/charges","match_mode":"exact"}]' (the denial's suggested_rules fit as-is).`,
+					})
+				}
+				rules = decoded
+			}
+			target := connectTargetLabel(vendor, api)
+			rerun := "jentic connect " + vendor
+			if api != nil {
+				rerun = "jentic connect --api " + target
+			}
 			// Bound reason client-side (the route's max_length=1024): an
 			// overlong reason must be a clear argument error here, not a
 			// route 422 rendered as a retryable transport failure.
@@ -122,8 +189,16 @@ func newConnectCmd(a *app) *cobra.Command {
 			if err != nil {
 				return reportCoded(aud, err)
 			}
-			vendor := args[0]
-			body := control.IntegrationsConnectRequest{Vendor: &vendor}
+			body := control.IntegrationsConnectRequest{Api: api}
+			if api == nil {
+				body.Vendor = &vendor
+			}
+			if authType != "" {
+				body.AuthType = &authType
+			}
+			if len(rules) > 0 {
+				body.RequestedPermissionRules = &rules
+			}
 			if len(scopes) > 0 {
 				body.RequestedScopes = &scopes
 			}
@@ -138,7 +213,7 @@ func newConnectCmd(a *app) *cobra.Command {
 			// a user token connecting FOR an agent uses the dashboard.
 			resp, callErr := client.IntegrationsConnectWithResponse(cmd.Context(), body)
 			if err := apiErrorFor(resp, callErr); err != nil {
-				return reportCoded(aud, connectCoded(cmd.Context(), client, args[0], err))
+				return reportCoded(aud, connectCoded(cmd.Context(), client, target, api != nil, err))
 			}
 			var created connectResponse
 			if err := json.Unmarshal(resp.Body, &created); err != nil {
@@ -152,6 +227,7 @@ func newConnectCmd(a *app) *cobra.Command {
 			// token would render as [REDACTED] anyway — and the agent's loop
 			// doesn't need it (--wait polls with the in-memory token; the
 			// binding check is `jentic whoami` either way).
+			humanEntry := isHumanEntryFlow(created.ResolvedFlow)
 			envelope := map[string]any{
 				"session_id":    created.SessionID,
 				"approval_url":  created.ApprovalURL,
@@ -160,7 +236,18 @@ func newConnectCmd(a *app) *cobra.Command {
 					"connection in the browser. Then confirm the new binding with `jentic whoami` " +
 					"and retry the call that was blocked.",
 			}
+			if humanEntry {
+				envelope["next_step"] = humanEntryNextStep("`jentic whoami`")
+			}
 			if !wait {
+				aud.Render(envelope)
+				return nil
+			}
+			if humanEntry && !cmd.Flags().Changed("timeout") {
+				// A human typing a credential can take hours: blocking the
+				// agent's turn on it helps no one. An explicit --timeout
+				// still waits that long.
+				envelope["status"] = "pending"
 				aud.Render(envelope)
 				return nil
 			}
@@ -172,21 +259,21 @@ func newConnectCmd(a *app) *cobra.Command {
 			// server-side until its TTL expires — accepted behavior; the
 			// operator can still approve it and `jentic whoami` shows the
 			// resulting binding.
-			final, err := a.waitForConnectSession(cmd.Context(), client, created.SessionID, created.PollToken, timeout)
+			final, err := a.waitForConnectSession(cmd.Context(), client, created.SessionID, created.PollToken, timeout, humanEntry)
 			if errors.Is(err, errConnectSessionEnded) {
 				return reportCoded(aud, &ux.CodedError{
 					Code: ux.CodeResolveFailed,
-					Msg: fmt.Sprintf("connect session %s ended without connecting "+
-						"(rejected, expired, or cancelled)", created.SessionID),
-					Actionable: "Ask your operator whether they rejected it; otherwise run `jentic connect " +
-						args[0] + "` again and relay the fresh approval_url.",
+					Msg: fmt.Sprintf("connect session %s ended or was replaced by a newer request "+
+						"for the same target", created.SessionID),
+					Actionable: "Check `jentic whoami` — if the binding is there, retry the original call. " +
+						"Otherwise ask your human user whether they rejected it before running `" + rerun +
+						"` again (a newer request for the same target reuses the same approval_url).",
 				})
 			}
 			if err != nil {
 				return reportCoded(aud, asCoded(err))
 			}
-			switch final.Status {
-			case "connected":
+			if final.Status == "connected" {
 				envelope["status"] = final.Status
 				envelope["connected_as"] = final.ConnectedAs
 				envelope["credential_id"] = final.CredentialID
@@ -195,21 +282,8 @@ func newConnectCmd(a *app) *cobra.Command {
 					"and retry the call that was blocked."
 				aud.Render(envelope)
 				return nil
-			case "expired":
-				return reportCoded(aud, &ux.CodedError{
-					Code:       ux.CodeResolveFailed,
-					Msg:        fmt.Sprintf("connect session %s expired before it was approved", created.SessionID),
-					Actionable: "Run `jentic connect " + args[0] + "` again and relay the fresh approval_url to your operator.",
-				})
-			default: // failed
-				return reportCoded(aud, &ux.CodedError{
-					Code: ux.CodeBrokerDenied,
-					Msg: fmt.Sprintf("connect session %s failed (%s)", created.SessionID,
-						valueOr(final.ErrorCode, "no error code")),
-					Actionable: "Relay the failure to your human operator — they can see the session " +
-						"in the dashboard; retry `jentic connect` once the cause is fixed.",
-				})
 			}
+			return reportCoded(aud, connectOutcomeCoded(created.SessionID, final.Status, final.ErrorCode, rerun))
 		},
 	}
 	cmd.Flags().StringSliceVar(&scopes, "scopes", nil,
@@ -218,6 +292,12 @@ func newConnectCmd(a *app) *cobra.Command {
 		"why you need this connection (shown to the approver; max 1024 chars)")
 	cmd.Flags().StringVar(&registration, "registration", "",
 		"registration_id of the shared OAuth app to connect through, when several serve the vendor (your user picks it)")
+	cmd.Flags().StringVar(&apiRef, "api", "",
+		"registry API to connect a credential for, as vendor/name/version (instead of a vendor key)")
+	cmd.Flags().StringVar(&authType, "auth-type", "",
+		"with --api: the declared scheme name or kind to use (api_key, bearer, basic, oauth2) when the spec declares several")
+	cmd.Flags().StringVar(&rulesJSON, "rules", "",
+		"permission rules you ask for on the binding, as a JSON list (the approver reviews them; a denial's suggested_rules fit as-is)")
 	cmd.Flags().BoolVar(&wait, "wait", false,
 		"poll the session until it connects or ends (rejected, expired, or cancelled)")
 	cmd.Flags().DurationVar(&timeout, "timeout", connectWaitDefault,
@@ -232,6 +312,7 @@ func newConnectCmd(a *app) *cobra.Command {
 // agent parses (the pollImportJobProgress posture).
 func (a *app) waitForConnectSession(
 	ctx context.Context, client *control.ClientWithResponses, sessionID, pollToken string, timeout time.Duration,
+	humanEntry bool,
 ) (*connectStatusResponse, error) {
 	if timeout <= 0 {
 		// Callers validate up front (RunE); this guard keeps a direct caller
@@ -269,12 +350,17 @@ func (a *app) waitForConnectSession(
 			return &status, nil
 		}
 		if time.Now().After(deadline) {
+			actionable := "The approval is still with your operator; re-run with --wait later, or " +
+				"confirm the binding with `jentic whoami` once they approve."
+			if humanEntry {
+				actionable = "A human still has to enter the credential, which can take hours: end your " +
+					"turn and retry the call that was blocked later (check `jentic whoami` first)."
+			}
 			return nil, &ux.CodedError{
 				Code: ux.CodeTimeoutPending,
 				Msg: fmt.Sprintf("connect session %s still %s after %s", sessionID,
 					valueOr(status.Status, "pending"), timeout),
-				Actionable: "The approval is still with your operator; re-run with --wait later, or " +
-					"confirm the binding with `jentic whoami` once they approve.",
+				Actionable: actionable,
 			}
 		}
 		if now := time.Now(); now.After(nextHeartbeat) {
@@ -296,32 +382,59 @@ func (a *app) waitForConnectSession(
 
 // connectCoded maps the connect route's failure surface onto the coded
 // taxonomy — the CLI twin of requestConnectionError (mcp_request_connection.go):
-// 404 unknown vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 400
+// the API-target and session-cap codes first (apiTargetCoded), then 404 unknown
+// vendor / 400 unsupported flow → RESOLVE_FAILED (change the ask), 400
 // ambiguous_vendor → RESOLVE_FAILED listing the shared apps (the user picks one),
-// 400 invalid_oauth_app_registration → RESOLVE_FAILED (the pin is unusable),
-// 403 → the missing credentials:connect permission (operator grant), 429 → the
+// 400 invalid_oauth_app_registration → RESOLVE_FAILED (the pin is unusable), 422 →
+// RESOLVE_FAILED with the route's reason (in practice a --rules entry), 403 →
+// the missing credentials:connect permission (operator grant), 429 → the
 // per-actor rate limit, 503 → the vendor's OAuth client is not configured
-// (operator action).
-func connectCoded(ctx context.Context, client *control.ClientWithResponses, vendor string, err error) *ux.CodedError {
+// (operator action). target is the vendor key or the API identity; isAPI says
+// which.
+func connectCoded(ctx context.Context, client *control.ClientWithResponses, target string, isAPI bool, err error) *ux.CodedError {
+	vendor := target
+	rerun := "jentic connect " + target
+	if isAPI {
+		rerun = "jentic connect --api " + target
+	}
 	var he *HTTPError
 	if errors.As(err, &he) {
+		if coded, _ := apiTargetCoded(he, target, err, connectLane{}); coded != nil {
+			return coded
+		}
 		if isAmbiguousVendor(he) {
 			candidates := listVendorAppCandidates(ctx, client, vendor)
 			return ambiguousVendorCoded(vendor, err, candidates,
-				fmt.Sprintf("re-run `jentic connect %s --registration <registration_id>` with the id they pick", vendor))
+				fmt.Sprintf("re-run `%s --registration <registration_id>` with the id they pick", rerun))
 		}
 		if isInvalidRegistration(he) {
 			return invalidRegistrationCoded(vendor, err,
-				fmt.Sprintf("run `jentic connect %s` without --registration to see the shared apps that serve it", vendor))
+				fmt.Sprintf("run `%s` without --registration to see the shared apps that serve it", rerun))
 		}
 		switch he.StatusCode {
+		case http.StatusUnprocessableEntity:
+			return &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  fmt.Sprintf("the connect request for %s was rejected: %v", target, err),
+				Actionable: "Fix the argument the error names (usually a --rules entry: a valid path " +
+					"pattern, and an allow rule must constrain methods, path, or operations), then retry.",
+			}
 		case http.StatusBadRequest, http.StatusNotFound:
+			if isAPI {
+				return &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg:  fmt.Sprintf("cannot start a connect session for API %s: %v", target, err),
+					Actionable: "Check the request against the error, then retry `jentic connect --api " +
+						target + "`; if it keeps failing, report the gap to your human user.",
+				}
+			}
 			return &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
 				Actionable: "Pass a vendor registry key this deployment supports (e.g. \"github\"). " +
-					"For an API outside the registry, ask your operator to connect a credential " +
-					"in the dashboard instead.",
+					"For an API outside the registry, run `jentic connect --api <vendor/name/version>` " +
+					"instead; if this deployment does not take API connect requests, ask your " +
+					"operator to connect a credential in the dashboard.",
 			}
 		case http.StatusForbidden:
 			return &ux.CodedError{

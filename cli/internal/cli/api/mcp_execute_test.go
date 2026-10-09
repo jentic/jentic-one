@@ -206,6 +206,11 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"action_denied","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"connect":{"vendor_key":"google"}},"human_readable_instruction":"Ask your operator."}}`, "whoami",
 		},
 		{
+			// API connect requests enabled: the directive names the API itself.
+			"no_credential_binding_api_target", http.StatusForbidden,
+			`{"type":"no_credential_binding","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect --api acme/pets/v1","connect":{"api":{"vendor":"acme","name":"pets","version":"v1"}}},"human_readable_instruction":"Run jentic connect --api acme/pets/v1 (or request_connection with api) and relay the approval_url."}}`, "request_connection",
+		},
+		{
 			"action_denied", http.StatusForbidden,
 			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
 		},
