@@ -99,7 +99,8 @@ code:
 
 - **`no_credential_binding` (403)** — with `api_served: false` no credential
   is provisioned for the API at all: if the directive carries a
-  `suggested_command` (`jentic connect <vendor>`), run it and relay the
+  `suggested_command` (`jentic connect <vendor>`, with `--registration
+  <id>` when one shared app covers the API), run it and relay the
   printed `approval_url` to your operator; otherwise ask them to connect or
   provision a credential in the dashboard and bind you to it, proposing the
   auth type and permission rules you read from the API spec (see `SKILL.md`
@@ -108,7 +109,8 @@ code:
   aren't bound: ask your operator to bind you to it (dashboard, or
   `POST /agents/{agent_id}/credentials`). Then retry.
 - **`credential_not_provisioned` (424)** — if the directive carries a
-  `suggested_command` (`jentic connect <key>`), the vendor is in the
+  `suggested_command` (`jentic connect <key>`, pinned with
+  `--registration <id>` when one shared app covers the API), the vendor is in the
   connect registry: run it and relay the printed `approval_url` to your
   operator; otherwise relay the directive's `provisioning_url` (when
   present) — or report the gap — so they can connect the account. Then

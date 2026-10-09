@@ -105,8 +105,9 @@ the right ask, then retry once they confirm.
     directive carries a `suggested_command` (`jentic connect <vendor>`),
     start the connect session yourself and relay its `approval_url`;
     otherwise ask your operator to connect or provision a credential for
-    the API and bind you to it — include the auth type and permission
-    rules you read from the spec so they can set it up in one pass.
+    the API and bind you to it — include the auth type you read from the
+    spec and the directive's `suggested_rules` (the minimal rule for the
+    denied call) so they can set it up in one pass.
   - `true` — a credential already serves this API and you just aren't bound
     to it; ask your operator to bind you to the existing credential
     (binding is always theirs — a fresh `jentic connect` also works for a
@@ -118,6 +119,12 @@ the right ask, then retry once they confirm.
   call `request_connection` with the key it names) and relay the
   `approval_url`; otherwise hand the directive's `provisioning_url` to
   your operator to connect the account. Then retry.
+- Both provisioning denials also carry the connect target as data:
+  `parameters.connect` (`{vendor_key, registration_id?}` — the key
+  `jentic connect` / `request_connection` takes, and the shared OAuth app
+  when exactly one covers the API) and `parameters.suggested_rules` (the
+  minimal permission rule allowing the denied call). Read the key from
+  `connect` rather than parsing `suggested_command`.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing

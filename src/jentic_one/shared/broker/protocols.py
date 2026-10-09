@@ -193,6 +193,31 @@ class CredentialDeriverProtocol(Protocol):
     ) -> CredentialDerivation: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ConnectableRegistration:
+    """An active shared OAuth-app registration an agent can connect through.
+
+    ``api_vendor`` is the connect key ``POST /integrations:connect`` resolves
+    the registration under; ``catalog_api_id`` is the catalog API the
+    registration's credentials are scoped to.
+    """
+
+    id: str
+    api_vendor: str
+    catalog_api_id: str
+
+
+@runtime_checkable
+class ConnectableRegistrationSourceProtocol(Protocol):
+    """Lists the active shared OAuth-app registrations (denial guidance only).
+
+    The broker reads these to tell an unprovisioned agent which connect key
+    serves the API it was denied; it never decides authorization.
+    """
+
+    async def list_active(self) -> tuple[ConnectableRegistration, ...]: ...
+
+
 @runtime_checkable
 class AgentRuleEvaluatorProtocol(Protocol):
     """Evaluates direct-binding permission rules against an inbound request.
