@@ -408,3 +408,29 @@ async def test_middleware_does_not_trap_cancel_scope_on_disconnect(tmp_path: Pat
     finally:
         with contextlib.suppress(Exception):
             await engine.dispose()
+
+
+def test_access_log_masks_query_values_after_uvicorn_dictconfig(
+    minimal_config: AppConfig,
+) -> None:
+    """uvicorn's access line carries the inbound query (a connect session's
+    ``poll_token``); the mask is a logger filter, so it survives uvicorn's
+    ``dictConfig`` and applies before uvicorn's own (non-propagating) handler."""
+    configure_logging(minimal_config)
+    configure_logging(minimal_config)
+    logging.config.dictConfig(LOGGING_CONFIG)
+    access = logging.getLogger("uvicorn.access")
+    assert sum(type(f).__name__ == "_AccessLogQueryFilter" for f in access.filters) == 1
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:5000", "GET", "/connect-sessions/cs_1/status?poll_token=pt_secret", "1.1", 200),
+        None,
+    )
+    assert access.filter(record)
+    message = record.getMessage()
+    assert "pt_secret" not in message
+    assert "/connect-sessions/cs_1/status?poll_token=" in message
