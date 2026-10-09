@@ -1506,6 +1506,7 @@ type ConnectSessionSummaryResponse struct {
 	AgentId            *string                            `json:"agent_id,omitempty"`
 	ConnectedAs        *string                            `json:"connected_as,omitempty"`
 	CreatedAt          time.Time                          `json:"created_at"`
+	CredentialId       string                             `json:"credential_id"`
 	ErrorCode          *string                            `json:"error_code,omitempty"`
 	Reason             *string                            `json:"reason,omitempty"`
 	RequestedByActorId string                             `json:"requested_by_actor_id"`

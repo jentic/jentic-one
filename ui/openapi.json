@@ -2454,6 +2454,10 @@
             "title": "Created At",
             "type": "string"
           },
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -2508,7 +2512,8 @@
           "vendor_key",
           "vendor_display_name",
           "requested_by_actor_id",
-          "created_at"
+          "created_at",
+          "credential_id"
         ],
         "title": "ConnectSessionSummaryResponse",
         "type": "object"
