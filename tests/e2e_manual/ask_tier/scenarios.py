@@ -461,18 +461,19 @@ def s07_rule_changed_to_deny(w: World, o: Outcome) -> None:
     ]
     set_rules(w.admin, cid, w.cli.agent_id, deny_rules)
     try:
-        # Approved at once: the run re-authorises against the broker's rule
-        # cache (30 s TTL), which still holds the ask rule.
+        # Approved at once: the run-time re-authorisation reads the rules fresh
+        # (its evaluator has no cache), so the new deny already applies.
         w.admin.decide(a["approval"]["id"], "approve")
         ja = _wait_job(w.admin, a["job_id"], {"completed", "failed"})
         if ja["status"] == "completed":
             o.gap(
                 "2D: approved right after the rule became deny, the job still ran — the "
-                "run-time re-authorisation reads the 30 s rule cache, not fresh rules"
+                "run-time re-authorisation did not see the fresh rules"
             )
         else:
             o.note("immediate approve after deny: denied at run time")
-        o.note("waiting 32 s for the rule cache to lapse")
+        # And after the broker's hot-path rule cache (30 s) has lapsed too.
+        o.note("waiting 32 s past the broker's rule cache")
         time.sleep(32)
         w.admin.decide(b["approval"]["id"], "approve")
         jb = _wait_job(w.admin, b["job_id"], {"completed", "failed"})
