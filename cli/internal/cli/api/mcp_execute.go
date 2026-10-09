@@ -492,13 +492,37 @@ func connectVendorKey(directive *ux.Directive) string {
 	return key
 }
 
+// connectAPI is the registry API a denial directive names as its connect
+// target in parameters.connect.api ({vendor, name, version}), or nil — set
+// when the deployment takes connect requests for any registry API and no
+// vendor key covers the denied one (Python twin: _connect_api).
+func connectAPI(directive *ux.Directive) map[string]any {
+	if directive == nil {
+		return nil
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	api, _ := connect["api"].(map[string]any)
+	out := map[string]any{}
+	for _, k := range []string{"vendor", "name", "version"} {
+		v, _ := api[k].(string)
+		if v == "" {
+			return nil
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // requestConnectionArguments are the request_connection arguments a denial
-// directive fills: only the vendor the tool accepts today. The directive's
-// registration_id and suggested_rules stay in agent_directive (Python twin:
-// _request_connection_arguments).
+// directive fills: the vendor key, or else the api identity, it names. The
+// directive's registration_id and suggested_rules stay in agent_directive
+// (Python twin: _request_connection_arguments).
 func requestConnectionArguments(directive *ux.Directive) map[string]any {
 	if key := connectVendorKey(directive); key != "" {
 		return map[string]any{"vendor": key}
+	}
+	if api := connectAPI(directive); api != nil {
+		return map[string]any{"api": api}
 	}
 	return nil
 }

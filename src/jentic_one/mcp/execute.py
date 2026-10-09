@@ -416,14 +416,42 @@ def _connect_vendor_key(directive: dict[str, Any] | None) -> str:
     return ""
 
 
+def _connect_api(directive: dict[str, Any] | None) -> dict[str, str] | None:
+    """The registry API a denial directive names as its connect target, or ``None``.
+
+    ``parameters.connect.api`` (``{vendor, name, version}``) is set when the
+    deployment takes connect requests for any registry API and no vendor key
+    covers the denied one (Go: ``connectAPI``).
+    """
+    if directive is None:
+        return None
+    parameters = directive.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    connect = parameters.get("connect")
+    if not isinstance(connect, dict):
+        return None
+    api = connect.get("api")
+    if not isinstance(api, dict):
+        return None
+    fields = {k: api.get(k) for k in ("vendor", "name", "version")}
+    if not all(isinstance(v, str) and v for v in fields.values()):
+        return None
+    return {k: str(v) for k, v in fields.items()}
+
+
 def _request_connection_arguments(directive: dict[str, Any] | None) -> dict[str, Any]:
     """The ``request_connection`` arguments a denial directive fills (Go twin).
 
-    Only the ``vendor`` the tool accepts today; the directive's
-    ``registration_id`` and ``suggested_rules`` stay in ``agent_directive``.
+    The ``vendor`` key, or else the ``api`` identity, the directive names; the
+    directive's ``registration_id`` and ``suggested_rules`` stay in
+    ``agent_directive``.
     """
     key = _connect_vendor_key(directive)
-    return {"vendor": key} if key else {}
+    if key:
+        return {"vendor": key}
+    api = _connect_api(directive)
+    return {"api": api} if api else {}
 
 
 def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:

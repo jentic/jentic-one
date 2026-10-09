@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -263,7 +264,8 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 
 // TestMCPExecute_DenialFillsRequestConnectionArguments pins the
 // next_tool_arguments a provisioning denial carries: the vendor from the
-// directive's parameters.connect.vendor_key, and nothing when the directive
+// directive's parameters.connect.vendor_key (else the api identity from
+// parameters.connect.api), and nothing when the directive
 // names only the CLI suggested_command (an older broker) or when next_tool is
 // not request_connection. Python twin:
 // tests/unit/mcp/test_execute_golden.py.
@@ -282,6 +284,11 @@ func TestMCPExecute_DenialFillsRequestConnectionArguments(t *testing.T) {
 			"suggested_command_only",
 			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`,
 			nil,
+		},
+		{
+			"api_target",
+			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect --api acme/pets/v1","connect":{"api":{"vendor":"acme","name":"pets","version":"v1"}}},"human_readable_instruction":"Run jentic connect --api acme/pets/v1 (or request_connection with api)."}}`,
+			map[string]any{"api": map[string]any{"vendor": "acme", "name": "pets", "version": "v1"}},
 		},
 		{
 			"rule_denial",
@@ -313,8 +320,7 @@ func TestMCPExecute_DenialFillsRequestConnectionArguments(t *testing.T) {
 				}
 				return
 			}
-			args, _ := got.(map[string]any)
-			if len(args) != len(tc.wantArgs) || args["vendor"] != tc.wantArgs["vendor"] {
+			if !reflect.DeepEqual(got, tc.wantArgs) {
 				t.Errorf("next_tool_arguments = %v, want %v", got, tc.wantArgs)
 			}
 		})
