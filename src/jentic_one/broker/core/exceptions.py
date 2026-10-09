@@ -18,8 +18,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
 from jentic_one.shared.broker.protocols import IdentityMismatch
+from jentic_one.shared.permissions.matching import validate_path
 
 AgentStrategy = Literal[
     "wait",
@@ -346,13 +348,48 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
 # ---------------------------------------------------------------------------
 
 
+def suggested_permission_rules(*, method: str, path: str) -> list[dict[str, Any]] | None:
+    """The minimal permission rule allowing one denied request, in rule-schema shape.
+
+    One ``allow`` rule on the request's method and exact upstream path — the
+    narrowest grant that lets the denied call through. An approver widens it
+    (a path pattern, read-only ``GET``) at review. ``None`` when the path is
+    not a valid exact-mode rule path, so a directive never suggests a rule the
+    rule schema would refuse.
+    """
+    if not method or validate_path(path, "exact") is not None:
+        return None
+    return [{"effect": "allow", "methods": [method.upper()], "path": path, "match_mode": "exact"}]
+
+
+def connect_parameters(
+    connect: ConnectTarget | None, suggested_rules: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """The provisioning fields a missing-credential directive adds to ``parameters``.
+
+    ``suggested_command`` is the CLI form and ``connect`` the structured form
+    an MCP client fills ``request_connection`` from — both only when something
+    connectable covers the API. ``suggested_rules`` is the minimal rule to ask
+    for with the credential, whoever provisions it.
+    """
+    params: dict[str, Any] = {}
+    if connect is not None:
+        params["suggested_command"] = connect.cli_command()
+        params["connect"] = connect.as_parameters()
+    if suggested_rules:
+        params["suggested_rules"] = suggested_rules
+    return params
+
+
 def no_credential_binding_directive(
     *,
     vendor: str,
     name: str,
     version: str,
     api_served: bool,
-    connect_vendor: str | None = None,
+    connect: ConnectTarget | None = None,
+    suggested_rules: list[dict[str, Any]] | None = None,
+    provisioning_url: str | None = None,
 ) -> AgentDirective:
     """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
 
@@ -364,17 +401,26 @@ def no_credential_binding_directive(
       it. The operator grants the binding in the dashboard (or via
       ``POST /agents/{id}/credentials``) — binding stays human.
     - ``api_served=False`` — no credential is provisioned for this API yet.
-      The *provisioning* leg is agent-initiable when the API maps onto a
-      vendor-registry entry (``connect_vendor``): the agent runs ``jentic
-      connect <vendor>`` (or calls the ``request_connection`` MCP tool) —
-      an agent-initiated connect session binds the agent at confirm time —
-      and relays the approval_url to its operator; approval stays human.
-      Off the registry the whole ask stays with the operator.
+      The *provisioning* leg is agent-initiable when a vendor-registry entry
+      or a shared OAuth-app registration covers the API (``connect``): the
+      agent runs ``jentic connect <vendor>`` (or calls the
+      ``request_connection`` MCP tool) — an agent-initiated connect session
+      binds the agent at confirm time — and relays the approval_url to its
+      operator; approval stays human. Otherwise the whole ask stays with the
+      operator.
 
-    ``connect_vendor`` is the vendor-registry key resolved for this API
-    (``shared.access_guidance.connect_vendor_key``), or ``None`` when the API
-    is not in the registry; when set, the directive carries a runnable
-    ``parameters.suggested_command`` (``jentic connect <vendor>``).
+    ``connect`` is the target resolved for this API
+    (``broker.services.credentials.connect_target``), or ``None`` when nothing
+    connectable covers it; when set, the directive carries
+    ``parameters.suggested_command`` (``jentic connect <vendor>``),
+    and ``parameters.connect`` (``{vendor_key, registration_id?}``).
+    ``suggested_rules`` (the minimal rule allowing the denied request) rides
+    ``parameters.suggested_rules`` whenever given.
+
+    ``provisioning_url`` is the owner deep link to the agent's open connect
+    session for this API, when it has one: the agent already asked, so the
+    directive carries the link to relay and neither ``suggested_command`` nor
+    ``connect`` (a second connect would only duplicate the pending request).
 
     Deliberately never enumerates other owners' credentials (that would leak
     instance inventory to an unbound agent).
@@ -383,9 +429,21 @@ def no_credential_binding_directive(
     parameters: dict[str, Any] = {
         "api": {"vendor": vendor, "name": name, "version": version},
         "api_served": api_served,
+        **connect_parameters(None if provisioning_url else connect, suggested_rules),
     }
-    if connect_vendor:
-        parameters["suggested_command"] = f"jentic connect {connect_vendor}"
+    if provisioning_url:
+        parameters["provisioning_url"] = provisioning_url
+        return AgentDirective(
+            strategy="prompt_human",
+            parameters=parameters,
+            human_readable_instruction=(
+                f"You have no credential binding for '{api}' yet, and your request to "
+                "connect a credential for it is still waiting for your operator. Do not "
+                f"start another: relay {provisioning_url} to them to approve it. Once they "
+                "confirm, retry this call."
+            ),
+        )
+    connect_command = connect.cli_command() if connect is not None else None
     if api_served:
         instruction = (
             f"You have no credential binding for '{api}', but a credential already serves "
@@ -393,16 +451,16 @@ def no_credential_binding_directive(
             "or via POST /agents/{agent_id}/credentials) — only a human can grant the "
             "binding. Once bound, retry this call."
         )
-        if connect_vendor:
+        if connect_command:
             instruction += (
                 f" Alternatively, start connecting a fresh credential yourself with "
-                f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
+                f"`{connect_command}` (or the request_connection tool) and "
                 "relay its approval_url to your operator — approval is still theirs."
             )
-    elif connect_vendor:
+    elif connect_command:
         instruction = (
             f"No credential is provisioned for '{api}' yet. Start connecting one yourself: "
-            f"run `jentic connect {connect_vendor}` (or call the request_connection tool) "
+            f"run `{connect_command}` (or call the request_connection tool) "
             "and relay the approval_url it returns to your operator — they approve the "
             "connection in the browser; only a human can approve. Once they confirm, retry "
             "this call."

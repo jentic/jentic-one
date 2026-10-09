@@ -17,6 +17,10 @@
  *                                    `events:read`)
  *   - credentials whose OAuth sign-in never finished (joined from the credential list,
  *                                    `credentials:read` or `owner:credentials:read`)
+ *   - agents waiting on a connect request (`GET /connect-sessions`, `created` /
+ *                                    `awaiting_app` / `polling`, collapsed per agent;
+ *                                    listed only to approvers — `org:admin`, or
+ *                                    `credentials:write` and `agents:write`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
  * client's registration) are dropped — the queue row is the actionable one —
@@ -38,7 +42,14 @@ import {
 	type OAuthClientResponse,
 } from '@/shared/api';
 import { usePendingAgentsCount } from '@/shared/hooks/usePendingAgentsCount';
-import { useAllCredentials } from '@/shared/credentials/api';
+import { useAllCredentials, useOpenConnectRequests } from '@/shared/credentials/api';
+import {
+	groupConnectRequestsByAgent,
+	summariseConnectTargets,
+	useCanApproveConnectRequests,
+} from '@/shared/credentials/lib/connectRequests';
+import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
 import { adaptEvent, primaryDestinationFor, severityForWire } from '@/shared/lib/agentStream';
 import { useOptionalCurrentUser } from '@/shared/auth/AuthContext';
@@ -46,7 +57,7 @@ import { ORG_ADMIN } from '@/shared/auth/usePermission';
 import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
 import { CREDENTIALS_READ, OWNER_CREDENTIALS_READ, useCanAccess } from '@/shared/auth/useCanAccess';
 
-export type AttentionKind = 'agent' | 'oauth_client' | 'credential' | 'event';
+export type AttentionKind = 'agent' | 'oauth_client' | 'connect_request' | 'credential' | 'event';
 
 /** Higher sorts first. Failures outrank approvals; approvals outrank setup nags. */
 export type AttentionUrgency = 3 | 2 | 1;
@@ -132,6 +143,15 @@ export function useAttentionItems(): AttentionState {
 
 	const canReadCredentials = useCanAccess(CREDENTIALS_READ, OWNER_CREDENTIALS_READ);
 	const credentials = useAllCredentials({ enabled: canReadCredentials });
+	// Read for every credentials reader (an open request's pending credential
+	// is not a separate unfinished sign-in), listed only to approvers.
+	const canApproveConnectRequests = useCanApproveConnectRequests();
+	const connectRequests = useOpenConnectRequests({ enabled: canReadCredentials });
+	const connectGroups = useMemo(
+		() => groupConnectRequestsByAgent(connectRequests.data ?? []),
+		[connectRequests.data],
+	);
+	const actors = useActorDirectory(connectGroups.map((g) => g.agentId));
 
 	const items = useMemo<AttentionItem[]>(() => {
 		const out: AttentionItem[] = [];
@@ -162,9 +182,34 @@ export function useAttentionItems(): AttentionState {
 			});
 		}
 
+		// One row per agent, however many accounts it asked for: the agent is
+		// blocked either way, and the row's link opens its longest-waiting ask.
+		const connectCredentialIds = new Set<string>();
+		for (const group of connectGroups) {
+			for (const session of group.sessions) connectCredentialIds.add(session.credential_id);
+			if (!canApproveConnectRequests) continue;
+			const oldest = group.sessions[0];
+			const name = actors.resolve(group.agentId) ?? group.agentId;
+			out.push({
+				key: `connect_request:${group.agentId}`,
+				kind: 'connect_request',
+				urgency: 2,
+				title: `${name} is waiting for you to connect ${summariseConnectTargets(group.sessions)}`,
+				detail:
+					group.sessions.length > 1
+						? `${group.sessions.length} requests`
+						: (oldest.reason ?? null),
+				since: group.since,
+				href: ROUTE_PATHS.connectApproval(oldest.session_id, group.agentId),
+			});
+		}
+
 		if (credentials.complete) {
 			for (const credential of credentials.items) {
 				if (!credentialAwaitsConsent(credential)) continue;
+				// An open request's pending credential is that request's row, not
+				// a separate unfinished sign-in.
+				if (connectCredentialIds.has(credential.credential_id)) continue;
 				out.push({
 					key: `credential:${credential.credential_id}`,
 					kind: 'credential',
@@ -198,6 +243,9 @@ export function useAttentionItems(): AttentionState {
 	}, [
 		pendingAgents.agents,
 		oauthClients.data,
+		connectGroups,
+		canApproveConnectRequests,
+		actors,
 		credentials.complete,
 		credentials.items,
 		events.data,
@@ -208,12 +256,17 @@ export function useAttentionItems(): AttentionState {
 		events.isError && 'alerts',
 		oauthClients.isError && 'OAuth client queue',
 		credentials.error != null && 'credentials',
+		connectRequests.isError && 'connect requests',
 	].filter((s): s is string => typeof s === 'string');
 
 	return {
 		items,
 		count: items.length,
-		isLoading: pendingAgents.isLoading || events.isLoading || oauthClients.isLoading,
+		isLoading:
+			pendingAgents.isLoading ||
+			events.isLoading ||
+			oauthClients.isLoading ||
+			connectRequests.isLoading,
 		failedSources,
 	};
 }

@@ -104,6 +104,19 @@ export const ROUTE_PATHS = {
 	 */
 	approval: (approvalId: string) => `${ROUTES.approvals}/${encodeURIComponent(approvalId)}`,
 	/**
+	 * An agent's connect request opened for approval — the address the backend
+	 * mints as the session's `approval_url` (`?approve=<sid>`, no poll token:
+	 * the agent's owner or an org admin acts without it). With `agentId`, the
+	 * requesting agent is also selected behind the dialog. Read by
+	 * `modules/agents/pages/AgentsPage`.
+	 */
+	connectApproval: (sessionId: string, agentId?: string) => {
+		const q = new URLSearchParams();
+		if (agentId) q.set('agent', agentId);
+		q.set('approve', sessionId);
+		return `${ROUTES.agents}?${q}`;
+	},
+	/**
 	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
 	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because

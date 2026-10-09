@@ -86,7 +86,7 @@ reference names the exact recovery for each state.
 
 ### 2. Check what you can do, and report access gaps to your operator
 
-Your identity view (CLI `jentic api GET /me`; MCP `whoami`) lists your
+Your identity view (CLI `jentic whoami`; MCP `whoami`) lists your
 status, permissions, and credential bindings; each binding lists the APIs it
 **serves** (`serves: [{api_vendor, api_name, api_version}]`). This tells you
 exactly what you can already call. Combined with the catalog (what's

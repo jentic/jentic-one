@@ -225,12 +225,58 @@
     {
       "name": "request_connection",
       "title": "Start connecting a vendor credential",
-      "description": "Start a connect session for a verified vendor when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Example: {\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}. Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection in their browser and confirm the scopes; you cannot open the URL or approve it yourself. Once they confirm, call whoami to see the new credential binding, then retry the blocked call. This tool only STARTS the flow and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes are flagged for the approver) and a reason the approver will see. Only vendors in the deployment's connect registry work; for any other API, ask your operator to connect a credential in the dashboard. Binding an EXISTING credential and scope grants stay operator actions.",
+      "description": "Start a connect session for a verified vendor when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Example: {\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}. Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection in their browser and confirm the scopes; you cannot open the URL or approve it yourself. Once they confirm, call whoami to see the new credential binding, then retry the blocked call. This tool only STARTS the flow and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes are flagged for the approver), requested_permission_rules (the binding rules you need; the approver reviews them) and a reason the approver will see. If several shared OAuth apps serve the vendor, the error lists them: ask your human user which one to use (choosing it is their call, not yours) and retry with its oauth_app_registration_id. Only vendors in the deployment's connect registry work; for any other API, ask your operator to connect a credential in the dashboard. Binding an EXISTING credential and scope grants stay operator actions.",
       "input_schema": {
         "properties": {
+          "oauth_app_registration_id": {
+            "description": "registration_id of the shared OAuth app to connect through (optional; \"registration_id\" is an accepted alias). Only needed when several shared apps serve the vendor: the error then lists them, and your human user picks one — never choose it yourself.",
+            "type": "string"
+          },
           "reason": {
             "description": "Why you need this connection (optional, max 1024 chars). Shown to the approver — a clear one-liner gets you approved faster.",
             "type": "string"
+          },
+          "requested_permission_rules": {
+            "description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
+            "items": {
+              "properties": {
+                "effect": {
+                  "enum": [
+                    "allow",
+                    "deny"
+                  ],
+                  "type": "string"
+                },
+                "match_mode": {
+                  "enum": [
+                    "regex",
+                    "prefix",
+                    "exact"
+                  ],
+                  "type": "string"
+                },
+                "methods": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "operations": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "effect"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "requested_scopes": {
             "description": "Vendor scope names to request (optional; \"scopes\" is an accepted alias). The human approver confirms the final set — write scopes are flagged for their attention.",

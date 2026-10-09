@@ -56,6 +56,28 @@ class _OutboundUrlQueryFilter(logging.Filter):
         return True
 
 
+class _AccessLogQueryFilter(logging.Filter):
+    """Mask query-string values in uvicorn's access-log line.
+
+    uvicorn logs ``<client> - "<METHOD> <path?query> HTTP/<v>" <status>`` with
+    the raw query string, and some routes take a capability there (a connect
+    session's ``poll_token``, an OAuth callback's ``code`` and ``state``). The
+    path argument is rewritten via :func:`redact_url_query` (path and parameter
+    names kept) before uvicorn's own handler formats it. That handler does not
+    propagate to the root, so ``redact_event`` never sees the line. Never drops
+    a record.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and args:
+            record.args = tuple(
+                redact_url_query(arg) if isinstance(arg, str) and "?" in arg else arg
+                for arg in args
+            )
+        return True
+
+
 # Third-party loggers whose DEBUG output is raw outbound wire detail (see
 # ``configure_logging``). Gated together by ``logging.http_wire_trace``.
 _WIRE_TRACE_LOGGERS: tuple[str, ...] = ("httpcore", "hpack")
@@ -65,6 +87,14 @@ def _install_httpx_url_filter() -> None:
     httpx_logger = logging.getLogger("httpx")
     if not any(isinstance(f, _OutboundUrlQueryFilter) for f in httpx_logger.filters):
         httpx_logger.addFilter(_OutboundUrlQueryFilter())
+
+
+def _install_access_log_query_filter() -> None:
+    # A logger filter survives uvicorn's later ``dictConfig`` (it replaces
+    # handlers, never filters).
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _AccessLogQueryFilter) for f in access_logger.filters):
+        access_logger.addFilter(_AccessLogQueryFilter())
 
 
 def _build_file_handler(config: AppConfig) -> RotatingFileHandler:
@@ -158,6 +188,9 @@ def configure_logging(config: AppConfig) -> None:
     # httpx's INFO request line carries the full outbound URL — mask its query
     # values (query-located API keys) before any handler formats it.
     _install_httpx_url_filter()
+    # uvicorn's access line carries the inbound query string (poll tokens,
+    # OAuth callback codes) — mask its values too.
+    _install_access_log_query_filter()
 
 
 def _is_valid_request_id(value: str) -> bool:

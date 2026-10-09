@@ -54,10 +54,16 @@ class RevisionPinOutcome(StrEnum):
     FORBIDDEN = "forbidden"
     """The revision is an unpublished ``draft`` the caller does not own (→ 403)."""
 
+    HOST_CHANGE_HELD = "host_change_held"
+    """The caller's own ``draft`` serves different server hosts than the API's live
+    revision, the API has bound credentials, and the caller lacks
+    ``credentials:write`` (→ 403 ``host_change_requires_operator``).
+    ``revision_id`` is set so the broker can tell whether the draft serves the URL."""
+
 
 @dataclass(frozen=True, slots=True)
 class RevisionPinResult:
-    """The resolved ``revision_id`` (when ``RESOLVED``) plus the classifying outcome."""
+    """The resolved ``revision_id`` (``RESOLVED``, ``HOST_CHANGE_HELD``) plus the outcome."""
 
     outcome: RevisionPinOutcome
     revision_id: uuid.UUID | None = None
@@ -90,7 +96,7 @@ class RegistryResolverProtocol(Protocol):
         Performs the in-process lookup + access-rule check and returns a neutral
         :class:`RevisionPinResult`; it never raises a registry-specific exception
         across the boundary. The broker maps the outcome to its domain taxonomy
-        (``UNKNOWN``/``ARCHIVED`` → 422, ``FORBIDDEN`` → 403).
+        (``UNKNOWN``/``ARCHIVED`` → 422, ``FORBIDDEN``/``HOST_CHANGE_HELD`` → 403).
         """
         ...
 
@@ -216,6 +222,31 @@ class CredentialDeriverProtocol(Protocol):
     async def derive_credentials(
         self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> CredentialDerivation: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectableRegistration:
+    """An active shared OAuth-app registration an agent can connect through.
+
+    ``api_vendor`` is the connect key ``POST /integrations:connect`` resolves
+    the registration under; ``catalog_api_id`` is the catalog API the
+    registration's credentials are scoped to.
+    """
+
+    id: str
+    api_vendor: str
+    catalog_api_id: str
+
+
+@runtime_checkable
+class ConnectableRegistrationSourceProtocol(Protocol):
+    """Lists the active shared OAuth-app registrations (denial guidance only).
+
+    The broker reads these to tell an unprovisioned agent which connect key
+    serves the API it was denied; it never decides authorization.
+    """
+
+    async def list_active(self) -> tuple[ConnectableRegistration, ...]: ...
 
 
 @runtime_checkable

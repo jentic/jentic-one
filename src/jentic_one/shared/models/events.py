@@ -97,6 +97,12 @@ class EventType:
     # agent-needed APIs. Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424,
     # fires when a bound credential is unresolvable at inject time).
     CREDENTIAL_BINDING_UNSERVED = "broker.credential_binding_unserved"
+    # An agent opened a connect session asking its owner to approve a new
+    # credential. Informational (requires_action=False): the open session is
+    # the live signal — the attention inbox and the Agents page read it, and
+    # the event row deep-links to its approval page. ``created_by`` is the
+    # agent, so its owner sees the row under owner-scoped event reads.
+    CONNECT_SESSION_CREATED = "connect_session.created"
 
     # --- Local-MCP transport events (issue #1177) -------------------------
     # Emitted once per MCP session UUID on the first authenticated request
@@ -184,6 +190,7 @@ class EventType:
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
             CREDENTIAL_BINDING_UNSERVED,
+            CONNECT_SESSION_CREATED,
             MCP_SESSION_STARTED,
             MCP_CONFIG_REGISTERED,
             OAUTH_CLIENT_REGISTERED,
@@ -430,6 +437,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_DECIDED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
+    EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),

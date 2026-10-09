@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { ApiError, consumeSessionExpiredNotice, getIdpDescriptor } from '@/shared/api';
 import { beginSsoLogin } from '@/shared/auth/sso';
-import { ROUTES } from '@/shared/app/routes';
+import { resolveReturnTo, type ReturnLocation } from '@/shared/auth/returnTo';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Button } from '@/shared/ui/Button';
@@ -12,7 +12,7 @@ import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
 interface LocationState {
-	from?: { pathname?: string };
+	from?: ReturnLocation;
 }
 
 /** Human-friendly provider label for the SSO button. */
@@ -74,8 +74,11 @@ export function LoginPage() {
 		setSubmitting(true);
 		try {
 			await login({ email, password });
-			const from = (location.state as LocationState | null)?.from?.pathname;
-			navigate(from && from !== ROUTES.login ? from : ROUTES.app, { replace: true });
+			// Back to the full remembered location (query and hash included), so a
+			// deep link keeps its state; off-app targets fall back to the home.
+			navigate(resolveReturnTo((location.state as LocationState | null)?.from), {
+				replace: true,
+			});
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 401) {
 				setError('Incorrect email or password.');

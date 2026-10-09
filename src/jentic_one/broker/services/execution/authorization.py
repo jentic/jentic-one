@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -26,13 +27,17 @@ from jentic_one.broker.core.exceptions import (
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
+    suggested_permission_rules,
 )
+from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
+from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
-from jentic_one.shared.access_guidance import connect_vendor_key
+from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
+    ConnectableRegistrationSourceProtocol,
     CredentialDerivation,
     CredentialDeriverProtocol,
     RuleVerdict,
@@ -57,27 +62,14 @@ _authz_denied = _meter.create_counter(
 )
 
 
-def _connect_vendor_for(ctx: Context, api: APIReference) -> str | None:
-    """Resolve the vendor-registry key covering ``api``, if any (Phase 1b).
-
-    Gates the missing-binding directives' ``suggested_command`` (``jentic
-    connect <vendor>``) on the registry: the connect surface takes the
-    registry key, not the API identity, and suggesting a connect for an
-    off-registry API would send the agent into a guaranteed
-    ``unknown vendor`` error. The broker call-path owns ``AppConfig`` via
-    ``ctx``, so the reverse map is a pure config scan — no I/O.
-    """
-    return connect_vendor_key(
-        ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
-    )
-
-
 def _empty_credential_derivation_denial(
     d: CredentialDerivation,
     api: APIReference,
     *,
     instance: str,
-    connect_vendor: str | None = None,
+    connect: ConnectTarget | None = None,
+    suggested_rules: list[dict[str, Any]] | None = None,
+    provisioning_url: str | None = None,
 ) -> BrokerError:
     """Pick the right denial for an empty credential derivation (direct path).
 
@@ -124,7 +116,9 @@ def _empty_credential_derivation_denial(
             name=api.name,
             version=api.version,
             api_served=d.api_served,
-            connect_vendor=connect_vendor,
+            connect=connect,
+            suggested_rules=suggested_rules,
+            provisioning_url=provisioning_url,
         ),
     )
 
@@ -175,6 +169,9 @@ async def derive_credential_bindings(
     api: APIReference,
     instance: str,
     ctx: Context,
+    method: str = "",
+    path: str = "",
+    connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
 ) -> CredentialDerivation:
     """Derive the caller's credential-binding candidates for this execution.
 
@@ -188,6 +185,11 @@ async def derive_credential_bindings(
     Non-agent actors (users) follow the **same** derivation rule — no
     implicit bypass. Retired toolkit keys resolve as their successor agents
     and derive here like any other caller.
+
+    ``method`` / ``path`` are the denied request's, for the directive's
+    ``suggested_rules``. The connect target is resolved (``config`` entries,
+    then active shared OAuth-app registrations via ``connect_registrations``)
+    only on the denial path, before the denial is built.
     """
     assert api.vendor and api.name and api.version, (
         "derive_credential_bindings requires a concrete discovered API identity"
@@ -203,7 +205,9 @@ async def derive_credential_bindings(
             derivation,
             api,
             instance=instance,
-            connect_vendor=_connect_vendor_for(ctx, api),
+            connect=await resolve_connect_target(ctx, api, registrations=connect_registrations),
+            suggested_rules=suggested_permission_rules(method=method, path=path),
+            provisioning_url=await open_session_provisioning_url(ctx, identity=identity, api=api),
         )
         # The operator-visible pre-binding signal fires only for the plain
         # no-binding + nothing-serves case — an identity mismatch already has
@@ -278,6 +282,8 @@ async def authorize_execution(
         api=api,
         instance=instance,
         ctx=ctx,
+        method=method,
+        path=path,
     )
     allowed_credential_ids = [bc.credential_id for bc in derivation.credentials]
     rule_set_ids = {bc.credential_id: bc.rule_set_id for bc in derivation.credentials}
@@ -291,6 +297,8 @@ async def authorize_execution(
         allowed_credential_ids=allowed_credential_ids,
         request_server_variables=request_server_variables,
         server_variables_unresolved=server_variables_unresolved,
+        method=method,
+        path=path,
     )
     assert selected_credential is not None  # api.vendor is concrete (asserted above)
     evaluation = await agent_rule_evaluator.evaluate(

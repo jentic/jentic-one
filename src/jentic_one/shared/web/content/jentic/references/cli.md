@@ -70,6 +70,11 @@ exit 3 if the timeout lapses while still pending). Once they confirm,
 re-check `jentic whoami` — an agent-initiated connect binds you at
 approval — and retry the `execute` that was blocked.
 
+If several shared OAuth apps serve the vendor, `jentic connect` fails and
+lists them in `details.candidates` (name and `registration_id`). Choosing
+the app is your user's decision, not yours: show them the list, ask which
+one to use, then re-run `jentic connect <vendor> --registration <registration_id>`.
+
 For APIs outside the registry, **report the gap to your operator in
 one complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission
@@ -92,9 +97,13 @@ which recoveries an operator must perform) are shared by both lanes and
 live in `references/recovery.md`; what follows is this lane's mechanics per
 code:
 
-- **`no_credential_binding` (403)** — with `api_served: false` no credential
-  is provisioned for the API at all: if the directive carries a
-  `suggested_command` (`jentic connect <vendor>`), run it and relay the
+- **`no_credential_binding` (403)** — if the directive carries a
+  `provisioning_url`, a connect request you opened for this API is still
+  waiting: relay that link to your operator instead of connecting again,
+  then retry once they approve. Otherwise, with `api_served: false` no
+  credential is provisioned for the API at all: if the directive carries a
+  `suggested_command` (`jentic connect <vendor>`, with `--registration
+  <id>` when one shared app covers the API), run it and relay the
   printed `approval_url` to your operator; otherwise ask them to connect or
   provision a credential in the dashboard and bind you to it, proposing the
   auth type and permission rules you read from the API spec (see `SKILL.md`
@@ -103,10 +112,12 @@ code:
   aren't bound: ask your operator to bind you to it (dashboard, or
   `POST /agents/{agent_id}/credentials`). Then retry.
 - **`credential_not_provisioned` (424)** — if the directive carries a
-  `suggested_command` (`jentic connect <key>`), the vendor is in the
-  connect registry: run it and relay the printed `approval_url` to your
-  operator; otherwise relay the directive's `provisioning_url` (when
-  present) — or report the gap — so they can connect the account. Then
+  `provisioning_url`, your earlier connect request is still waiting: relay
+  that link to your operator instead of connecting again. Otherwise, if it
+  carries a `suggested_command` (`jentic connect <key>`, pinned with
+  `--registration <id>` when one shared app covers the API), the vendor is
+  in the connect registry: run it and relay the printed `approval_url` to
+  your operator; otherwise report the gap so they can connect the account. Then
   retry.
 - **`credential_undecryptable` (424)** — ask your operator to remove and
   re-add the credential, then retry; this is not agent-recoverable.

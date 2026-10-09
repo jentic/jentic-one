@@ -267,3 +267,8 @@ export type { HeldRequestResponse } from '@/shared/api/generated/models/HeldRequ
 export { ApprovalDecision } from '@/shared/api/generated/models/ApprovalDecision';
 export { ExecutionApprovalState } from '@/shared/api/generated/models/ExecutionApprovalState';
 export type { DecideRequest } from '@/shared/api/generated/models/DecideRequest';
+// Connect sessions — the open requests an agent is waiting on a human for.
+// Read by the credentials api tier (`listOpenConnectRequests`) for the
+// attention inbox and the Agents page; views use its hooks. Append-only.
+export { IntegrationsService } from '@/shared/api/generated/services/IntegrationsService';
+export type { ConnectSessionSummaryResponse } from '@/shared/api/generated/models/ConnectSessionSummaryResponse';

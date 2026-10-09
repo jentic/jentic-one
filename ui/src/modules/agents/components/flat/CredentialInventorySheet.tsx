@@ -76,9 +76,10 @@ export function CredentialInventorySheet({
 	 * credential. */
 	autoOpenCreate?: boolean;
 	/** An agent-initiated connect session to approve: opens the wizard in approve
-	 * mode. `onApprovalClose` fires when that wizard closes, so the caller can drop
-	 * the link that carried it. */
-	approvalSession?: { sessionId: string; pollToken: string };
+	 * mode. `pollToken` is present only when an older link carried one — the
+	 * agent's owner or an org admin approves without it. `onApprovalClose` fires
+	 * when that wizard closes, so the caller can drop the request it carried. */
+	approvalSession?: { sessionId: string; pollToken?: string };
 	onApprovalClose?: () => void;
 }) {
 	const headingId = 'credential-inventory-sheet-title';
@@ -424,6 +425,9 @@ export function CredentialInventorySheet({
 			    the host surface's DOM while it is closed. */}
 			{createOpen && (
 				<CreateCredentialFlow
+					// A different approval request is a different wizard: remount
+					// so one session's review state never carries into the next.
+					key={approvalSession?.sessionId ?? 'create'}
 					open
 					onClose={(): void => {
 						setCreateOpen(false);

@@ -195,6 +195,17 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`, "request_connection",
 		},
 		{
+			// A shared OAuth app covers the API: the structured connect target
+			// alone is enough to point at request_connection.
+			"credential_not_provisioned_shared_app", http.StatusFailedDependency,
+			`{"type":"credential_not_provisioned","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"connect":{"vendor_key":"google","registration_id":"oar_1"}},"human_readable_instruction":"Run jentic connect google (or request_connection)."}}`, "request_connection",
+		},
+		{
+			// A connect target never turns a rule denial into a connect pointer.
+			"action_denied_with_connect", http.StatusForbidden,
+			`{"type":"action_denied","detail":"denied","agent_directive":{"strategy":"prompt_human","parameters":{"connect":{"vendor_key":"google"}},"human_readable_instruction":"Ask your operator."}}`, "whoami",
+		},
+		{
 			"action_denied", http.StatusForbidden,
 			`{"type":"action_denied","detail":"a permission rule forbids this operation"}`, "whoami",
 		},
@@ -240,6 +251,72 @@ func TestMCPExecute_DenialNextToolKeysOnProblemType(t *testing.T) {
 			}
 			if tc.wantTool == "request_connection" && !strings.Contains(step, "request_connection") {
 				t.Errorf("actionable_step %q must teach the connect leg on a registry-vendor denial", step)
+			}
+		})
+	}
+}
+
+// TestMCPExecute_DenialFillsRequestConnectionArguments pins the
+// next_tool_arguments a provisioning denial carries: the vendor from the
+// directive's parameters.connect.vendor_key, with oauth_app_registration_id
+// when it pins a registration_id, and nothing when the directive
+// names only the CLI suggested_command (an older broker) or when next_tool is
+// not request_connection. Python twin:
+// tests/unit/mcp/test_execute_golden.py.
+func TestMCPExecute_DenialFillsRequestConnectionArguments(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantArgs map[string]any
+	}{
+		{
+			"structured_connect",
+			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect google","connect":{"vendor_key":"google","registration_id":"oar_1"},"suggested_rules":[{"effect":"allow","methods":["GET"],"path":"/v1/pets","match_mode":"exact"}]},"human_readable_instruction":"Run jentic connect google (or request_connection)."}}`,
+			map[string]any{"vendor": "google", "oauth_app_registration_id": "oar_1"},
+		},
+		{
+			"structured_connect_unpinned",
+			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect google","connect":{"vendor_key":"google"}},"human_readable_instruction":"Run jentic connect google (or request_connection)."}}`,
+			map[string]any{"vendor": "google"},
+		},
+		{
+			"suggested_command_only",
+			`{"type":"no_credential_binding","agent_directive":{"strategy":"prompt_human","parameters":{"suggested_command":"jentic connect acme"},"human_readable_instruction":"Run jentic connect acme (or request_connection)."}}`,
+			nil,
+		},
+		{
+			"rule_denial",
+			`{"type":"action_denied","agent_directive":{"strategy":"prompt_human","parameters":{"connect":{"vendor_key":"google"}},"human_readable_instruction":"Ask your operator."}}`,
+			nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Jentic-Error-Origin", "broker")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer broker.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleExecute(activeCtxWithBroker("http://127.0.0.1:8000", broker.URL),
+				callToolRequest("execute", `{"operation_id":"GET:/v1/pets"}`))
+			if err != nil {
+				t.Fatalf("a broker denial must be a soft error: %v", err)
+			}
+			payload := decodeToolJSON(t, res)
+			got, present := payload["next_tool_arguments"]
+			if tc.wantArgs == nil {
+				if present {
+					t.Errorf("next_tool_arguments = %v, want absent", got)
+				}
+				return
+			}
+			args, _ := got.(map[string]any)
+			if len(args) != len(tc.wantArgs) || args["vendor"] != tc.wantArgs["vendor"] {
+				t.Errorf("next_tool_arguments = %v, want %v", got, tc.wantArgs)
 			}
 		})
 	}

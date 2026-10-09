@@ -337,6 +337,61 @@ def test_cache_headers_do_not_leak_outside_the_spa_mount(
     assert "cache-control" not in client.get(APP_CONFIG_PATH).headers
 
 
+def test_spa_responses_send_no_referrer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shell (and its assets) send ``Referrer-Policy: no-referrer``.
+
+    Deep links carry identifiers in the query string — the connect approval
+    link is ``/app/agents?approve=<session id>`` — and a browser would
+    otherwise forward the full URL as ``Referer`` to any third-party origin the
+    page links to or loads from.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    router = APIRouter()
+
+    @router.get("/users")
+    def _users() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app.include_router(router)
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    for path in (
+        f"{SPA_MOUNT_PATH}/",
+        f"{SPA_MOUNT_PATH}/agents?approve=cs_123",
+        f"{SPA_MOUNT_PATH}/assets/app.js",
+    ):
+        resp = client.get(path, headers=_HTML_HEADERS)
+        assert resp.status_code == 200, path
+        assert resp.headers["referrer-policy"] == "no-referrer", path
+
+    # API responses outside the mount keep their own policy.
+    assert "referrer-policy" not in client.get("/users").headers
+    assert "referrer-policy" not in client.get(APP_CONFIG_PATH).headers
+
+
+def test_explicit_referrer_policy_is_not_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A route under /app that sets its own Referrer-Policy keeps it."""
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+
+    @app.get(f"{SPA_MOUNT_PATH}/custom")
+    def _custom() -> JSONResponse:
+        return JSONResponse({"ok": True}, headers={"Referrer-Policy": "same-origin"})
+
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    assert client.get(f"{SPA_MOUNT_PATH}/custom").headers["referrer-policy"] == "same-origin"
+
+
 def test_explicit_cache_control_is_not_overwritten(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

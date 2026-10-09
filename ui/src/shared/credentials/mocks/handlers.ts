@@ -6,8 +6,13 @@ import {
 	type CredentialUpdateRequest,
 } from '@/shared/credentials/api';
 import type {
-	ConfirmRequest,
+	ConfirmSessionBody,
 	ConnectRequest,
+	ExistingCredential,
+	PermissionRule,
+	ReviewAgent,
+	ReviewProvenance,
+	ReviewScheme,
 	SessionStatus,
 	StatusResponse,
 	VendorAuthCapabilities,
@@ -378,15 +383,52 @@ export interface MockConnectSession {
 	state: string;
 	vendor_key: string;
 	credential_id: string;
+	/** Target agent; the session is agent-initiated when it also requested it. */
+	agent_id: string | null;
 	requested_by_actor_id: string;
+	created_at: string;
+	/**
+	 * Whether the mock caller may act on the session without its poll token —
+	 * the target agent's owner or an org admin. Default true; a test sets false
+	 * to stand in for a caller who is neither.
+	 */
+	ownerCanAct: boolean;
 	requested_scopes: string[];
-	requested_permission_rules: NonNullable<ConfirmRequest['permission_rules']>;
+	requested_permission_rules: PermissionRule[];
 	reason: string | null;
 	/** Status served by `/status` polls. Tests flip it to drive terminal states. */
 	status: StatusResponse;
 	/** Captured `:confirm` request bodies, newest last — for assertions. */
-	confirmBodies: ConfirmRequest[];
+	confirmBodies: ConfirmSessionBody[];
+	/**
+	 * The session's flow: a vendor challenge kind (default: the current mock
+	 * challenge), `manual_api_key` / `manual_bearer` / `manual_basic`, or
+	 * `awaiting_app` alongside `state: 'awaiting_app'`.
+	 */
+	resolved_flow?: string;
+	target_kind?: 'vendor' | 'api';
+	provenance?: ReviewProvenance | null;
+	/** Review's agent; defaults to the target agent, owned by the mock caller. */
+	agent?: ReviewAgent | null;
+	scheme?: ReviewScheme | null;
+	pinned_hosts?: string[] | null;
+	/** The review digest `:confirm` must echo; a mismatch is 409 `review_stale`. */
+	digest?: string;
+	can_confirm?: boolean;
+	existing_credentials?: ExistingCredential[];
+	/**
+	 * A problem `:confirm` answers with instead of succeeding, e.g.
+	 * `scheme_changed` (which also ends the session, as the backend does).
+	 */
+	confirmProblem?: { status: number; type: string; endsSession?: boolean };
+	/** How the session ended once its row went (`:reject`, `:cancel`, an existing credential). */
+	outcome?: MockSessionOutcome;
 }
+
+type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected';
+
+/** Sessions whose row went (`:reject`, `:cancel`, an existing credential), newest last. */
+let endedConnectSessions: MockConnectSession[] = [];
 
 let connectSessionsStore: MockConnectSession[] = [];
 let connectSessionSeq = 0;
@@ -399,6 +441,7 @@ let confirmChallengeKind: 'device_authorization' | 'authorization_code' = 'devic
 /** Reset the connect-session mock state (sessions, vendors, capabilities). */
 export function resetConnectSessionsStore(): void {
 	connectSessionsStore = [];
+	endedConnectSessions = [];
 	connectSessionSeq = 0;
 	vendorsStore = [];
 	vendorCapabilitiesStore = {};
@@ -425,6 +468,18 @@ export function getMockConnectSessions(): readonly MockConnectSession[] {
 	return connectSessionsStore;
 }
 
+/** Sessions whose row went, with their `outcome` — for assertions. */
+export function getEndedMockConnectSessions(): readonly MockConnectSession[] {
+	return endedConnectSessions;
+}
+
+/** End a session the way `_mark_terminal` does: the row and its pending credential go. */
+function endMockConnectSession(session: MockConnectSession, outcome: MockSessionOutcome): void {
+	connectSessionsStore = connectSessionsStore.filter((s) => s.session_id !== session.session_id);
+	store = store.filter((c) => c.credential_id !== session.credential_id);
+	endedConnectSessions.push({ ...session, outcome });
+}
+
 /** Drive a session's `/status` poll result (e.g. flip it to a terminal state). */
 function setMockConnectSessionStatus(
 	sessionId: string,
@@ -435,16 +490,49 @@ function setMockConnectSessionStatus(
 	session.status = { ...session.status, ...status };
 }
 
-const problem = (status: number, title: string, detail: string) =>
+const problem = (
+	status: number,
+	title: string,
+	detail: string,
+	type = 'about:blank',
+	extensions: Record<string, unknown> = {},
+) =>
 	HttpResponse.json(
-		{ type: 'about:blank', title, detail, status, instance: null },
+		{ type, title, detail, status, instance: null, ...extensions },
 		{ status, headers: { 'Content-Type': 'application/problem+json' } },
 	);
 
+/** The secret-collecting `:confirm` kind of a `manual_*` flow. */
+const MANUAL_CONFIRM_KINDS: Record<string, string> = {
+	manual_api_key: 'api_key',
+	manual_bearer: 'bearer',
+	manual_basic: 'basic',
+};
+
+/** `:confirm` kinds a session accepts, mirroring the backend's `_allowed_confirm_kinds`. */
+function allowedConfirmKinds(session: MockConnectSession): string[] {
+	const primary =
+		session.state === 'awaiting_app'
+			? 'own_oauth_client'
+			: (MANUAL_CONFIRM_KINDS[session.resolved_flow ?? ''] ?? 'oauth');
+	return [primary, 'existing_credential', 'reauthorize'];
+}
+
+function reviewDigest(session: MockConnectSession): string {
+	return session.digest ?? `dig_${session.session_id}`;
+}
+
+function reviewAgent(session: MockConnectSession): ReviewAgent | null {
+	if (session.agent !== undefined) return session.agent;
+	if (!session.agent_id) return null;
+	return { agent_id: session.agent_id, name: null, owner_id: 'usr_mock_owner', status: 'active' };
+}
+
 /**
- * Poll-token gate shared by the session-scoped routes. Missing session and
- * token mismatch are indistinguishable on the wire (both 403), matching
- * the backend's enumeration-oracle guard.
+ * Gate shared by the session-scoped routes: the poll token when one is sent,
+ * otherwise the owner / org-admin path (`ownerCanAct`). Missing session, token
+ * mismatch and a token-less caller who is neither are indistinguishable on the
+ * wire (all 403), matching the backend's enumeration-oracle guard.
  */
 function gateSession(
 	sessionId: string | readonly string[] | undefined,
@@ -453,10 +541,57 @@ function gateSession(
 	const id = String(sessionId);
 	const token = new URL(requestUrl).searchParams.get('poll_token');
 	const session = connectSessionsStore.find((s) => s.session_id === id);
-	if (!session || !token || token !== session.poll_token) {
+	const allowed = session && (token ? token === session.poll_token : session.ownerCanAct);
+	if (!session || !allowed) {
 		return problem(403, 'Forbidden', 'Unknown session or invalid poll token.');
 	}
 	return session;
+}
+
+/**
+ * Seed an agent-initiated connect session (the agent is both target and
+ * requester), as an agent's `jentic connect` leaves one — for the "waiting for
+ * you" signals and the token-less approve path. Returns the stored row.
+ */
+// Never reset: a seeded id is unique across tests, so a late request from a
+// previous test's unmounted dialog can never land on this test's session.
+let agentConnectSeedSeq = 0;
+
+export function seedMockAgentConnectSession(
+	overrides: Partial<MockConnectSession> & { agent_id: string; vendor_key: string },
+): MockConnectSession {
+	agentConnectSeedSeq += 1;
+	const pending = makeMockCredential({
+		name: `${overrides.vendor_key} (connecting…)`,
+		type: CredentialType.OAUTH2,
+		provider: 'direct_oauth2',
+		api: { vendor: overrides.vendor_key, name: 'default', version: '1.0.0' },
+		details: { grant_type: 'authorization_code', connected: false },
+	});
+	store.push(pending);
+	const row: MockConnectSession = {
+		session_id: `sess_agent_${agentConnectSeedSeq}`,
+		poll_token: `ptok_agent_${agentConnectSeedSeq}`,
+		state: 'created',
+		credential_id: pending.credential_id,
+		requested_by_actor_id: overrides.agent_id,
+		created_at: new Date().toISOString(),
+		ownerCanAct: true,
+		requested_scopes: [],
+		requested_permission_rules: [],
+		reason: null,
+		status: {
+			status: 'pending',
+			connected_as: null,
+			credential_id: null,
+			bound_scopes: null,
+			error_code: null,
+		},
+		confirmBodies: [],
+		...overrides,
+	};
+	connectSessionsStore.push(row);
+	return row;
 }
 
 function isMockSession(v: unknown): v is MockConnectSession {
@@ -502,7 +637,12 @@ const connectSessionsHandlers = [
 			state: 'created',
 			vendor_key: body.vendor,
 			credential_id: credentialId,
+			agent_id: body.agent_id ?? null,
 			requested_by_actor_id: body.agent_id ?? 'usr_mock_owner',
+			created_at: new Date().toISOString(),
+			// A session with no target agent has no owner path: only its
+			// poll token (or an org admin) opens it.
+			ownerCanAct: body.agent_id != null,
 			requested_scopes: body.requested_scopes ?? [],
 			requested_permission_rules: [],
 			reason: null,
@@ -519,14 +659,40 @@ const connectSessionsHandlers = [
 			{
 				session_id: sessionId,
 				// The real backend emits an absolute URL to the SPA's
-				// Agents page; an absolute mock URL keeps the shape
-				// without hardcoding the client's basename here.
-				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}&poll_token=${pollToken}`,
+				// Agents page carrying only the session id (no poll token);
+				// an absolute mock URL keeps the shape without hardcoding
+				// the client's basename here.
+				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}`,
 				poll_token: pollToken,
 				resolved_flow: confirmChallengeKind,
 			},
 			{ status: 201 },
 		);
+	}),
+
+	// The list never carries the poll token. Scoping is not modelled: the mock
+	// caller sees every session, as an org admin would.
+	http.get('/connect-sessions', ({ request }) => {
+		const state = new URL(request.url).searchParams.get('state');
+		const rows = connectSessionsStore.filter((s) => !state || s.state === state);
+		return HttpResponse.json({
+			data: rows.map((s) => ({
+				session_id: s.session_id,
+				state: s.state,
+				vendor_key: s.vendor_key,
+				vendor_display_name:
+					vendorCapabilitiesStore[s.vendor_key]?.display_name ?? s.vendor_key,
+				agent_id: s.agent_id,
+				requested_by_actor_id: s.requested_by_actor_id,
+				reason: s.reason,
+				connected_as: null,
+				error_code: null,
+				created_at: s.created_at,
+				credential_id: s.credential_id,
+			})),
+			has_more: false,
+			next_cursor: null,
+		});
 	}),
 
 	http.get('/connect-sessions/:sessionId', ({ params, request }) => {
@@ -539,7 +705,16 @@ const connectSessionsHandlers = [
 			state: gated.state,
 			vendor_key: gated.vendor_key,
 			vendor_display_name: caps?.display_name ?? gated.vendor_key,
-			resolved_flow: confirmChallengeKind,
+			resolved_flow: gated.resolved_flow ?? confirmChallengeKind,
+			target_kind: gated.target_kind ?? 'vendor',
+			requested_scopes: gated.requested_scopes,
+			provenance: gated.provenance ?? null,
+			agent: reviewAgent(gated),
+			scheme: gated.scheme ?? null,
+			pinned_hosts: gated.pinned_hosts ?? null,
+			digest: reviewDigest(gated),
+			can_confirm: gated.can_confirm ?? true,
+			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
 			scopes: (caps?.scopes ?? []).map((s) => ({
 				name: s.name,
@@ -557,9 +732,96 @@ const connectSessionsHandlers = [
 	http.post('/connect-sessions/:sessionId\\:confirm', async ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
-		const body = (await request.json()) as ConfirmRequest;
+		const body = (await request.json()) as ConfirmSessionBody;
 		gated.confirmBodies.push(body);
-		gated.state = 'confirmed';
+		if (gated.confirmProblem) {
+			const { status, type, endsSession } = gated.confirmProblem;
+			if (endsSession) {
+				connectSessionsStore = connectSessionsStore.filter(
+					(s) => s.session_id !== gated.session_id,
+				);
+			}
+			return problem(status, type, `Mock ${type}.`, type);
+		}
+		const kind = body.kind ?? 'oauth';
+		const allowed = allowedConfirmKinds(gated);
+		if (!allowed.includes(kind)) {
+			return problem(400, 'Bad Request', 'Confirm kind mismatch.', 'confirm_kind_mismatch', {
+				allowed_kinds: allowed,
+			});
+		}
+		// Checked when given; required for every non-OAuth variant.
+		const needsReview = kind !== 'oauth' || gated.target_kind === 'api';
+		if (needsReview || body.digest != null) {
+			const expected = reviewAgent(gated)?.agent_id ?? null;
+			if (
+				body.digest !== reviewDigest(gated) ||
+				(body.expected_agent_id ?? null) !== expected
+			) {
+				return problem(409, 'Conflict', 'The review is stale.', 'review_stale');
+			}
+		}
+		if (needsReview && body.permission_rules.length === 0) {
+			return problem(422, 'Unprocessable Entity', 'Rules required.', 'rules_required');
+		}
+		if (kind === 'existing_credential' || kind === 'reauthorize') {
+			const credentialId = (body as { credential_id: string }).credential_id;
+			const candidate = (gated.existing_credentials ?? []).find(
+				(c) => c.credential_id === credentialId,
+			);
+			if (!candidate) {
+				return problem(
+					404,
+					'Not Found',
+					'No such credential.',
+					'existing_credential_not_found',
+				);
+			}
+			if (kind === 'reauthorize' && !candidate.can_reauthorize) {
+				return problem(409, 'Conflict', 'Cannot re-authorize.', 'reauthorize_unavailable');
+			}
+			if (kind === 'existing_credential' && !candidate.can_bind) {
+				return problem(
+					409,
+					'Conflict',
+					'Granted scopes too narrow.',
+					'insufficient_granted_scopes',
+					{
+						missing_scopes: candidate.missing_scopes ?? [],
+					},
+				);
+			}
+			// The session's own pending credential is not needed; it takes the
+			// session row with it.
+			endMockConnectSession(gated, 'connected');
+			if (kind === 'reauthorize') {
+				return HttpResponse.json({
+					kind: 'reauthorize',
+					credential_id: credentialId,
+					authorize_url: `https://vendor.example.test/oauth/authorize?reauthorize=${credentialId}`,
+				});
+			}
+			return HttpResponse.json({ kind: 'connected', credential_id: credentialId });
+		}
+		if (kind === 'api_key' || kind === 'bearer' || kind === 'basic') {
+			gated.state = 'connected';
+			gated.status = {
+				...gated.status,
+				status: 'connected',
+				credential_id: gated.credential_id,
+			};
+			return HttpResponse.json({ kind: 'connected', credential_id: gated.credential_id });
+		}
+		if (kind === 'own_oauth_client') {
+			gated.state = 'polling';
+			gated.resolved_flow = 'authorization_code';
+			gated.status = { ...gated.status, status: 'polling' };
+			return HttpResponse.json({
+				kind: 'authorization_code',
+				authorize_url: `https://vendor.example.test/oauth/authorize?session=${gated.session_id}`,
+			});
+		}
+		gated.state = 'polling';
 		gated.status = { ...gated.status, status: 'polling' };
 		if (confirmChallengeKind === 'authorization_code') {
 			return HttpResponse.json({
@@ -587,10 +849,23 @@ const connectSessionsHandlers = [
 		if (!isMockSession(gated)) return gated;
 		// Cancel cascades the session AND its pending credential, like the
 		// backend's `_mark_terminal` unhappy path.
-		connectSessionsStore = connectSessionsStore.filter(
-			(s) => s.session_id !== gated.session_id,
-		);
-		store = store.filter((c) => c.credential_id !== gated.credential_id);
+		endMockConnectSession(gated, 'cancelled');
+		return new HttpResponse(null, { status: 204 });
+	}),
+
+	// Owner / org admin only: no poll-token path, so a token on the query is
+	// ignored and a caller who is neither gets the uniform 403.
+	http.post('/connect-sessions/:sessionId\\:reject', ({ params }) => {
+		const session = connectSessionsStore.find((s) => s.session_id === String(params.sessionId));
+		if (!session || !session.ownerCanAct) {
+			return problem(
+				403,
+				'Forbidden',
+				'Unknown session or invalid poll token.',
+				'invalid_poll_token',
+			);
+		}
+		endMockConnectSession(session, 'rejected');
 		return new HttpResponse(null, { status: 204 });
 	}),
 ];
@@ -613,6 +888,7 @@ export const credentialsE2eHooks = {
 	setMockVendorCapabilities,
 	setMockConfirmChallengeKind,
 	setMockConnectSessionStatus,
+	seedMockAgentConnectSession,
 };
 
 export const credentialsHandlers = [

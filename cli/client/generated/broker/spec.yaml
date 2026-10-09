@@ -1116,10 +1116,13 @@ components:
         opposite recovery paths:
         - `credential_not_provisioned` — no credential is connected for the
           resolved upstream API. The `agent_directive` is a `prompt_human`
-          instruction carrying a non-secret `provisioning_url` (when
-          account-linking is configured) and an `intent_id` correlation id,
-          so an autonomous agent stops and asks the user to connect the
-          account rather than retrying or guessing the credential.
+          instruction carrying an `intent_id` correlation id, so an
+          autonomous agent stops and asks the user to connect the account
+          rather than retrying or guessing the credential. When the agent
+          already has an open connect session for the API, the directive
+          also carries a non-secret `provisioning_url` — that session's
+          owner approval link (`/app/agents?approve=<session_id>`) — for
+          the agent to relay instead of starting another connect.
         - `credential_undecryptable` — a credential is connected but its
           stored secret can no longer be decrypted (typically the
           deployment's encryption key rotated underneath it, e.g. a

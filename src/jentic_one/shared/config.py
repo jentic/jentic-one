@@ -1136,14 +1136,69 @@ class VendorRegistryConfig(BaseModel):
     entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
 
 
+class ControlConnectConfig(BaseModel):
+    """Agent connect-session settings on the control surface."""
+
+    manual_flows_enabled: bool = Field(
+        default=False,
+        description=(
+            "Allow connect sessions that target a registry API (rather than a "
+            "vendor-registry key), where a human enters the credential, or "
+            "brings an OAuth app, when approving them in the dashboard. While "
+            "off, `:connect` refuses API targets with `manual_flows_disabled`. "
+            "Turn it on only after every control replica runs a release that "
+            "understands them."
+        ),
+    )
+    manual_flows_ttl_hours: int = Field(
+        default=72,
+        ge=1,
+        description=(
+            "Hours an API-target connect session (a human-entered credential, or "
+            "an OAuth API waiting for an app) stays open before it expires. "
+            "Vendor OAuth sessions keep their fixed 30-minute lifetime."
+        ),
+    )
+    max_open_sessions_per_agent: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Most open connect sessions one agent may hold at once while "
+            "`manual_flows_enabled` is on; one more `:connect` gets 429 "
+            "`too_many_open_sessions`."
+        ),
+    )
+    max_open_sessions_per_owner: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Most open connect sessions across one user and the agents they own "
+            "while `manual_flows_enabled` is on; one more `:connect` gets 429 "
+            "`too_many_open_sessions`."
+        ),
+    )
+    rejection_cooldown_hours: int = Field(
+        default=24,
+        ge=0,
+        description=(
+            "Hours after a human rejects an agent's connect request during which "
+            "the agent's repeat `:connect` for the same target gets 429 "
+            "`recently_rejected`. 0 turns the cooldown off."
+        ),
+    )
+
+
 class ControlSurfaceConfig(BaseModel):
     """Control surface configuration.
 
-    Empty since theme 7 removed the access-request subsystem (its
-    ``access_requests.ttl_days``/``canonical_base_url`` knobs). The section
-    stays so a ``control:`` key in existing YAML keeps validating and future
-    control-surface knobs have a home; unknown subkeys are ignored.
+    Unknown subkeys are ignored, so a ``control:`` section written for another
+    release keeps validating.
     """
+
+    connect: ControlConnectConfig = Field(
+        default_factory=ControlConnectConfig,
+        description="Agent connect-session settings.",
+    )
 
 
 class UpstreamClientConfig(BaseModel):
@@ -1532,19 +1587,11 @@ class BrokerConfig(BaseModel):
     # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
     # it supersedes the HS256 jwt_secret path for self-contained JWTs.
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
-    # Public base URL of the account-linking/provisioning UI. When set, a 424
-    # (credential not provisioned) carries a `prompt_human` directive with a
-    # `provisioning_url` the agent can relay to the user. None keeps the
-    # directive but omits the URL. The URL is non-secret (where to *go* to
-    # provision, never the credential itself).
-    account_linking_base_url: str | None = None
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
 
-    _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
-        _normalize_optional_base_url
-    )
+    _normalize_public_urls = field_validator("jobs_api_base_url")(_normalize_optional_base_url)
 
     @model_validator(mode="before")
     @classmethod
@@ -1573,6 +1620,21 @@ class BrokerConfig(BaseModel):
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_account_linking_base_url(cls, data: Any) -> Any:
+        """Ignore ``broker.account_linking_base_url`` with a one-time warning.
+
+        Denial directives link to the agent's open connect session on the
+        deployment's own UI (``connect_approval_url``), so there is no
+        separate account-linking origin to configure. A leftover value is
+        harmless and never fails boot.
+        """
+        if isinstance(data, dict) and _RETIRED_ACCOUNT_LINKING_KEY in data:
+            _warn_retired_account_linking_base_url_once()
+            data = {k: v for k, v in data.items() if k != _RETIRED_ACCOUNT_LINKING_KEY}
+        return data
+
 
 _retired_direct_bindings_flag_warned = threading.Event()
 
@@ -1596,6 +1658,34 @@ def _warn_retired_direct_bindings_flag_once() -> None:
         actionable_step=(
             "Remove broker.direct_bindings_enabled from the config file or "
             "JENTIC__BROKER__DIRECT_BINDINGS_ENABLED from the environment."
+        ),
+    )
+
+
+_RETIRED_ACCOUNT_LINKING_KEY = "account_linking_base_url"
+_retired_account_linking_warned = threading.Event()
+
+
+def _warn_retired_account_linking_base_url_once() -> None:
+    """One WARNING per process for the leftover setting (it is ignored).
+
+    Latched like :func:`_warn_retired_direct_bindings_flag_once`: config is
+    validated more than once per process.
+    """
+    if _retired_account_linking_warned.is_set():
+        return
+    _retired_account_linking_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting=f"broker.{_RETIRED_ACCOUNT_LINKING_KEY}",
+        detail=(
+            "denial directives carry a provisioning_url only when the agent has an "
+            "open connect session, linking to it on this deployment's UI; the value "
+            "is ignored"
+        ),
+        actionable_step=(
+            f"Remove broker.{_RETIRED_ACCOUNT_LINKING_KEY} from the config file or "
+            "JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL from the environment."
         ),
     )
 
@@ -1745,12 +1835,11 @@ class ServerConfig(BaseModel):
     Every absolute URL the app builds for external consumption on the
     control/auth surfaces — the OAuth connect ``redirect_uri``, the OIDC issuer
     / JWT-Bearer audience, the DCR ``registration_client_uri``, the SPA login
-    callback, and access-request approval links — falls back to this when its
+    callback, and connect-session approval links — falls back to this when its
     own more specific knob is unset. Explicit per-field values still win
     (needed behind a reverse proxy that fronts multiple surfaces on distinct
-    origins). The broker's ``jobs_api_base_url`` / ``account_linking_base_url``
-    are deliberately independent: they name other services' origins, not this
-    one. Left unset, request-scoped consumers derive
+    origins). The broker's ``jobs_api_base_url`` is deliberately independent:
+    it names another service's origin, not this one. Left unset, request-scoped consumers derive
     from the incoming request's origin and request-less ones from the serving
     bind (``http://{host}:{port}``), so zero-config local dev on any port just
     works — set this only when clients reach the app on an origin it can't
@@ -2074,6 +2163,20 @@ def resolved_auth_base_url(config: AppConfig) -> str:
     return effective_auth_base_url(config) or bind_origin(config)
 
 
+def connect_approval_url(config: AppConfig, session_id: str) -> str:
+    """The owner-facing deep link to an agent's connect session (token-less).
+
+    Lands on the Agents page with the session id as the ``approve`` query
+    param, where the target agent's owner or ``org:admin`` reviews it without
+    the ``poll_token``. Absolute even with no public URL configured (it is
+    relayed out-of-band by agents), via :func:`resolved_auth_base_url`. Shared
+    by the connect session's ``approval_url`` and the broker denials'
+    ``provisioning_url`` so both always name the same address.
+    """
+    base = resolved_auth_base_url(config).rstrip("/")
+    return f"{base}/app/agents?approve={session_id}"
+
+
 @dataclass(frozen=True, slots=True)
 class PublicUrlMismatch:
     """One explicitly-configured public URL whose origin doesn't match serving."""
@@ -2096,8 +2199,8 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
        When it is unset, the bind is the only known origin only on a loopback
        bind; on an all-interfaces bind the public origin is unknowable (proxy,
        ingress, port mapping), so the check is skipped rather than flag every
-       correctly-proxied override. The broker's ``jobs_api_base_url`` /
-       ``account_linking_base_url`` name other services and are not compared.
+       correctly-proxied override. The broker's ``jobs_api_base_url`` names
+       another service and is not compared.
     2. When the server binds a **loopback** host, it can only be reached from
        the same machine on exactly that port — no port mapping or gateway can
        sit in front of it. A loopback ``server.public_base_url`` or provider

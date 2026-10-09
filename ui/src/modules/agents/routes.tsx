@@ -48,9 +48,9 @@ function RetiredAccessRequestsRedirect() {
 /**
  * `/app/credentials` (the retired standalone Credentials page) redirects to the
  * Agents credential inventory, where credentials now live. The query string is
- * kept: approval links (`?approve=&poll_token=`) minted before the backend moved
- * them to `/app/agents` still point here until they expire, and Agents opens the
- * approval wizard from them. A component for the same TDZ reason as above.
+ * kept: approval links (`?approve=`, with a `&poll_token=` on older ones) minted
+ * before the backend moved them to `/app/agents` still point here until they
+ * expire, and Agents opens the approval wizard from them. A component for the same TDZ reason as above.
  */
 function RetiredCredentialsRedirect() {
 	const { search } = useLocation();
