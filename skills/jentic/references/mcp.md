@@ -195,8 +195,9 @@ names a connect target (`parameters.connect.vendor_key`, or a
 `suggested_command` naming the key), start the fix yourself — the envelope's
 `next_tool_arguments` (`{"vendor": …}`) are the `request_connection`
 arguments — and relay the `approval_url`;
-a denial whose recovery carries only a `provisioning_url` is for your
-operator — relay it so they can connect the account. The denial taxonomy
+a denial carrying a `provisioning_url` means a connect request you opened
+is still waiting — relay that link to your operator rather than calling
+`request_connection` again. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
 `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent

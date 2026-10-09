@@ -39,6 +39,7 @@ from jentic_one.shared.config import (
     _env_overrides,
     bind_origin,
     check_public_url_consistency,
+    connect_approval_url,
     effective_auth_base_url,
     has_spa_platform_client,
     load_config,
@@ -1077,6 +1078,47 @@ def test_broker_retired_direct_bindings_flag_true_is_ignored(
     assert warnings[0]["setting"] == "broker.direct_bindings_enabled"
 
 
+def test_broker_retired_account_linking_base_url_is_ignored(
+    tmp_path: Path, sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Denials link to the agent's open connect session; the old base URL is dropped."""
+    sample_config_dict["broker"] = {
+        "account_linking_base_url": "https://console.example.com",
+        "jobs_api_base_url": "https://api.example.com",
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    with structlog.testing.capture_logs() as logs:
+        config = load_config(path)
+        load_config(path)
+    assert config.broker.jobs_api_base_url == "https://api.example.com"
+    assert not hasattr(config.broker, "account_linking_base_url")
+    warnings = [e for e in logs if e["event"] == "config_retired_setting_ignored"]
+    assert len(warnings) == 1, "the warning is logged once per process"
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "broker.account_linking_base_url"
+
+
+def test_broker_retired_account_linking_base_url_env_is_ignored(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_module, "_retired_account_linking_warned", threading.Event())
+    env = {"JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL": "https://console.example.com"}
+    with patch.dict(os.environ, env, clear=False), structlog.testing.capture_logs() as logs:
+        load_config(config_file)
+    assert [e["setting"] for e in logs if e["event"] == "config_retired_setting_ignored"] == [
+        "broker.account_linking_base_url"
+    ]
+
+
+def test_connect_approval_url_is_token_less_and_absolute(tmp_path: Path) -> None:
+    config = _load(tmp_path, {"server": {"public_base_url": "https://j1.example.com/"}})
+    assert connect_approval_url(config, "cs_1") == "https://j1.example.com/app/agents?approve=cs_1"
+    bare = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8123}})
+    assert connect_approval_url(bare, "cs_1") == "http://127.0.0.1:8123/app/agents?approve=cs_1"
+
+
 @pytest.mark.parametrize("value", [24, "0"])
 def test_services_retired_sa_sweep_age_is_ignored(
     tmp_path: Path,
@@ -1498,15 +1540,12 @@ def test_check_public_url_consistency_skips_overrides_on_all_interfaces_bind(tmp
 
 
 def test_check_public_url_consistency_ignores_broker_urls(tmp_path: Path):
-    # The broker's jobs/account-linking URLs name other services' origins.
+    # The broker's jobs URL names another service's origin.
     config = _load(
         tmp_path,
         {
             "server": {"host": "127.0.0.1", "port": 8000},
-            "broker": {
-                "jobs_api_base_url": "https://api.example.com",
-                "account_linking_base_url": "https://console.example.com",
-            },
+            "broker": {"jobs_api_base_url": "https://api.example.com"},
         },
     )
     assert check_public_url_consistency(config) == []

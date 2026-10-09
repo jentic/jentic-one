@@ -30,6 +30,7 @@ import {
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
 import {
+	connectRequestsKey,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -41,7 +42,7 @@ import {
 } from '@/shared/credentials/api/vendors-hooks';
 import {
 	cancelConnectSession,
-	cancelConnectSessionBeacon,
+	cancelConnectSessionOnUnload,
 } from '@/shared/credentials/api/vendors-client';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
@@ -67,9 +68,12 @@ import type {
  *  * `self` — the current user is opening the flow from the credential inventory,
  *    picks an agent + scopes, then runs start-and-confirm in one shot.
  *  * `approve` — an agent already started the session; the current user is the
- *    human owner following the emitted approval URL. Session (with the agent's
- *    requested scopes) already exists; we skip the picker, load the review data,
- *    and go straight to confirm → device code → poll.
+ *    human owner (or an org admin) following the emitted approval URL. Session
+ *    (with the agent's requested scopes) already exists; we skip the picker,
+ *    load the review data, and go straight to confirm → device code → poll.
+ *    `pollToken` is optional: the approval URL carries only the session id, and
+ *    the backend authorises the agent's owner / an org admin without it. An
+ *    older link that still carries a token keeps working for its holder.
  *
  * Both variants share the awaiting (device code + polling) and terminal
  * (success / failure) steps.
@@ -107,7 +111,7 @@ export type VendorConnectFlowProps =
 	| {
 			mode: 'approve';
 			sessionId: string;
-			pollToken: string;
+			pollToken?: string;
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
@@ -348,18 +352,18 @@ function VendorSelfConnectFlow({
 		};
 	}, []);
 
-	// Tab-close variant: ``fetch`` fired from unmount is aborted by the
-	// browser when the page itself is being torn down, so the pending
+	// Tab-close variant: a plain ``fetch`` fired from unmount is aborted by
+	// the browser when the page itself is being torn down, so the pending
 	// credential + session would otherwise linger until the session TTL
-	// scanner reaps them. ``sendBeacon`` is guaranteed to deliver on
-	// unload; we keep the ``fetch`` above for the in-page dismiss case
-	// (dialog close, navigation) since it can observe the response.
+	// scanner reaps them. A ``keepalive`` request outlives the page (see
+	// ``cancelConnectSessionOnUnload``); we keep the ``fetch`` above for the
+	// in-page dismiss case (dialog close, navigation).
 	useEffect(() => {
 		const onBeforeUnload = (): void => {
 			if (phaseRef.current === 'terminal') return;
 			const s = sessionRef.current;
 			if (!s) return;
-			cancelConnectSessionBeacon(s.id, s.pollToken);
+			cancelConnectSessionOnUnload(s.id, s.pollToken);
 		};
 		window.addEventListener('beforeunload', onBeforeUnload);
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
@@ -722,6 +726,18 @@ function AgentPickerField({
 // Agent-initiated approval flow
 // ---------------------------------------------------------------------------
 
+/**
+ * What to tell a human whose approval link did not load. A 403 is the
+ * backend's uniform "missing, not your token, or not your agent" answer, so
+ * it reads as one message; anything else surfaces the server's own detail.
+ */
+function approvalLoadError(error: unknown): string {
+	if ((error as { status?: number | null } | null)?.status === 403) {
+		return "This request is no longer open, or it isn't yours to approve.";
+	}
+	return (error as Error | null)?.message ?? 'The approval link is no longer valid.';
+}
+
 function VendorApproveFlow({
 	sessionId,
 	pollToken,
@@ -730,14 +746,17 @@ function VendorApproveFlow({
 	onDone,
 }: {
 	sessionId: string;
-	pollToken: string;
+	/** Absent for the owner / org-admin path (the approval URL carries none). */
+	pollToken?: string;
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	// The review read is poll_token-gated server-side: a missing session
-	// and a token mismatch both come back 403 (no enumeration oracle), so
-	// the error branch below treats any failure as "link no longer valid".
+	// The review read is gated server-side by the poll_token or, without
+	// one, by the caller owning the target agent (or being org:admin). A
+	// missing session, a token mismatch and a caller who is neither all come
+	// back 403 (no enumeration oracle), so the error branch below treats any
+	// 403 as "this request isn't open to you".
 	const sessionQuery = useConnectSession(sessionId, pollToken);
 	const agents = useAgentsForPicker();
 	const queryClient = useQueryClient();
@@ -767,11 +786,12 @@ function VendorApproveFlow({
 	}, [sessionId, pollToken]);
 
 	// Tab-close variant — see the sibling ``VendorSelfConnectFlow`` effect
-	// for the rationale (fetch aborts on unload; sendBeacon delivers).
+	// for the rationale (fetch aborts on unload; a keepalive request
+	// delivers, and carries the bearer the token-less path needs).
 	useEffect(() => {
 		const onBeforeUnload = (): void => {
 			if (phaseRef.current !== 'awaiting') return;
-			cancelConnectSessionBeacon(sessionId, pollToken);
+			cancelConnectSessionOnUnload(sessionId, pollToken);
 		};
 		window.addEventListener('beforeunload', onBeforeUnload);
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
@@ -817,13 +837,16 @@ function VendorApproveFlow({
 		// See ``VendorSelfConnectFlow`` for the 403-as-terminal rationale
 		// (backend cascades the session on unhappy terminal, and the
 		// service raises ``InvalidPollTokenError`` for missing sessions
-		// to close the enumeration oracle — but we know our poll_token
-		// is correct at this point, so a 403 here is unambiguously
+		// to close the enumeration oracle — but this caller already
+		// passed the same gate on the review read and ``:confirm``, with
+		// or without a poll_token, so a 403 here is unambiguously
 		// "session gone → terminal").
 		const err = polling.error as { status?: number } | undefined;
 		if (err?.status === 403) {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
+			// The request is no longer open: drop it from the waiting signals.
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			return;
 		}
 		if (!polling.data) return;
@@ -831,6 +854,7 @@ function VendorApproveFlow({
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			if (status === 'connected') {
 				toast({
 					title: `Connected to ${session?.vendor_display_name ?? 'the integration'}`,
@@ -898,12 +922,7 @@ function VendorApproveFlow({
 	if (sessionQuery.error || !session) {
 		return (
 			<div className="space-y-4">
-				<ErrorAlert
-					message={
-						(sessionQuery.error as Error)?.message ??
-						'The approval link is no longer valid.'
-					}
-				/>
+				<ErrorAlert message={approvalLoadError(sessionQuery.error)} />
 				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close

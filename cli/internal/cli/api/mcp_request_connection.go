@@ -9,9 +9,9 @@ package api
 // operator. It is deliberately create-only: approval always blocks on a human
 // in the browser, so the agent's loop is relay approval_url → operator
 // approves → confirm the new binding with whoami → retry the blocked call.
-// The poll_token is not a separate field of the tool result — the tool
-// surface serves no poll leg. (It still rides the approval_url's query
-// string, which is how the human's browser drives the approve page.)
+// The poll_token is not a field of the tool result — the tool surface serves
+// no poll leg, and the approval_url carries only the session id: the agent's
+// owner (or an org admin) opens the approve page without the token.
 
 import (
 	"bytes"

@@ -52,6 +52,15 @@ class AgentNotFoundError(ConnectSessionServiceError):
         self.agent_id = agent_id
 
 
+class AgentInactiveError(ConnectSessionServiceError):
+    """The agent to bind exists but is archived, disabled or rejected."""
+
+    def __init__(self, agent_id: str, status: str) -> None:
+        super().__init__(f"agent {agent_id!r} is {status} and cannot be bound to a credential")
+        self.agent_id = agent_id
+        self.status = status
+
+
 class NoOpForFlowError(ConnectSessionServiceError):
     """The resolved flow is not yet implemented in phase 1."""
 

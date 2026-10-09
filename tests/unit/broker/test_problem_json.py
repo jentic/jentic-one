@@ -173,6 +173,33 @@ def test_suggested_permission_rules_match_the_rule_schema() -> None:
     assert suggested_permission_rules(method="", path="/v1/pets") is None
 
 
+@pytest.mark.parametrize("api_served", [False, True])
+def test_no_credential_binding_directive_relays_the_open_session(api_served: bool) -> None:
+    """With an open connect session, the agent relays its link instead of connecting again."""
+    url = "https://j1.example.com/app/agents?approve=cs_1"
+    d = no_credential_binding_directive(
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=api_served,
+        connect=ConnectTarget(vendor_key="github"),
+        suggested_rules=[
+            {"effect": "allow", "methods": ["GET"], "path": "/x", "match_mode": "exact"}
+        ],
+        provisioning_url=url,
+    )
+    assert d.strategy == "prompt_human"
+    assert d.parameters["provisioning_url"] == url
+    assert d.parameters["api_served"] is api_served
+    # A second connect would only duplicate the pending request.
+    assert "suggested_command" not in d.parameters
+    assert "connect" not in d.parameters
+    # The minimal rule still rides along for the approver.
+    assert d.parameters["suggested_rules"][0]["path"] == "/x"
+    assert url in d.human_readable_instruction
+    assert "Do not start another" in d.human_readable_instruction
+
+
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
     """The direct-path 409 twin retries via the Jentic-Credential-Id header.
 

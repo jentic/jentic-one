@@ -245,7 +245,7 @@ func (a *app) waitForConnectSession(
 	delay, maxDelay, step := a.PollCadence()
 	const heartbeatAfter = 2 * time.Second
 	nextHeartbeat := start.Add(heartbeatAfter)
-	params := &control.PollConnectSessionStatusParams{PollToken: pollToken}
+	params := &control.PollConnectSessionStatusParams{PollToken: &pollToken}
 	for {
 		resp, callErr := client.PollConnectSessionStatusWithResponse(ctx, sessionID, params)
 		if err := apiErrorFor(resp, callErr); err != nil {

@@ -385,6 +385,7 @@ def no_credential_binding_directive(
     api_served: bool,
     connect: ConnectTarget | None = None,
     suggested_rules: list[dict[str, Any]] | None = None,
+    provisioning_url: str | None = None,
 ) -> AgentDirective:
     """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
 
@@ -412,6 +413,11 @@ def no_credential_binding_directive(
     ``suggested_rules`` (the minimal rule allowing the denied request) rides
     ``parameters.suggested_rules`` whenever given.
 
+    ``provisioning_url`` is the owner deep link to the agent's open connect
+    session for this API, when it has one: the agent already asked, so the
+    directive carries the link to relay and neither ``suggested_command`` nor
+    ``connect`` (a second connect would only duplicate the pending request).
+
     Deliberately never enumerates other owners' credentials (that would leak
     instance inventory to an unbound agent).
     """
@@ -419,8 +425,20 @@ def no_credential_binding_directive(
     parameters: dict[str, Any] = {
         "api": {"vendor": vendor, "name": name, "version": version},
         "api_served": api_served,
-        **connect_parameters(connect, suggested_rules),
+        **connect_parameters(None if provisioning_url else connect, suggested_rules),
     }
+    if provisioning_url:
+        parameters["provisioning_url"] = provisioning_url
+        return AgentDirective(
+            strategy="prompt_human",
+            parameters=parameters,
+            human_readable_instruction=(
+                f"You have no credential binding for '{api}' yet, and your request to "
+                "connect a credential for it is still waiting for your operator. Do not "
+                f"start another: relay {provisioning_url} to them to approve it. Once they "
+                "confirm, retry this call."
+            ),
+        )
     connect_vendor = connect.vendor_key if connect is not None else None
     if api_served:
         instruction = (

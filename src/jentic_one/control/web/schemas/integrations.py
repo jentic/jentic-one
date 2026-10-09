@@ -139,6 +139,9 @@ class ConnectSessionSummaryResponse(BaseModel):
     # listed row carries no error_code today.
     error_code: str | None = None
     created_at: datetime
+    # The session's pending (later connected) credential. Lets a list reader
+    # tell a session's own credential apart from an unrelated unfinished one.
+    credential_id: str
 
 
 class ConnectSessionListResponse(BaseModel):

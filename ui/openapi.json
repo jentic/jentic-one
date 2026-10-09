@@ -2454,6 +2454,10 @@
             "title": "Created At",
             "type": "string"
           },
+          "credential_id": {
+            "title": "Credential Id",
+            "type": "string"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -2508,7 +2512,8 @@
           "vendor_key",
           "vendor_display_name",
           "requested_by_actor_id",
-          "created_at"
+          "created_at",
+          "credential_id"
         ],
         "title": "ConnectSessionSummaryResponse",
         "type": "object"
@@ -22487,7 +22492,7 @@
     },
     "/connect-sessions/{session_id}": {
       "get": {
-        "description": "Data the review page needs: vendor display name, resolved flow, the\nscope catalog flagged with default/requested, current state, reason.\n\nGated by the session's ``poll_token`` capability (rides the approval\nURL / the ``:connect`` response) — ``credentials:write`` alone must\nnot read arbitrary sessions' review data. Missing session and token\nmismatch both surface as 403, matching ``/status`` (no session-id\nenumeration oracle).",
+        "description": "Data the review page needs: vendor display name, resolved flow, the\nscope catalog flagged with default/requested, current state, reason.\n\nGated by the session's ``poll_token`` capability (rides the approval\nURL / the ``:connect`` response), or by being the target agent's owner\nor ``org:admin`` — ``credentials:write`` alone must not read arbitrary\nsessions' review data. Missing session, token mismatch and a caller who\nis neither all surface as 403, matching ``/status`` (no session-id\nenumeration oracle).",
         "operationId": "getConnectSession",
         "parameters": [
           {
@@ -22500,14 +22505,21 @@
             }
           },
           {
-            "description": "Opaque poll capability",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
             "in": "query",
             "name": "poll_token",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Opaque poll capability",
-              "title": "Poll Token",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "title": "Poll Token"
             }
           }
         ],
@@ -22671,14 +22683,21 @@
             }
           },
           {
-            "description": "Opaque poll capability",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
             "in": "query",
             "name": "poll_token",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Opaque poll capability",
-              "title": "Poll Token",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "title": "Poll Token"
             }
           }
         ],
@@ -22813,7 +22832,7 @@
     },
     "/connect-sessions/{session_id}:cancel": {
       "post": {
-        "description": "Terminate a still-active session at the user's request.\n\nGated by the same ``poll_token`` capability as ``/status`` — the\nSPA already holds it, so we don't force the caller to bring a\nheavier scope than the poller endpoint they're already using.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
+        "description": "Terminate a still-active session at the user's request.\n\nGated like ``/status`` — the ``poll_token`` the SPA already holds, or\nthe target agent's owner / ``org:admin`` without it.\n\nA still-existing but already-terminal session is a 204 no-op — a\n\"Cancel\" click racing the poll scanner doesn't error. A session\nthat has already been cascade-deleted (unhappy-terminal path in\n``_mark_terminal``) surfaces as 403, matching ``/status`` — the\ncaller can't distinguish \"gone\" from \"your poll_token is wrong\",\nwhich is the enumeration-oracle guard. The SPA's cancel-on-unmount\nis fire-and-forget and ``.catch``es the 403, so this doesn't leak\ninto the UX.",
         "operationId": "cancelConnectSession",
         "parameters": [
           {
@@ -22826,14 +22845,21 @@
             }
           },
           {
-            "description": "Opaque poll capability",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
             "in": "query",
             "name": "poll_token",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Opaque poll capability",
-              "title": "Poll Token",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "title": "Poll Token"
             }
           }
         ],
@@ -22963,7 +22989,7 @@
     },
     "/connect-sessions/{session_id}:confirm": {
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated by ``poll_token``\nlike the review read (403 on mismatch or missing session).",
+        "description": "Called by the review page after the human confirms selections.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -22976,14 +23002,21 @@
             }
           },
           {
-            "description": "Opaque poll capability",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
             "in": "query",
             "name": "poll_token",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "Opaque poll capability",
-              "title": "Poll Token",
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "title": "Poll Token"
             }
           }
         ],
