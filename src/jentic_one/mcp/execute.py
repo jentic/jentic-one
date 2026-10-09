@@ -359,7 +359,11 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
             directive = envelope.get("agent_directive")
             problem_type = str(envelope.get("type") or "")
         if isinstance(directive, dict):
-            instruction = str(directive.get("instruction") or "")
+            # The broker's AgentDirective field is ``human_readable_instruction``
+            # (Go: ``ux.Directive.Instruction``); ``instruction`` is a fallback.
+            instruction = str(
+                directive.get("human_readable_instruction") or directive.get("instruction") or ""
+            )
         else:
             directive = None
     except ValueError:

@@ -175,7 +175,10 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     taxonomy; the broker's verbatim agent_directive rides the payload (the
     same fixture the execute_broker_denial_directive_json golden froze)."""
     directive = {
-        "instruction": "Run `jentic connect acme` and relay the approval_url, then retry.",
+        "strategy": "prompt_human",
+        "human_readable_instruction": (
+            "Run `jentic connect acme` and relay the approval_url, then retry."
+        ),
         "parameters": {"suggested_command": "jentic connect acme"},
     }
 
@@ -197,7 +200,7 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
     assert payload["error_code"] == "BROKER_DENIED"
     assert payload["schema_version"] == "1"
     assert payload["agent_directive"] == directive
-    assert payload["actionable_step"] == directive["instruction"]
+    assert payload["actionable_step"] == directive["human_readable_instruction"]
     assert payload["details"] == {"http_status": 403}
     assert payload["retryable"] is False
     assert payload["next_tool"] == "request_connection"
