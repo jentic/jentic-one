@@ -3,8 +3,8 @@
 Seeds real credentials in the control DB and exercises the full resolve →
 decrypt → inject path through ``CredentialService.inject`` against a connected
 ``Context`` (real encryption, no DB mocking). Also asserts the credential-error
-mapping: missing → 424 (``prompt_human`` directive + ``provisioning_url`` +
-``intent_id``), ambiguous → 409.
+mapping: missing → 424 (``prompt_human`` directive + ``intent_id``),
+ambiguous → 409.
 """
 
 from __future__ import annotations
@@ -127,22 +127,21 @@ async def test_inject_api_key_cookie_end_to_end(
     assert result.query_params == {}
 
 
-async def test_missing_credential_maps_to_424_with_provisioning_url(
+async def test_missing_credential_maps_to_424_with_directive(
     integration_context: Context, clean_credentials: None
 ) -> None:
-    """No provisioned credential → 424 with a ``prompt_human`` directive + URL + intent id."""
-    base = integration_context.config.broker.account_linking_base_url
-    integration_context.config.broker.account_linking_base_url = "https://app.example.com"
-    try:
-        with pytest.raises(CredentialNotProvisionedError) as exc:
-            await CredentialService(integration_context).inject(
-                api_vendor=_VENDOR,
-                api_name=_API_NAME,
-                api_version=_API_VERSION,
-                identity=_IDENTITY,
-            )
-    finally:
-        integration_context.config.broker.account_linking_base_url = base
+    """No provisioned credential → 424 with a ``prompt_human`` directive + intent id.
+
+    No open connect session for the agent, so no ``provisioning_url`` (the
+    open-session arm is covered in ``test_open_connect_session.py``).
+    """
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(integration_context).inject(
+            api_vendor=_VENDOR,
+            api_name=_API_NAME,
+            api_version=_API_VERSION,
+            identity=_IDENTITY,
+        )
 
     err = exc.value
     assert err.type == "credential_not_provisioned"
@@ -150,9 +149,7 @@ async def test_missing_credential_maps_to_424_with_provisioning_url(
     assert err.directive.strategy == "prompt_human"
     intent_id = err.directive.parameters["intent_id"]
     assert err.extra["intent_id"] == intent_id
-    assert err.directive.parameters["provisioning_url"] == (
-        f"https://app.example.com/connect/{_VENDOR}?actor=agent_42&intent={intent_id}"
-    )
+    assert "provisioning_url" not in err.directive.parameters
 
 
 async def test_ambiguous_credential_maps_to_409(

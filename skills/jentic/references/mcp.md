@@ -197,8 +197,9 @@ names a connect target (`parameters.connect.vendor_key`, or a
 when the directive pins the one shared app that covers the API) are the
 `request_connection` arguments; add the directive's `suggested_rules` as
 `requested_permission_rules` — and relay the `approval_url`;
-a denial whose recovery carries only a `provisioning_url` is for your
-operator — relay it so they can connect the account. The denial taxonomy
+a denial carrying a `provisioning_url` means a connect request you opened
+is still waiting — relay that link to your operator rather than calling
+`request_connection` again. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
 `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent
