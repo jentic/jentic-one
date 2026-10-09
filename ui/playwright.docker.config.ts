@@ -11,6 +11,11 @@ import { STORAGE_STATE_PATH } from './e2e/docker/helpers';
  *   make destroy-fixtures && make start-fixtures && make start-app
  *   cd ui && npm run e2e:docker
  *
+ * The connect-approve specs (`connect-*.spec.ts`) also need the smoke upstream
+ * and the fake OAuth server, and the app started through
+ * `python -m tests.harness.e2e_app` with manual flows on; see
+ * e2e/docker/connect-helpers.ts. Without the upstreams they skip.
+ *
  * Auth is established ONCE via setup projects and reused via storageState — the
  * Playwright-recommended pattern (https://playwright.dev/docs/auth):
  *   - `bootstrap` clears the first-run gate by creating the first admin via /setup.

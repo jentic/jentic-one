@@ -22,7 +22,8 @@ import { authHeaders } from './helpers';
  * fail a plain `npm run e2e:docker` that didn't launch the fixture.
  */
 
-const UPSTREAM = 'http://127.0.0.1:8099';
+// E2E_FLOW3_UPSTREAM lets a local run put the fixture on another port.
+const UPSTREAM = process.env.E2E_FLOW3_UPSTREAM ?? 'http://127.0.0.1:8099';
 const CATALOG_API_ID = 'flow3-e2e.test';
 const IMPORT_PATH = `/catalog/${CATALOG_API_ID}:import`;
 
