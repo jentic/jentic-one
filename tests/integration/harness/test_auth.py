@@ -11,6 +11,7 @@ from tests.harness.smoke_upstream.routers.auth import (
     HEADER_API_KEY,
     HEADER_APP_ID,
     HEADER_AUTHORIZATION,
+    QUERY_API_KEY,
     AuthScheme,
 )
 
@@ -23,6 +24,7 @@ _BASIC_CREDENTIAL = base64.b64encode(b"user:pass").decode("ascii")
         ("/auth/bearer", AuthScheme.BEARER),
         ("/auth/basic", AuthScheme.BASIC),
         ("/auth/api-key", AuthScheme.API_KEY),
+        ("/auth/api-key-query", AuthScheme.API_KEY_QUERY),
         ("/auth/oauth2", AuthScheme.OAUTH2),
     ],
 )
@@ -88,3 +90,14 @@ async def test_auth_complex_authorized_with_both(smoke_client: AsyncClient) -> N
     body = response.json()
     assert body["authenticated"] is True
     assert body["scheme"] == AuthScheme.COMPLEX.value
+
+
+async def test_auth_api_key_query_authorized_with_query_parameter(
+    smoke_client: AsyncClient,
+) -> None:
+    response = await smoke_client.get(
+        "/auth/api-key-query",
+        params={QUERY_API_KEY: "secret-api-key"},  # pragma: allowlist secret
+    )
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True, "scheme": AuthScheme.API_KEY_QUERY.value}
