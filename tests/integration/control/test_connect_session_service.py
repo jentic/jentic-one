@@ -71,6 +71,7 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.web.deps import resolve_identity
@@ -1419,10 +1420,15 @@ async def _grant_agent(ctx: Context, permission: str) -> None:
         await session.execute(
             text(
                 "INSERT INTO actor_permission_grants "
-                "(actor_id, actor_type, permission, created_by) "
-                "VALUES (:id, 'agent', :permission, :created_by)"
+                "(id, actor_id, actor_type, permission, created_by) "
+                "VALUES (:grant_id, :id, 'agent', :permission, :created_by)"
             ),
-            {"id": _AGENT_ID, "permission": permission, "created_by": _USER_ID},
+            {
+                "grant_id": generate_ksuid("asg"),
+                "id": _AGENT_ID,
+                "permission": permission,
+                "created_by": _USER_ID,
+            },
         )
         await session.commit()
 
