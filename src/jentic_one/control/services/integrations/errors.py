@@ -123,3 +123,25 @@ class CredentialMissingCreatorError(ConnectSessionServiceError):
             "cannot finalise a connect flow without an initiator identity"
         )
         self.credential_id = credential_id
+
+
+class ManualFlowsDisabledError(ConnectSessionServiceError):
+    """``:connect`` named an API target while ``control.connect.manual_flows_enabled`` is off."""
+
+    def __init__(self) -> None:
+        super().__init__("connect sessions for API targets are not enabled on this instance")
+
+
+class UnsupportedTargetKindError(ConnectSessionServiceError):
+    """A code path that only handles vendor-registry targets met another target kind.
+
+    Internal: API targets are only created once their flows exist, so reaching
+    this means a session row this release cannot act on.
+    """
+
+    def __init__(self, session_id: str | None, target_kind: str, action: str) -> None:
+        subject = f"session {session_id!r}" if session_id else "connect request"
+        super().__init__(f"{subject} has target kind {target_kind!r}; cannot {action}")
+        self.session_id = session_id
+        self.target_kind = target_kind
+        self.action = action

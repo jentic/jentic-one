@@ -18,7 +18,15 @@ from typing import Any
 
 import structlog
 
-from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.connect_session_outcomes import (
+    OUTCOME_CANCELLED,
+    OUTCOME_CONNECTED,
+)
+from jentic_one.control.core.schema.connect_sessions import (
+    TARGET_KIND_API,
+    TARGET_KIND_VENDOR,
+    ConnectSession,
+)
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.control.repos import (
@@ -26,7 +34,10 @@ from jentic_one.control.repos import (
     CredentialRepository,
     OAuthTokenRepository,
 )
-from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.repos.connect_session_outcome_repo import (
+    ConnectSessionOutcomeRepository,
+)
+from jentic_one.control.repos.connect_session_repo import LIVE_STATES, ConnectSessionRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
@@ -40,10 +51,12 @@ from jentic_one.control.services.integrations.errors import (
     InvalidOAuthAppRegistrationError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
     NoOpForFlowError,
     OAuthAppChangedError,
     ScopeValidationError,
     SessionNotFoundError,
+    UnsupportedTargetKindError,
 )
 from jentic_one.control.services.integrations.flow_handlers import (
     AuthCodeFlowHandler,
@@ -114,6 +127,15 @@ _time_to_connected = _meter.create_histogram(
 # ---------------------------------------------------------------------------
 # Return types (Pydantic-free — the web layer wraps these into response models)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class ApiTarget:
+    """A registry API identity a connect session can target instead of a vendor key."""
+
+    vendor: str
+    name: str
+    version: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -222,9 +244,17 @@ class StatusResult:
 # Config / defaults
 # ---------------------------------------------------------------------------
 
-# Overall hard TTL for a session — clamps stale rows even if flow-level
-# device_code_expires_at hasn't been reached.
+# Overall hard TTL for a vendor OAuth session — clamps stale rows even if
+# flow-level device_code_expires_at hasn't been reached.
 _SESSION_TTL_SECONDS = 30 * 60
+
+# Flows that live for ``_SESSION_TTL_SECONDS``. Every other flow (a session a
+# human completes by entering a credential, or one waiting for an OAuth app)
+# lives for ``control.connect.manual_flows_ttl_hours``.
+_OAUTH_FLOWS: tuple[str, ...] = (DeviceAuthorizationHandler.kind, AuthCodeFlowHandler.kind)
+
+# How long a session's terminal outcome is kept once the session has ended.
+_OUTCOME_RETENTION = timedelta(days=30)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +351,28 @@ def _scope_view(s: ResolvedScope) -> ScopeView:
         requested=s.requested,
         description=s.description,
     )
+
+
+def _require_vendor_target(row: ConnectSession, *, action: str) -> None:
+    """Refuse a vendor-registry read on a session that does not target a vendor key.
+
+    Review, confirm and finalise resolve ``row.vendor`` as a vendor-registry
+    key; an ``api`` target's ``vendor`` is an API vendor, so reading it as a
+    key would silently pick the wrong source.
+    """
+    if row.target_kind != TARGET_KIND_VENDOR:
+        raise UnsupportedTargetKindError(row.id, row.target_kind, action)
+
+
+def _outcome_for(state: str, error_code: str | None) -> str:
+    """The recorded outcome of a terminal transition.
+
+    A cancel is stored as state ``failed`` with ``error_code="cancelled"`` (the
+    wire contract of ``/status``); its outcome is ``cancelled``.
+    """
+    if state == "failed" and error_code == "cancelled":
+        return OUTCOME_CANCELLED
+    return state
 
 
 def _require_state(row: ConnectSession, *, expected: str, action: str) -> None:
@@ -429,6 +481,9 @@ class ConnectSessionService:
         # when the vendor has no config entry and several active
         # registrations offer the flow (``AmbiguousVendorError`` otherwise).
         oauth_app_registration_id: str | None = None,
+        # A registry API identity to target instead of ``vendor_key``. Refused
+        # while ``control.connect.manual_flows_enabled`` is off.
+        api_target: ApiTarget | None = None,
     ) -> CreatedSession:
         """Create a pending session + upfront credential row.
 
@@ -439,6 +494,11 @@ class ConnectSessionService:
         connecting a credential without granting any agent access to it,
         and can bind an agent later through the credentials API.
         """
+        if api_target is not None:
+            if not self._ctx.config.control.connect.manual_flows_enabled:
+                raise ManualFlowsDisabledError()
+            raise UnsupportedTargetKindError(None, TARGET_KIND_API, "create a session")
+
         # Entry, flow and minting app come from one source — the pinned
         # registration, the config entry, or the vendor's single active
         # registration — so the credential's identity and scope catalog can
@@ -618,6 +678,7 @@ class ConnectSessionService:
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
         row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        _require_vendor_target(row, action="build review data")
         async with self._ctx.control_db.session() as session:
             # Pull the credential's api coords so the SPA can call
             # ``/apis/{vendor}/{name}/{version}/operations`` for the
@@ -720,7 +781,7 @@ class ConnectSessionService:
             session_id=row.id,
             state=row.state,
             vendor_key=row.vendor,
-            vendor_display_name=self._vendor_display_name(row.vendor, registration_name),
+            vendor_display_name=self._vendor_display_name(row, registration_name),
             agent_id=row.agent_id,
             requested_by_actor_id=row.initiator_actor_id,
             reason=row.reason,
@@ -730,7 +791,7 @@ class ConnectSessionService:
             credential_id=row.credential_id,
         )
 
-    def _vendor_display_name(self, vendor_key: str, registration_name: str | None) -> str:
+    def _vendor_display_name(self, row: ConnectSession, registration_name: str | None) -> str:
         """Display name of the app a session ran through.
 
         ``registration_name`` comes off the session credential's
@@ -738,12 +799,15 @@ class ConnectSessionService:
         uses — so a row never shows another registration's name. Without
         one (a config session) it's the config entry's name, else the raw
         key: the entry may have been removed since, and the list must not
-        500 on such rows.
+        500 on such rows. An ``api`` target is never looked up as a config
+        key; it shows its API identity.
         """
+        if row.target_kind != TARGET_KIND_VENDOR:
+            return f"{row.vendor}/{row.api_name}" if row.api_name else row.vendor
         if registration_name is not None:
             return registration_name
-        cfg = self._ctx.config.vendors.entries.get(vendor_key)
-        return cfg.display_name if cfg is not None else vendor_key
+        cfg = self._ctx.config.vendors.entries.get(row.vendor)
+        return cfg.display_name if cfg is not None else row.vendor
 
     # ---- confirm ----------------------------------------------------------
 
@@ -1076,8 +1140,9 @@ class ConnectSessionService:
         if row.state in ("connected", "expired", "failed"):
             return _terminal_status(row, await self._bound_scopes(row))
 
-        # ``created`` = confirm not called yet; ``polling`` = advancement
-        # in flight (scanner or callback route). Both surface as pending.
+        # ``created`` = confirm not called yet; ``awaiting_app`` = no OAuth
+        # app resolved yet; ``polling`` = advancement in flight (scanner or
+        # callback route). All surface as pending.
         return StatusResult(status="pending")
 
     async def _bound_scopes(self, row: ConnectSession) -> list[str] | None:
@@ -1240,6 +1305,7 @@ class ConnectSessionService:
         ``oauth_app_changed``: its aux rows were written for that app, so
         the caller must start a new session.
         """
+        _require_vendor_target(row, action="re-open its vendor source")
         try:
             return await self._vendors.resolve_session_source(
                 row.vendor, registration_id=registration_id, flow_kind=row.resolved_flow
@@ -1273,6 +1339,7 @@ class ConnectSessionService:
         failed echo marks the session ``failed`` (no vaulting) so we don't
         strand a credential we can't tie back to a human.
         """
+        _require_vendor_target(row, action="finalise")
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(session, row.credential_id)
         pinned_registration_id = (
@@ -1496,12 +1563,20 @@ class ConnectSessionService:
                 credential.updated_at = datetime.now(UTC)
                 await session.flush()
             if close_session_id is not None:
-                await ConnectSessionRepository.update_fields(
+                closed = await ConnectSessionRepository.update_fields(
                     session,
                     close_session_id,
                     state="connected",
                     connected_as=connected_as,
                 )
+                if closed is not None:
+                    await ConnectSessionOutcomeRepository.record(
+                        session,
+                        row=closed,
+                        outcome=OUTCOME_CONNECTED,
+                        error_code=None,
+                        ended_at=datetime.now(UTC),
+                    )
 
     async def _maybe_import_catalog(self, *, api_id: str, initiator_actor_id: str) -> None:
         """Best-effort catalog auto-import — see the phase-1 rationale.
@@ -1541,12 +1616,15 @@ class ConnectSessionService:
         would have to garbage-collect later.
 
         Compare-and-swap guarded: the delete only happens if the session
-        is still live (``created``/``polling``) at the moment of the
-        UPDATE. Without the CAS, a replayed callback URL carrying
+        is still live (``LIVE_STATES``) at the moment of the UPDATE.
+        Without the CAS, a replayed callback URL carrying
         ``error=access_denied`` — or a second scanner pod whose in-flight
         poll loses the race against a successful one — would delete an
         already-``connected`` credential, its vaulted token, and the
         admin binding. Returns True when this call won the transition.
+
+        The winner records the session's outcome in the same transaction, so
+        how it ended outlives the cascade-deleted session row.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -1557,10 +1635,17 @@ class ConnectSessionService:
                 session,
                 session_id,
                 to_state=state,
-                from_states=("created", "polling"),
+                from_states=LIVE_STATES,
                 error_code=error_code,
             )
             if won:
+                await ConnectSessionOutcomeRepository.record(
+                    session,
+                    row=row,
+                    outcome=_outcome_for(state, error_code),
+                    error_code=error_code,
+                    ended_at=datetime.now(UTC),
+                )
                 await CredentialRepository.delete(session, row.credential_id)
         if not won:
             _logger.info(
@@ -1639,7 +1724,7 @@ class ConnectSessionService:
     # ---- TTL sweep (scanner-driven, flow-agnostic) ---------------------
 
     async def expire_stale_sessions(self, *, limit: int = 100) -> int:
-        """Expire live sessions older than the session TTL (scanner tick).
+        """Expire live sessions older than their TTL (scanner tick).
 
         The device-flow scanner only ever sees sessions with an active
         device-code aux row, so a session whose initiator never called
@@ -1648,18 +1733,33 @@ class ConnectSessionService:
         expiry driver — it, and the upfront ``pending`` credential row it
         minted, would leak forever. Each expiry goes through
         ``_mark_terminal`` (CAS-guarded), so a session that completes
-        between the read and the sweep is left alone. Returns the number
-        of sessions actually expired.
+        between the read and the sweep is left alone. Vendor OAuth flows
+        expire after ``_SESSION_TTL_SECONDS``; every other flow after
+        ``control.connect.manual_flows_ttl_hours``.
+
+        The same tick drops outcomes older than the retention window.
+        Returns the number of sessions actually expired.
         """
-        cutoff = datetime.now(UTC) - timedelta(seconds=_SESSION_TTL_SECONDS)
+        now = datetime.now(UTC)
+        oauth_cutoff = now - timedelta(seconds=_SESSION_TTL_SECONDS)
+        manual_cutoff = now - timedelta(
+            hours=self._ctx.config.control.connect.manual_flows_ttl_hours
+        )
         async with self._ctx.control_db.session() as read_session:
             stale_ids = await ConnectSessionRepository.list_stale_live_ids(
-                read_session, older_than=cutoff, limit=limit
+                read_session, older_than=oauth_cutoff, limit=limit, flows=_OAUTH_FLOWS
+            )
+            stale_ids += await ConnectSessionRepository.list_stale_live_ids(
+                read_session, older_than=manual_cutoff, limit=limit, exclude_flows=_OAUTH_FLOWS
             )
         expired = 0
         for session_id in stale_ids:
             if await self._mark_terminal(session_id, "expired", "session TTL exceeded"):
                 expired += 1
+        async with self._ctx.control_db.transaction() as session:
+            await ConnectSessionOutcomeRepository.delete_ended_before(
+                session, older_than=now - _OUTCOME_RETENTION, limit=limit
+            )
         return expired
 
     # ---- redirect-based (auth-code / MCP) completion ----------------------

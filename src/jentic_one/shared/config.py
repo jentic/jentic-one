@@ -1136,14 +1136,42 @@ class VendorRegistryConfig(BaseModel):
     entries: dict[str, VendorAuthConfig] = Field(default_factory=dict)
 
 
+class ControlConnectConfig(BaseModel):
+    """Agent connect-session settings on the control surface."""
+
+    manual_flows_enabled: bool = Field(
+        default=False,
+        description=(
+            "Allow connect sessions that target a registry API (rather than a "
+            "vendor-registry key), where a human enters the credential at "
+            "approval. While off, `:connect` refuses API targets with "
+            "`manual_flows_disabled`. Not usable in this release: leave it off. "
+            "Once usable, turn it on only after every control replica runs a "
+            "release that understands these sessions."
+        ),
+    )
+    manual_flows_ttl_hours: int = Field(
+        default=72,
+        ge=1,
+        description=(
+            "Hours an API-target connect session (a human-entered credential, or "
+            "an OAuth API waiting for an app) stays open before it expires. "
+            "Vendor OAuth sessions keep their fixed 30-minute lifetime."
+        ),
+    )
+
+
 class ControlSurfaceConfig(BaseModel):
     """Control surface configuration.
 
-    Empty since theme 7 removed the access-request subsystem (its
-    ``access_requests.ttl_days``/``canonical_base_url`` knobs). The section
-    stays so a ``control:`` key in existing YAML keeps validating and future
-    control-surface knobs have a home; unknown subkeys are ignored.
+    Unknown subkeys are ignored, so a ``control:`` section written for another
+    release keeps validating.
     """
+
+    connect: ControlConnectConfig = Field(
+        default_factory=ControlConnectConfig,
+        description="Agent connect-session settings.",
+    )
 
 
 class UpstreamClientConfig(BaseModel):
