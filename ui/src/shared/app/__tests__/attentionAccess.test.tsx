@@ -13,6 +13,7 @@ import { AuthProvider } from '@/shared/auth';
 import { NotificationsMenu } from '@/shared/app/NotificationsMenu';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 import { clearToken, setToken } from '@/shared/api';
+import { useOpenConnectRequests } from '@/shared/credentials/api';
 
 const emptyPage = { data: [], has_more: false, next_cursor: null };
 
@@ -78,7 +79,17 @@ function trackSources({ agentsStatus = 200 }: { agentsStatus?: number } = {}) {
 	return calls;
 }
 
-function renderMenu() {
+/**
+ * Marks the open connect-request read as settled. It shares the menu's query,
+ * so both re-render in the same commit: once the marker is in the DOM, the
+ * menu has rendered (or withheld) the connect-request row.
+ */
+function ConnectRequestsSettled() {
+	const { isSuccess } = useOpenConnectRequests();
+	return isSuccess ? <span data-testid="connect-requests-settled" hidden /> : null;
+}
+
+function renderMenu({ withConnectProbe = false }: { withConnectProbe?: boolean } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -88,6 +99,7 @@ function renderMenu() {
 				<MemoryRouter initialEntries={['/dashboard']}>
 					<AgentStreamProvider live={false}>
 						<NotificationsMenu />
+						{withConnectProbe && <ConnectRequestsSettled />}
 					</AgentStreamProvider>
 				</MemoryRouter>
 			</AuthProvider>
@@ -224,12 +236,15 @@ describe('Notifications — connect requests go to approvers', () => {
 			}),
 		);
 		trackSources();
-		renderMenu();
+		renderMenu({ withConnectProbe: true });
 
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: /^Notifications/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 		await within(dialog).findByText('waiting-bot is waiting for approval');
+		// The connect-request read is independent of the pending-agents read, so
+		// the agent row alone says nothing about whether it has landed yet.
+		await screen.findByTestId('connect-requests-settled');
 		const row = within(dialog).queryByText(/is waiting for you to connect GitHub/);
 		if (listed) expect(row).toBeInTheDocument();
 		else expect(row).toBeNull();
