@@ -8,13 +8,13 @@
 import { useEffect, useId, useReducer, useState, type ReactNode, type RefObject } from 'react';
 import { AnimatePresence, motion, type Transition } from 'framer-motion';
 import {
+	Award,
 	Check,
 	ChevronRight,
 	CircleCheck,
 	Clock,
 	KeyRound,
 	Plus,
-	Sparkles,
 	Terminal,
 	TriangleAlert,
 	type LucideIcon,
@@ -190,7 +190,7 @@ export function RegisterCommand({
 					surface === 'landing' ? (
 						// Glyph and word, as the app marks a state — no pill.
 						<span className="text-foreground-sub inline-flex items-center gap-1.5 text-xs font-semibold">
-							<Sparkles aria-hidden="true" className="text-primary size-3.5" />
+							<Award aria-hidden="true" className="text-primary size-3.5" />
 							Recommended
 						</span>
 					) : undefined
