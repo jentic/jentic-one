@@ -23,6 +23,16 @@ class OperationInfo(BaseModel):
     # — persisted flat as the record's ``operation_path`` column/API field.
     path: str | None = None
     method: str | None = None
+    # The concrete request path relative to the API's server URL, normalized —
+    # e.g. ``/repos/octocat/hello`` for ``https://host/v3/repos/octocat/hello``
+    # against server ``https://host/v3``. Binding permission rules are authored
+    # against spec paths, so this (never the full upstream path, which carries
+    # the server base) is what they are enforced on (#1424). Not a column on
+    # the execution record, but it does ride the async job payload and the
+    # job's ``metadata["operation"]`` (``model_dump``) — it is a concrete
+    # request path, so treat it like ``upstream_url``. ``None`` when discovery
+    # could not rebuild it or on payloads written before it existed.
+    relative_path: str | None = None
 
     @property
     def display(self) -> str:

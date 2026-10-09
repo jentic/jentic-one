@@ -409,6 +409,40 @@ async def test_handler_reauthorizes_on_the_operation_dict_id() -> None:
 
     assert authorizer.last_request is not None
     assert authorizer.last_request.operation_id == "op_dict"
+    assert authorizer.last_request.relative_path is None
+
+
+@pytest.mark.asyncio
+async def test_handler_reauthorizes_on_the_operation_relative_path() -> None:
+    """Pins #1424: the run-time rule re-check is handed the enqueue-time
+    server-relative path, so a base-path API's rules are judged on the same
+    path at run time as at the sync edge."""
+    authorizer = _FakeAuthorizer()
+    handler = ExecutionHandler(
+        executor=_RecordingExecutor(
+            UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+        ),
+        credential_injector=_FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={})),
+        execution_authorizer=authorizer,
+    )
+
+    await handler.execute(
+        "job_relative",
+        _FakeSession(),
+        payload=_payload(
+            operation={
+                "id": "op_w",
+                "path": "/widgets/{id}",
+                "method": "GET",
+                "relative_path": "/widgets/42",
+            }
+        ),
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    assert authorizer.last_request is not None
+    assert authorizer.last_request.relative_path == "/widgets/42"
 
 
 def test_handler_refuses_an_injector_without_an_authorizer() -> None:
@@ -634,7 +668,7 @@ async def test_handler_forwards_operation_dict_in_metadata() -> None:
     )
 
     assert executor.last_request is not None
-    assert executor.last_request.metadata["operation"] == operation
+    assert executor.last_request.metadata["operation"] == OperationInfo(**operation).model_dump()
     assert executor.last_request.metadata["operation_id"] == "op_x"
 
 
@@ -661,6 +695,7 @@ async def test_handler_forwards_legacy_flat_operation_id() -> None:
         "id": "op_legacy",
         "path": None,
         "method": None,
+        "relative_path": None,
     }
     assert executor.last_request.metadata["operation_id"] == "op_legacy"
 

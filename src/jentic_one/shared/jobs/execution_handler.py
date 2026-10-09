@@ -150,6 +150,7 @@ class ExecutionHandler:
                     api_name=api_name or "",
                     api_version=api_version or "",
                     operation_id=operation.id if operation else None,
+                    relative_path=operation.relative_path if operation else None,
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,

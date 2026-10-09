@@ -120,6 +120,69 @@ still marks the sets, prints one `could not list cross-owner bindings`
 warning, and reports `cross_owner_bindings: null`; the upgrade does not
 fail on it.
 
+## Binding rules written against the full upstream path
+
+The broker evaluates binding permission rules on the request path relative
+to the API's server URL — the spec's path, which the rule editor, its
+preview and `permissions:test` all show. A `prefix`/`exact` rule written with
+the server's base path included (`/api/v3/pet` for a server
+`https://host/api/v3`, `/eu/widgets` for a server `http://host/{region}`)
+matches nothing on that basis. That cuts both ways:
+
+- an **`allow`** rule stops allowing — those calls fail with `403
+  action_denied`;
+- a **`deny`** rule stops denying — a later, broader `allow` (for example
+  `allow /`) now **lets those calls through**.
+
+**Run the rewrite job before (or immediately after) upgrading** any
+deployment whose rules include a server base path. Preview first:
+
+```sh
+jentic_one rewrite-rule-base-paths --diff-only --report rewrite-preview.jsonl
+jentic_one rewrite-rule-base-paths --report rewrite.jsonl
+```
+
+The broker also flags affected rules as calls hit them: a
+`rule_written_with_server_base_path` warning (at most once per rule per five
+minutes) names the binding (`agent_id`, `credential_id`, `rule_set_id`), the
+rule's position and pattern, and a `kind` — `legacy_allow_no_longer_matches`
+(now denied) or `legacy_deny_no_longer_matches` (now **allowed**). The
+`broker.authorization.base_path_divergence` counter counts every occurrence.
+
+The job rewrites a rule only when stripping one of the bound API's **static**
+server base paths gives a path that applies to a real operation and the
+rule's current path applies to none. Each rewrite is audited against the
+binding (or rule set) — if the audit write fails the rule is left unchanged —
+and a re-run changes nothing. The command exits `1` while any rule still
+needs manual review. Report lines with `"category": "skipped"` need a manual
+fix in the rule editor; their `reason` says why:
+
+| `reason` | Meaning |
+| -------- | ------- |
+| `server_variable_base` | The base path has a server variable (`/{region}`). `/eu/widgets` allowed only `eu`; `/widgets` would allow every region, so this is never automatic. Rules can't express a server-variable value — scope the region with the credential's server variables instead, then write the rule as `/widgets`. |
+| `spec_path_or_base_qualified` | The path fits an operation as written **and** after stripping the base (e.g. `prefix /api/v3` against `/{owner}/{repo}`). Decide which you meant. |
+| `regex_not_rewritable` | `regex` rules are never rewritten; check whether the pattern includes the base path. |
+| `matches_no_operation` | Stripping the base path leaves a path no operation uses. |
+| `ambiguous_base` | More than one server base path fits, with different results. |
+| `rule_set_mixed_apis` | A shared rule set is attached to bindings on APIs that need different rewrites. |
+| `rule_set_not_attached` | The rule set is attached to no binding, so there is no API to judge it against. |
+| `binding_not_found` | An inline rule whose agent↔credential binding no longer exists (it is never evaluated). |
+| `credential_not_api_scoped` | The credential is vendor-wide (no single API), so there is no base path to strip. |
+| `credential_not_found` | The rule's credential no longer exists. |
+| `api_not_found` | The bound credential's API has no live revision in the registry. |
+
+A `"category": "conflict"` line means the rule was edited while the job ran
+(`changed_concurrently`) or the write and its audit entry failed together
+(`write_failed`); re-run it.
+
+### Encoded path traversal is refused
+
+Rule enforcement no longer decodes `%2F` / `%5C`, and a request whose path
+spells a dot segment with escapes (`/admin%2F..%2Fusers`, `/admin/%2e%2e/users`)
+is denied with `403 action_denied` (`reason: ambiguous_path`): different
+upstream servers resolve such a path differently, so no rule check on it is
+sound.
+
 ## Where the commands live, per install
 
 | Install | Upgrade steps |

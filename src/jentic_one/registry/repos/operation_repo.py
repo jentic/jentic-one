@@ -87,6 +87,18 @@ class OperationRepository:
         return list(result.unique().scalars().all())
 
     @staticmethod
+    async def list_for_revision(
+        session: AsyncSession, *, revision_id: uuid.UUID
+    ) -> list[Operation]:
+        """Every operation of a revision (servers eager-loaded via the relationships)."""
+        result = await session.execute(
+            select(Operation)
+            .where(Operation.revision_id == revision_id)
+            .order_by(Operation.path.asc(), Operation.method.asc())
+        )
+        return list(result.unique().scalars().all())
+
+    @staticmethod
     async def list_page_for_revision(
         session: AsyncSession,
         *,

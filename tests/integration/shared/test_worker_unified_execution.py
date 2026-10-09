@@ -167,6 +167,7 @@ async def test_async_job_dispatches_through_executor(
         "id": "op_widgets",
         "path": "/v1/widgets",
         "method": "GET",
+        "relative_path": None,
     }
 
     # The job completed and the upstream body was persisted as the job result.

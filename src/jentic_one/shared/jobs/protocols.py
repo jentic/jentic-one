@@ -99,6 +99,11 @@ class QueuedExecutionRequest:
     api_name: str
     api_version: str
     operation_id: str | None = None
+    # The enqueue-time operation's server-relative path
+    # (``OperationInfo.relative_path``) — the path the binding rules are
+    # re-evaluated on, so enqueue and run time judge the same path. ``None``
+    # on payloads written before it existed (falls back to the upstream path).
+    relative_path: str | None = None
     credential_id: str | None = None
     # Concrete server-variable values of the request URL (from discovery at
     # enqueue time) — the re-check selects under the same scoping.

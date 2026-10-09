@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from jentic_one.registry.core.url_index import expand_path_template
 from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
@@ -64,6 +65,9 @@ class RegistryService:
                 id=hit.operation_id,
                 path=op_ctx.path,
                 method=op_ctx.method,
+                relative_path=(
+                    expand_path_template(op_ctx.path, hit.path_params) if op_ctx.path else None
+                ),
             ),
             api=op_ctx.api,
             path_params=hit.path_params,

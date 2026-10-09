@@ -22,8 +22,10 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
+from jentic_one.control.services.rule_base_path_rewrite import RuleBasePathRewriteService
 from jentic_one.control.services.toolkit_export import ToolkitExportError, ToolkitExportService
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
+from jentic_one.registry.services.api_path_shapes import RegistryApiPathShapeReader
 from jentic_one.shared.config import (
     AppConfig,
     check_public_url_consistency,
@@ -469,6 +471,39 @@ async def _flatten_toolkits(
     return 0
 
 
+async def _rewrite_rule_base_paths(*, diff_only: bool, report_path: str | None) -> int:
+    """Rewrite binding rules that carry an API's server base path (#1424).
+
+    Rules are enforced on the spec-relative path; a ``prefix``/``exact`` rule
+    written as ``/eu/widgets`` for a server ``http://host/{region}`` matches
+    nothing. This rewrites each such rule to its spec-relative form when that
+    is unambiguous and reports the rest. One JSONL report line per finding.
+    """
+    config = load_config()
+    configure_logging(config)
+
+    async with Context(config, allowed_dbs={"admin", "control", "registry"}) as ctx:
+        svc = RuleBasePathRewriteService(ctx, shapes=RegistryApiPathShapeReader(ctx))
+        run = await svc.run(diff_only=diff_only)
+    lines = [json.dumps(f.as_dict()) for f in run.findings]
+    if report_path is None:
+        for line in lines:
+            print(line, flush=True)
+    else:
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.writelines(line + "\n" for line in lines)
+    verb = "would rewrite" if diff_only else "rewrote"
+    print(
+        f"==> {run.rules_scanned} path rule(s) scanned: {verb} {run.rewritten}, "
+        f"{run.skipped} need manual review (see the 'skipped'/'conflict' report lines).",
+        file=sys.stderr,
+        flush=True,
+    )
+    # Non-zero while anything needs a human, so automation can't mistake a
+    # partial run for done.
+    return 1 if run.skipped else 0
+
+
 async def _export_toolkits(*, out_path: str | None, import_path: str | None) -> int:
     """Export the five legacy toolkit tables, or re-import an export file."""
     config = load_config()
@@ -578,6 +613,25 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    rewrite_rules = sub.add_parser(
+        "rewrite-rule-base-paths",
+        help=(
+            "Rewrite binding permission rules written against the full upstream "
+            "path (server base included) to their spec-relative form "
+            "(idempotent, operator-invoked). Exits 1 when any rule needs manual review."
+        ),
+    )
+    rewrite_rules.add_argument(
+        "--diff-only",
+        action="store_true",
+        help="Report what a run would rewrite without writing anything.",
+    )
+    rewrite_rules.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Write the JSONL report here instead of stdout.",
+    )
+
     export_toolkits = sub.add_parser(
         "export-toolkits",
         help=(
@@ -626,6 +680,11 @@ def main(argv: list[str] | None = None) -> int:
                 verify=args.verify,
                 acknowledge=args.acknowledge,
             )
+        )
+
+    if args.command == "rewrite-rule-base-paths":
+        return asyncio.run(
+            _rewrite_rule_base_paths(diff_only=args.diff_only, report_path=args.report)
         )
 
     if args.command == "export-toolkits":

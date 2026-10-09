@@ -14,10 +14,10 @@ rule set). The credential's identity was already matched during derivation, so
 no vendor join is needed here.
 
 Path matching (``regex``/``prefix``/``exact``) delegates to the shared
-``shared.permissions.matching`` seam so authoring surfaces and this enforcer
-cannot disagree; the rule value object, JSON-column coercion and evaluation
-loop live in this module (their pre-6b home, the toolkit ``rule_evaluator``,
-was deleted with the toolkit path).
+``shared.permissions.matching`` seam and the first-match-wins loop to
+``shared.permissions.evaluation``, so the control dry-run
+(``permissions:test``) and this enforcer cannot disagree. This module owns the
+DB read, JSON-column coercion and the rule cache.
 
 Performance: the rule list per binding (or per rule set — shared across N
 bindings) is short-TTL cached (LRU + single-flight), amortising the hot-path DB
@@ -37,22 +37,18 @@ from sqlalchemy import text
 from jentic_one.broker.core.singleflight import SingleFlight
 from jentic_one.shared.broker.protocols import RuleEvaluation
 from jentic_one.shared.db import DatabaseSession
+from jentic_one.shared.permissions.evaluation import (
+    PermissionRule,
+    base_path_divergence,
+    evaluate_rules,
+    normalize_methods,
+)
 from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 
 _logger = structlog.get_logger(__name__)
 
 DEFAULT_RULE_CACHE_TTL_SECONDS = 30.0
 DEFAULT_MAX_CACHE_ENTRIES = 5_000
-
-
-@dataclass(frozen=True, slots=True)
-class PermissionRule:
-    """A single permission rule — immutable value object for cache safety."""
-
-    effect: str
-    methods: frozenset[str] | None
-    path: PathMatcher | None
-    operations: tuple[str, ...] | None
 
 
 def _coerce_json_list(value: object) -> list[str] | None:
@@ -77,62 +73,6 @@ def _coerce_json_list(value: object) -> list[str] | None:
     if isinstance(value, list):
         return [str(item) for item in value]
     return None
-
-
-def _normalize_methods(raw: list[str] | None) -> frozenset[str] | None:
-    if raw is None:
-        return None
-    return frozenset(m.upper() for m in raw)
-
-
-def _is_condition_less(rule: PermissionRule) -> bool:
-    """True if a rule constrains nothing — matches every request when evaluated."""
-    return rule.methods is None and rule.path is None and rule.operations is None
-
-
-def _rule_matches(
-    rule: PermissionRule, *, method: str, path: str, operation_id: str | None
-) -> bool:
-    """Return True if ALL defined criteria in the rule match the request."""
-    if rule.methods is not None and method.upper() not in rule.methods:
-        return False
-    if rule.path is not None and not rule.path.matches(path):
-        return False
-    if rule.operations is not None:
-        return operation_id is not None and operation_id in rule.operations
-    return True
-
-
-def evaluate_rules(
-    rules: list[PermissionRule],
-    *,
-    method: str,
-    path: str,
-    operation_id: str | None,
-    binding: str | None = None,
-) -> bool:
-    """Evaluate an ordered list of permission rules. Returns True if allowed.
-
-    ``binding`` labels the rule source (``agent:credential`` ids or
-    ``rule_set:<id>`` — identifiers only, never secret material) so a
-    misconfiguration warning names what to fix.
-    """
-    for rule in rules:
-        # Defense-in-depth: a condition-less `allow` is an unrestricted grant
-        # (matches everything) and should have been rejected at the API schema.
-        # If one reaches the broker it is a misconfiguration — skip it rather
-        # than honour blanket access. A condition-less `deny` keeps its
-        # legitimate match-all catch-all behaviour.
-        if _is_condition_less(rule) and rule.effect.lower() == "allow":
-            _logger.warning(
-                "Ignoring misconfigured condition-less 'allow' permission rule "
-                "(matches all requests); skipping to next rule",
-                binding=binding,
-            )
-            continue
-        if _rule_matches(rule, method=method, path=path, operation_id=operation_id):
-            return rule.effect.lower() == "allow"
-    return False
 
 
 # Inline per-binding rules. No credential/vendor join — the binding is the key.
@@ -224,13 +164,17 @@ class AgentRuleEvaluator:
         method: str,
         path: str,
         operation_id: str | None,
+        upstream_path: str | None = None,
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
 
         Returns a :class:`RuleEvaluation` — ``allowed`` plus the rule count so
         the router can distinguish "no rules configured for this binding"
         (rules_loaded == 0) from "loaded but nothing matched" in the deny
-        problem detail (#578 twin).
+        problem detail (#578 twin). With ``upstream_path`` (the normalized
+        full upstream path) it also reports a verdict change caused by a rule
+        still written with the server base path; that never alters
+        ``allowed``.
         """
         rules = await self._get_rules(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
@@ -246,7 +190,18 @@ class AgentRuleEvaluator:
                 agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
             ),
         )
-        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules))
+        divergence = (
+            base_path_divergence(
+                rules,
+                method=method,
+                relative_path=path,
+                upstream_path=upstream_path,
+                operation_id=operation_id,
+            )
+            if upstream_path is not None
+            else None
+        )
+        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules), divergence=divergence)
 
     async def _get_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None
@@ -292,7 +247,7 @@ class AgentRuleEvaluator:
         return [
             PermissionRule(
                 effect=row[0],
-                methods=_normalize_methods(_coerce_json_list(row[1])),
+                methods=normalize_methods(_coerce_json_list(row[1])),
                 path=_compile_path(row[2], str(row[4] or "regex"), binding=binding_label),
                 operations=(tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None),
             )

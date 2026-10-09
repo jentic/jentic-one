@@ -262,7 +262,8 @@ export function AgentBindingRuleTester({
 				) : (
 					<p className="text-foreground-sub text-xs">
 						Dry-runs the broker's decision against the <strong>saved</strong> rules.
-						Nothing is sent upstream.
+						Nothing is sent upstream. Paths are relative to the API's server URL (the
+						spec's paths), without the server's base path.
 					</p>
 				)}
 				{!operationOpen && (
