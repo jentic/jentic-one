@@ -771,9 +771,9 @@ class ConnectSessionService:
         approval URLs) and bind an arbitrary agent. Missing session, token
         mismatch and a caller who is neither surface identically.
 
-        An agent-initiated session's credential is re-attributed to the
-        approving human (``created_by``) unless the initiating agent itself
-        holds ``credentials:write``.
+        The credential is attributed to the approver (``created_by``),
+        whoever initiated the session; the initiator stays recorded on the
+        session and in the audit entry.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -873,13 +873,10 @@ class ConnectSessionService:
                 )
             raise
 
-        attributed_to = await self._confirm_attribution(row, identity)
-
         async with self._ctx.control_db.transaction() as session:
-            if attributed_to is not None:
-                await CredentialRepository.set_created_by(
-                    session, row.credential_id, created_by=attributed_to
-                )
+            await CredentialRepository.set_created_by(
+                session, row.credential_id, created_by=identity.sub
+            )
             # Persist the approved rules as direct agent-credential binding
             # rules (theme 5): ``agent_permission_rules`` is the list the
             # broker enforces for the ``(agent, credential)`` pair. Skipped
@@ -948,7 +945,7 @@ class ConnectSessionService:
                 "agent_id": effective_agent_id,
                 "confirmed_scopes": list(confirmed_scopes),
                 "rules_count": len(permission_rules),
-                "credential_created_by": attributed_to or row.initiator_actor_id,
+                "credential_created_by": identity.sub,
             },
         )
         if challenge.kind == "device_authorization":
@@ -987,26 +984,6 @@ class ConnectSessionService:
                 )
         if agent.status in _UNUSABLE_AGENT_STATUSES:
             raise AgentInactiveError(agent_id, agent.status)
-
-    async def _confirm_attribution(self, row: ConnectSession, identity: Identity) -> str | None:
-        """Who the session's credential is attributed to once it is confirmed.
-
-        Returns the approving human's id for an agent-initiated session, or
-        ``None`` to keep the initiator as ``created_by``: a user-initiated
-        session stays its initiator's, and an initiating agent that itself
-        holds ``credentials:write`` keeps ownership of what it asked for.
-        """
-        if identity.actor_type != ActorType.USER:
-            return None
-        if actor_type_label_from_id(row.initiator_actor_id) != ActorType.AGENT.value:
-            return None
-        async with self._ctx.admin_db.session() as admin_session:
-            grants = await EffectsRepository.list_actor_permissions(
-                admin_session, row.initiator_actor_id
-            )
-        if CREDENTIALS_WRITE in compute_effective(set(grants)):
-            return None
-        return identity.sub
 
     async def _require_session_access(
         self,
