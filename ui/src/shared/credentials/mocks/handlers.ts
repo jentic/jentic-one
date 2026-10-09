@@ -378,7 +378,16 @@ export interface MockConnectSession {
 	state: string;
 	vendor_key: string;
 	credential_id: string;
+	/** Target agent; the session is agent-initiated when it also requested it. */
+	agent_id: string | null;
 	requested_by_actor_id: string;
+	created_at: string;
+	/**
+	 * Whether the mock caller may act on the session without its poll token —
+	 * the target agent's owner or an org admin. Default true; a test sets false
+	 * to stand in for a caller who is neither.
+	 */
+	ownerCanAct: boolean;
 	requested_scopes: string[];
 	requested_permission_rules: NonNullable<ConfirmRequest['permission_rules']>;
 	reason: string | null;
@@ -442,9 +451,10 @@ const problem = (status: number, title: string, detail: string) =>
 	);
 
 /**
- * Poll-token gate shared by the session-scoped routes. Missing session and
- * token mismatch are indistinguishable on the wire (both 403), matching
- * the backend's enumeration-oracle guard.
+ * Gate shared by the session-scoped routes: the poll token when one is sent,
+ * otherwise the owner / org-admin path (`ownerCanAct`). Missing session, token
+ * mismatch and a token-less caller who is neither are indistinguishable on the
+ * wire (all 403), matching the backend's enumeration-oracle guard.
  */
 function gateSession(
 	sessionId: string | readonly string[] | undefined,
@@ -453,10 +463,57 @@ function gateSession(
 	const id = String(sessionId);
 	const token = new URL(requestUrl).searchParams.get('poll_token');
 	const session = connectSessionsStore.find((s) => s.session_id === id);
-	if (!session || !token || token !== session.poll_token) {
+	const allowed = session && (token ? token === session.poll_token : session.ownerCanAct);
+	if (!session || !allowed) {
 		return problem(403, 'Forbidden', 'Unknown session or invalid poll token.');
 	}
 	return session;
+}
+
+/**
+ * Seed an agent-initiated connect session (the agent is both target and
+ * requester), as an agent's `jentic connect` leaves one — for the "waiting for
+ * you" signals and the token-less approve path. Returns the stored row.
+ */
+// Never reset: a seeded id is unique across tests, so a late request from a
+// previous test's unmounted dialog can never land on this test's session.
+let agentConnectSeedSeq = 0;
+
+export function seedMockAgentConnectSession(
+	overrides: Partial<MockConnectSession> & { agent_id: string; vendor_key: string },
+): MockConnectSession {
+	agentConnectSeedSeq += 1;
+	const pending = makeMockCredential({
+		name: `${overrides.vendor_key} (connecting…)`,
+		type: CredentialType.OAUTH2,
+		provider: 'direct_oauth2',
+		api: { vendor: overrides.vendor_key, name: 'default', version: '1.0.0' },
+		details: { grant_type: 'authorization_code', connected: false },
+	});
+	store.push(pending);
+	const row: MockConnectSession = {
+		session_id: `sess_agent_${agentConnectSeedSeq}`,
+		poll_token: `ptok_agent_${agentConnectSeedSeq}`,
+		state: 'created',
+		credential_id: pending.credential_id,
+		requested_by_actor_id: overrides.agent_id,
+		created_at: new Date().toISOString(),
+		ownerCanAct: true,
+		requested_scopes: [],
+		requested_permission_rules: [],
+		reason: null,
+		status: {
+			status: 'pending',
+			connected_as: null,
+			credential_id: null,
+			bound_scopes: null,
+			error_code: null,
+		},
+		confirmBodies: [],
+		...overrides,
+	};
+	connectSessionsStore.push(row);
+	return row;
 }
 
 function isMockSession(v: unknown): v is MockConnectSession {
@@ -502,7 +559,12 @@ const connectSessionsHandlers = [
 			state: 'created',
 			vendor_key: body.vendor,
 			credential_id: credentialId,
+			agent_id: body.agent_id ?? null,
 			requested_by_actor_id: body.agent_id ?? 'usr_mock_owner',
+			created_at: new Date().toISOString(),
+			// A session with no target agent has no owner path: only its
+			// poll token (or an org admin) opens it.
+			ownerCanAct: body.agent_id != null,
 			requested_scopes: body.requested_scopes ?? [],
 			requested_permission_rules: [],
 			reason: null,
@@ -519,14 +581,40 @@ const connectSessionsHandlers = [
 			{
 				session_id: sessionId,
 				// The real backend emits an absolute URL to the SPA's
-				// Agents page; an absolute mock URL keeps the shape
-				// without hardcoding the client's basename here.
-				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}&poll_token=${pollToken}`,
+				// Agents page carrying only the session id (no poll token);
+				// an absolute mock URL keeps the shape without hardcoding
+				// the client's basename here.
+				approval_url: `https://jentic.example.test/app/agents?approve=${sessionId}`,
 				poll_token: pollToken,
 				resolved_flow: confirmChallengeKind,
 			},
 			{ status: 201 },
 		);
+	}),
+
+	// The list never carries the poll token. Scoping is not modelled: the mock
+	// caller sees every session, as an org admin would.
+	http.get('/connect-sessions', ({ request }) => {
+		const state = new URL(request.url).searchParams.get('state');
+		const rows = connectSessionsStore.filter((s) => !state || s.state === state);
+		return HttpResponse.json({
+			data: rows.map((s) => ({
+				session_id: s.session_id,
+				state: s.state,
+				vendor_key: s.vendor_key,
+				vendor_display_name:
+					vendorCapabilitiesStore[s.vendor_key]?.display_name ?? s.vendor_key,
+				agent_id: s.agent_id,
+				requested_by_actor_id: s.requested_by_actor_id,
+				reason: s.reason,
+				connected_as: null,
+				error_code: null,
+				created_at: s.created_at,
+				credential_id: s.credential_id,
+			})),
+			has_more: false,
+			next_cursor: null,
+		});
 	}),
 
 	http.get('/connect-sessions/:sessionId', ({ params, request }) => {
@@ -559,7 +647,7 @@ const connectSessionsHandlers = [
 		if (!isMockSession(gated)) return gated;
 		const body = (await request.json()) as ConfirmRequest;
 		gated.confirmBodies.push(body);
-		gated.state = 'confirmed';
+		gated.state = 'polling';
 		gated.status = { ...gated.status, status: 'polling' };
 		if (confirmChallengeKind === 'authorization_code') {
 			return HttpResponse.json({
@@ -613,6 +701,7 @@ export const credentialsE2eHooks = {
 	setMockVendorCapabilities,
 	setMockConfirmChallengeKind,
 	setMockConnectSessionStatus,
+	seedMockAgentConnectSession,
 };
 
 export const credentialsHandlers = [
