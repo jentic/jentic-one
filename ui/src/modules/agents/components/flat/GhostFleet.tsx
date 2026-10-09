@@ -126,7 +126,7 @@ export function GhostFleet({ arrived, slotRef, reducedMotion, settled = false }:
 						<span
 							className={cn(
 								'text-[13px] font-semibold transition-colors duration-[800ms]',
-								filled ? 'text-foreground/70' : 'text-foreground/55',
+								filled ? 'text-foreground/70' : 'text-foreground-sub',
 							)}
 						>
 							GitHub

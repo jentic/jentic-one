@@ -51,7 +51,7 @@ const TIERS = [
 export function TierLadder() {
 	return (
 		<div className="border-border bg-card/40 rounded-xl border p-4">
-			<p className="text-foreground/55 mb-3 text-xs">
+			<p className="text-foreground-sub mb-3 text-xs">
 				Permissions are tiered. A broader tier{' '}
 				<strong className="text-foreground/80">grants</strong> every narrower one, so you
 				only assign the highest level a caller needs.

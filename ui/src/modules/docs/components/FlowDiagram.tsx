@@ -30,7 +30,7 @@ function Node({
 		>
 			<Icon className={`mb-1 h-6 w-6 ${accent}`} aria-hidden="true" />
 			<p className="text-foreground text-sm font-semibold">{title}</p>
-			<p className="text-foreground/55 text-[11px] leading-snug">{subtitle}</p>
+			<p className="text-foreground-sub text-[11px] leading-snug">{subtitle}</p>
 		</div>
 	);
 }
@@ -38,8 +38,10 @@ function Node({
 function ArrowX({ label }: { label: string }) {
 	return (
 		<div className="flex flex-col items-center px-1">
-			<span className="text-foreground/50 mb-0.5 text-[10px] whitespace-nowrap">{label}</span>
-			<ArrowRight className="text-foreground/40 h-5 w-5" aria-hidden="true" />
+			<span className="text-foreground-sub mb-0.5 text-[10px] whitespace-nowrap">
+				{label}
+			</span>
+			<ArrowRight className="text-foreground-faint h-5 w-5" aria-hidden="true" />
 		</div>
 	);
 }
@@ -47,7 +49,7 @@ function ArrowX({ label }: { label: string }) {
 export function FlowDiagram() {
 	return (
 		<figure className="border-border bg-background/30 rounded-xl border p-4 sm:p-6">
-			<figcaption className="text-foreground/55 mb-4 text-xs">
+			<figcaption className="text-foreground-sub mb-4 text-xs">
 				High-level request flow — the control plane decides &amp; records; the data plane
 				executes.
 			</figcaption>
@@ -65,7 +67,7 @@ export function FlowDiagram() {
 						<ArrowX label="authenticated call" />
 					</div>
 					<ArrowDown
-						className="text-foreground/40 h-5 w-5 sm:hidden"
+						className="text-foreground-faint h-5 w-5 sm:hidden"
 						aria-hidden="true"
 					/>
 				</div>
@@ -82,7 +84,7 @@ export function FlowDiagram() {
 						<ArrowX label="execute via" />
 					</div>
 					<ArrowDown
-						className="text-foreground/40 h-5 w-5 sm:hidden"
+						className="text-foreground-faint h-5 w-5 sm:hidden"
 						aria-hidden="true"
 					/>
 				</div>
@@ -98,7 +100,7 @@ export function FlowDiagram() {
 						<ArrowX label="forwards request" />
 					</div>
 					<ArrowDown
-						className="text-foreground/40 h-5 w-5 sm:hidden"
+						className="text-foreground-faint h-5 w-5 sm:hidden"
 						aria-hidden="true"
 					/>
 				</div>
@@ -115,14 +117,14 @@ export function FlowDiagram() {
 			<div className="mt-4 flex flex-col items-center">
 				<ArrowDown className="text-foreground/30 h-4 w-4" aria-hidden="true" />
 				<div className="border-border/70 bg-muted/30 mt-1 flex items-center gap-2 rounded-lg border px-4 py-2">
-					<Database className="text-foreground/55 h-4 w-4" aria-hidden="true" />
+					<Database className="text-foreground-sub h-4 w-4" aria-hidden="true" />
 					<span className="text-foreground/70 text-xs">
 						Shared PostgreSQL — catalogue, identities, grants, audit &amp; executions
 					</span>
 				</div>
 			</div>
 
-			<p className="text-foreground/50 mt-4 text-[11px] leading-relaxed">
+			<p className="text-foreground-sub mt-4 text-[11px] leading-relaxed">
 				Credentials are stored encrypted and only ever decrypted inside the Broker at
 				execution time — they never reach the actor or leave the data plane.
 			</p>

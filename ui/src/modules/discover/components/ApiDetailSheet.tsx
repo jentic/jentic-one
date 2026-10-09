@@ -333,7 +333,7 @@ export function ApiDetailSheet({
 
 /** The sheet's one filled action: 36px, field radius, bold. */
 const CTA_CLASSES =
-	'rounded-field hover:bg-foreground-lighter h-9 gap-[7px] px-4 py-0 text-[13.5px] font-bold shadow-none';
+	'rounded-field hover:bg-primary-hover h-9 gap-[7px] px-4 py-0 text-[13.5px] font-bold shadow-none';
 
 /** Borderless status pill with a leading dot (workspace relation). */
 function SoftPill({

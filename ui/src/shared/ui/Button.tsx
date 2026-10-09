@@ -34,7 +34,7 @@ const variantClasses: Record<Variant, string> = {
 	// Disabled CTA: a quiet raised fill with legible `sub` text (≥5:1) rather
 	// than a 50% fade, so it still reads as the (unavailable) action.
 	primary:
-		'bg-primary text-background hover:bg-primary-hover disabled:bg-surface-quiet-cta disabled:text-foreground-sub',
+		'bg-primary text-primary-foreground hover:bg-primary-hover disabled:bg-surface-quiet-cta disabled:text-foreground-sub',
 	secondary: 'bg-surface-tonal text-foreground hover:bg-surface-tonal-hover disabled:opacity-50',
 	danger: 'bg-danger/18 text-danger hover:bg-danger/26 disabled:opacity-50',
 	ghost: 'text-muted-foreground hover:text-foreground hover:bg-tint-2 disabled:opacity-50',

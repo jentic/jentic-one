@@ -76,7 +76,7 @@ function FlagsTable({ flags }: { flags: CliFlag[] }) {
 	return (
 		<div className="border-border/60 overflow-hidden rounded-md border">
 			<table className="w-full text-left text-[13px]">
-				<thead className="bg-muted/40 text-foreground/55">
+				<thead className="bg-muted/40 text-foreground-sub">
 					<tr>
 						<th className="px-3 py-1.5 font-medium">Flag</th>
 						<th className="px-3 py-1.5 font-medium">Type</th>
@@ -90,11 +90,11 @@ function FlagsTable({ flags }: { flags: CliFlag[] }) {
 							<td className="px-3 py-1.5 font-mono whitespace-nowrap">
 								<span className="text-primary">--{f.name}</span>
 								{f.shorthand && (
-									<span className="text-foreground/45">, -{f.shorthand}</span>
+									<span className="text-foreground-faint">, -{f.shorthand}</span>
 								)}
 							</td>
-							<td className="text-foreground/55 px-3 py-1.5 font-mono">{f.type}</td>
-							<td className="text-foreground/55 px-3 py-1.5 font-mono">
+							<td className="text-foreground-sub px-3 py-1.5 font-mono">{f.type}</td>
+							<td className="text-foreground-sub px-3 py-1.5 font-mono">
 								{f.default ? f.default : '—'}
 							</td>
 							<td className="text-foreground/75 px-3 py-1.5">{f.usage}</td>
@@ -133,7 +133,7 @@ function CommandBlock({ cmd, depth }: { cmd: CliCommand; depth: number }) {
 				{cmd.aliases?.map((a) => (
 					<span
 						key={a}
-						className="text-foreground/55 border-border/70 bg-muted/30 rounded border px-1.5 py-0.5 font-mono text-[11px]"
+						className="text-foreground-sub border-border/70 bg-muted/30 rounded border px-1.5 py-0.5 font-mono text-[11px]"
 					>
 						{a}
 					</span>
@@ -143,14 +143,14 @@ function CommandBlock({ cmd, depth }: { cmd: CliCommand; depth: number }) {
 			<p className="text-foreground/75 mt-2 text-sm">{cmd.short}</p>
 
 			{cmd.long && cmd.long.trim() !== cmd.short.trim() && (
-				<p className="text-foreground/55 mt-2 max-w-3xl text-[13px] leading-relaxed whitespace-pre-line">
+				<p className="text-foreground-sub mt-2 max-w-3xl text-[13px] leading-relaxed whitespace-pre-line">
 					{cmd.long}
 				</p>
 			)}
 
 			{cmd.flags && cmd.flags.length > 0 && (
 				<div className="mt-3">
-					<h5 className="text-foreground/45 mb-1.5 text-[11px] font-semibold tracking-wide uppercase">
+					<h5 className="text-foreground-faint mb-1.5 text-[11px] font-semibold tracking-wide uppercase">
 						Flags
 					</h5>
 					<FlagsTable flags={cmd.flags} />
@@ -159,7 +159,7 @@ function CommandBlock({ cmd, depth }: { cmd: CliCommand; depth: number }) {
 
 			{example && (
 				<div className="mt-3">
-					<h5 className="text-foreground/45 mb-1.5 text-[11px] font-semibold tracking-wide uppercase">
+					<h5 className="text-foreground-faint mb-1.5 text-[11px] font-semibold tracking-wide uppercase">
 						Example
 					</h5>
 					<div className="border-border/60 bg-code relative overflow-hidden rounded-md border">
@@ -248,13 +248,13 @@ function CommandIndex({ data, activeId }: { data: BinaryGroups[]; activeId: stri
 								{binary.name}
 							</button>
 							{total === 0 ? (
-								<p className="text-foreground/35 px-2 text-[12px] italic">
+								<p className="text-foreground-faint px-2 text-[12px] italic">
 									no matches
 								</p>
 							) : (
 								groups.map((group) => (
 									<div key={group.title} className="mb-2">
-										<p className="text-foreground/40 mb-0.5 px-2 text-[10px] font-semibold tracking-wider uppercase">
+										<p className="text-foreground-faint mb-0.5 px-2 text-[10px] font-semibold tracking-wider uppercase">
 											{group.title}
 										</p>
 										<ul className="space-y-0.5">
@@ -312,13 +312,13 @@ function BinaryDocument({ binary, groups, total }: BinaryGroups) {
 						{binary.name}
 					</code>
 					{binary.tagline && (
-						<span className="text-foreground/60 ml-2 text-sm">{binary.tagline}</span>
+						<span className="text-foreground-sub ml-2 text-sm">{binary.tagline}</span>
 					)}
 				</div>
 			</header>
 
 			{total === 0 ? (
-				<p className="text-foreground/50 py-2 pl-1 text-sm">
+				<p className="text-foreground-sub py-2 pl-1 text-sm">
 					No commands match your filter.
 				</p>
 			) : (
@@ -402,7 +402,7 @@ export function CliReferenceView({ binaries }: CliReferenceViewProps) {
 						/>
 					</div>
 					{q && (
-						<span className="text-foreground/50 shrink-0 text-xs">
+						<span className="text-foreground-sub shrink-0 text-xs">
 							{matchTotal} match{matchTotal === 1 ? '' : 'es'}
 						</span>
 					)}

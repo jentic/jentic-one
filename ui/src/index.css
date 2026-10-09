@@ -80,6 +80,9 @@
 	/* Form placeholder — a muted grey, clearly lighter than entered text */
 	--color-input-placeholder: hsl(var(--input-placeholder));
 
+	/* Popovers: menus, dropdowns, chart tooltips. */
+	--color-popover: hsl(var(--popover));
+
 	/* Card */
 	--color-card: hsl(var(--card));
 	--color-card-foreground: hsl(var(--card-foreground));
@@ -192,6 +195,7 @@
 	--background: var(--primary-950); /* #0E1A1D */
 	--card: var(--primary-900); /* #162629 */
 	--card-foreground: 0 0% 100%; /* #FFFFFF */
+	--popover: var(--background);
 	--border: var(--primary-700); /* #305256 */
 
 	/* Text */
@@ -362,16 +366,17 @@
 	--primary-900: 0 0% 100%;
 	--primary-950: 180 11% 96%; /* #F5F7F7 */
 
-	--accent-orange: 28 78% 40%;
-	--accent-green: 164 62% 28%;
-	--accent-pink: 356 56% 44%;
-	--accent-blue: 205 66% 38%;
-	--accent-yellow: 44 80% 34%;
+	--accent-orange: 28 78% 33%;
+	--accent-green: 164 62% 26.5%;
+	--accent-pink: 356 58% 40%;
+	--accent-blue: 205 66% 36.5%;
+	--accent-yellow: 44 80% 27%;
 
 	/* Surfaces */
 	--background: var(--primary-950);
 	--card: 0 0% 100%;
 	--card-foreground: 192 35% 10%;
+	--popover: 0 0% 100%;
 	--border: 188 16% 84%;
 
 	/* Text */
@@ -380,8 +385,8 @@
 	--foreground-name: 192 35% 10% / 0.92;
 	--muted: 190 18% 94%;
 	--foreground-sub: 188 14% 34%; /* ≈ 7:1 on white */
-	--foreground-faint: 188 12% 40%; /* ≈ 5.6:1 on white, ≥ 4.5:1 on wells */
-	--foreground-group: 186 18% 38%;
+	--foreground-faint: 188 12% 37%; /* ≥ 4.5:1 on every surface up to chip-active */
+	--foreground-group: 186 18% 36%;
 	--foreground-disabled: 188 8% 66%;
 
 	/* Tonal surfaces — white for raised, cool greys for wells/hover/chips. */
@@ -401,7 +406,7 @@
 	--surface-drop: 186 30% 96%;
 	--surface-drop-over: 176 40% 92%;
 	--surface-ghost: 186 34% 92%;
-	--control-edge: 188 14% 74%;
+	--control-edge: 188 14% 56%; /* ≈ 2.7:1 on a card / sheet */
 	--control-edge-hover: 186 42% 30% / 0.55;
 
 	--hairline: 192 30% 20% / 0.09;
@@ -428,10 +433,10 @@
 	--header-field-bg-hover: 190 18% 92%;
 
 	--method-post: 164 52% 28%;
-	--method-delete: 356 48% 42%;
-	--method-put: 34 52% 34%;
+	--method-delete: 356 50% 39%;
+	--method-put: 34 52% 33.5%;
 
-	--input-placeholder: 188 10% 50%;
+	--input-placeholder: 188 10% 40%; /* ≥ 4.5:1 on fields; still lighter than `faint` */
 
 	/* Brand */
 	--primary: var(--primary-300);
@@ -439,11 +444,11 @@
 	--primary-foreground: 0 0% 100%;
 
 	/* State */
-	--success: 164 62% 28%;
-	--caution: 36 46% 38%;
-	--warning: 32 72% 36%;
-	--danger: 356 58% 44%;
-	--destructive: 13 80% 44%;
+	--success: 164 62% 26.5%;
+	--caution: 36 46% 33.5%;
+	--warning: 32 72% 32%;
+	--danger: 356 60% 40%;
+	--destructive: 13 80% 38.5%;
 
 	--elevation-card: 0 1px 2px 0 hsl(192 30% 20% / 0.06);
 	--elevation-card-hover:

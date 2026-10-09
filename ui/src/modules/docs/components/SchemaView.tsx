@@ -155,7 +155,7 @@ function SchemaNode({ spec, node, depth, anchorPrefix = '' }: SchemaNodeProps) {
 	const { schema } = derefSchema(spec, node);
 
 	if (!isObj(schema)) {
-		return <p className="text-foreground/50 text-[13px]">any</p>;
+		return <p className="text-foreground-sub text-[13px]">any</p>;
 	}
 
 	// A named ref: link to the model, and (shallowly) expand its object shape.
@@ -184,7 +184,7 @@ function SchemaNode({ spec, node, depth, anchorPrefix = '' }: SchemaNodeProps) {
 
 			{!named && variants && variants.length > 0 ? (
 				<div className="space-y-1">
-					<p className="text-foreground/45 text-[11px]">
+					<p className="text-foreground-faint text-[11px]">
 						{Array.isArray(resolved.oneOf) ? 'One of' : 'Any of'}:
 					</p>
 					<ul className="flex flex-wrap items-center gap-1.5">
@@ -198,7 +198,7 @@ function SchemaNode({ spec, node, depth, anchorPrefix = '' }: SchemaNodeProps) {
 									{vn ? (
 										<ModelLink name={vn} anchorPrefix={anchorPrefix} />
 									) : (
-										<code className="text-foreground/55 font-mono text-[12px]">
+										<code className="text-foreground-sub font-mono text-[12px]">
 											{typeLabel(spec, v)}
 										</code>
 									)}
@@ -224,7 +224,7 @@ function SchemaNode({ spec, node, depth, anchorPrefix = '' }: SchemaNodeProps) {
 			) : (
 				!named &&
 				!itemsNamed && (
-					<p className="text-foreground/55 font-mono text-[12px]">
+					<p className="text-foreground-sub font-mono text-[12px]">
 						{typeLabel(spec, resolved)}
 					</p>
 				)
@@ -287,7 +287,7 @@ function PropertyRow({
 				{badges.map((b) => (
 					<span
 						key={b}
-						className="bg-muted/40 text-foreground/55 rounded px-1 py-px font-mono text-[10px]"
+						className="bg-muted/40 text-foreground-sub rounded px-1 py-px font-mono text-[10px]"
 					>
 						{b}
 					</span>
@@ -296,7 +296,7 @@ function PropertyRow({
 			{desc && (
 				<Markdown
 					source={desc}
-					className="text-foreground/55 mt-0.5 text-[12px] leading-snug"
+					className="text-foreground-sub mt-0.5 text-[12px] leading-snug"
 				/>
 			)}
 			{canExpand && open && (

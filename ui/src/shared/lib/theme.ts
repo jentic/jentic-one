@@ -9,8 +9,9 @@
  * palettes live in `index.css`: `:root` is dark and `[data-theme='light']`
  * overrides the same tokens, so this module owns no colours.
  *
- * `main.tsx` imports this module first, for its side effect, so the attribute
- * lands before the app renders.
+ * `index.html` ships `data-theme="light"` and an inline head script applies a
+ * stored `dark` before first paint, so there is no flash of the wrong palette;
+ * this module takes over from there (the user menu toggle, other tabs).
  */
 import { useSyncExternalStore } from 'react';
 
@@ -33,15 +34,19 @@ function storedTheme(): Theme | null {
 	}
 }
 
+// Held in memory so a switch still applies when storage is unavailable.
+let current: Theme =
+	typeof window === 'undefined' ? DEFAULT_THEME : (storedTheme() ?? DEFAULT_THEME);
+
 /** The theme in force: this browser's stored choice, else the default. */
 export function activeTheme(): Theme {
-	return storedTheme() ?? DEFAULT_THEME;
+	return current;
 }
 
 const listeners = new Set<() => void>();
 
 function paint(): void {
-	const theme = activeTheme();
+	const theme = current;
 	document.documentElement.dataset.theme = theme;
 	document
 		.querySelector('meta[name="theme-color"]')
@@ -51,6 +56,7 @@ function paint(): void {
 
 /** Store a choice for this browser and repaint. */
 export function setTheme(theme: Theme): void {
+	current = theme;
 	try {
 		window.localStorage.setItem(THEME_STORAGE_KEY, theme);
 	} catch {
@@ -71,4 +77,12 @@ export function useTheme(): Theme {
 	return useSyncExternalStore(subscribe, activeTheme);
 }
 
-if (typeof window !== 'undefined') paint();
+if (typeof window !== 'undefined') {
+	paint();
+	// A switch in another tab moves this one too.
+	window.addEventListener('storage', (event) => {
+		if (event.key !== THEME_STORAGE_KEY) return;
+		current = storedTheme() ?? DEFAULT_THEME;
+		paint();
+	});
+}

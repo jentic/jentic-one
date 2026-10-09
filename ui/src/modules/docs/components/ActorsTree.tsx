@@ -116,7 +116,7 @@ export function ActorExplorer({ payload }: ActorExplorerProps) {
 								<Icon
 									className={cn(
 										'h-4 w-4 shrink-0',
-										active ? m.accent : 'text-foreground/45',
+										active ? m.accent : 'text-foreground-faint',
 									)}
 									aria-hidden="true"
 								/>
@@ -140,7 +140,7 @@ export function ActorExplorer({ payload }: ActorExplorerProps) {
 			{/* Selected actor summary + the grouped endpoint list (the CLI output). */}
 			<div className="p-3 sm:p-4">
 				{!actor || !meta ? (
-					<p className="text-foreground/55 py-6 text-center text-sm">
+					<p className="text-foreground-sub py-6 text-center text-sm">
 						Select an actor above to see which endpoints it can call — the interactive
 						form of{' '}
 						<code className="text-foreground/75 font-mono text-xs">
@@ -213,13 +213,13 @@ function CallerBucketBlock({
 			>
 				<ChevronRight
 					className={cn(
-						'text-foreground/40 h-4 w-4 shrink-0 transition-transform',
+						'text-foreground-faint h-4 w-4 shrink-0 transition-transform',
 						open && 'rotate-90',
 					)}
 					aria-hidden="true"
 				/>
 				<span className="text-foreground text-sm font-semibold">{label}</span>
-				<span className="text-foreground/60 text-xs">{blurb}</span>
+				<span className="text-foreground-sub text-xs">{blurb}</span>
 				<span className="text-foreground/65 ml-auto shrink-0 text-xs tabular-nums">
 					{count}
 				</span>

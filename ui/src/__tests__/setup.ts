@@ -9,6 +9,10 @@ import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
 // white-on-white because the theme background is missing.
 import '@/index.css';
 
+// Every file renders on the product's default palette, so axe colour-contrast
+// checks see one theme whether or not a file imports `shared/lib/theme`.
+document.documentElement.dataset.theme = 'light';
+
 // All test files run in parallel inside a single Chromium, so on a loaded CI
 // runner an async settle (backlog fetch → React commit) can outlast
 // testing-library's 1s default and fail every retry of the same loaded run

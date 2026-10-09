@@ -79,7 +79,7 @@ export function NotificationsMenu() {
 					ref={panelRef}
 					role="dialog"
 					aria-labelledby={titleId}
-					className="border-border/60 bg-background absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
+					className="border-border/60 bg-popover absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
 				>
 					{view === 'list' ? (
 						<>

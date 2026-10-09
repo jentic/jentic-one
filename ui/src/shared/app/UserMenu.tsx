@@ -46,7 +46,7 @@ export function UserMenu() {
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-label="User menu"
-				className="bg-primary/80 text-background hover:bg-primary/80 hover:text-background relative h-7 w-7 rounded-full p-0 text-xs font-semibold hover:opacity-80"
+				className="bg-primary/80 text-primary-foreground hover:bg-primary/80 hover:text-primary-foreground relative h-7 w-7 rounded-full p-0 text-xs font-semibold hover:opacity-80"
 			>
 				{initial}
 			</Button>

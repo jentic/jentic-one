@@ -143,7 +143,7 @@ export function StackedBarChart({
 					{hoveredBar && (
 						<div
 							role="tooltip"
-							className="border-border bg-background pointer-events-none absolute bottom-full z-10 mb-1 rounded-md border px-2.5 py-1.5 whitespace-nowrap shadow-md"
+							className="border-border bg-popover pointer-events-none absolute bottom-full z-10 mb-1 rounded-md border px-2.5 py-1.5 whitespace-nowrap shadow-md"
 							style={{
 								left: `${hoveredFrac * 100}%`,
 								transform: `translateX(${tooltipTranslateX(hoveredFrac)})`,
