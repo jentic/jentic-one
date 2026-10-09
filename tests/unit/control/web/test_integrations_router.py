@@ -41,7 +41,9 @@ from jentic_one.control.services.integrations.errors import (
     ConfirmationForbiddenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
     ScopeValidationError,
+    UnsupportedTargetKindError,
 )
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
@@ -165,6 +167,25 @@ def test_connect_maps_unknown_vendor_to_404() -> None:
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "nope"})
     assert resp.status_code == 404
+
+
+def test_connect_maps_manual_flows_disabled_and_unsupported_target_kind() -> None:
+    """The API-target gate is a coded 404; an unhandled target kind is an internal 500."""
+    svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    svc.create_session = AsyncMock(side_effect=ManualFlowsDisabledError())
+    with TestClient(app) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh"})
+    assert resp.status_code == 404
+    assert resp.json()["type"].endswith("manual_flows_disabled")
+
+    svc.create_session = AsyncMock(
+        side_effect=UnsupportedTargetKindError(None, "api", "create a session")
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh"})
+    assert resp.status_code == 500
+    assert resp.json()["type"].endswith("connect_session_error")
 
 
 def test_connect_maps_ambiguous_vendor_to_400() -> None:

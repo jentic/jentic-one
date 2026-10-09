@@ -2491,6 +2491,7 @@
           "state": {
             "enum": [
               "created",
+              "awaiting_app",
               "polling",
               "connected"
             ],
@@ -22310,6 +22311,7 @@
                 {
                   "enum": [
                     "created",
+                    "awaiting_app",
                     "polling",
                     "connected"
                   ],

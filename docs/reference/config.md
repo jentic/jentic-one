@@ -261,10 +261,12 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration. Empty since theme 7 removed the access-request subsystem (its `access_requests.ttl_days`/`canonical_base_url` knobs). The section stays so a `control:` key in existing YAML keeps validating and future control-surface knobs have a home; unknown subkeys are ignored.
+Control surface configuration. Unknown subkeys are ignored, so a `control:` section written for another release keeps validating.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
+| `control.connect.manual_flows_enabled` | boolean | `false` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED` | Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. Not usable in this release: leave it off. Once usable, turn it on only after every control replica runs a release that understands these sessions. |
+| `control.connect.manual_flows_ttl_hours` | integer (>= 1) | `72` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_TTL_HOURS` | Hours an API-target connect session (a human-entered credential, or an OAuth API waiting for an app) stays open before it expires. Vendor OAuth sessions keep their fixed 30-minute lifetime. |
 
 ## `ingest`
 
