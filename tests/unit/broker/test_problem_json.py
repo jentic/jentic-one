@@ -23,11 +23,14 @@ from jentic_one.broker.core.exceptions import (
     direct_action_denied_directive,
     direct_credential_identity_mismatch_directive,
     no_credential_binding_directive,
+    suggested_permission_rules,
     switch_toolkit_directive,
 )
 from jentic_one.broker.core.headers import JenticHeader
 from jentic_one.broker.core.problem import STATUS_BY_ERROR
 from jentic_one.broker.web.errors import handle_broker_error, problem_response
+from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.broker.protocols import IdentityMismatch
 
 
@@ -111,20 +114,22 @@ def test_no_credential_binding_directive_names_surviving_commands() -> None:
 
 
 def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> None:
-    """theme-7 Phase 1b: when the API reverse-maps onto a vendor-registry key
-    (``connect_vendor``), the provisioning leg is agent-initiable — the
-    directive carries a runnable ``suggested_command`` (``jentic connect
-    <key>``, the registry key, never the API id) and the prose teaches the
-    relay loop. Approval and the binding grant stay human in the wording."""
+    """When a connect target covers the API, the provisioning leg is
+    agent-initiable — the directive carries a runnable ``suggested_command``
+    (``jentic connect <key>``, the connect key, never the API id), the
+    structured ``connect`` object MCP clients fill ``request_connection``
+    from, and the prose teaches the relay loop. Approval and the binding
+    grant stay human in the wording."""
     unserved = no_credential_binding_directive(
         vendor="github.com",
         name="api.github.com",
         version="1.0.0",
         api_served=False,
-        connect_vendor="github",
+        connect=ConnectTarget(vendor_key="github"),
     )
     assert unserved.strategy == "prompt_human"
     assert unserved.parameters["suggested_command"] == "jentic connect github"
+    assert unserved.parameters["connect"] == {"vendor_key": "github"}
     instruction = unserved.human_readable_instruction
     assert "jentic connect github" in instruction
     assert "request_connection" in instruction
@@ -135,11 +140,37 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
         name="api.github.com",
         version="1.0.0",
         api_served=True,
-        connect_vendor="github",
+        connect=ConnectTarget(vendor_key="github", registration_id="oar_1"),
     )
     # Served keeps the bind-me-first ask; connect is the alternative.
     assert served.parameters["suggested_command"] == "jentic connect github"
+    assert served.parameters["connect"] == {"vendor_key": "github", "registration_id": "oar_1"}
     assert "bind" in served.human_readable_instruction
+
+
+def test_no_credential_binding_directive_carries_suggested_rules() -> None:
+    """``suggested_rules`` rides the directive whether or not the agent can
+    connect itself: it is the minimal rule to ask for with the credential."""
+    rules = suggested_permission_rules(method="post", path="/v1/widgets")
+    assert rules == [
+        {"effect": "allow", "methods": ["POST"], "path": "/v1/widgets", "match_mode": "exact"}
+    ]
+    off_registry = no_credential_binding_directive(
+        vendor="acme", name="widgets", version="1.0.0", api_served=False, suggested_rules=rules
+    )
+    assert off_registry.parameters["suggested_rules"] == rules
+    assert "connect" not in off_registry.parameters
+    assert "suggested_command" not in off_registry.parameters
+
+
+def test_suggested_permission_rules_match_the_rule_schema() -> None:
+    """The suggestion is the shape the permission-rule authoring schema
+    accepts, and an unusable path yields no suggestion rather than one the
+    schema would refuse."""
+    (rule,) = suggested_permission_rules(method="GET", path="/v1/pets/42") or []
+    assert PermissionRuleSchema.model_validate(rule).match_mode == "exact"
+    assert suggested_permission_rules(method="GET", path="") is None
+    assert suggested_permission_rules(method="", path="/v1/pets") is None
 
 
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:

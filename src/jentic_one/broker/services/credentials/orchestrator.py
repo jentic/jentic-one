@@ -26,11 +26,14 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     InvalidCredentialNameError,
     ambiguous_credential_binding_directive,
+    connect_parameters,
+    suggested_permission_rules,
 )
 from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
 )
 from jentic_one.broker.core.injection import inject_auth
+from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
     CredentialIdNotFoundError,
@@ -41,8 +44,9 @@ from jentic_one.broker.services.credentials.errors import (
 )
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
-from jentic_one.shared.access_guidance import connect_vendor_key
+from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import ConnectableRegistrationSourceProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import (
@@ -68,8 +72,16 @@ class CredentialService:
     into the async worker without ``shared/jobs/`` importing ``broker/``.
     """
 
-    def __init__(self, ctx: Context) -> None:
+    def __init__(
+        self,
+        ctx: Context,
+        *,
+        connect_registrations: ConnectableRegistrationSourceProtocol | None = None,
+    ) -> None:
         self._ctx = ctx
+        # Shared OAuth-app registrations the 424 directive may suggest; ``None``
+        # reads them from the control DB on the denial path.
+        self._connect_registrations = connect_registrations
 
     async def inject(
         self,
@@ -225,7 +237,9 @@ class CredentialService:
                 summary=f"No credential provisioned for '{api.vendor}'",
                 identity=identity,
             )
-            raise self._not_provisioned(api, identity) from exc
+            raise self._not_provisioned(
+                api, identity, connect=await self._connect_target(api)
+            ) from exc
         except RefreshInvalidGrantError as exc:
             # Jentic-side auth failure: our OAuth refresh against the token
             # endpoint was rejected (invalid_grant). The auth source rides as a
@@ -274,6 +288,8 @@ class CredentialService:
         allowed_credential_ids: Collection[str] | None = None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        method: str = "",
+        path: str = "",
     ) -> ResolvedCredential | None:
         """Resolve-only credential selection — no refresh, decrypt, or audit.
 
@@ -284,6 +300,9 @@ class CredentialService:
         event fires. This runs the same resolution + error mapping as
         :meth:`inject` and returns the resolved metadata; pass it back to
         :meth:`inject` as ``preresolved`` to avoid resolving twice.
+
+        ``method`` / ``path`` are the request's, for the 424 directive's
+        ``suggested_rules``.
 
         Returns ``None`` when the API tuple has no vendor (no credential path).
         """
@@ -298,6 +317,8 @@ class CredentialService:
             allowed_credential_ids=allowed_credential_ids,
             request_server_variables=request_server_variables,
             server_variables_unresolved=server_variables_unresolved,
+            method=method,
+            path=path,
         )
 
     async def _resolve_mapped(
@@ -310,6 +331,8 @@ class CredentialService:
         allowed_credential_ids: Collection[str] | None,
         request_server_variables: Mapping[str, str] | None = None,
         server_variables_unresolved: bool = False,
+        method: str = "",
+        path: str = "",
     ) -> ResolvedCredential:
         """Resolve via ``CredentialResolver``, mapping errors to the broker taxonomy.
 
@@ -333,7 +356,12 @@ class CredentialService:
                 summary=f"No credential provisioned for '{api.vendor}'",
                 identity=identity,
             )
-            raise self._not_provisioned(api, identity) from exc
+            raise self._not_provisioned(
+                api,
+                identity,
+                connect=await self._connect_target(api),
+                suggested_rules=suggested_permission_rules(method=method, path=path),
+            ) from exc
         except CredentialNameNotFoundError as exc:
             raise InvalidCredentialNameError(
                 detail=str(exc),
@@ -405,27 +433,38 @@ class CredentialService:
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)
 
+    async def _connect_target(self, api: APIReference) -> ConnectTarget | None:
+        """The connect target the 424 suggests, resolved before the error is built."""
+        return await resolve_connect_target(
+            self._ctx, api, registrations=self._connect_registrations
+        )
+
     def _not_provisioned(
-        self, api: APIReference, identity: Identity
+        self,
+        api: APIReference,
+        identity: Identity,
+        *,
+        connect: ConnectTarget | None,
+        suggested_rules: list[dict[str, Any]] | None = None,
     ) -> DomainCredentialNotProvisionedError:
         """Build the 424 with a ``prompt_human`` directive enabling a human handoff.
 
-        Phase 1b: when the API reverse-maps onto a vendor-registry key
-        (``connect_vendor_key``), the provisioning leg is agent-initiable —
-        the directive carries a runnable ``parameters.suggested_command``
-        (``jentic connect <key>``, the registry key, never the API identity)
-        and the prose teaches the relay loop. Off the registry the ask stays
-        with the operator (same registry-gated pattern as the 403 arms in
-        ``broker/web/routers/execute.py``); approval stays human either way.
+        When a vendor-registry entry or a shared OAuth-app registration covers
+        the API (``connect``), the provisioning leg is agent-initiable — the
+        directive carries a runnable ``parameters.suggested_command``
+        (``jentic connect <key>``, the connect key, never the API identity),
+        the structured ``parameters.connect`` and the prose teaches the relay
+        loop. Otherwise the ask stays with the operator (same pattern as the
+        403 ``no_credential_binding`` directive); approval stays human either
+        way. ``parameters.vendor`` is the API's vendor axis, not a connect key.
         """
         intent_id = f"intent_{uuid.uuid4().hex}"
-        params: dict[str, object] = {"intent_id": intent_id, "vendor": api.vendor}
-
-        connect_vendor = connect_vendor_key(
-            self._ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
-        )
-        if connect_vendor:
-            params["suggested_command"] = f"jentic connect {connect_vendor}"
+        params: dict[str, object] = {
+            "intent_id": intent_id,
+            "vendor": api.vendor,
+            **connect_parameters(connect, suggested_rules),
+        }
+        connect_vendor = connect.vendor_key if connect is not None else None
 
         base = self._ctx.config.broker.account_linking_base_url
         if connect_vendor:
