@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
@@ -156,6 +156,28 @@ async def count_pending_by_agent(session: AsyncSession, agent_id: str) -> int:
     return int(result.scalar_one() or 0)
 
 
+#: Namespace of the per-agent advisory lock that serialises hold filing.
+_HOLD_LOCK_NAMESPACE = "execution_approvals:agent:"
+
+
+async def _lock_agent_holds(session: AsyncSession, agent_id: str) -> None:
+    """Serialise hold filing per agent until the caller's transaction ends.
+
+    The pending cap is a count followed by an insert; two concurrent filings
+    by one agent would both count below the cap and both insert. On
+    PostgreSQL a transaction-scoped advisory lock keyed on the agent makes
+    the second wait for the first to commit, so its count sees the first
+    row. SQLite transactions already take the write lock up front
+    (``BEGIN IMMEDIATE``), so they never overlap.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": _HOLD_LOCK_NAMESPACE + agent_id},
+    )
+
+
 async def _joined(session: AsyncSession, row: ExecutionApproval) -> HoldOutcome:
     job = await session.get(Job, row.job_id)
     return HoldOutcome(
@@ -195,8 +217,11 @@ async def file_hold(
     identical pending request returns its existing job — then the insert of the
     ``held`` job and its ``pending`` approval. A concurrent identical filing
     that wins the partial unique index between the join check and the insert
-    is joined as well, so two racing retries never produce two holds.
+    is joined as well, so two racing retries never produce two holds. The cap
+    is counted under a per-agent lock held to the end of the transaction, so
+    concurrent filings cannot together exceed it.
     """
+    await _lock_agent_holds(session, agent_id)
     pending = await count_pending_by_agent(session, agent_id)
     if pending >= max_pending:
         raise PendingApprovalLimitError(pending, max_pending)

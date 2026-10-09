@@ -255,6 +255,35 @@ async def test_pending_cap_denies_further_holds_and_counts_only_pending(
     assert third.joined is False
 
 
+async def test_concurrent_filings_never_exceed_the_pending_cap(
+    integration_context: Context, actors: _Actors
+) -> None:
+    """Five different calls race for two pending slots: exactly two are held."""
+    ctx = integration_context
+    outcomes = await asyncio.gather(
+        *(_hold(ctx, actors.agent, path=f"/v1/race/{i}", max_pending=2) for i in range(5)),
+        return_exceptions=True,
+    )
+    held = [o for o in outcomes if isinstance(o, HoldOutcome)]
+    refused = [o for o in outcomes if isinstance(o, PendingApprovalLimitError)]
+    assert len(held) == 2, outcomes
+    assert len(refused) == 3, outcomes
+    async with ctx.admin_db.session() as session:
+        pending = (
+            (
+                await session.execute(
+                    select(ExecutionApproval).where(
+                        ExecutionApproval.agent_id == actors.agent.sub,
+                        ExecutionApproval.state == "pending",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(pending) == 2
+
+
 async def test_approve_releases_the_job_once_with_audit_and_event(
     integration_context: Context, actors: _Actors
 ) -> None:
