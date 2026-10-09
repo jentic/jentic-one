@@ -342,6 +342,28 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
 # ---------------------------------------------------------------------------
 
 
+def api_connect_parameters(*, vendor: str, name: str, version: str) -> dict[str, Any]:
+    """The ``parameters`` a missing-credential directive adds for an API-target connect.
+
+    ``suggested_command`` is the CLI form (``jentic connect --api
+    <vendor/name/version>``) and ``connect.api`` the structured form an MCP
+    client passes as ``request_connection``'s ``api`` argument.
+    """
+    return {
+        "suggested_command": f"jentic connect --api {vendor}/{name}/{version}",
+        "connect": {"api": {"vendor": vendor, "name": name, "version": version}},
+    }
+
+
+def api_connect_hint(*, vendor: str, name: str, version: str) -> str:
+    """The prose naming both lanes' API-target connect call."""
+    return (
+        f'run `jentic connect --api {vendor}/{name}/{version} --reason "…"` (or call the '
+        f'request_connection tool with api {{"vendor": "{vendor}", "name": "{name}", '
+        f'"version": "{version}"}} and a reason)'
+    )
+
+
 def no_credential_binding_directive(
     *,
     vendor: str,
@@ -349,6 +371,7 @@ def no_credential_binding_directive(
     version: str,
     api_served: bool,
     connect_vendor: str | None = None,
+    connect_api: bool = False,
 ) -> AgentDirective:
     """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
 
@@ -372,6 +395,13 @@ def no_credential_binding_directive(
     is not in the registry; when set, the directive carries a runnable
     ``parameters.suggested_command`` (``jentic connect <vendor>``).
 
+    ``connect_api`` says the deployment takes connect requests for any
+    registry API (``control.connect.manual_flows_enabled``). With no vendor
+    key, the directive then names the API itself
+    (:func:`api_connect_parameters`) and the agent starts the connect; a human
+    enters the credential, so the agent relays the URL, ends its turn and
+    retries later. Without it the ask stays with the operator.
+
     Deliberately never enumerates other owners' credentials (that would leak
     instance inventory to an unbound agent).
     """
@@ -382,6 +412,9 @@ def no_credential_binding_directive(
     }
     if connect_vendor:
         parameters["suggested_command"] = f"jentic connect {connect_vendor}"
+    elif connect_api:
+        parameters.update(api_connect_parameters(vendor=vendor, name=name, version=version))
+    hint = api_connect_hint(vendor=vendor, name=name, version=version)
     if api_served:
         instruction = (
             f"You have no credential binding for '{api}', but a credential already serves "
@@ -395,6 +428,12 @@ def no_credential_binding_directive(
                 f"`jentic connect {connect_vendor}` (or the request_connection tool) and "
                 "relay its approval_url to your operator — approval is still theirs."
             )
+        elif connect_api:
+            instruction += (
+                f" Alternatively, start the request yourself: {hint}, and relay its "
+                "approval_url to your operator — they can bind you to the existing credential "
+                "from it. Approval is still theirs."
+            )
     elif connect_vendor:
         instruction = (
             f"No credential is provisioned for '{api}' yet. Start connecting one yourself: "
@@ -402,6 +441,13 @@ def no_credential_binding_directive(
             "and relay the approval_url it returns to your operator — they approve the "
             "connection in the browser; only a human can approve. Once they confirm, retry "
             "this call."
+        )
+    elif connect_api:
+        instruction = (
+            f"No credential is provisioned for '{api}' yet. Start the request yourself: "
+            f"{hint}, and relay the approval_url it returns to your operator — a human "
+            "enters the credential in the browser, which can take a while, so end your turn "
+            "and retry this call later. Only a human can approve."
         )
     else:
         instruction = (

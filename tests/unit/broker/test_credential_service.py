@@ -59,9 +59,11 @@ def _ctx(
     account_linking_base_url: str | None = None,
     vendors: VendorRegistryConfig | None = None,
     public_base_url: str = "",
+    manual_flows_enabled: bool = False,
 ) -> MagicMock:
     ctx = MagicMock()
     ctx.config.broker.account_linking_base_url = account_linking_base_url
+    ctx.config.control.connect.manual_flows_enabled = manual_flows_enabled
     ctx.config.server.public_base_url = public_base_url
     # A real (default-empty) registry: the 424 arm reverse-maps the API onto
     # a connect key, and a bare MagicMock would explode the .entries scan.
@@ -225,6 +227,45 @@ async def test_not_provisioned_registry_vendor_suggests_connect(
     assert "jentic connect github" in instruction
     assert "request_connection" in instruction
     assert "approval_url" in instruction
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", [None, "https://console.example"])
+async def test_not_provisioned_off_registry_suggests_api_connect_when_gate_is_on(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None
+) -> None:
+    """With API connect requests enabled, an off-registry 424 names the API
+    itself: the CLI form, the structured ``connect.api`` an MCP client fills
+    ``request_connection`` from, and end-your-turn prose (a human enters the
+    credential). It wins over the operator-only ``provisioning_url`` prose."""
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("stripe-com", "stripe-com-api", "2024-06-20")
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(
+            _ctx(manual_flows_enabled=True, account_linking_base_url=base_url)
+        ).inject(
+            api_vendor="stripe-com",
+            api_name="stripe-com-api",
+            api_version="2024-06-20",
+            identity=_IDENTITY,
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert directive.parameters["suggested_command"] == (
+        "jentic connect --api stripe-com/stripe-com-api/2024-06-20"
+    )
+    assert directive.parameters["connect"] == {
+        "api": {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}
+    }
+    # parameters.vendor stays the API's vendor axis.
+    assert directive.parameters["vendor"] == "stripe-com"
+    instruction = directive.human_readable_instruction
+    assert "jentic connect --api stripe-com/stripe-com-api/2024-06-20" in instruction
+    assert "request_connection" in instruction
+    assert "end your turn" in instruction
 
 
 @pytest.mark.asyncio

@@ -71,12 +71,23 @@ def _connect_vendor_for(ctx: Context, api: APIReference) -> str | None:
     )
 
 
+def _api_connect_enabled(ctx: Context) -> bool:
+    """Whether connect sessions may target any registry API on this deployment.
+
+    Mirrors the control-plane gate (``control.connect.manual_flows_enabled``)
+    so a directive only suggests ``jentic connect --api`` where ``:connect``
+    accepts it; off, the off-registry ask stays with the operator.
+    """
+    return ctx.config.control.connect.manual_flows_enabled
+
+
 def _empty_credential_derivation_denial(
     d: CredentialDerivation,
     api: APIReference,
     *,
     instance: str,
     connect_vendor: str | None = None,
+    connect_api: bool = False,
 ) -> BrokerError:
     """Pick the right denial for an empty credential derivation (direct path).
 
@@ -124,6 +135,7 @@ def _empty_credential_derivation_denial(
             version=api.version,
             api_served=d.api_served,
             connect_vendor=connect_vendor,
+            connect_api=connect_api,
         ),
     )
 
@@ -203,6 +215,7 @@ async def derive_credential_bindings(
             api,
             instance=instance,
             connect_vendor=_connect_vendor_for(ctx, api),
+            connect_api=_api_connect_enabled(ctx),
         )
         # The operator-visible pre-binding signal fires only for the plain
         # no-binding + nothing-serves case — an identity mismatch already has

@@ -142,6 +142,54 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
     assert "bind" in served.human_readable_instruction
 
 
+def test_no_credential_binding_directive_suggests_api_connect_when_enabled() -> None:
+    """With API connect requests enabled (``connect_api``) and no vendor key,
+    the directive names the API itself — ``suggested_command`` for the CLI
+    and ``connect.api`` for an MCP client's ``request_connection`` — and
+    teaches relay-then-end-your-turn. A vendor key still wins."""
+    unserved = no_credential_binding_directive(
+        vendor="acme",
+        name="pets",
+        version="v1",
+        api_served=False,
+        connect_api=True,
+    )
+    assert unserved.parameters["suggested_command"] == "jentic connect --api acme/pets/v1"
+    assert unserved.parameters["connect"] == {
+        "api": {"vendor": "acme", "name": "pets", "version": "v1"}
+    }
+    instruction = unserved.human_readable_instruction
+    assert "jentic connect --api acme/pets/v1" in instruction
+    assert "request_connection" in instruction
+    assert "end your turn" in instruction
+    assert "include the auth type" not in instruction
+
+    served = no_credential_binding_directive(
+        vendor="acme", name="pets", version="v1", api_served=True, connect_api=True
+    )
+    assert served.parameters["connect"]["api"]["name"] == "pets"
+    assert "bind" in served.human_readable_instruction
+    assert "jentic connect --api acme/pets/v1" in served.human_readable_instruction
+
+    vendor_wins = no_credential_binding_directive(
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=False,
+        connect_vendor="github",
+        connect_api=True,
+    )
+    assert vendor_wins.parameters["suggested_command"] == "jentic connect github"
+    assert "connect" not in vendor_wins.parameters
+
+    gate_off = no_credential_binding_directive(
+        vendor="acme", name="pets", version="v1", api_served=False
+    )
+    assert "suggested_command" not in gate_off.parameters
+    assert "connect" not in gate_off.parameters
+    assert "include the auth type" in gate_off.human_readable_instruction
+
+
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
     """The direct-path 409 twin retries via the Jentic-Credential-Id header.
 

@@ -26,6 +26,8 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     InvalidCredentialNameError,
     ambiguous_credential_binding_directive,
+    api_connect_hint,
+    api_connect_parameters,
 )
 from jentic_one.broker.core.exceptions import (
     CredentialNotProvisionedError as DomainCredentialNotProvisionedError,
@@ -424,8 +426,19 @@ class CredentialService:
         connect_vendor = connect_vendor_key(
             self._ctx.config.vendors, vendor=api.vendor, name=api.name, version=api.version
         )
+        # Off the vendor registry, the API itself is the connect target when
+        # the deployment takes API connect requests (the control gate).
+        connect_api = (
+            not connect_vendor
+            and self._ctx.config.control.connect.manual_flows_enabled
+            and bool(api.vendor and api.name and api.version)
+        )
         if connect_vendor:
             params["suggested_command"] = f"jentic connect {connect_vendor}"
+        elif connect_api:
+            params.update(
+                api_connect_parameters(vendor=api.vendor, name=api.name, version=api.version)
+            )
 
         base = self._ctx.config.broker.account_linking_base_url
         if connect_vendor:
@@ -435,6 +448,14 @@ class CredentialService:
                 "request_connection tool) and relay the approval_url to your human "
                 "operator — they approve it in the browser; you cannot. Once they "
                 "confirm, verify the new binding with whoami and retry."
+            )
+        elif connect_api:
+            hint = api_connect_hint(vendor=api.vendor, name=api.name, version=api.version)
+            instruction = (
+                f"No credential is connected for '{api.vendor}'. Start the request "
+                f"yourself: {hint}, and relay the approval_url to your human operator — "
+                "a human enters the credential in the browser, which can take a while, so "
+                "end your turn and retry later."
             )
         else:
             instruction = (
@@ -446,7 +467,7 @@ class CredentialService:
                 f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
             )
             params["provisioning_url"] = provisioning_url
-            if not connect_vendor:
+            if not connect_vendor and not connect_api:
                 instruction = (
                     f"No credential is connected for '{api.vendor}'. Ask the user to open "
                     f"{provisioning_url} to authorize, then retry once they confirm."
