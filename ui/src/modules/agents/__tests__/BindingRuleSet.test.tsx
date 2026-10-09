@@ -123,7 +123,11 @@ function renderPage() {
 
 async function openSidebar(title: string): Promise<HTMLElement> {
 	const user = userEvent.setup();
-	await user.click(await screen.findByRole('button', { name: `${title} — open access details` }));
+	// The row's Manage access opens the sheet; the row and its chevron only pin it.
+	const row = (await screen.findByRole('heading', { name: title })).closest(
+		'[data-testid="api-tile"]',
+	) as HTMLElement;
+	await user.click(within(row).getByTestId('row-manage-access'));
 	const dialog = await screen.findByRole('dialog', { name: title });
 	await waitFor(() => {
 		expect(within(dialog).getAllByRole('button')[0]).toHaveFocus();

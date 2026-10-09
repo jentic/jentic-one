@@ -249,7 +249,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 100,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 		expect(agentSetupGapCount(bindings, credentials)).toBe(1);
 	});
@@ -266,7 +267,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 0,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -289,7 +291,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: null,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -313,7 +316,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 100,
 			operationsAtLeast: true,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -348,7 +352,8 @@ describe('tileStats / agentSetupGapCount', () => {
 		expect(tileStats(tiles, (t) => rules.get(t.credentialId))).toMatchObject({
 			operations: 100,
 			operationsAtLeast: true,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -380,8 +385,66 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 100,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 1,
+			// GitHub's one credential is its only row, so the API is fully blocked.
+			blockedBindings: 1,
+			fullyBlockedApis: 1,
 		});
+	});
+
+	it('counts blocked per credential; an API is fully blocked only when every row is', () => {
+		// The screenshot's shape: 3 APIs over 9 credentials, 5 of them Blocked —
+		// but every API keeps at least one credential through.
+		const apis = [
+			makeApi({ vendor: 'canada-holidays.ca', display_name: 'Canada', operation_count: 6 }),
+			makeApi({ vendor: 'freehoroscopeapi.com', display_name: 'Horo', operation_count: 7 }),
+			makeApi({ vendor: 'github.com', display_name: 'GitHub', operation_count: 1021 }),
+		];
+		const serve = (vendor: string) => [{ vendor, name: null, version: null }];
+		const plan: [string, string, boolean][] = [
+			['c1', 'canada-holidays.ca', false],
+			['c2', 'canada-holidays.ca', true],
+			['c3', 'canada-holidays.ca', false],
+			['c4', 'canada-holidays.ca', false],
+			['h1', 'freehoroscopeapi.com', true],
+			['h2', 'freehoroscopeapi.com', true],
+			['h3', 'freehoroscopeapi.com', false],
+			['g1', 'github.com', true],
+			['g2', 'github.com', true],
+		];
+		const credentials = plan.map(([id]) => makeCredential({ credential_id: id }));
+		const bindings = plan.map(([id, vendor]) =>
+			makeBinding({ id: `acb_${id}`, credentialId: id, serves: serve(vendor) }),
+		);
+		const rules = new Map(
+			plan.map(([id, , blocked]) => [
+				id,
+				blocked ? { total: 0, allow: 0, deny: 0 } : { total: 1, allow: 1, deny: 0 },
+			]),
+		);
+		const tiles = composeApiTiles(bindings, credentials, apis);
+		const stats = tileStats(tiles, (t) => rules.get(t.credentialId));
+		expect(stats.blockedBindings).toBe(5);
+		// GitHub's two credentials are both Blocked: the one fully blocked API.
+		expect(stats.fullyBlockedApis).toBe(1);
+		rules.set('g2', { total: 1, allow: 1, deny: 0 });
+		const relaxed = tileStats(tiles, (t) => rules.get(t.credentialId));
+		expect(relaxed.blockedBindings).toBe(4);
+		expect(relaxed.fullyBlockedApis).toBe(0);
+	});
+
+	it('counts a Blocked vendor-wide binding once, however many rows it draws', () => {
+		const apis = [
+			makeApi({ vendor: 'github.com', name: 'repos', display_name: 'Repos' }),
+			makeApi({ vendor: 'github.com', name: 'gists', display_name: 'Gists' }),
+		];
+		const bindings = [
+			makeBinding({ serves: [{ vendor: 'github.com', name: null, version: null }] }),
+		];
+		const tiles = composeApiTiles(bindings, [makeCredential()], apis);
+		expect(tiles).toHaveLength(2);
+		const stats = tileStats(tiles, () => ({ total: 0, allow: 0, deny: 0 }));
+		expect(stats.blockedBindings).toBe(1);
+		expect(stats.fullyBlockedApis).toBe(2);
 	});
 
 	it('counts an API with two credentials once, and its operations once', () => {
@@ -408,7 +471,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 1121,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -435,7 +499,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 1021,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 
@@ -454,7 +519,8 @@ describe('tileStats / agentSetupGapCount', () => {
 			operations: 1021,
 			operationsAtLeast: false,
 			operationsChecking: false,
-			blocked: 0,
+			blockedBindings: 0,
+			fullyBlockedApis: 0,
 		});
 	});
 

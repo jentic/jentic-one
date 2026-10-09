@@ -89,8 +89,36 @@ export const TILE_STATUS_CHIP_LABEL: Record<TileStatus, string> = {
 	suspended: 'Suspended',
 };
 
+/** The one-word form for a dense card's status line, where the long "· why"
+ * tail rides on the card's tooltip instead. */
+export const TILE_STATUS_CARD_LABEL: Record<TileStatus, string> = {
+	suspended: 'Paused',
+	'not-serving': 'Not serving',
+	'sign-in-needed': 'Sign-in needed',
+	'blocked-no-rules': 'Blocked',
+	'blocked-all-denied': 'Blocked',
+	checking: 'Checking',
+	unavailable: 'Unavailable',
+	ready: 'Ready',
+};
+
 /** Tooltip / accessible hint for the Blocked statuses' button. */
 export const BLOCKED_HINT: Record<BlockedStatus, string> = {
 	'blocked-no-rules': 'No access rules yet — every call is denied. Add a rule.',
 	'blocked-all-denied': 'Every rule denies — no call is allowed. Add an allow rule.',
 };
+
+/**
+ * The binding's rules in one line — "2 access rules · 1 deny", led by the
+ * shared rule set when one governs it ("Rule set Support · …") — or null while
+ * the rules are unknown. The row prints it under its marker; the card's status
+ * tooltip carries it.
+ */
+export function rulesSummaryText(rules: BindingRulesState | undefined): string | null {
+	const summary = ruleSummaryOf(rules);
+	if (summary === undefined) return null;
+	const prefix = summary.ruleSet ? `Rule set ${summary.ruleSet.name} · ` : '';
+	if (summary.total === 0) return `${prefix}No rules — all calls blocked`;
+	const count = summary.total === 1 ? '1 access rule' : `${summary.total} access rules`;
+	return `${prefix}${summary.deny > 0 ? `${count} · ${summary.deny} deny` : count}`;
+}
