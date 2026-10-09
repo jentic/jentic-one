@@ -7,7 +7,9 @@ worker generations read during a rolling deploy.
 
 from typing import Any
 
-from jentic_one.broker.core.proxy_headers import replay_headers
+import pytest
+
+from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _async_job_payload
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -108,3 +110,44 @@ def test_payload_omits_headers_when_none_are_kept() -> None:
     payload = _async_job_payload(_ctx(), execution_id="exec_1", origin="api", headers={})
 
     assert "headers" not in payload
+
+
+def test_replay_keeps_api_version_headers_vendors_require() -> None:
+    """A queued or held run sends the API version the caller chose: vendor
+    version headers and the generic ``*-version`` forms replay."""
+    inbound = {
+        "Notion-Version": "2022-06-28",
+        "Stripe-Version": "2024-06-20",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Anthropic-Version": "2023-06-01",
+        "Api-Version": "7.1",
+        "X-Api-Version": "2",
+    }
+
+    assert replay_headers(inbound) == {key.lower(): value for key, value in inbound.items()}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Version",
+        "Jentic-Version",
+        "X-Jentic-Version",
+        "Jentic-Revision",
+        "Authorization",
+        "Proxy-Authorization",
+        "Cookie",
+        "X-Api-Key",
+        "Connection",
+        "Upgrade",
+        "Host",
+        "X-Forwarded-For",
+        "Versioning",
+        "X-Version-Token",
+        "-version",
+        "x--version",
+    ],
+)
+def test_replay_never_keeps_credentials_hop_by_hop_or_jentic_headers(name: str) -> None:
+    assert is_replay_header(name) is False
+    assert replay_headers({name: "1"}) == {}

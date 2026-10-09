@@ -76,6 +76,7 @@ def _request(body: bytes) -> Request:
         "query_string": b"",
         "headers": [
             (b"content-type", b"application/json"),
+            (b"notion-version", b"2022-06-28"),
             (b"host", b"broker.local:8080"),
             (b"authorization", b"Bearer agent-token"),
         ],
@@ -155,9 +156,13 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     decrypted = json.loads(ctx.encryption.decrypt(payload[ENCRYPTED_PAYLOAD_KEY]))
     assert decrypted["method"] == "POST"
     assert decrypted["credential_id"] == "cred_holdpath"
-    # Only the replay allow-list is kept: the run sends the body as described,
-    # and the agent's own bearer token never sits in the admin DB.
-    assert decrypted["headers"] == {"content-type": "application/json"}
+    # Only the replay allow-list is kept: the run sends the body as described
+    # at the API version the caller chose, and the agent's own bearer token
+    # never sits in the admin DB.
+    assert decrypted["headers"] == {
+        "content-type": "application/json",
+        "notion-version": "2022-06-28",
+    }
     assert row.matched_rule_id == "apr_holdpath"
     assert row.path == "/v1/charges"
 
