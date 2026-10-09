@@ -44,6 +44,18 @@ describe('auth flow', () => {
 		expect(screen.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 	});
 
+	it('returns to the deep link, query included, after signing in', async () => {
+		renderApp('/agents?approve=cs_deeplink');
+		const user = userEvent.setup();
+
+		await user.type(await screen.findByLabelText('Email'), 'admin@local');
+		await user.type(screen.getByLabelText('Password'), 'password');
+		await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+		// The approve param survives sign-in and opens the approval review.
+		expect(await screen.findByRole('dialog', { name: 'Approve integration' })).toBeVisible();
+	});
+
 	it('shows an error on bad credentials', async () => {
 		worker.use(http.post('/auth/login', () => new HttpResponse(null, { status: 401 })));
 		renderApp('/login');

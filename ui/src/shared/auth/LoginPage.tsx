@@ -12,7 +12,7 @@ import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
 interface LocationState {
-	from?: { pathname?: string };
+	from?: { pathname?: string; search?: string; hash?: string };
 }
 
 /** Human-friendly provider label for the SSO button. */
@@ -74,8 +74,16 @@ export function LoginPage() {
 		setSubmitting(true);
 		try {
 			await login({ email, password });
-			const from = (location.state as LocationState | null)?.from?.pathname;
-			navigate(from && from !== ROUTES.login ? from : ROUTES.app, { replace: true });
+			// Return to where the visit was headed, query included: an agent's
+			// approval link (`/agents?approve=<sid>`) must still open its review
+			// after the operator signs in.
+			const from = (location.state as LocationState | null)?.from;
+			navigate(
+				from?.pathname && from.pathname !== ROUTES.login
+					? { pathname: from.pathname, search: from.search, hash: from.hash }
+					: ROUTES.app,
+				{ replace: true },
+			);
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 401) {
 				setError('Incorrect email or password.');
