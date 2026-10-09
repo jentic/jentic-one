@@ -141,4 +141,4 @@ postgresql:
     # The Alpine mirror (deploy/docker/postgres-mirror.Dockerfile) — Alpine
     # because AWS's scanner blocks on Debian's won't-fix glibc CVEs; the
     # mirror workflow pushes the tag it reads from that Dockerfile's FROM pin.
-    tag: "17.11-alpine"
+    tag: "18.6-alpine"
