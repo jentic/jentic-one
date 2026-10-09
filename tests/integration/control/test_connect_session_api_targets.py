@@ -48,6 +48,7 @@ from jentic_one.control.repos.oauth_client_credential_repo import (
 )
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
+    AuthCodeConfirmResult,
     ConfirmChecks,
     ConnectedConfirmResult,
     ConnectSessionService,
@@ -220,7 +221,7 @@ async def _wipe(ctx: Context) -> None:
         await session.execute(delete(Api))
         await session.commit()
     async with ctx.control_db.session() as session:
-        for table in (
+        for control_table in (
             ConnectSessionOutcome,
             ConnectSession,
             OAuthToken,
@@ -228,7 +229,7 @@ async def _wipe(ctx: Context) -> None:
             Credential,
             OAuthAppRegistration,
         ):
-            await session.execute(delete(table))
+            await session.execute(delete(control_table))
         await session.commit()
     async with ctx.admin_db.session() as session:
         await session.execute(
@@ -1152,6 +1153,7 @@ async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
         ),
         identity=_OWNER,
     )
+    assert isinstance(result, AuthCodeConfirmResult)
     assert result.authorize_url.startswith("https://auth.widgets.example/authorize?")
     assert "client_id=my-own-client" in result.authorize_url
     row = await _row(env, created.session_id)
