@@ -4,7 +4,8 @@ Backs the server-host change guard: a catalog re-import or a promote that
 changes an API's server hosts is held for operator review only when the API
 has stored credentials that some agent is bound to (direct agent bindings
 are the only binding form since theme-5 Phase 6b dropped the toolkit tables),
-because only then does the host change redirect where a stored secret is sent.
+or an open connect session that targets it, because only then does the host
+change redirect where a stored (or about-to-be-entered) secret is sent.
 
 Registry, control and admin are **separate databases**, and the registry
 module may import neither ``admin`` nor ``control`` ORM, so both legs run as
@@ -28,6 +29,15 @@ _COVERING_CREDENTIALS = text(
     f"SELECT c.id FROM credentials c WHERE {credential_coverage_where()} ORDER BY c.id"
 )
 
+# control DB — an open connect session targeting the API identity. Its pending
+# credential is not bound yet, but a human may be about to enter a secret that
+# goes to the hosts pinned at ``:connect``.
+_OPEN_API_TARGET_SESSION = text(
+    "SELECT 1 FROM connect_sessions WHERE target_kind = 'api' "
+    "AND state IN ('created', 'awaiting_app', 'polling') "
+    "AND vendor = :vendor AND api_name = :name AND api_version = :version LIMIT 1"
+)
+
 # admin DB — direct agent bindings to those credentials.
 _AGENT_BOUND = text(
     "SELECT 1 FROM agent_credential_bindings WHERE credential_id IN :credential_ids LIMIT 1"
@@ -48,6 +58,18 @@ class CredentialBindingPresenceRepository:
             )
         ).all()
         return [row[0] for row in rows]
+
+    @staticmethod
+    async def any_open_api_target_session(
+        session: AsyncSession, *, vendor: str, name: str, version: str
+    ) -> bool:
+        """True when an open connect session targets the API identity (**control** DB)."""
+        row = (
+            await session.execute(
+                _OPEN_API_TARGET_SESSION, {"vendor": vendor, "name": name, "version": version}
+            )
+        ).first()
+        return row is not None
 
     @staticmethod
     async def any_agent_binding(session: AsyncSession, *, credential_ids: list[str]) -> bool:
