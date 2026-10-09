@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { QueryClient } from '@tanstack/react-query';
 import { worker } from '@/mocks/browser';
 import {
 	checkA11y,
@@ -311,6 +312,101 @@ describe('VendorConnectFlow — self mode', () => {
 		// this is the string the human types into the vendor page, so a
 		// regression here breaks the whole device-code UX.
 		expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
+	});
+
+	it('reports the created credential once and refreshes the agent bindings', async () => {
+		// ``:connect`` fires on Continue off the configure page and ``:confirm``
+		// on Continue off the rules page.
+		const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+		worker.use(
+			http.post('/integrations:connect', () =>
+				HttpResponse.json(
+					{
+						session_id: 'sess_1',
+						approval_url:
+							'https://example.com/app/agents?approve=sess_1&poll_token=tok',
+						poll_token: 'tok',
+						resolved_flow: 'device_authorization',
+					},
+					{ status: 201 },
+				),
+			),
+			// ``:connect`` returning triggers a ``GET /connect-sessions/{id}``
+			// (useConnectSession) so the rules page can read ``api_reference``.
+			http.get('/connect-sessions/sess_1', () =>
+				HttpResponse.json({
+					session_id: 'sess_1',
+					state: 'created',
+					vendor_key: 'github',
+					vendor_display_name: 'GitHub',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+				}),
+			),
+			http.post('/connect-sessions/sess_1\\:confirm', () =>
+				HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'ABCD-1234',
+					verification_uri: 'https://github.com/login/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 5,
+				}),
+			),
+			http.get('/connect-sessions/:id/status', () =>
+				HttpResponse.json({
+					status: 'connected',
+					connected_as: 'octocat',
+					credential_id: 'cred_new',
+					bound_scopes: null,
+					error_code: null,
+				}),
+			),
+		);
+
+		const onConnected = vi.fn();
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="self"
+				vendor={vendor}
+				onConnected={onConnected}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		// Wait for both capabilities + session-id + agent choice (Continue
+		// is gated on all three). ``read:user`` proves the scope catalog
+		// hydrated; picking Scout satisfies the agent gate; the button
+		// un-disables when ``:connect`` also returns.
+		await screen.findByText('read:user');
+		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
+		await user.click(within(picker).getByRole('radio', { name: 'Scout' }));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await user.click(
+			await screen.findByRole('button', { name: /(skip.*continue|^continue$)/i }),
+		);
+
+		await waitFor(() =>
+			expect(onConnected).toHaveBeenCalledWith({
+				credentialId: 'cred_new',
+				name: vendor.display_name,
+			}),
+		);
+		expect(onConnected).toHaveBeenCalledTimes(1);
+		// The connect bound the credential to Scout, so Scout's binding list
+		// (agent page, Add APIs tray) is refetched.
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ['agents', 'credential-bindings', 'agnt_1'],
+		});
 	});
 
 	it('threads a user-typed credential name through the :connect payload', async () => {

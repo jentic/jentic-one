@@ -3329,6 +3329,7 @@ type VendorListResponse struct {
 
 // VendorSummaryResponse defines model for VendorSummaryResponse.
 type VendorSummaryResponse struct {
+	CatalogApiId   *string                     `json:"catalog_api_id,omitempty"`
 	DisplayName    string                      `json:"display_name"`
 	EntryId        string                      `json:"entry_id"`
 	FlowKinds      []string                    `json:"flow_kinds"`

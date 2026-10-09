@@ -559,6 +559,7 @@ def _project_db_registration(
         has_client_secret=registration.authorization_code_details is not None,
         default_scopes=default_scopes,
         source="db",
+        catalog_api_id=registration.catalog_api_id,
     )
 
 

@@ -9639,6 +9639,17 @@
       },
       "VendorSummaryResponse": {
         "properties": {
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Api Id"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"

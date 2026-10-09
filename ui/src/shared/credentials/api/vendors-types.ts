@@ -180,6 +180,11 @@ export interface VendorSummary {
 	/** ``db`` = admin registration, ``config`` = platform-shipped entry. */
 	source: 'db' | 'config';
 	flow_kinds: string[];
+	/**
+	 * For ``db`` rows, the catalog API the shared app signs in to
+	 * (``<domain>/<sub>``); ``null`` for config rows.
+	 */
+	catalog_api_id?: string | null;
 }
 
 export interface VendorListResponse {

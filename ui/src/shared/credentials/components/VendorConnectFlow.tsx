@@ -30,6 +30,7 @@ import {
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
 import {
+	invalidateBindingSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -101,6 +102,8 @@ export type VendorConnectFlowProps =
 			// Extra content rendered on the terminal step's success path
 			// (typically a "Bind to more agents" CTA). See ``PostConnectInfo``.
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+			/** Fires once when the sign-in completes, with the credential it created. */
+			onConnected?: (info: ConnectedCredentialInfo) => void;
 			onBack: () => void;
 			onDone: () => void;
 	  }
@@ -112,6 +115,12 @@ export type VendorConnectFlowProps =
 			onBack: () => void;
 			onDone: () => void;
 	  };
+
+/** The credential a completed self connect created (and bound, when an agent was set). */
+export interface ConnectedCredentialInfo {
+	credentialId: string;
+	name: string;
+}
 
 interface VendorDisplay {
 	displayName: string;
@@ -162,6 +171,7 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 			vendor={props.vendor}
 			preselectedAgentId={props.preselectedAgentId}
 			renderPostConnect={props.renderPostConnect}
+			onConnected={props.onConnected}
 			onBack={props.onBack}
 			onDone={props.onDone}
 		/>
@@ -176,12 +186,14 @@ function VendorSelfConnectFlow({
 	vendor,
 	preselectedAgentId,
 	renderPostConnect,
+	onConnected,
 	onBack,
 	onDone,
 }: {
 	vendor: VendorSummary;
 	preselectedAgentId?: string;
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	onConnected?: (info: ConnectedCredentialInfo) => void;
 	onBack: () => void;
 	onDone: () => void;
 }) {
@@ -321,9 +333,15 @@ function VendorSelfConnectFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The connect bound the credential to the picked agent, so that
+				// agent's binding list (its page, the Add APIs tray) is stale too.
+				const credentialId = polling.data.credential_id;
+				if (credentialId && agentId) {
+					invalidateBindingSurfaces(queryClient, credentialId, [agentId]);
+				}
 			}
 		}
-	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient, agentId]);
 
 	// Cancel-on-unmount: if the user closes the dialog / navigates away
 	// mid-flow, the backend needs to know so the pending credential +
@@ -433,6 +451,22 @@ function VendorSelfConnectFlow({
 			// surfaced via ErrorAlert below.
 		}
 	};
+
+	// Report the finished sign-in once, so a host tracking its own progress
+	// (e.g. the agent setup queue) can mark the credential added.
+	const reportedRef = useRef(false);
+	const connectedId =
+		phase === 'terminal' && polling.data?.status === 'connected'
+			? (polling.data.credential_id ?? null)
+			: null;
+	useEffect(() => {
+		if (!connectedId || reportedRef.current) return;
+		reportedRef.current = true;
+		onConnected?.({
+			credentialId: connectedId,
+			name: credentialName.trim() || vendor.display_name,
+		});
+	}, [connectedId, onConnected, credentialName, vendor.display_name]);
 
 	const display: VendorDisplay = {
 		displayName: vendor.display_name,
