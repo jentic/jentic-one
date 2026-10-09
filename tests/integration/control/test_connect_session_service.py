@@ -243,12 +243,15 @@ async def test_create_session_device_authorization_seeds_credential_and_aux_row(
     assert created.session_id
     assert created.poll_token
     # Approval URL points at the SPA's Agents page (where the credential
-    # inventory lives) with the session id + token so the human can pick it up.
+    # inventory lives) with only the session id: the owner / org:admin acts
+    # without the poll token, so the token never rides in a browser URL.
     # Absolute even with no public URL configured: it is relayed out-of-band.
-    assert urlsplit(created.approval_url).scheme in {"http", "https"}
-    assert "/app/agents?" in created.approval_url
-    assert f"approve={created.session_id}" in created.approval_url
-    assert f"poll_token={created.poll_token}" in created.approval_url
+    approval = urlsplit(created.approval_url)
+    assert approval.scheme in {"http", "https"}
+    assert approval.path == "/app/agents"
+    assert approval.query == f"approve={created.session_id}"
+    assert "poll_token" not in created.approval_url
+    assert created.poll_token not in created.approval_url
 
     async with ctx.control_db.session() as session:
         row = await ConnectSessionRepository.get_by_id(session, created.session_id)
@@ -1185,6 +1188,10 @@ async def test_list_all_plain_caller_sees_only_own_sessions(
     assert row.requested_by_actor_id == _USER_ID
     assert row.vendor_key == "testdev"
     assert row.vendor_display_name == "Test Device Vendor"
+    async with integration_context.control_db.session() as session:
+        stored = await ConnectSessionRepository.get_by_id(session, row.session_id)
+    assert stored is not None
+    assert row.credential_id == stored.credential_id
 
 
 async def test_list_all_org_admin_sees_all_sessions(

@@ -82,7 +82,7 @@ func (ClaimRequest) RequiredFields() []string               { return []string{"t
 func (ConfirmSessionRequest) RequiredFields() []string      { return []string{"confirmed_scopes"} }
 func (ConnectSessionListResponse) RequiredFields() []string { return []string{"data", "has_more"} }
 func (ConnectSessionSummaryResponse) RequiredFields() []string {
-	return []string{"created_at", "requested_by_actor_id", "session_id", "state", "vendor_display_name", "vendor_key"}
+	return []string{"created_at", "credential_id", "requested_by_actor_id", "session_id", "state", "vendor_display_name", "vendor_key"}
 }
 func (ConsentAgentStatusResponse) RequiredFields() []string  { return []string{"status"} }
 func (CreateAdminRequest) RequiredFields() []string          { return []string{"email", "password"} }

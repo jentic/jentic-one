@@ -219,6 +219,7 @@ async def list_connect_sessions(
                 connected_as=s.connected_as,
                 error_code=s.error_code,
                 created_at=s.created_at,
+                credential_id=s.credential_id,
             )
             for s in page.data
         ],

@@ -102,7 +102,7 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -143,7 +143,7 @@ def test_connect_allows_user_caller_without_agent_id() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -198,7 +198,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_9",
-            approval_url="https://example.com/app/agents?approve=sess_9&poll_token=tok9",
+            approval_url="https://example.com/app/agents?approve=sess_9",
             poll_token="tok9",
             resolved_flow="authorization_code",
         )
@@ -212,7 +212,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     body = resp.json()
     assert body == {
         "session_id": "sess_9",
-        "approval_url": "https://example.com/app/agents?approve=sess_9&poll_token=tok9",
+        "approval_url": "https://example.com/app/agents?approve=sess_9",
         "poll_token": "tok9",
         "resolved_flow": "authorization_code",
     }
@@ -499,6 +499,7 @@ def _summary(session_id: str = "cs_1", state: str = "created") -> SessionSummary
         connected_as=None,
         error_code=None,
         created_at=dt.datetime(2026, 9, 16, 12, 0, 0, tzinfo=dt.UTC),
+        credential_id=f"cred_{session_id}",
     )
 
 
@@ -517,6 +518,7 @@ def test_list_sessions_returns_paginated_envelope() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert [row["session_id"] for row in body["data"]] == ["cs_1", "cs_2"]
+    assert [row["credential_id"] for row in body["data"]] == ["cred_cs_1", "cred_cs_2"]
     assert body["has_more"] is True
     assert body["next_cursor"] == "opaque-cursor"
     call = svc.list_all.await_args
@@ -575,6 +577,7 @@ def test_list_sessions_never_includes_poll_token() -> None:
         "connected_as",
         "error_code",
         "created_at",
+        "credential_id",
     }
 
 
