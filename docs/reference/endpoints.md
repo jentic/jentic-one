@@ -31,7 +31,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 _Total endpoints: **185**._
 
 
-## Agent-facing (typically an agent) (32)
+## Agent-facing (typically an agent) (35)
 
 
 ### `apis`
@@ -82,6 +82,9 @@ _Total endpoints: **185**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/executions` | `executions:read` | agent | List Executions |
+| GET | `/executions/approvals` | `jobs:read` | agent | List execution approvals |
+| GET | `/executions/approvals/{approval_id}` | `jobs:read` | agent | Get an execution approval |
+| POST | `/executions/approvals/{approval_id}:withdraw` | `jobs:read` | agent | Withdraw a held execution |
 | GET | `/executions/{execution_id}` | `executions:read` | agent | Get Execution |
 
 ### `inspect`
@@ -215,7 +218,7 @@ _Total endpoints: **185**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (77)
+## Any authenticated actor (74)
 
 
 ### `actors`
@@ -298,10 +301,7 @@ _Total endpoints: **185**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/executions/approvals` | _any authenticated_ | any | List execution approvals |
-| GET | `/executions/approvals/{approval_id}` | _any authenticated_ | any | Get an execution approval |
-| POST | `/executions/approvals/{approval_id}:decide` | _any authenticated_ | any | Approve or deny an execution approval |
-| POST | `/executions/approvals/{approval_id}:withdraw` | _any authenticated_ | any | Withdraw a held execution |
+| POST | `/executions/approvals/{approval_id}:decide` | `jobs:write` | any | Approve or deny an execution approval |
 
 ### `governed-hosts`
 

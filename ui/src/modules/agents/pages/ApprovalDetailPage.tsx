@@ -24,6 +24,7 @@ import {
 	Textarea,
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
+import { JOBS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	ApprovalDecision,
 	ApprovalsApiError,
@@ -65,6 +66,9 @@ export default function ApprovalDetailPage() {
 	const decide = useDecideApproval();
 
 	const decidable = approval ? isDecidable(approval.state, approval.expires_at) : false;
+	// Deciding takes `jobs:write` (org admins hold it); a reviewer without it
+	// still sees the held call but not the verbs.
+	const canDecide = useCanAccess(JOBS_WRITE);
 	const notReviewer = error instanceof ApprovalsApiError && error.status === 404;
 
 	function handleDecide(decision: ApprovalDecision) {
@@ -217,7 +221,20 @@ export default function ApprovalDetailPage() {
 						</CardBody>
 					</Card>
 
-					{decidable ? (
+					{decidable && !canDecide ? (
+						<Card>
+							<CardHeader>
+								<CardTitle>Decision</CardTitle>
+							</CardHeader>
+							<CardBody>
+								<p className="text-muted-foreground text-sm">
+									Approving or denying a held call needs the{' '}
+									<strong>jobs:write</strong> permission. Ask an org admin to
+									decide it.
+								</p>
+							</CardBody>
+						</Card>
+					) : decidable ? (
 						<Card>
 							<CardHeader>
 								<CardTitle>Decision</CardTitle>

@@ -13,6 +13,7 @@ export {
 	CREDENTIALS_READ,
 	CREDENTIALS_WRITE,
 	JOBS_READ,
+	JOBS_WRITE,
 	OWNER_CREDENTIALS_READ,
 } from '@/shared/auth/useCanAccess';
 export { LoginPage } from '@/shared/auth/LoginPage';

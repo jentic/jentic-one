@@ -2385,16 +2385,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_permissions": {},
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "jobs:read": []
+      },
       "method": "GET",
       "operation_id": "listExecutionApprovals",
       "path": "/executions/approvals",
       "public": false,
-      "required_permissions": [],
+      "required_permissions": [
+        "jobs:read"
+      ],
       "summary": "List execution approvals",
       "surface": "executions",
-      "typical_caller": "any"
+      "typical_caller": "agent"
     },
     {
       "actor_types": [
@@ -2403,16 +2407,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_permissions": {},
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "jobs:read": []
+      },
       "method": "GET",
       "operation_id": "getExecutionApproval",
       "path": "/executions/approvals/{approval_id}",
       "public": false,
-      "required_permissions": [],
+      "required_permissions": [
+        "jobs:read"
+      ],
       "summary": "Get an execution approval",
       "surface": "executions",
-      "typical_caller": "any"
+      "typical_caller": "agent"
     },
     {
       "actor_types": [
@@ -2422,12 +2430,18 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
-      "implied_permissions": {},
+      "implied_permissions": {
+        "jobs:write": [
+          "jobs:read"
+        ]
+      },
       "method": "POST",
       "operation_id": "decideExecutionApproval",
       "path": "/executions/approvals/{approval_id}:decide",
       "public": false,
-      "required_permissions": [],
+      "required_permissions": [
+        "jobs:write"
+      ],
       "summary": "Approve or deny an execution approval",
       "surface": "executions",
       "typical_caller": "any"
@@ -2439,16 +2453,20 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_permissions": {},
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "jobs:read": []
+      },
       "method": "POST",
       "operation_id": "withdrawExecutionApproval",
       "path": "/executions/approvals/{approval_id}:withdraw",
       "public": false,
-      "required_permissions": [],
+      "required_permissions": [
+        "jobs:read"
+      ],
       "summary": "Withdraw a held execution",
       "surface": "executions",
-      "typical_caller": "any"
+      "typical_caller": "agent"
     },
     {
       "actor_types": [

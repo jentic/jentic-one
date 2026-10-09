@@ -1,9 +1,10 @@
 """Execution approvals router — review, decide and withdraw require-approval holds.
 
-The routes need only a signed-in caller: who may see or decide an approval is
-reviewer visibility (the agent's owner or ``org:admin``), and who may withdraw
-one is the identity that filed the hold, both applied by the service, not a
-scope.
+Each route takes the jobs permission its job counterpart takes — reading an
+approval needs ``jobs:read``, deciding one ``jobs:write`` — and the service
+then narrows to reviewer visibility (the agent's owner or ``org:admin``).
+Withdrawing needs only ``jobs:read``, which every agent holds by default: the
+service lets only the identity that filed the hold withdraw it.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ def _detail_response(
 @router.get("/executions/approvals", summary="List execution approvals")
 async def list_execution_approvals(
     request: Request,
-    identity: Identity = get_current_identity(),
+    identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
     state: ExecutionApprovalState | None = None,
     agent_id: str | None = None,
@@ -100,7 +101,7 @@ async def list_execution_approvals(
 async def get_execution_approval(
     approval_id: str,
     request: Request,
-    identity: Identity = get_current_identity(),
+    identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
 ) -> ExecutionApprovalDetailResponse:
     """One approval with its agent, owner, matched rule and the held request body.
@@ -120,7 +121,7 @@ async def decide_execution_approval(
     approval_id: str,
     body: DecideRequest,
     request: Request,
-    identity: Identity = get_current_identity(),
+    identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
 ) -> ExecutionApprovalResponse:
     """Decide a pending approval — the agent's owner or an ``org:admin`` only.
@@ -147,7 +148,7 @@ async def decide_execution_approval(
 async def withdraw_execution_approval(
     approval_id: str,
     request: Request,
-    identity: Identity = get_current_identity(),
+    identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     svc: ExecutionApprovalService = Depends(get_execution_approval_service),
 ) -> ExecutionApprovalResponse:
     """Abandon a held execution — the identity that filed the hold only.

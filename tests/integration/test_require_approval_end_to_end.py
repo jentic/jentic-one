@@ -122,7 +122,7 @@ async def parties(integration_context: Context) -> AsyncGenerator[_Parties, None
         )
         owner_id, agent_id = owner.id, agent.id
     yield _Parties(
-        owner=Identity(sub=owner_id, email="e2e-owner@test.local", permissions=[]),
+        owner=Identity(sub=owner_id, email="e2e-owner@test.local", permissions=["jobs:write"]),
         agent=Identity(
             sub=agent_id,
             permissions=["jobs:read"],

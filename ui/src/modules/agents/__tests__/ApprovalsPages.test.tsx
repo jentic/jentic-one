@@ -9,6 +9,7 @@ import {
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
+import { AuthProvider } from '@/shared/auth';
 import { Toaster } from '@/shared/ui';
 import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
 import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
@@ -95,6 +96,35 @@ describe('Approvals pages', () => {
 		renderDetail('exap_someone_else');
 		expect(await screen.findByText("You can't review this approval")).toBeInTheDocument();
 		expect(screen.getByText(/Ask them to open this link/)).toBeInTheDocument();
+	});
+
+	it('shows a reviewer without jobs:write the held call but not the verbs', async () => {
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: 'usr_owner',
+					email: 'owner@local',
+					first_name: 'Owner',
+					last_name: 'User',
+					active: true,
+					permissions: ['jobs:read'],
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+		const { container } = renderWithProviders(
+			<AuthProvider>
+				<ApprovalDetailPage />
+			</AuthProvider>,
+			{ route: '/agents/approvals/exap_pending1', path: '/agents/approvals/:id' },
+		);
+		expect(await screen.findByText(/needs the/)).toBeInTheDocument();
+		expect(screen.getByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
+		await checkA11y(container);
 	});
 
 	it('surfaces a load failure', async () => {
