@@ -1,7 +1,8 @@
 """Unit tests for the broker ``CredentialService`` orchestrator (§02b).
 
 Covers the credential-error → broker-domain-exception mapping (424/409/401/502)
-and the 424 ``prompt_human`` agent directive (provisioning URL + intent id),
+and the 424 ``prompt_human`` agent directive (intent id, plus the open connect
+session's ``provisioning_url`` when the agent has one),
 plus the empty-result shortcut. The per-credential-type ``InjectedAuth`` mapping
 itself lives in ``test_injection.py`` (``inject_auth``).
 """
@@ -9,6 +10,7 @@ itself lives in ``test_injection.py`` (``inject_auth``).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -56,12 +58,11 @@ _IDENTITY = Identity(
 
 def _ctx(
     *,
-    account_linking_base_url: str | None = None,
     vendors: VendorRegistryConfig | None = None,
-    public_base_url: str = "",
+    public_base_url: str = "https://app.example.com",
 ) -> MagicMock:
     ctx = MagicMock()
-    ctx.config.broker.account_linking_base_url = account_linking_base_url
+    ctx.config.auth.canonical_base_url = ""
     ctx.config.server.public_base_url = public_base_url
     # A real (default-empty) registry: the 424 arm reverse-maps the API onto
     # a connect key, and a bare MagicMock would explode the .entries scan.
@@ -73,6 +74,37 @@ def _ctx(
 
     ctx.admin_db.transaction = _noop_transaction
     return ctx
+
+
+@dataclass
+class _OpenSessionStub:
+    """What the stubbed open-connect-session read returns, and what it was asked."""
+
+    session_id: str | None = None
+    calls: list[dict[str, str]] = field(default_factory=list)
+
+
+@pytest.fixture(autouse=True)
+def open_session(monkeypatch: pytest.MonkeyPatch) -> _OpenSessionStub:
+    """Stub the agent's open-connect-session read; no session by default.
+
+    The read itself runs against a real control DB in
+    ``tests/integration/broker/test_open_connect_session.py``.
+    """
+    stub = _OpenSessionStub()
+
+    class _Reader:
+        def __init__(self, control_db: object) -> None:
+            del control_db
+
+        async def find_session_id(self, **kwargs: str) -> str | None:
+            stub.calls.append(kwargs)
+            return stub.session_id
+
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.provisioning.OpenConnectSessionReader", _Reader
+    )
+    return stub
 
 
 def _resolved() -> ResolvedCredential:
@@ -133,13 +165,13 @@ async def test_empty_vendor_returns_empty_injection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_not_provisioned_maps_to_424_with_directive_and_url(
+async def test_not_provisioned_maps_to_424_with_directive_and_intent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(account_linking_base_url="https://app.example.com/")).inject(
+        await CredentialService(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -153,26 +185,95 @@ async def test_not_provisioned_maps_to_424_with_directive_and_url(
     assert intent_id.startswith("intent_")
     # intent id is echoed both in the directive and as a top-level extension member
     assert err.extra["intent_id"] == intent_id
-    # provisioning url is non-secret and carries actor + intent for the host app
-    assert params["provisioning_url"] == (
-        f"https://app.example.com/connect/stripe?actor=agent_42&intent={intent_id}"
-    )
+    # No open connect session for the agent → no provisioning_url.
+    assert "provisioning_url" not in params
 
 
 @pytest.mark.asyncio
-async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
+async def test_not_provisioned_links_the_agents_open_connect_session(
+    monkeypatch: pytest.MonkeyPatch, open_session: _OpenSessionStub
+) -> None:
+    # The agent already asked: the 424 carries the token-less owner deep link
+    # to that session and tells the agent to relay it, not to connect again.
+    open_session.session_id = "cs_open"
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("github.com", "github.com/api.github.com", "")
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx(vendors=_github_registry())).inject(
+            api_vendor="github.com",
+            api_name="github.com/api.github.com",
+            api_version="",
+            identity=_IDENTITY,
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    url = "https://app.example.com/app/agents?approve=cs_open"
+    assert directive.parameters["provisioning_url"] == url
+    assert "poll_token" not in url
+    # A second connect would only duplicate the pending request.
+    assert "suggested_command" not in directive.parameters
+    assert url in directive.human_readable_instruction
+    assert "Do not start another" in directive.human_readable_instruction
+    assert open_session.calls == [
+        {
+            "agent_id": "agent_42",
+            "vendor": "github.com",
+            "name": "github.com/api.github.com",
+            "version": "",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_skips_the_session_read_for_a_user(
+    monkeypatch: pytest.MonkeyPatch, open_session: _OpenSessionStub
+) -> None:
+    # Only agents open connect sessions in their own name.
+    open_session.session_id = "cs_open"
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+    user = Identity(
+        sub="usr_1",
+        actor_type=ActorType.USER,
+        permissions=["execute"],
+        expires_at=datetime(2999, 1, 1, tzinfo=UTC),
+        active=True,
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(_ctx()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=user
+        )
+
+    assert "provisioning_url" not in exc.value.directive.parameters  # type: ignore[union-attr]
+    assert open_session.calls == []
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_survives_a_failed_session_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The denial is the outcome; a failed lookup only drops the link.
+    class _Broken:
+        def __init__(self, control_db: object) -> None:
+            del control_db
+
+        async def find_session_id(self, **kwargs: str) -> str | None:
+            raise RuntimeError("control db down")
+
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.provisioning.OpenConnectSessionReader", _Broken
+    )
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(account_linking_base_url=None)).inject(
+        await CredentialService(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
-    params = exc.value.directive.parameters  # type: ignore[union-attr]
-    assert "provisioning_url" not in params
-    assert params["intent_id"].startswith("intent_")
+    assert "provisioning_url" not in exc.value.directive.parameters  # type: ignore[union-attr]
 
 
 def _github_registry() -> VendorRegistryConfig:
@@ -245,23 +346,6 @@ async def test_not_provisioned_off_registry_keeps_operator_prose(
     assert directive is not None
     assert "suggested_command" not in directive.parameters
     assert "jentic connect" not in directive.human_readable_instruction
-
-
-@pytest.mark.asyncio
-async def test_not_provisioned_ignores_public_base_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # server.public_base_url names this deployment, not an account-linking UI:
-    # it must not synthesize a provisioning_url (the path would 404 here).
-    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
-
-    with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(
-            _ctx(account_linking_base_url=None, public_base_url="https://gw.example.com")
-        ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
-
-    params = exc.value.directive.parameters  # type: ignore[union-attr]
-    assert "provisioning_url" not in params
 
 
 @pytest.mark.asyncio

@@ -187,8 +187,9 @@ unserved `no_credential_binding` (403) denial is **provisioning-shaped** —
 its envelope points `next_tool` at `request_connection`. When the directive
 carries a `suggested_command` naming the registry key, start the fix
 yourself (`request_connection` with that key) and relay the `approval_url`;
-a denial whose recovery carries only a `provisioning_url` is for your
-operator — relay it so they can connect the account. The denial taxonomy
+a denial carrying a `provisioning_url` means a connect request you opened
+is still waiting — relay that link to your operator rather than calling
+`request_connection` again. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
 `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent

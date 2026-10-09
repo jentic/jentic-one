@@ -155,18 +155,6 @@
     "BrokerConfig": {
       "description": "Broker surface configuration.",
       "properties": {
-        "account_linking_base_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Account Linking Base Url"
-        },
         "egress": {
           "$ref": "#/$defs/EgressConfig"
         },

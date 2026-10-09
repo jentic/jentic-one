@@ -217,10 +217,6 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
-	// AccountLinkingBaseUrl corresponds to the JSON schema field
-	// "account_linking_base_url".
-	AccountLinkingBaseUrl interface{} `json:"account_linking_base_url,omitempty,omitzero" yaml:"account_linking_base_url,omitempty" mapstructure:"account_linking_base_url,omitempty"`
-
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -259,8 +255,6 @@ type BrokerConfig struct {
 	// envelope.
 	UpstreamTimeoutS float64 `json:"upstream_timeout_s,omitempty,omitzero" yaml:"upstream_timeout_s,omitempty" mapstructure:"upstream_timeout_s,omitempty"`
 }
-
-type BrokerConfigAccountLinkingBaseUrl_0 *string
 
 type BrokerConfigJobsApiBaseUrl_0 *string
 

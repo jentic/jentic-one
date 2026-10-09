@@ -1532,19 +1532,11 @@ class BrokerConfig(BaseModel):
     # + clock-skew, strict asymmetric alg allowlist. When trusted_issuers is set
     # it supersedes the HS256 jwt_secret path for self-contained JWTs.
     jwt_verification: JwtVerificationConfig = Field(default_factory=JwtVerificationConfig)
-    # Public base URL of the account-linking/provisioning UI. When set, a 424
-    # (credential not provisioned) carries a `prompt_human` directive with a
-    # `provisioning_url` the agent can relay to the user. None keeps the
-    # directive but omits the URL. The URL is non-secret (where to *go* to
-    # provision, never the credential itself).
-    account_linking_base_url: str | None = None
     resilience: BrokerResilienceConfig = Field(default_factory=BrokerResilienceConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
 
-    _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
-        _normalize_optional_base_url
-    )
+    _normalize_public_urls = field_validator("jobs_api_base_url")(_normalize_optional_base_url)
 
     @model_validator(mode="before")
     @classmethod
@@ -1573,6 +1565,21 @@ class BrokerConfig(BaseModel):
             data = {k: v for k, v in data.items() if k != "direct_bindings_enabled"}
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_account_linking_base_url(cls, data: Any) -> Any:
+        """Ignore ``broker.account_linking_base_url`` with a one-time warning.
+
+        Denial directives link to the agent's open connect session on the
+        deployment's own UI (``connect_approval_url``), so there is no
+        separate account-linking origin to configure. A leftover value is
+        harmless and never fails boot.
+        """
+        if isinstance(data, dict) and _RETIRED_ACCOUNT_LINKING_KEY in data:
+            _warn_retired_account_linking_base_url_once()
+            data = {k: v for k, v in data.items() if k != _RETIRED_ACCOUNT_LINKING_KEY}
+        return data
+
 
 _retired_direct_bindings_flag_warned = threading.Event()
 
@@ -1596,6 +1603,34 @@ def _warn_retired_direct_bindings_flag_once() -> None:
         actionable_step=(
             "Remove broker.direct_bindings_enabled from the config file or "
             "JENTIC__BROKER__DIRECT_BINDINGS_ENABLED from the environment."
+        ),
+    )
+
+
+_RETIRED_ACCOUNT_LINKING_KEY = "account_linking_base_url"
+_retired_account_linking_warned = threading.Event()
+
+
+def _warn_retired_account_linking_base_url_once() -> None:
+    """One WARNING per process for the leftover setting (it is ignored).
+
+    Latched like :func:`_warn_retired_direct_bindings_flag_once`: config is
+    validated more than once per process.
+    """
+    if _retired_account_linking_warned.is_set():
+        return
+    _retired_account_linking_warned.set()
+    _logger.warning(
+        "config_retired_setting_ignored",
+        setting=f"broker.{_RETIRED_ACCOUNT_LINKING_KEY}",
+        detail=(
+            "denial directives carry a provisioning_url only when the agent has an "
+            "open connect session, linking to it on this deployment's UI; the value "
+            "is ignored"
+        ),
+        actionable_step=(
+            f"Remove broker.{_RETIRED_ACCOUNT_LINKING_KEY} from the config file or "
+            "JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL from the environment."
         ),
     )
 
@@ -1748,9 +1783,8 @@ class ServerConfig(BaseModel):
     callback, and access-request approval links — falls back to this when its
     own more specific knob is unset. Explicit per-field values still win
     (needed behind a reverse proxy that fronts multiple surfaces on distinct
-    origins). The broker's ``jobs_api_base_url`` / ``account_linking_base_url``
-    are deliberately independent: they name other services' origins, not this
-    one. Left unset, request-scoped consumers derive
+    origins). The broker's ``jobs_api_base_url`` is deliberately independent:
+    it names another service's origin, not this one. Left unset, request-scoped consumers derive
     from the incoming request's origin and request-less ones from the serving
     bind (``http://{host}:{port}``), so zero-config local dev on any port just
     works — set this only when clients reach the app on an origin it can't
@@ -2020,6 +2054,20 @@ def resolved_auth_base_url(config: AppConfig) -> str:
     return effective_auth_base_url(config) or bind_origin(config)
 
 
+def connect_approval_url(config: AppConfig, session_id: str) -> str:
+    """The owner-facing deep link to an agent's connect session (token-less).
+
+    Lands on the Agents page with the session id as the ``approve`` query
+    param, where the target agent's owner or ``org:admin`` reviews it without
+    the ``poll_token``. Absolute even with no public URL configured (it is
+    relayed out-of-band by agents), via :func:`resolved_auth_base_url`. Shared
+    by the connect session's ``approval_url`` and the broker denials'
+    ``provisioning_url`` so both always name the same address.
+    """
+    base = resolved_auth_base_url(config).rstrip("/")
+    return f"{base}/app/agents?approve={session_id}"
+
+
 @dataclass(frozen=True, slots=True)
 class PublicUrlMismatch:
     """One explicitly-configured public URL whose origin doesn't match serving."""
@@ -2042,8 +2090,8 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
        When it is unset, the bind is the only known origin only on a loopback
        bind; on an all-interfaces bind the public origin is unknowable (proxy,
        ingress, port mapping), so the check is skipped rather than flag every
-       correctly-proxied override. The broker's ``jobs_api_base_url`` /
-       ``account_linking_base_url`` name other services and are not compared.
+       correctly-proxied override. The broker's ``jobs_api_base_url`` names
+       another service and is not compared.
     2. When the server binds a **loopback** host, it can only be reached from
        the same machine on exactly that port — no port mapping or gateway can
        sit in front of it. A loopback ``server.public_base_url`` or provider

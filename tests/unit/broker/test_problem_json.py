@@ -142,6 +142,27 @@ def test_no_credential_binding_directive_registry_vendor_suggests_connect() -> N
     assert "bind" in served.human_readable_instruction
 
 
+@pytest.mark.parametrize("api_served", [False, True])
+def test_no_credential_binding_directive_relays_the_open_session(api_served: bool) -> None:
+    """With an open connect session, the agent relays its link instead of connecting again."""
+    url = "https://j1.example.com/app/agents?approve=cs_1"
+    d = no_credential_binding_directive(
+        vendor="github.com",
+        name="api.github.com",
+        version="1.0.0",
+        api_served=api_served,
+        connect_vendor="github",
+        provisioning_url=url,
+    )
+    assert d.strategy == "prompt_human"
+    assert d.parameters["provisioning_url"] == url
+    assert d.parameters["api_served"] is api_served
+    # A second connect would only duplicate the pending request.
+    assert "suggested_command" not in d.parameters
+    assert url in d.human_readable_instruction
+    assert "Do not start another" in d.human_readable_instruction
+
+
 def test_ambiguous_credential_binding_directive_disambiguates_by_header() -> None:
     """The direct-path 409 twin retries via the Jentic-Credential-Id header.
 

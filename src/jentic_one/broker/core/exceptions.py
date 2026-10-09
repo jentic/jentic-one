@@ -349,6 +349,7 @@ def no_credential_binding_directive(
     version: str,
     api_served: bool,
     connect_vendor: str | None = None,
+    provisioning_url: str | None = None,
 ) -> AgentDirective:
     """Directive for a ``no_credential_binding`` 403 — recover the missing binding.
 
@@ -372,6 +373,11 @@ def no_credential_binding_directive(
     is not in the registry; when set, the directive carries a runnable
     ``parameters.suggested_command`` (``jentic connect <vendor>``).
 
+    ``provisioning_url`` is the owner deep link to the agent's open connect
+    session for this API, when it has one: the agent already asked, so the
+    directive carries the link to relay and no ``suggested_command`` (a second
+    connect would only duplicate the pending request).
+
     Deliberately never enumerates other owners' credentials (that would leak
     instance inventory to an unbound agent).
     """
@@ -380,6 +386,18 @@ def no_credential_binding_directive(
         "api": {"vendor": vendor, "name": name, "version": version},
         "api_served": api_served,
     }
+    if provisioning_url:
+        parameters["provisioning_url"] = provisioning_url
+        return AgentDirective(
+            strategy="prompt_human",
+            parameters=parameters,
+            human_readable_instruction=(
+                f"You have no credential binding for '{api}' yet, and your request to "
+                "connect a credential for it is still waiting for your operator. Do not "
+                f"start another: relay {provisioning_url} to them to approve it. Once they "
+                "confirm, retry this call."
+            ),
+        )
     if connect_vendor:
         parameters["suggested_command"] = f"jentic connect {connect_vendor}"
     if api_served:

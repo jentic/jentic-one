@@ -72,7 +72,7 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_effective,
 )
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
-from jentic_one.shared.config import resolved_auth_base_url
+from jentic_one.shared.config import connect_approval_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.metrics import get_meter
@@ -587,11 +587,11 @@ class ConnectSessionService:
         stays with the agent and never rides in a browser URL.
 
         The URL is relayed out-of-band (CLI output, MCP tool result), so it must
-        be absolute even with no public URL configured — ``resolved_auth_base_url``
-        falls back to ``bind_origin`` rather than yielding a bare path.
+        be absolute even with no public URL configured — ``connect_approval_url``
+        falls back to ``bind_origin`` rather than yielding a bare path. The
+        broker's denial ``provisioning_url`` uses the same builder.
         """
-        base = resolved_auth_base_url(self._ctx.config).rstrip("/")
-        return f"{base}/app/agents?approve={session_id}"
+        return connect_approval_url(self._ctx.config, session_id)
 
     # ---- review data ------------------------------------------------------
 

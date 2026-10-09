@@ -58,13 +58,14 @@ this file adds the lane-specific detail.
   `get_execution_result` with the job id; approval happens out-of-band and
   re-sending duplicates the side effect.
 - A 424 `credential_not_provisioned` error means no account is connected
-  yet. If the denial's directive carries a `suggested_command` (`jentic
-  connect <key>`), the vendor is in the connect registry: call
-  `request_connection` with that key and relay the returned `approval_url`
-  to your operator. Otherwise relay the directive's `provisioning_url`
-  (when present) — or report the gap — so they can connect the account.
-  Either way a human approves; no tool you can call completes the
-  connection.
+  yet. If the denial's directive carries a `provisioning_url`, a connect
+  request you opened is still waiting: relay that link to your operator
+  and don't call `request_connection` again. Otherwise, if it carries a
+  `suggested_command` (`jentic connect <key>`), the vendor is in the
+  connect registry: call `request_connection` with that key and relay the
+  returned `approval_url` to your operator; otherwise report the gap so
+  they can connect the account. Either way a human approves; no tool you
+  can call completes the connection.
 - Don't call `get_started` on the HTTP mount — it isn't there. Its absence
   is a transport tell (you're on the daemon mount), not an outage; don't
   retry it or report it as a failure.
@@ -99,8 +100,11 @@ changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers
-  this API. The ask forks on the directive/envelope's `api_served`
-  field:
+  this API. If the directive carries a `provisioning_url`, a connect
+  request you opened for this API is still waiting for your operator:
+  relay that link to them instead of starting another connect, and retry
+  once they approve. Otherwise the ask forks on the directive/envelope's
+  `api_served` field:
   - `false` — **no** credential is provisioned for this API at all. If the
     directive carries a `suggested_command` (`jentic connect <vendor>`),
     start the connect session yourself and relay its `approval_url`;
@@ -113,11 +117,13 @@ the right ask, then retry once they confirm.
     registry vendor, but prefer the existing credential).
 - **`credential_not_provisioned` (424)** — you're bound, but no
   credential (account) is connected. If the directive carries a
-  `suggested_command` (`jentic connect <key>`), the vendor is in the
-  connect registry — start the reconnect yourself (run that command, or
-  call `request_connection` with the key it names) and relay the
-  `approval_url`; otherwise hand the directive's `provisioning_url` to
-  your operator to connect the account. Then retry.
+  `provisioning_url`, your earlier connect request is still waiting: relay
+  that link to your operator instead of starting another. Otherwise, if it
+  carries a `suggested_command` (`jentic connect <key>`), the vendor is in
+  the connect registry — start the reconnect yourself (run that command,
+  or call `request_connection` with the key it names) and relay the
+  `approval_url`; otherwise ask your operator to connect the account. Then
+  retry.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing
