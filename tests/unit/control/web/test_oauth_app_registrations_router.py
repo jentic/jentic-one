@@ -20,6 +20,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.services.oauth_app_registrations.errors import (
     OAuthAppRegistrationInUseError,
     OAuthAppRegistrationNotFoundError,
@@ -33,7 +36,10 @@ from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
 from jentic_one.control.web.app import get_exception_handlers
-from jentic_one.control.web.deps import get_oauth_app_registration_service
+from jentic_one.control.web.deps import (
+    get_connect_session_service,
+    get_oauth_app_registration_service,
+)
 from jentic_one.control.web.routers import oauth_app_registrations as router_module
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.pagination import InvalidCursorError
@@ -99,6 +105,10 @@ def _build_app(*, svc: Any, identity: Identity = _ADMIN_IDENTITY) -> FastAPI:
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
     app.dependency_overrides[get_oauth_app_registration_service] = lambda: svc
+    # A registration create also re-resolves sessions waiting for an OAuth app.
+    connect_svc = AsyncMock(spec=ConnectSessionService)
+    connect_svc.resolve_awaiting_app_sessions.return_value = 0
+    app.dependency_overrides[get_connect_session_service] = lambda: connect_svc
     app.dependency_overrides[shared_deps.resolve_identity] = lambda: identity
     return app
 

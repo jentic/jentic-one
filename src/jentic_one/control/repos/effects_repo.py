@@ -21,6 +21,7 @@ class AgentOwnerRow(NamedTuple):
 
     owner_id: str | None
     status: str
+    name: str | None = None
 
 
 class EffectsRepository:
@@ -191,7 +192,7 @@ class EffectsRepository:
         "missing".
         """
         result = await session.execute(
-            text("SELECT owner_id, status FROM agents WHERE id = :agent_id"),
+            text("SELECT owner_id, status, name FROM agents WHERE id = :agent_id"),
             {"agent_id": agent_id},
         )
         row = result.first()
@@ -200,6 +201,7 @@ class EffectsRepository:
         return AgentOwnerRow(
             owner_id=str(row[0]) if row[0] is not None else None,
             status=str(row[1]),
+            name=str(row[2]) if row[2] is not None else None,
         )
 
     @staticmethod
