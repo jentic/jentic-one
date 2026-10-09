@@ -205,6 +205,7 @@ markers = [
     "integration: marks tests requiring running database fixtures",
     "arch: architecture enforcement tests (no external services required)",
     "smoke: lightweight liveness checks against a deployed environment",
+    "e2e: live app + broker round trips against scripts/e2e_1556_security_stack.sh (never run in CI)",
 ]
 asyncio_mode = "auto"
 
