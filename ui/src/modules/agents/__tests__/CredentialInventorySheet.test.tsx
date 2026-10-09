@@ -838,7 +838,9 @@ describe('CredentialInventorySheet — what a reader may see and send', () => {
 		seedViewer(['agents:read', 'credentials:read', 'credentials:write']);
 		const sheet = within(await openSheet());
 
-		expect(sheet.getByRole('button', { name: 'Add credential' })).toBeInTheDocument();
+		// `findBy`: the credential rows can land before `/users/me` does, and the
+		// verbs follow the permissions, not the rows.
+		expect(await sheet.findByRole('button', { name: 'Add credential' })).toBeInTheDocument();
 		expect(await sheet.findByRole('button', { name: /^Connect/ })).toBeInTheDocument();
 	});
 });
