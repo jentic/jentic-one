@@ -222,6 +222,7 @@ _VENDOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     VendorNotConfiguredError: (503, "vendor_not_configured"),
 }
 
+
 def _vendor_response_hook(
     request: Request, exc: Exception, status_code: int, response: JSONResponse
 ) -> JSONResponse:
