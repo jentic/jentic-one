@@ -74,7 +74,11 @@ def _request(body: bytes) -> Request:
         "raw_path": b"/api.example.com/v1/charges",
         "root_path": "",
         "query_string": b"",
-        "headers": [(b"content-type", b"application/json"), (b"host", b"broker.local:8080")],
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"host", b"broker.local:8080"),
+            (b"authorization", b"Bearer agent-token"),
+        ],
     }
     return Request(scope, receive)
 
@@ -151,6 +155,9 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     decrypted = json.loads(ctx.encryption.decrypt(payload[ENCRYPTED_PAYLOAD_KEY]))
     assert decrypted["method"] == "POST"
     assert decrypted["credential_id"] == "cred_holdpath"
+    # Only the replay allow-list is kept: the run sends the body as described,
+    # and the agent's own bearer token never sits in the admin DB.
+    assert decrypted["headers"] == {"content-type": "application/json"}
     assert row.matched_rule_id == "apr_holdpath"
     assert row.path == "/v1/charges"
 
