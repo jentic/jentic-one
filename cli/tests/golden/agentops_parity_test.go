@@ -99,7 +99,9 @@ func TestAgentopsReproducesGoldens(t *testing.T) {
 					"suggested_command": "jentic execute --header Jentic-Credential-Id=cred_pets ...",
 					"provisioning_url": "https://console.example/connect/acme",
 					"candidates": ["cred_pets", "cred_pets_admin"],
-					"retry_after_seconds": 30
+					"retry_after_seconds": 30,
+					"connect": {"vendor_key": "acme", "registration_id": "oar_acme"},
+					"suggested_rules": [{"effect": "allow", "methods": ["GET"], "path": "/v1/pets", "match_mode": "exact"}]
 				},
 				"human_readable_instruction": "You are not bound for 'acme/pets'. Ask your operator to bind this agent to the credential serving 'acme/pets' (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
 			}

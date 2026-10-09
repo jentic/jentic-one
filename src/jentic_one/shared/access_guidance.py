@@ -5,20 +5,23 @@ then can an agent be bound to it. When nothing serves an API yet, the broker's
 missing-binding recovery directive must recommend provisioning a credential as
 the first step (see issue #683).
 
-Historically this wording was shared with the control access-request approval
-flow so a denial reason could never contradict the broker directive; theme 7
-removed that flow, leaving the broker as the sole consumer. It stays under
-``shared`` as the single wording module pending a possible fold into
-``broker/core/exceptions.py`` (theme-7 open question). It also holds the
-vendor-registry reverse lookup that decides whether the provisioning step is
-agent-initiable (``jentic connect <vendor>`` / the ``request_connection`` MCP
-tool — theme-7 Phase 1b) or operator-only.
+The module also holds the reverse lookup that decides whether the provisioning
+step is agent-initiable (``jentic connect <vendor>`` / the
+``request_connection`` MCP tool) or operator-only: an API is connectable when a
+vendor-registry config entry or an active shared OAuth-app registration covers
+it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
+
+from jentic_one.shared.broker.protocols import ConnectableRegistration
 from jentic_one.shared.config import VendorRegistryConfig
 from jentic_one.shared.models.api_identity import (
+    CredentialScope,
     canonical_credential_scope,
     credential_covers,
 )
@@ -68,8 +71,80 @@ def connect_vendor_key(
     # registry's insertion (config) order, so overlapping entries resolve
     # to the earliest-declared key.
     for key, entry in vendors.entries.items():
-        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
-        scope = canonical_credential_scope(vendor=raw_vendor, name=entry.vendor, version=None)
-        if credential_covers(scope, vendor=vendor, name=name, version=version):
+        if credential_covers(
+            _connect_scope(entry.vendor), vendor=vendor, name=name, version=version
+        ):
             return key
     return None
+
+
+def _connect_scope(catalog_api_id: str) -> CredentialScope:
+    """The API scope a connect session stamps on a credential for ``catalog_api_id``.
+
+    Same decomposition as the connect-session service at credential-create
+    time: the vendor axis is the registrable domain of the api_id's host, the
+    name axis the whole api_id, the version unscoped.
+    """
+    raw_vendor = vendor_from_api_id(catalog_api_id) or catalog_api_id
+    return canonical_credential_scope(vendor=raw_vendor, name=catalog_api_id, version=None)
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectTarget:
+    """What an agent passes to the connect surface to provision a denied API.
+
+    ``vendor_key`` is the key ``POST /integrations:connect`` takes.
+    ``registration_id`` pins the one shared OAuth-app registration that
+    covers the API; it is set only when exactly one registration matches.
+    """
+
+    vendor_key: str
+    registration_id: str | None = None
+
+    def as_parameters(self) -> dict[str, Any]:
+        """The ``parameters.connect`` object a broker directive carries."""
+        params: dict[str, Any] = {"vendor_key": self.vendor_key}
+        if self.registration_id is not None:
+            params["registration_id"] = self.registration_id
+        return params
+
+
+def connect_target(
+    vendors: VendorRegistryConfig,
+    registrations: Iterable[ConnectableRegistration],
+    *,
+    vendor: str,
+    name: str,
+    version: str = "",
+) -> ConnectTarget | None:
+    """Resolve the connect target covering an API identity, if any.
+
+    A covering vendor-registry config entry wins: an unpinned
+    ``:connect <key>`` resolves to the config entry before any registration
+    sharing the key. Otherwise the active shared OAuth-app registrations are
+    matched by their ``catalog_api_id`` on the same coverage rule:
+
+    - exactly one covers the API → its ``api_vendor`` plus its id;
+    - several cover it → the first ``api_vendor`` in sorted order, with no
+      ``registration_id`` (choosing among shared apps is operator policy, so
+      the connect surface answers ``ambiguous_vendor`` and the agent asks);
+    - none → ``None``.
+    """
+    key = connect_vendor_key(vendors, vendor=vendor, name=name, version=version)
+    if key is not None:
+        return ConnectTarget(vendor_key=key)
+    covering = sorted(
+        (
+            r
+            for r in registrations
+            if credential_covers(
+                _connect_scope(r.catalog_api_id), vendor=vendor, name=name, version=version
+            )
+        ),
+        key=lambda r: (r.api_vendor, r.id),
+    )
+    if not covering:
+        return None
+    if len(covering) == 1:
+        return ConnectTarget(vendor_key=covering[0].api_vendor, registration_id=covering[0].id)
+    return ConnectTarget(vendor_key=covering[0].api_vendor)

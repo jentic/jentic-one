@@ -34,6 +34,7 @@ from jentic_one.broker.services.credentials.errors import (
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import ConnectableRegistration
 from jentic_one.shared.config import (
     VendorAuthConfig,
     VendorDeviceAuthorizationFlowConfig,
@@ -73,6 +74,22 @@ def _ctx(
 
     ctx.admin_db.transaction = _noop_transaction
     return ctx
+
+
+class _Registrations:
+    """In-memory ``ConnectableRegistrationSourceProtocol`` (no control DB)."""
+
+    def __init__(self, *rows: ConnectableRegistration) -> None:
+        self.rows = rows
+        self.calls = 0
+
+    async def list_active(self) -> tuple[ConnectableRegistration, ...]:
+        self.calls += 1
+        return self.rows
+
+
+def _service(ctx: MagicMock, registrations: _Registrations | None = None) -> CredentialService:
+    return CredentialService(ctx, connect_registrations=registrations or _Registrations())
 
 
 def _resolved() -> ResolvedCredential:
@@ -121,7 +138,7 @@ def _patch_resolver(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
 
 @pytest.mark.asyncio
 async def test_empty_vendor_returns_empty_injection() -> None:
-    result = await CredentialService(_ctx()).inject(
+    result = await _service(_ctx()).inject(
         api_vendor="", api_name="", api_version="", identity=_IDENTITY
     )
     assert result.headers == {}
@@ -139,7 +156,7 @@ async def test_not_provisioned_maps_to_424_with_directive_and_url(
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(account_linking_base_url="https://app.example.com/")).inject(
+        await _service(_ctx(account_linking_base_url="https://app.example.com/")).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -166,7 +183,7 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(account_linking_base_url=None)).inject(
+        await _service(_ctx(account_linking_base_url=None)).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -211,7 +228,7 @@ async def test_not_provisioned_registry_vendor_suggests_connect(
     )
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(vendors=_github_registry())).inject(
+        await _service(_ctx(vendors=_github_registry())).inject(
             api_vendor="github.com",
             api_name="github.com/api.github.com",
             api_version="",
@@ -237,7 +254,7 @@ async def test_not_provisioned_off_registry_keeps_operator_prose(
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(_ctx(vendors=_github_registry())).inject(
+        await _service(_ctx(vendors=_github_registry())).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -245,6 +262,105 @@ async def test_not_provisioned_off_registry_keeps_operator_prose(
     assert directive is not None
     assert "suggested_command" not in directive.parameters
     assert "jentic connect" not in directive.human_readable_instruction
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_registry_vendor_carries_structured_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config-registry vendor rides ``parameters.connect`` next to the CLI
+    command, with no ``registration_id`` (the unpinned connect resolves the
+    config entry), and the registrations are never read."""
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("github.com", "github.com/api.github.com", "")
+    )
+    registrations = _Registrations()
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await _service(_ctx(vendors=_github_registry()), registrations).select(
+            api_vendor="github.com",
+            api_name="github.com/api.github.com",
+            api_version="",
+            identity=_IDENTITY,
+            method="get",
+            path="/repos/acme/widgets/issues",
+        )
+
+    params = exc.value.directive.parameters  # type: ignore[union-attr]
+    assert params["connect"] == {"vendor_key": "github"}
+    assert params["suggested_command"] == "jentic connect github"
+    assert params["suggested_rules"] == [
+        {
+            "effect": "allow",
+            "methods": ["GET"],
+            "path": "/repos/acme/widgets/issues",
+            "match_mode": "exact",
+        }
+    ]
+    assert params["vendor"] == "github.com"
+    assert registrations.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_shared_app_registration_suggests_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An API off the config registry but covered by exactly one active
+    shared OAuth-app registration (matched by ``catalog_api_id``) is
+    agent-connectable: the directive names the registration's connect key
+    and pins its id."""
+    _patch_resolver(
+        monkeypatch, ResolveNotProvisioned("googleapis.com", "googleapis.com/gmail", "v1")
+    )
+    registrations = _Registrations(
+        ConnectableRegistration(
+            id="oar_gmail", api_vendor="google", catalog_api_id="googleapis.com/gmail"
+        ),
+        ConnectableRegistration(
+            id="oar_drive", api_vendor="google", catalog_api_id="googleapis.com/drive"
+        ),
+    )
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await _service(_ctx(), registrations).inject(
+            api_vendor="googleapis.com",
+            api_name="googleapis.com/gmail",
+            api_version="v1",
+            identity=_IDENTITY,
+        )
+
+    directive = exc.value.directive
+    assert directive is not None
+    assert directive.parameters["connect"] == {
+        "vendor_key": "google",
+        "registration_id": "oar_gmail",
+    }
+    assert directive.parameters["suggested_command"] == "jentic connect google"
+    # inject carries no request method/path, so no rule is suggested.
+    assert "suggested_rules" not in directive.parameters
+    assert "jentic connect google" in directive.human_readable_instruction
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_registration_lookup_failure_keeps_operator_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed registration read must not turn the 424 into a 500: the
+    denial degrades to the operator-only guidance."""
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    class _Failing(_Registrations):
+        async def list_active(self) -> tuple[ConnectableRegistration, ...]:
+            raise RuntimeError("control DB unavailable")
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await _service(_ctx(), _Failing()).inject(
+            api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
+        )
+
+    params = exc.value.directive.parameters  # type: ignore[union-attr]
+    assert "connect" not in params
+    assert "suggested_command" not in params
 
 
 @pytest.mark.asyncio
@@ -256,7 +372,7 @@ async def test_not_provisioned_ignores_public_base_url(
     _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
 
     with pytest.raises(CredentialNotProvisionedError) as exc:
-        await CredentialService(
+        await _service(
             _ctx(account_linking_base_url=None, public_base_url="https://gw.example.com")
         ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
 
@@ -269,7 +385,7 @@ async def test_ambiguous_maps_to_409(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_resolver(monkeypatch, AmbiguousCredentialError("stripe", "", "", 2))
 
     with pytest.raises(AmbiguousMatchError) as exc:
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
     assert exc.value.type == "ambiguous_credential"
@@ -283,7 +399,7 @@ async def test_invalid_grant_maps_to_401_reconnect(monkeypatch: pytest.MonkeyPat
     _patch_refresher(monkeypatch, RefreshInvalidGrantError("cred_1"))
 
     with pytest.raises(CredentialNeedsReconnectError) as exc:
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
     assert exc.value.type == "credential_needs_reconnect"
@@ -297,7 +413,7 @@ async def test_refresh_transient_maps_to_502_upstream(monkeypatch: pytest.Monkey
     _patch_refresher(monkeypatch, RefreshTransientError("cred_1", "502 from idp"))
 
     with pytest.raises(CredentialRefreshTransientError) as exc:
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
     assert exc.value.type == "refresh_transient_error"
@@ -321,7 +437,7 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
         "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
     )
 
-    result = await CredentialService(_ctx()).inject(
+    result = await _service(_ctx()).inject(
         api_vendor="stripe",
         api_name="charges",
         api_version="v1",
@@ -376,7 +492,7 @@ async def test_inject_with_invalid_trace_id_emits_uncorrelated_audit_event(
         "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
     )
 
-    result = await CredentialService(_ctx()).inject(
+    result = await _service(_ctx()).inject(
         api_vendor="stripe",
         api_name="charges",
         api_version="v1",
@@ -400,7 +516,7 @@ async def test_failed_resolution_emits_no_audit_event(monkeypatch: pytest.Monkey
     )
 
     with pytest.raises(CredentialNotProvisionedError):
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -424,7 +540,7 @@ async def test_decryption_error_maps_to_424_undecryptable_with_directive(
     monkeypatch.setattr("jentic_one.broker.services.credentials.orchestrator.inject_auth", _boom)
 
     with pytest.raises(CredentialUndecryptableError) as exc:
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="charges", api_version="v1", identity=_IDENTITY
         )
 
@@ -471,7 +587,7 @@ async def test_decryption_error_during_oauth_refresh_also_maps(
     )
 
     with pytest.raises(CredentialUndecryptableError) as exc:
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="google", api_name="sheets", api_version="v4", identity=_IDENTITY
         )
     assert exc.value.type == "credential_undecryptable"
@@ -499,7 +615,7 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
     )
 
     with pytest.raises(CredentialUndecryptableError):
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -540,7 +656,7 @@ async def test_access_event_names_the_credential_owner(
         "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
     )
 
-    await CredentialService(_ctx()).inject(
+    await _service(_ctx()).inject(
         api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
     )
 
@@ -596,7 +712,7 @@ async def test_health_events_name_the_credential_owner(
     )
 
     with pytest.raises((CredentialUndecryptableError, CredentialNeedsReconnectError)):
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
@@ -619,7 +735,7 @@ async def test_not_provisioned_event_names_the_caller(monkeypatch: pytest.Monkey
     )
 
     with pytest.raises(CredentialNotProvisionedError):
-        await CredentialService(_ctx()).inject(
+        await _service(_ctx()).inject(
             api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY
         )
 
