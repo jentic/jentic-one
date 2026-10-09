@@ -446,8 +446,12 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
 	});
 
-	it('routes decided/withdrawn approval events to the approval, keeping View job', () => {
-		for (const type of ['execution.approval_decided', 'execution.approval_withdrawn']) {
+	it('routes decided/withdrawn/expired approval events to the approval, keeping View job', () => {
+		for (const type of [
+			'execution.approval_decided',
+			'execution.approval_withdrawn',
+			'execution.approval_expired',
+		]) {
 			const ev = makeEvent({
 				type,
 				kind: 'execution',

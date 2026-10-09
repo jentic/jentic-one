@@ -14,6 +14,7 @@ import { NotificationsMenu } from '@/shared/app/NotificationsMenu';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 import { clearToken, setToken } from '@/shared/api';
 import { useOpenConnectRequests } from '@/shared/credentials/api';
+import { usePendingApprovals } from '@/shared/approvals';
 
 const emptyPage = { data: [], has_more: false, next_cursor: null };
 
@@ -89,7 +90,16 @@ function ConnectRequestsSettled() {
 	return isSuccess ? <span data-testid="connect-requests-settled" hidden /> : null;
 }
 
-function renderMenu({ withConnectProbe = false }: { withConnectProbe?: boolean } = {}) {
+/** Marks the pending-approvals read as settled (same shared query as the menu). */
+function ApprovalsSettled() {
+	const { isSuccess } = usePendingApprovals();
+	return isSuccess ? <span data-testid="approvals-settled" hidden /> : null;
+}
+
+function renderMenu({
+	withConnectProbe = false,
+	withApprovalsProbe = false,
+}: { withConnectProbe?: boolean; withApprovalsProbe?: boolean } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -100,6 +110,7 @@ function renderMenu({ withConnectProbe = false }: { withConnectProbe?: boolean }
 					<AgentStreamProvider live={false}>
 						<NotificationsMenu />
 						{withConnectProbe && <ConnectRequestsSettled />}
+						{withApprovalsProbe && <ApprovalsSettled />}
 					</AgentStreamProvider>
 				</MemoryRouter>
 			</AuthProvider>
@@ -248,5 +259,56 @@ describe('Notifications — connect requests go to approvers', () => {
 		const row = within(dialog).queryByText(/is waiting for you to connect GitHub/);
 		if (listed) expect(row).toBeInTheDocument();
 		else expect(row).toBeNull();
+	});
+});
+
+describe('Notifications — held calls go to deciders', () => {
+	const heldCall = {
+		id: 'exap_waiting',
+		job_id: 'job_waiting',
+		agent_id: 'agnt_pending_9',
+		credential_id: 'cred_1',
+		api_vendor: 'api.stripe.com',
+		api_name: 'payments',
+		api_version: '1',
+		method: 'POST',
+		path: '/v1/charges',
+		state: 'pending',
+		expires_at: '2999-01-01T00:00:00Z',
+		created_at: '2026-01-01T00:00:00Z',
+		_links: { self: '/executions/approvals/exap_waiting', job: '/jobs/job_waiting' },
+	};
+
+	it.each([
+		['admin', ['org:admin'], true],
+		['jobs:write', [...MEMBER_DEFAULTS, 'jobs:write'], true],
+		['jobs:read only', MEMBER_DEFAULTS, false],
+	] as const)('%s', async (_label, permissions, listed) => {
+		let reads = 0;
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
+			http.get('/executions/approvals', () => {
+				reads += 1;
+				return HttpResponse.json({ data: [heldCall], has_more: false, next_cursor: null });
+			}),
+		);
+		trackSources();
+		renderMenu({ withApprovalsProbe: listed });
+
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: /^Notifications/ }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		await within(dialog).findByText('waiting-bot is waiting for approval');
+		if (listed) {
+			await screen.findByTestId('approvals-settled');
+			expect(
+				await within(dialog).findByText(/is waiting for you to approve a call/),
+			).toBeInTheDocument();
+		} else {
+			await new Promise((r) => setTimeout(r, 300));
+			expect(within(dialog).queryByText(/is waiting for you to approve/)).toBeNull();
+			// A caller who cannot decide makes no request for them.
+			expect(reads).toBe(0);
+		}
 	});
 });

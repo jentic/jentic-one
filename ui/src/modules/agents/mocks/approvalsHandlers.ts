@@ -6,6 +6,7 @@
  *   GET  /executions/approvals             → 200 page (`?state=` filters)
  *   GET  /executions/approvals/{id}        → 200 detail | 404 (not a reviewer / missing)
  *   POST /executions/approvals/{id}:decide → 200 updated row | 409 not pending | 422 bad decision
+ *   POST /executions/approvals/{id}:withdraw → 200 withdrawn row | 409 not pending
  *
  * Registered additively in src/mocks/handlers.ts.
  */
@@ -106,6 +107,54 @@ export function resetApprovalsStore(): void {
 	store = seed();
 }
 
+/** Empty the store: nothing is held. */
+export function clearApprovalsStore(): void {
+	store = [];
+}
+
+let nextId = 1;
+
+/**
+ * Add a pending held call (or any state via `overrides`) and return it. The
+ * caller's agent id defaults to the composed agents store's `agnt_active_1`.
+ */
+export function seedMockApproval(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
+	const id = overrides.id ?? `exap_seeded_${nextId++}`;
+	const row: ApprovalRow = {
+		id,
+		job_id: `job_${id}`,
+		agent_id: 'agnt_active_1',
+		agent_name: null,
+		agent_owner_id: 'usr_viewer_1',
+		credential_id: 'cred_stripe',
+		api_vendor: 'api.stripe.com',
+		api_name: 'payments',
+		api_version: '2024-01-01',
+		operation_id: 'createCharge',
+		method: 'POST',
+		path: '/v1/charges',
+		matched_rule_id: 'apr_hold_posts',
+		state: 'pending',
+		expires_at: hours(23),
+		decided_at: null,
+		decided_by: null,
+		decision_reason: null,
+		trace_id: null,
+		execution_id: null,
+		created_at: hours(-0.5),
+		updated_at: null,
+		request: null,
+		...overrides,
+	};
+	store.push(row);
+	return row;
+}
+
+/** The store's current row for `id` — tests assert a decision landed. */
+export function getMockApproval(id: string): ApprovalRow | undefined {
+	return store.find((r) => r.id === id);
+}
+
 function links(row: ApprovalRow) {
 	return { self: `/executions/approvals/${row.id}`, job: `/jobs/${row.job_id}` };
 }
@@ -152,6 +201,23 @@ export const approvalsHandlers = [
 		row.decided_at = new Date().toISOString();
 		row.decided_by = 'usr_owner';
 		row.decision_reason = body.reason ?? null;
+		return HttpResponse.json(listView(row));
+	}),
+	http.post('/executions/approvals/:id\\:withdraw', ({ params }) => {
+		const row = store.find((r) => r.id === params.id);
+		if (!row) return HttpResponse.json({ status: 404 }, { status: 404 });
+		if (row.state !== 'pending') {
+			return HttpResponse.json(
+				{
+					type: 'execution_approval_already_decided',
+					status: 409,
+					detail: `Execution approval '${row.id}' is already ${row.state}`,
+				},
+				{ status: 409 },
+			);
+		}
+		row.state = 'withdrawn';
+		row.updated_at = new Date().toISOString();
 		return HttpResponse.json(listView(row));
 	}),
 ];

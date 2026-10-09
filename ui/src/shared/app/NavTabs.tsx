@@ -8,6 +8,7 @@ import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, menuItemClass, useDismissable } from '@/shared/ui/Menu';
 import { usePendingAgentsCount } from '@/shared/hooks';
+import { PendingApprovalsBadge } from '@/shared/approvals';
 import { cn } from '@/shared/lib/utils';
 
 const NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
@@ -32,9 +33,20 @@ function PendingAgentsBadge() {
 	);
 }
 
-/** Renders the pending-count badge appropriate to a nav item, if any. */
+/**
+ * Renders the pending-count badges appropriate to a nav item, if any. The
+ * Agents tab carries two: agents awaiting approval, and held calls awaiting
+ * the viewer's decision (its Approvals subsection).
+ */
 function NavBadge({ navId }: { navId: string }) {
-	if (navId === 'agents') return <PendingAgentsBadge />;
+	if (navId === 'agents') {
+		return (
+			<>
+				<PendingAgentsBadge />
+				<PendingApprovalsBadge className="ml-0.5" />
+			</>
+		);
+	}
 	return null;
 }
 

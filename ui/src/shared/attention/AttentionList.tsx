@@ -7,7 +7,7 @@
  *
  *   Alerts     — recent failures and warnings that need a look (view)
  *   Approvals  — agents and OAuth clients waiting to be let in, and agents
- *                waiting on an account connection (approve / review)
+ *                waiting on an account connection or a held call (approve / review)
  *   Setup      — credential sign-ins nobody finished
  *
  * The cheap, reversible verb (approve an agent) runs inline; anything that
@@ -16,7 +16,7 @@
  * row still links to the agent for anyone else.
  */
 import { type ComponentType } from 'react';
-import { AlertTriangle, Bot, KeyRound, PlugZap, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Bot, CheckSquare, KeyRound, PlugZap, ShieldQuestion } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
@@ -30,6 +30,7 @@ const KIND_ICON: Record<AttentionKind, ComponentType<{ className?: string }>> = 
 	agent: Bot,
 	oauth_client: ShieldQuestion,
 	connect_request: PlugZap,
+	execution_approval: CheckSquare,
 	credential: KeyRound,
 	event: AlertTriangle,
 };
@@ -41,6 +42,7 @@ const GROUP_OF: Record<AttentionKind, Group> = {
 	agent: 'approvals',
 	oauth_client: 'approvals',
 	connect_request: 'approvals',
+	execution_approval: 'approvals',
 	credential: 'setup',
 };
 
@@ -192,6 +194,7 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 			return <ReviewLink href={item.href} label="View" onNavigate={onNavigate} />;
 		case 'oauth_client':
 		case 'connect_request':
+		case 'execution_approval':
 			return <ReviewLink href={item.href} label="Review" onNavigate={onNavigate} />;
 		case 'credential':
 			// The inventory is a sheet on the Agents page; there is no per-credential route.

@@ -5,9 +5,9 @@
  * inventory (a sheet reached through `?credentials`, `=new` for the wizard, and
  * `?approve=<sid>` for an agent's connect approval link), the agents'
  * held calls (the Approvals subsection), the fleet filter and `New agent`. It
- * owns the keyboard map documented in `PageHelp`; below it sit the "Waiting
- * for you" connect requests and `FlatAgentsSection`, which keeps its selection
- * in `?agent=`.
+ * owns the keyboard map documented in `PageHelp`; below it sit "Waiting for
+ * you" (connect requests and held calls) and `FlatAgentsSection`, which keeps
+ * its selection in `?agent=`.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -23,10 +23,11 @@ import {
 	type KeyboardShortcut,
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
+import { PendingApprovalsBadge } from '@/shared/approvals';
 import { useHotkey } from '@/shared/hooks';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
-import { ConnectRequestsSection } from '@/modules/agents/components/flat/ConnectRequestsSection';
+import { WaitingForYouSection } from '@/modules/agents/components/flat/WaitingForYouSection';
 
 /** The connect session the approve wizard is open on. */
 interface ApprovalSession {
@@ -170,6 +171,7 @@ export default function AgentsPage() {
 						>
 							<CheckSquare className="h-4 w-4" />
 							Approvals
+							<PendingApprovalsBadge />
 						</Button>
 						<PageHelp
 							title="About Agents"
@@ -223,7 +225,7 @@ export default function AgentsPage() {
 				}
 			/>
 
-			<ConnectRequestsSection />
+			<WaitingForYouSection />
 
 			<FlatAgentsSection
 				createOpen={agentCreateOpen}

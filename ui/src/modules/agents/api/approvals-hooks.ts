@@ -14,14 +14,14 @@ import {
 	listApprovals,
 	type ListApprovalsParams,
 } from '@/modules/agents/api/approvals-client';
-import type { DecideRequest, ExecutionApprovalResponse } from '@/shared/api';
+import { sharedQueryKeys, type DecideRequest, type ExecutionApprovalResponse } from '@/shared/api';
 
 export { ApprovalDecision, ExecutionApprovalState } from '@/shared/api';
 export { ApprovalsApiError } from '@/modules/agents/api/approvals-client';
 
 /** Stable query-key roots for precise cache invalidation. */
 export const approvalsKeys = {
-	all: ['approvals'] as const,
+	all: sharedQueryKeys.approvalsRoot,
 	list: (params: ListApprovalsParams) => [...approvalsKeys.all, 'list', params] as const,
 	detail: (id: string) => [...approvalsKeys.all, 'detail', id] as const,
 };
@@ -43,7 +43,11 @@ export function useApproval(approvalId: string | undefined) {
 	});
 }
 
-/** Approve or deny a pending approval. Invalidates list + detail on success. */
+/**
+ * Approve or deny a pending approval. Invalidates the Approvals slices, the
+ * waiting signals (inbox, badges, "Waiting for you") and the held job's
+ * Monitor rows on success.
+ */
 export function useDecideApproval() {
 	const qc = useQueryClient();
 	return useMutation<
@@ -54,6 +58,9 @@ export function useDecideApproval() {
 		mutationFn: ({ approvalId, body }) => decideApproval(approvalId, body),
 		onSuccess: (data, { approvalId }) => {
 			qc.invalidateQueries({ queryKey: approvalsKeys.all });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.monitorJobsRoot });
+			qc.invalidateQueries({ queryKey: [...sharedQueryKeys.monitorJobRoot, data.job_id] });
 			qc.setQueryData(approvalsKeys.detail(approvalId), data);
 			const verb = data.state === 'approved' ? 'Approved' : 'Denied';
 			toast({

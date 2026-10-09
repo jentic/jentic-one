@@ -4,6 +4,7 @@ import {
 	renderWithProviders,
 	screen,
 	userEvent,
+	waitFor,
 	checkA11y,
 	createErrorHandler,
 } from '@/__tests__/test-utils';
@@ -11,6 +12,7 @@ import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { AuthProvider } from '@/shared/auth';
 import { Toaster } from '@/shared/ui';
+import { PendingApprovalsBadge } from '@/shared/approvals';
 import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
 import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
 import { resetApprovalsStore } from '@/modules/agents/mocks/approvalsHandlers';
@@ -69,6 +71,23 @@ describe('Approvals pages', () => {
 		expect(screen.getByText('looks right')).toBeInTheDocument();
 		expect(screen.getAllByText('Approved').length).toBeGreaterThan(0);
 		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
+	});
+
+	it('clears the pending-count badge once the decision lands', async () => {
+		renderWithProviders(
+			<>
+				<PendingApprovalsBadge />
+				<ApprovalDetailPage />
+			</>,
+			{ route: '/agents/approvals/exap_pending1', path: '/agents/approvals/:id' },
+		);
+		expect(await screen.findByLabelText('1 call awaiting your approval')).toBeInTheDocument();
+		await userEvent.type(screen.getByLabelText('Reason (optional)'), 'not this one');
+		await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+		expect(await screen.findByText('not this one')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByLabelText(/awaiting your approval/)).not.toBeInTheDocument(),
+		);
 	});
 
 	it('reports a decision that lost the race', async () => {

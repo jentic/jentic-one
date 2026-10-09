@@ -21,9 +21,13 @@
  *                                    `awaiting_app` / `polling`, collapsed per agent;
  *                                    listed only to approvers — `org:admin`, or
  *                                    `credentials:write` and `agents:write`)
+ *   - agents waiting on a held call (`GET /executions/approvals?state=pending`,
+ *                                    collapsed per agent; listed only to deciders —
+ *                                    `jobs:write` or `org:admin` — and scoped
+ *                                    server-side to the agents they review)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
- * client's registration) are dropped — the queue row is the actionable one —
+ * client's registration, a held call's approval request) are dropped — the queue row is the actionable one —
  * as are catalog updates, whose current state lives on the Workspace page.
  *
  * Events are append-only history, so nothing clears an alert's
@@ -48,6 +52,13 @@ import {
 	summariseConnectTargets,
 	useCanApproveConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
+import {
+	describeHeldCall,
+	groupApprovalsByAgent,
+	summariseHeldCalls,
+	useCanDecideApprovals,
+	usePendingApprovals,
+} from '@/shared/approvals';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { credentialAwaitsConsent } from '@/shared/credentials/lib/credentialIdentity';
@@ -57,7 +68,8 @@ import { ORG_ADMIN } from '@/shared/auth/usePermission';
 import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
 import { CREDENTIALS_READ, OWNER_CREDENTIALS_READ, useCanAccess } from '@/shared/auth/useCanAccess';
 
-export type AttentionKind = 'agent' | 'oauth_client' | 'connect_request' | 'credential' | 'event';
+export type AttentionKind =
+	'agent' | 'oauth_client' | 'connect_request' | 'execution_approval' | 'credential' | 'event';
 
 /** Higher sorts first. Failures outrank approvals; approvals outrank setup nags. */
 export type AttentionUrgency = 3 | 2 | 1;
@@ -99,14 +111,15 @@ const REFETCH_MS = 45_000;
 export const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Event types the inbox skips. Registrations duplicate a live queue row (the
- * queue row wins). A catalog update's outstanding-ness lives on the API's
+ * Event types the inbox skips. Registrations and a held call's approval request
+ * duplicate a live queue row (the queue row wins, and clears once decided). A catalog update's outstanding-ness lives on the API's
  * Workspace page, not in the event — listing it here would keep an adopted
  * update counted until it aged out.
  */
 const SKIPPED_EVENT_TYPES = new Set([
 	'agent.self_registered',
 	'oauth_client.registered',
+	'execution.approval_requested',
 	'catalog.update_available',
 	'catalog.update_conflicts_overlay',
 ]);
@@ -151,7 +164,16 @@ export function useAttentionItems(): AttentionState {
 		() => groupConnectRequestsByAgent(connectRequests.data ?? []),
 		[connectRequests.data],
 	);
-	const actors = useActorDirectory(connectGroups.map((g) => g.agentId));
+	const canDecideApprovals = useCanDecideApprovals();
+	const pendingApprovals = usePendingApprovals({ enabled: canDecideApprovals });
+	const approvalGroups = useMemo(
+		() => groupApprovalsByAgent(pendingApprovals.data?.approvals ?? []),
+		[pendingApprovals.data],
+	);
+	const actors = useActorDirectory([
+		...connectGroups.map((g) => g.agentId),
+		...approvalGroups.map((g) => g.agentId),
+	]);
 
 	const items = useMemo<AttentionItem[]>(() => {
 		const out: AttentionItem[] = [];
@@ -204,6 +226,27 @@ export function useAttentionItems(): AttentionState {
 			});
 		}
 
+		// Likewise one row per agent with held calls; the link opens the
+		// longest-waiting one.
+		if (canDecideApprovals) {
+			for (const group of approvalGroups) {
+				const oldest = group.approvals[0];
+				const name = actors.resolve(group.agentId) ?? group.agentId;
+				out.push({
+					key: `execution_approval:${group.agentId}`,
+					kind: 'execution_approval',
+					urgency: 2,
+					title: `${name} is waiting for you to approve ${summariseHeldCalls(group.approvals)}`,
+					detail:
+						group.approvals.length > 1
+							? `${group.approvals.length} held calls`
+							: describeHeldCall(oldest),
+					since: group.since,
+					href: ROUTE_PATHS.approval(oldest.id),
+				});
+			}
+		}
+
 		if (credentials.complete) {
 			for (const credential of credentials.items) {
 				if (!credentialAwaitsConsent(credential)) continue;
@@ -245,6 +288,8 @@ export function useAttentionItems(): AttentionState {
 		oauthClients.data,
 		connectGroups,
 		canApproveConnectRequests,
+		approvalGroups,
+		canDecideApprovals,
 		actors,
 		credentials.complete,
 		credentials.items,
@@ -257,6 +302,7 @@ export function useAttentionItems(): AttentionState {
 		oauthClients.isError && 'OAuth client queue',
 		credentials.error != null && 'credentials',
 		connectRequests.isError && 'connect requests',
+		pendingApprovals.isError && 'held calls',
 	].filter((s): s is string => typeof s === 'string');
 
 	return {
@@ -266,7 +312,8 @@ export function useAttentionItems(): AttentionState {
 			pendingAgents.isLoading ||
 			events.isLoading ||
 			oauthClients.isLoading ||
-			connectRequests.isLoading,
+			connectRequests.isLoading ||
+			pendingApprovals.isLoading,
 		failedSources,
 	};
 }

@@ -611,6 +611,20 @@ export function AgentStreamProvider({
 		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 	}, [queryClient]);
 
+	/**
+	 * Refresh the held-call surfaces (the Approvals list and review page, the
+	 * inbox's held-call rows, the pending-count badges, "Waiting for you", and
+	 * the held job in Monitor). A hold is filed by an agent and settles
+	 * out-of-band — another reviewer decides, the agent withdraws, the expiry
+	 * sweep lapses it — so each `execution.approval_*` event refreshes them.
+	 */
+	const invalidateApprovalSurfaces = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.approvalsRoot });
+		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.monitorJobsRoot });
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.monitorJobRoot });
+	}, [queryClient]);
+
 	const upsert = useCallback((incoming: StreamEvent[], front: boolean) => {
 		setEvents((prev) => {
 			const byId = new Map(prev.map((e) => [e.id, e] as const));
@@ -734,11 +748,14 @@ export function AgentStreamProvider({
 					setLatest(ev);
 					// Bridge: agent lifecycle events (CLI self-registration,
 					// approval) refresh the agent surfaces the instant they
-					// land; OAuth events likewise refresh theirs.
+					// land; OAuth and execution-approval events likewise
+					// refresh theirs.
 					if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
 					} else if (ev.kind === 'oauth') {
 						invalidateOAuthSurfaces();
+					} else if (isApprovalEvent(ev)) {
+						invalidateApprovalSurfaces();
 					}
 				},
 				onError: (error) => {
@@ -753,7 +770,14 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, canReadEvents, upsert, invalidateAgentSurfaces, invalidateOAuthSurfaces]);
+	}, [
+		live,
+		canReadEvents,
+		upsert,
+		invalidateAgentSurfaces,
+		invalidateOAuthSurfaces,
+		invalidateApprovalSurfaces,
+	]);
 
 	// The lens at call time vs. now: a Load older still in flight when the lens
 	// changes must not write its actor's cursor under the new one.
@@ -1138,8 +1162,10 @@ export function isApprovalRequestEvent(ev: Pick<StreamEvent, 'type'>): boolean {
 	return ev.type === 'execution.approval_requested';
 }
 
-/** Every execution-approval lifecycle event (requested, decided, withdrawn). */
-const isApprovalEvent = (ev: StreamEvent): boolean => ev.type.startsWith('execution.approval_');
+/** Every execution-approval lifecycle event (requested, decided, withdrawn, expired). */
+export function isApprovalEvent(ev: Pick<StreamEvent, 'type'>): boolean {
+	return ev.type.startsWith('execution.approval_');
+}
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	const actions: InlineActionSpec[] = [];
