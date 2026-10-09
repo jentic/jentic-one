@@ -94,6 +94,9 @@ export type StreamTokens = {
 	// `oauth_client_id` data key (the token-lineage join key).
 	oauth_client_id?: string;
 	grant_id?: string;
+	// Connect-session events (`connect_session.created`) carry the session id,
+	// which opens the agent's connect request for approval.
+	session_id?: string;
 };
 
 /** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
@@ -176,10 +179,15 @@ export function isRetiredEventType(type: string): boolean {
  * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind:
  * client registration/approval and consent-grant lifecycle
  * are two halves of the same interactive-OAuth surface.
+ *
+ * `connect_session.*` events are an agent asking for a credential, so they
+ * share the `credential` kind (filter chip, label) with the credential
+ * lifecycle they start.
  */
 export function kindForType(type: string): StreamKind {
 	const ns = type.split('.', 1)[0];
 	if (ns === 'overlay') return 'catalog';
+	if (ns === 'connect_session') return 'credential';
 	if (ns === 'oauth_client' || ns === 'oauth_grant') return 'oauth';
 	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
@@ -389,6 +397,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		// picked up by the shared field above).
 		oauth_client_id: stringField(data, 'oauth_client_id'),
 		grant_id: stringField(data, 'grant_id'),
+		session_id: stringField(data, 'session_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
@@ -1064,6 +1073,18 @@ const NAV = {
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
+	// An agent's connect request opened for approval, with the requesting agent
+	// selected behind the dialog — the shape of `ROUTE_PATHS.connectApproval`
+	// (the session's `approval_url`), inlined like `agent` above. Token-less:
+	// the agent's owner or an org admin acts without the poll token.
+	connectApproval: (ev: StreamEvent) => {
+		const sessionId = ev.tokens.session_id;
+		if (!sessionId) return null;
+		const q = new URLSearchParams();
+		if (ev.tokens.agent_id) q.set('agent', ev.tokens.agent_id);
+		q.set('approve', sessionId);
+		return `/agents?${q}`;
+	},
 	// Catalog/overlay events deep-link to the affected API's hub in the
 	// Library: `/library/workspace/:vendor/:name/:version`, each segment
 	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
@@ -1172,9 +1193,14 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'import':
 			return NAV.job(ev) ?? NAV.trace(ev);
 		case 'credential':
-			// The agent the event is about when it names one (binding events);
-			// otherwise the credential inventory, which has no per-credential URL.
-			return NAV.agent(ev) ?? (ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev));
+			// A connect request opens its approval; otherwise the agent the event
+			// is about when it names one (binding events); otherwise the
+			// credential inventory, which has no per-credential URL.
+			return (
+				NAV.connectApproval(ev) ??
+				NAV.agent(ev) ??
+				(ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev))
+			);
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':

@@ -73,13 +73,15 @@ from jentic_one.shared.auth.permission_catalog import (
     compute_effective,
 )
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
-from jentic_one.shared.config import resolved_auth_base_url
+from jentic_one.shared.config import connect_approval_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
+from jentic_one.shared.events import emit_event_best_effort, summary_label
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.actors import Origin, actor_type_label_from_id
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -536,6 +538,7 @@ class ConnectSessionService:
                 "credential_id": row.credential_id,
             },
         )
+        await self._emit_session_created(row, vendor_display_name=entry.display_name)
         # Kick off the vendor's OpenAPI import as early as we can — the SPA
         # opens the connect dialog and immediately calls ``:connect``, so
         # firing here (rather than at ``:confirm``) gives the import
@@ -561,6 +564,55 @@ class ConnectSessionService:
             return _session_app_from_registration(self._ctx, resolved.registration)
         return _session_app_from_flow(resolved.flow)
 
+    async def _emit_session_created(
+        self, row: ConnectSession, *, vendor_display_name: str | None
+    ) -> None:
+        """Emit the informational ``connect_session.created`` rail event (best-effort).
+
+        Only for agent-initiated sessions with a target agent — the signal is
+        "your agent is waiting for you"; a human connecting in the SPA is
+        already looking at the result. ``created_by`` is the agent, so the
+        owner-scoped event read shows the row to the agent's owner (and
+        ``org:admin``). The open session carries the live state, so the event
+        never asks for action. The summary and data name only the agent, the
+        vendor and the session — never the poll token.
+        """
+        if row.agent_id is None:
+            return
+        if actor_type_label_from_id(row.initiator_actor_id) != ActorType.AGENT.value:
+            return
+        try:
+            async with self._ctx.admin_db.session() as admin_session:
+                agent = await EffectsRepository.get_agent_owner(admin_session, row.agent_id)
+            agent_name = agent.name if agent is not None else None
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.CONNECT_SESSION_CREATED,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Agent {summary_label(agent_name, row.agent_id)} asked to connect "
+                        f"{summary_label(vendor_display_name, row.vendor)}"
+                    ),
+                    requires_action=False,
+                    data={
+                        "session_id": row.id,
+                        "agent_id": row.agent_id,
+                        "vendor_key": row.vendor,
+                        "credential_id": row.credential_id,
+                    },
+                    created_by=row.agent_id,
+                    actor_id=row.initiator_actor_id,
+                    actor_type=ActorType.AGENT.value,
+                )
+        except Exception:
+            _logger.warning(
+                "telemetry_emit_failed",
+                event_type=EventType.CONNECT_SESSION_CREATED,
+                session_id=row.id,
+                exc_info=True,
+            )
+
     def _approval_url_for(self, session_id: str) -> str:
         """Build the human-facing approval URL for an agent-initiated session.
 
@@ -572,11 +624,11 @@ class ConnectSessionService:
         stays with the agent and never rides in a browser URL.
 
         The URL is relayed out-of-band (CLI output, MCP tool result), so it must
-        be absolute even with no public URL configured — ``resolved_auth_base_url``
-        falls back to ``bind_origin`` rather than yielding a bare path.
+        be absolute even with no public URL configured — ``connect_approval_url``
+        falls back to ``bind_origin`` rather than yielding a bare path. The
+        broker's denial ``provisioning_url`` uses the same builder.
         """
-        base = resolved_auth_base_url(self._ctx.config).rstrip("/")
-        return f"{base}/app/agents?approve={session_id}"
+        return connect_approval_url(self._ctx.config, session_id)
 
     # ---- review data ------------------------------------------------------
 

@@ -42,6 +42,7 @@ from jentic_one.broker.services.credentials.errors import (
     RefreshInvalidGrantError,
     RefreshTransientError,
 )
+from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver, ResolvedCredential
 from jentic_one.shared.access_guidance import ConnectTarget
@@ -237,7 +238,7 @@ class CredentialService:
                 summary=f"No credential provisioned for '{api.vendor}'",
                 identity=identity,
             )
-            raise self._not_provisioned(
+            raise await self._not_provisioned(
                 api, identity, connect=await self._connect_target(api)
             ) from exc
         except RefreshInvalidGrantError as exc:
@@ -356,7 +357,7 @@ class CredentialService:
                 summary=f"No credential provisioned for '{api.vendor}'",
                 identity=identity,
             )
-            raise self._not_provisioned(
+            raise await self._not_provisioned(
                 api,
                 identity,
                 connect=await self._connect_target(api),
@@ -439,7 +440,7 @@ class CredentialService:
             self._ctx, api, registrations=self._connect_registrations
         )
 
-    def _not_provisioned(
+    async def _not_provisioned(
         self,
         api: APIReference,
         identity: Identity,
@@ -449,25 +450,39 @@ class CredentialService:
     ) -> DomainCredentialNotProvisionedError:
         """Build the 424 with a ``prompt_human`` directive enabling a human handoff.
 
-        When a vendor-registry entry or a shared OAuth-app registration covers
-        the API (``connect``), the provisioning leg is agent-initiable — the
-        directive carries a runnable ``parameters.suggested_command``
-        (``jentic connect <key>``, the connect key, never the API identity),
-        the structured ``parameters.connect`` and the prose teaches the relay
-        loop. Otherwise the ask stays with the operator (same pattern as the
-        403 ``no_credential_binding`` directive); approval stays human either
-        way. ``parameters.vendor`` is the API's vendor axis, not a connect key.
+        When the denied agent already has an open connect session for the API,
+        the directive carries its owner deep link as ``provisioning_url`` and
+        tells the agent to relay it rather than start another connect (no
+        ``suggested_command`` / ``connect``). Otherwise, when a vendor-registry
+        entry or a shared OAuth-app registration covers the API (``connect``),
+        the provisioning leg is agent-initiable — the directive carries a
+        runnable ``parameters.suggested_command`` (``jentic connect <key>``,
+        the connect key, never the API identity), the structured
+        ``parameters.connect`` and the prose teaches the relay loop. Otherwise
+        the ask stays with the operator (same pattern as the 403
+        ``no_credential_binding`` directive); approval stays human either way.
+        ``parameters.vendor`` is the API's vendor axis, not a connect key.
         """
         intent_id = f"intent_{uuid.uuid4().hex}"
+        provisioning_url = await open_session_provisioning_url(
+            self._ctx, identity=identity, api=api
+        )
         params: dict[str, object] = {
             "intent_id": intent_id,
             "vendor": api.vendor,
-            **connect_parameters(connect, suggested_rules),
+            **connect_parameters(None if provisioning_url else connect, suggested_rules),
         }
         connect_command = connect.cli_command() if connect is not None else None
 
-        base = self._ctx.config.broker.account_linking_base_url
-        if connect_command:
+        if provisioning_url:
+            params["provisioning_url"] = provisioning_url
+            instruction = (
+                f"No credential is connected for '{api.vendor}' yet, and your request to "
+                "connect one is still waiting for your human operator. Do not start "
+                f"another: relay {provisioning_url} to them to approve it, then retry once "
+                "they confirm."
+            )
+        elif connect_command:
             instruction = (
                 f"No credential is connected for '{api.vendor}'. Start connecting one "
                 f"yourself: run `{connect_command}` (or call the "
@@ -480,16 +495,6 @@ class CredentialService:
                 f"No credential is connected for '{api.vendor}'; "
                 "ask the user to connect the account before retrying."
             )
-        if base:
-            provisioning_url = (
-                f"{base.rstrip('/')}/connect/{api.vendor}?actor={identity.sub}&intent={intent_id}"
-            )
-            params["provisioning_url"] = provisioning_url
-            if not connect_command:
-                instruction = (
-                    f"No credential is connected for '{api.vendor}'. Ask the user to open "
-                    f"{provisioning_url} to authorize, then retry once they confirm."
-                )
 
         return DomainCredentialNotProvisionedError(
             detail=f"No credential provisioned for '{api.vendor}'.",

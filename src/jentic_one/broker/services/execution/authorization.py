@@ -31,6 +31,7 @@ from jentic_one.broker.core.exceptions import (
 )
 from jentic_one.broker.services.credentials.connect_target import resolve_connect_target
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
+from jentic_one.broker.services.credentials.provisioning import open_session_provisioning_url
 from jentic_one.broker.services.credentials.resolver import ResolvedCredential
 from jentic_one.shared.access_guidance import ConnectTarget
 from jentic_one.shared.auth.identity import Identity
@@ -67,6 +68,7 @@ def _empty_credential_derivation_denial(
     instance: str,
     connect: ConnectTarget | None = None,
     suggested_rules: list[dict[str, Any]] | None = None,
+    provisioning_url: str | None = None,
 ) -> BrokerError:
     """Pick the right denial for an empty credential derivation (direct path).
 
@@ -115,6 +117,7 @@ def _empty_credential_derivation_denial(
             api_served=d.api_served,
             connect=connect,
             suggested_rules=suggested_rules,
+            provisioning_url=provisioning_url,
         ),
     )
 
@@ -203,6 +206,7 @@ async def derive_credential_bindings(
             instance=instance,
             connect=await resolve_connect_target(ctx, api, registrations=connect_registrations),
             suggested_rules=suggested_permission_rules(method=method, path=path),
+            provisioning_url=await open_session_provisioning_url(ctx, identity=identity, api=api),
         )
         # The operator-visible pre-binding signal fires only for the plain
         # no-binding + nothing-serves case — an identity mismatch already has
