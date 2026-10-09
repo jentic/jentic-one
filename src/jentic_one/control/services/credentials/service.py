@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 import structlog
+from pydantic import SecretStr
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -74,6 +75,12 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.credentials.typed_secrets import (
+    write_api_key_secret,
+    write_basic_secret,
+    write_bearer_token_secret,
+    write_sigv4_secret,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
@@ -220,48 +227,39 @@ class CredentialService:
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
-                encrypted = encryption.encrypt(payload.token)
-                preview = encryption.preview(payload.token)
-                await TokenValueCredentialRepository.create(
+                secret = await write_bearer_token_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_token_value=encrypted,
-                    token_preview=preview,
+                    token=SecretStr(payload.token),
                     created_by=identity.sub,
                 )
-                secret = BearerTokenFull(token=payload.token)
 
             elif payload.type == CredentialType.API_KEY:
                 assert payload.key
                 assert payload.location
                 assert payload.field_name
-                encrypted = encryption.encrypt(payload.key)
-                preview = encryption.preview(payload.key)
-                await CustomerAPIKeyRepository.create(
+                secret = await write_api_key_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_key=encrypted,
-                    key_preview=preview,
+                    key=SecretStr(payload.key),
                     location=payload.location,
                     field_name=payload.field_name,
                     created_by=identity.sub,
-                )
-                secret = ApiKeyFull(
-                    key=payload.key, location=payload.location, field_name=payload.field_name
                 )
 
             elif payload.type == CredentialType.BASIC:
                 assert payload.username
                 assert payload.password
-                encrypted_pw = encryption.encrypt(payload.password)
-                await BasicCredentialRepository.create(
+                secret = await write_basic_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     username=payload.username,
-                    encrypted_password=encrypted_pw,
+                    password=SecretStr(payload.password),
                     created_by=identity.sub,
                 )
-                secret = BasicAuthFull(username=payload.username, password=payload.password)
 
             elif payload.type == CredentialType.OAUTH2:
                 validated_token_url: str | None = None
@@ -338,28 +336,20 @@ class CredentialService:
                 assert payload.secret_access_key
                 assert payload.aws_region
                 assert payload.aws_service
-                encrypted = encryption.encrypt(payload.secret_access_key)
-                preview = encryption.preview(payload.secret_access_key)
-                encrypted_session = (
-                    encryption.encrypt(payload.session_token) if payload.session_token else None
-                )
-                await Sigv4CredentialRepository.create(
+                secret = await write_sigv4_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     access_key_id=payload.access_key_id,
-                    encrypted_secret_access_key=encrypted,
-                    secret_preview=preview,
-                    encrypted_session_token=encrypted_session,
+                    secret_access_key=SecretStr(payload.secret_access_key),
+                    session_token=(
+                        SecretStr(payload.session_token)
+                        if payload.session_token is not None
+                        else None
+                    ),
                     region=payload.aws_region,
                     service=payload.aws_service,
                     created_by=identity.sub,
-                )
-                secret = Sigv4Full(
-                    access_key_id=payload.access_key_id,
-                    secret_access_key=payload.secret_access_key,
-                    session_token=payload.session_token,
-                    aws_region=payload.aws_region,
-                    aws_service=payload.aws_service,
                 )
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
