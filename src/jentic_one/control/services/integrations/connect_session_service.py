@@ -2243,7 +2243,6 @@ class ConnectSessionService:
             newly_bound = await self._bind_for_confirm(
                 agent_id, row.credential_id, created_by=identity.sub
             )
-        attributed_to = await self._confirm_attribution(row, identity)
         cas_fields: dict[str, object] = {"agent_id": agent_id} if late_bound else {}
         try:
             async with self._ctx.control_db.transaction() as session:
@@ -2259,10 +2258,9 @@ class ConnectSessionService:
                         created_by=identity.sub,
                     )
                     await CredentialRepository.set_state(session, row.credential_id, "connected")
-                    if attributed_to is not None:
-                        await CredentialRepository.set_created_by(
-                            session, row.credential_id, created_by=attributed_to
-                        )
+                    await CredentialRepository.set_created_by(
+                        session, row.credential_id, created_by=identity.sub
+                    )
                     if agent_id is not None:
                         await AgentPermissionRuleRepository.replace_user_rules(
                             session,
@@ -2470,12 +2468,10 @@ class ConnectSessionService:
             raise
         assert isinstance(challenge, AuthCodeBeginResult)
 
-        attributed_to = await self._confirm_attribution(row, identity)
         async with self._ctx.control_db.transaction() as session:
-            if attributed_to is not None:
-                await CredentialRepository.set_created_by(
-                    session, row.credential_id, created_by=attributed_to
-                )
+            await CredentialRepository.set_created_by(
+                session, row.credential_id, created_by=identity.sub
+            )
             if agent_id is not None:
                 await AgentPermissionRuleRepository.replace_user_rules(
                     session,
