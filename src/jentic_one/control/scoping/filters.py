@@ -41,7 +41,7 @@ _OWNED_AGENT_MODELS: frozenset[type[Any]] = frozenset({ConnectSession, Credentia
 # Session states that still hold a pending credential. Mirrors
 # ``connect_session_repo.LIVE_STATES`` (kept local so this module imports
 # only ORM models; a unit test pins the two together).
-_LIVE_SESSION_STATES: tuple[str, ...] = ("created", "polling")
+_LIVE_SESSION_STATES: tuple[str, ...] = ("created", "awaiting_app", "polling")
 
 # ---------------------------------------------------------------------------
 # Extra access-filter providers (extension seam).
@@ -108,7 +108,7 @@ def _owned_agent_visibility_clause(
 
     ``ConnectSession``: any session whose target ``agent_id`` is one of
     ``owned_agent_ids``. ``Credential``: only a still-``pending`` credential
-    held by an open (``created``/``polling``) session for one of those agents —
+    held by an open (live-state) session for one of those agents —
     once the session ends the credential is visible through its own
     ``created_by`` and bindings, never through this clause. Returns ``None``
     when there is nothing to add.

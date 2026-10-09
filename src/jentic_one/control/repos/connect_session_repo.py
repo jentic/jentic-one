@@ -10,11 +10,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.connect_sessions import TARGET_KIND_VENDOR, ConnectSession
 
-# The two non-terminal states. A session outside these is frozen — no
-# transition (including the terminal sweep) may touch it.
-LIVE_STATES: tuple[str, ...] = ("created", "polling")
+# The non-terminal states. A session outside these is frozen — no transition
+# (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
+# API target with no app resolved yet; it holds a pending credential like
+# ``created``.
+LIVE_STATES: tuple[str, ...] = ("created", "awaiting_app", "polling")
 
 
 class ConnectSessionRepository:
@@ -31,6 +33,7 @@ class ConnectSessionRepository:
         state: str,
         resolved_flow: str,
         poll_token_hash: str,
+        target_kind: str = TARGET_KIND_VENDOR,
         requested_scopes: list[str] | None = None,
         requested_permission_rules: list[dict[str, Any]] | None = None,
         preferred_flow: str | None = None,
@@ -39,6 +42,7 @@ class ConnectSessionRepository:
     ) -> ConnectSession:
         row = ConnectSession(
             credential_id=credential_id,
+            target_kind=target_kind,
             vendor=vendor,
             agent_id=agent_id,
             initiator_actor_id=initiator_actor_id,
@@ -106,13 +110,12 @@ class ConnectSessionRepository:
 
         Used by the connect-poll scanner to dispatch: a candidate credential
         with a live session takes the session-mode advancement path, one
-        without takes the raw-credential path. Only ``polling`` and
-        ``created`` sessions count as "live" here (terminal states are
-        already frozen).
+        without takes the raw-credential path. Only sessions in
+        ``LIVE_STATES`` count (terminal states are already frozen).
         """
         stmt = select(ConnectSession).where(
             ConnectSession.credential_id == credential_id,
-            ConnectSession.state.in_(("created", "polling")),
+            ConnectSession.state.in_(LIVE_STATES),
         )
         result = await session.execute(stmt)
         return result.scalars().first()
@@ -153,24 +156,27 @@ class ConnectSessionRepository:
         *,
         older_than: datetime,
         limit: int,
+        flows: Sequence[str] | None = None,
+        exclude_flows: Sequence[str] | None = None,
     ) -> list[str]:
-        """Return ids of live (``created``/``polling``) sessions created before ``older_than``.
+        """Return ids of live sessions created before ``older_than``.
 
-        Feeds the flow-agnostic TTL sweep: sessions whose initiator never
-        confirmed, or whose auth-code popup was abandoned, have no other
-        expiry driver (the device-flow scanner only sees rows with an aux
-        device-code row), so they — and their upfront ``pending`` credential
-        rows — would otherwise leak forever.
+        Feeds the TTL sweep: sessions whose initiator never confirmed, or
+        whose auth-code popup was abandoned, have no other expiry driver (the
+        device-flow scanner only sees rows with an aux device-code row), so
+        they — and their upfront ``pending`` credential rows — would
+        otherwise leak forever. ``flows`` / ``exclude_flows`` narrow the
+        sweep by ``resolved_flow`` so each flow family gets its own cutoff.
         """
-        stmt = (
-            select(ConnectSession.id)
-            .where(
-                ConnectSession.state.in_(LIVE_STATES),
-                ConnectSession.created_at < older_than,
-            )
-            .order_by(ConnectSession.created_at.asc())
-            .limit(limit)
+        stmt = select(ConnectSession.id).where(
+            ConnectSession.state.in_(LIVE_STATES),
+            ConnectSession.created_at < older_than,
         )
+        if flows is not None:
+            stmt = stmt.where(ConnectSession.resolved_flow.in_(flows))
+        if exclude_flows is not None:
+            stmt = stmt.where(ConnectSession.resolved_flow.not_in(exclude_flows))
+        stmt = stmt.order_by(ConnectSession.created_at.asc()).limit(limit)
         result = await session.execute(stmt)
         return [str(row_id) for row_id in result.scalars().all()]
 

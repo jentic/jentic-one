@@ -287,7 +287,7 @@ def test_credential_owner_sees_only_pending_credentials_of_open_owned_sessions()
     assert "credentials.state = 'pending'" in sql
     assert "SELECT connect_sessions.credential_id" in sql
     assert "connect_sessions.agent_id IN ('agnt_a')" in sql
-    assert "connect_sessions.state IN ('created', 'polling')" in sql
+    assert "connect_sessions.state IN ('created', 'awaiting_app', 'polling')" in sql
 
 
 def test_owned_agent_live_states_match_the_repository() -> None:
