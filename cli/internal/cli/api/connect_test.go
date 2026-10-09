@@ -282,6 +282,42 @@ func TestConnect_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
 	}
 }
 
+// An API-target connect counts the shared apps that serve that API: the 400
+// ambiguous_vendor names them in registration_ids, and only those are listed
+// (not every app under the key).
+func TestConnect_APITargetAmbiguousListsTheCountedApps(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "googleapis-com/gmail/v1")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous api target returned %T (%v), want *ux.CodedError", err, err)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_other", Name: "Slack", DisplayName: "Slack"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (the registrations the problem counted)", got, want)
+	}
+	if !strings.Contains(coded.Actionable, "jentic connect --api googleapis-com/gmail/v1 --registration <registration_id>") {
+		t.Errorf("actionable %q must name the --api retry with --registration", coded.Actionable)
+	}
+}
+
 // When GET /vendors is unavailable the advice still routes the choice to the
 // user, just without the list.
 func TestConnect_AmbiguousVendorWithoutVendorListStillAsksTheUser(t *testing.T) {

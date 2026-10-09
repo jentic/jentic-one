@@ -403,7 +403,7 @@ func connectCoded(ctx context.Context, client *control.ClientWithResponses, targ
 			return coded
 		}
 		if isAmbiguousVendor(he) {
-			candidates := listVendorAppCandidates(ctx, client, vendor)
+			candidates := listVendorAppCandidates(ctx, client, vendor, he)
 			return ambiguousVendorCoded(vendor, err, candidates,
 				fmt.Sprintf("re-run `%s --registration <registration_id>` with the id they pick", rerun))
 		}
@@ -471,13 +471,21 @@ type vendorAppCandidate struct {
 }
 
 // listVendorAppCandidates reads GET /vendors (capabilities:read, in the
-// default agent permission set) and keeps the registration-backed rows for
-// vendor — the same set the route's ambiguity check counts when no flow is
-// preferred. Best effort: any failure yields nil, and the caller's advice
-// still routes the choice to the user without the list.
-func listVendorAppCandidates(ctx context.Context, client *control.ClientWithResponses, vendor string) []vendorAppCandidate {
+// default agent permission set) and keeps the registration-backed rows the
+// 400 ambiguous_vendor problem counted: its registration_ids when it lists
+// them (an API-target connect matches apps by the API they serve, not by
+// key), else every row for vendor — the same set the route's ambiguity check
+// counts when no flow is preferred. Best effort: any failure yields nil, and
+// the caller's advice still routes the choice to the user without the list.
+func listVendorAppCandidates(ctx context.Context, client *control.ClientWithResponses, vendor string, he *HTTPError) []vendorAppCandidate {
 	if client == nil {
 		return nil
+	}
+	wanted := map[string]bool{}
+	if he != nil {
+		for _, id := range connectStringList(he, "registration_ids") {
+			wanted[id] = true
+		}
 	}
 	resp, err := client.ListVendorsWithResponse(ctx)
 	if apiErrorFor(resp, err) != nil || resp.JSON200 == nil {
@@ -485,7 +493,13 @@ func listVendorAppCandidates(ctx context.Context, client *control.ClientWithResp
 	}
 	var out []vendorAppCandidate
 	for _, v := range resp.JSON200.Data {
-		if v.Key != vendor || v.RegistrationId == nil || *v.RegistrationId == "" {
+		if v.RegistrationId == nil || *v.RegistrationId == "" {
+			continue
+		}
+		if len(wanted) > 0 && !wanted[*v.RegistrationId] {
+			continue
+		}
+		if len(wanted) == 0 && v.Key != vendor {
 			continue
 		}
 		out = append(out, vendorAppCandidate{

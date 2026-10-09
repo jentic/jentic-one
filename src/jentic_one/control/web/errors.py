@@ -222,7 +222,25 @@ _VENDOR_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     VendorNotConfiguredError: (503, "vendor_not_configured"),
 }
 
-vendor_error_handler = make_service_error_handler(_VENDOR_ERROR_MAP)
+def _vendor_response_hook(
+    request: Request, exc: Exception, status_code: int, response: JSONResponse
+) -> JSONResponse:
+    # ``ambiguous_vendor`` names the connect key and the shared apps it
+    # counted, so a client can list exactly those for its user to pick from —
+    # an API-target connect counts the apps serving that API, not every app
+    # under the key.
+    if not isinstance(exc, AmbiguousVendorError):
+        return response
+    content: dict[str, object] = json.loads(bytes(response.body))
+    content.update(vendor=exc.vendor, registration_ids=list(exc.registration_ids))
+    return JSONResponse(
+        status_code=status_code, content=content, media_type="application/problem+json"
+    )
+
+
+vendor_error_handler = make_service_error_handler(
+    _VENDOR_ERROR_MAP, response_hook=_vendor_response_hook
+)
 
 
 _OAUTH_APP_REGISTRATION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
