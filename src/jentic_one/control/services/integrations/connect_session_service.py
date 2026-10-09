@@ -61,6 +61,7 @@ from jentic_one.control.services.vendors.service import (
     UnsupportedFlowError,
     VendorRegistryService,
 )
+from jentic_one.shared.access_guidance import catalog_import_name
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
@@ -70,7 +71,7 @@ from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.metrics import get_meter
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin, actor_type_label_from_id
-from jentic_one.shared.models.api_identity import canonical_credential_scope
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
@@ -432,23 +433,7 @@ class ConnectSessionService:
 
         poll_token = secrets.token_urlsafe(32)
 
-        # Decompose the vendor's catalog api_id (e.g. ``github.com/api.github.com``)
-        # into the same identity axes a normal catalog import puts on the
-        # registered Api row and the credential: ``api_vendor`` slugged from the
-        # registrable domain of the host portion (``vendor_from_api_id``, the
-        # same helper the catalog manifest uses), ``api_name`` slugged from the
-        # *whole* api_id (mirrors registry ``_to_import_source`` which passes
-        # ``entry.api_id`` verbatim as ``api_name`` and lets the import pipeline
-        # slugify it), and
-        # ``catalog_api_id`` verbatim as display-only provenance. That way the
-        # credential's identity matches ``list_by_vendor`` **and** the broker's
-        # per-operation identity check.
-        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
-        api_scope = canonical_credential_scope(
-            vendor=raw_vendor,
-            name=entry.vendor,
-            version=None,
-        )
+        api_scope = await self._vendor_api_scope(entry.vendor)
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
@@ -1398,6 +1383,33 @@ class ConnectSessionService:
                     state="connected",
                     connected_as=connected_as,
                 )
+
+    async def _vendor_api_scope(self, catalog_api_id: str) -> CredentialScope:
+        """The API scope a vendor connect stamps on its credential.
+
+        The identity the registry gives the API imported from the vendor's
+        catalog api_id (e.g. ``github.com/api.github.com``), so the credential
+        matches ``list_by_vendor`` **and** the broker's per-operation identity
+        check: the stored ``(vendor, name)`` when the API is already imported,
+        else what a first catalog import seeds — ``api_vendor`` from the
+        registrable domain of the host (``vendor_from_api_id``, the helper the
+        catalog manifest uses) and ``api_name`` from the sub segment
+        (``catalog_import_name``). The version stays unscoped.
+        """
+        registered = None
+        if self._catalog_auto_importer is not None:
+            registered = await self._catalog_auto_importer.registered_identity(
+                api_id=catalog_api_id
+            )
+        if registered is not None:
+            return canonical_credential_scope(
+                vendor=registered[0], name=registered[1], version=None
+            )
+        return canonical_credential_scope(
+            vendor=vendor_from_api_id(catalog_api_id) or catalog_api_id,
+            name=catalog_import_name(catalog_api_id),
+            version=None,
+        )
 
     async def _maybe_import_catalog(self, *, api_id: str, initiator_actor_id: str) -> None:
         """Best-effort catalog auto-import — see the phase-1 rationale.
