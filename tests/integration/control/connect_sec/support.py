@@ -20,6 +20,9 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
+from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
+from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.services.integrations.connect_session_service import (
     ApiTarget,
@@ -86,6 +89,7 @@ def spec_source(
     approved: bool = False,
     name: str = NAME,
     origin: str = "catalog",
+    submitted_by: str = "usr_sec_writer",
 ) -> dict[str, Any]:
     spec = {
         "openapi": "3.1.0",
@@ -104,7 +108,7 @@ def spec_source(
         "api_name": name,
         "version": VERSION,
         "origin": origin,
-        "submitted_by": "usr_sec_writer",
+        "submitted_by": submitted_by,
     }
     if approved:
         source["host_change_approved"] = "true"
@@ -231,3 +235,50 @@ def build_app(ctx: Context, identity: Identity) -> FastAPI:
 
 def client(ctx: Context, identity: Identity) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=build_app(ctx, identity)), base_url="https://t")
+
+
+async def existing_credential(
+    ctx: Context,
+    *,
+    oauth_scope: str | None = None,
+    name: str = "Mine",
+    owner_id: str = OWNER_ID,
+    client_secret: str = "existing-client-secret",
+) -> str:
+    """A connected credential of ``owner_id`` covering the API (OAuth when a scope is given)."""
+    credential_id = generate_ksuid("cred")
+    async with ctx.control_db.transaction() as session:
+        session.add(
+            Credential(
+                id=credential_id,
+                type="OAUTH2_AUTHORIZATION_CODE" if oauth_scope is not None else "API_KEY",
+                provider="direct_oauth2" if oauth_scope is not None else "static",
+                name=name,
+                api_vendor=VENDOR,
+                api_name=NAME,
+                created_by=owner_id,
+                state="connected",
+            )
+        )
+        await session.flush()
+        if oauth_scope is not None:
+            session.add(
+                OAuthClientCredential(
+                    id=credential_id,
+                    token_url="https://auth.vault.example/token",
+                    client_id="mine",
+                    encrypted_client_secret=ctx.encryption.encrypt(client_secret),
+                    authorize_url="https://auth.vault.example/authorize",
+                    created_by=owner_id,
+                )
+            )
+            session.add(
+                OAuthToken(
+                    id=generate_ksuid("otok"),
+                    credential_id=credential_id,
+                    encrypted_access_token=ctx.encryption.encrypt("access"),
+                    scope=oauth_scope,
+                    created_by=owner_id,
+                )
+            )
+    return credential_id
