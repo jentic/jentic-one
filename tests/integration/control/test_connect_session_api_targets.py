@@ -1150,8 +1150,8 @@ async def test_own_oauth_client_resolves_awaiting_app(env: Context) -> None:
         variant=OwnClientConfirm(
             client_id="my-own-client",
             client_secret=SecretStr(client_secret),
-            authorize_url=None,
-            token_url=None,
+            authorize_url="https://auth.widgets.example/authorize",
+            token_url="https://auth.widgets.example/token",
             confirmed_scopes=["read"],
             checks=_checks(await _digest(env, created.session_id)),
         ),

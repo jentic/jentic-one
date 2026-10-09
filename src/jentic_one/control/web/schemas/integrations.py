@@ -376,15 +376,17 @@ class OwnOAuthClientConfirmSessionRequest(_ReviewedConfirm):
 
     The client is stored on the session's credential (the same shape as a
     ``direct_oauth2`` credential) and the session continues as an
-    authorization-code connect. Endpoints default to the API's declared
-    authorization-code flow.
+    authorization-code connect. Both endpoints are required: the API's
+    declared OAuth endpoints are never used for the approver's client, since
+    the spec may be agent-submitted and the token endpoint receives the
+    client secret.
     """
 
     kind: Literal["own_oauth_client"]
     client_id: str = Field(min_length=1, max_length=255)
     client_secret: SecretStr = Field(min_length=1, max_length=8192, json_schema_extra=SENSITIVE)
-    authorize_url: str | None = Field(default=None, max_length=2048)
-    token_url: str | None = Field(default=None, max_length=2048)
+    authorize_url: str = Field(min_length=1, max_length=2048)
+    token_url: str = Field(min_length=1, max_length=2048)
     confirmed_scopes: list[str] = Field(default_factory=list, max_length=100)
 
 

@@ -2897,11 +2897,13 @@ type OverlayUpdateRequest struct {
 //
 // The client is stored on the session's credential (the same shape as a
 // “direct_oauth2“ credential) and the session continues as an
-// authorization-code connect. Endpoints default to the API's declared
-// authorization-code flow.
+// authorization-code connect. Both endpoints are required: the API's
+// declared OAuth endpoints are never used for the approver's client, since
+// the spec may be agent-submitted and the token endpoint receives the
+// client secret.
 type OwnOAuthClientConfirmSessionRequest struct {
 	AgentId         *string                                 `json:"agent_id,omitempty"`
-	AuthorizeUrl    *string                                 `json:"authorize_url,omitempty"`
+	AuthorizeUrl    string                                  `json:"authorize_url"`
 	ClientId        string                                  `json:"client_id"`
 	ClientSecret    *string                                 `json:"client_secret,omitempty"`
 	ConfirmedScopes *[]string                               `json:"confirmed_scopes,omitempty"`
@@ -2909,7 +2911,7 @@ type OwnOAuthClientConfirmSessionRequest struct {
 	ExpectedAgentId *string                                 `json:"expected_agent_id,omitempty"`
 	Kind            OwnOAuthClientConfirmSessionRequestKind `json:"kind"`
 	PermissionRules []PermissionRuleSchema                  `json:"permission_rules"`
-	TokenUrl        *string                                 `json:"token_url,omitempty"`
+	TokenUrl        string                                  `json:"token_url"`
 }
 
 // OwnOAuthClientConfirmSessionRequestKind defines model for OwnOAuthClientConfirmSessionRequest.Kind.

@@ -227,7 +227,7 @@ func (OverlayResponse) RequiredFields() []string {
 }
 func (OverlaySubmitRequest) RequiredFields() []string { return []string{"document"} }
 func (OwnOAuthClientConfirmSessionRequest) RequiredFields() []string {
-	return []string{"client_id", "client_secret", "digest", "kind", "permission_rules"}
+	return []string{"authorize_url", "client_id", "client_secret", "digest", "kind", "permission_rules", "token_url"}
 }
 func (PermissionListResponse) RequiredFields() []string { return []string{"data"} }
 func (PermissionResponse) RequiredFields() []string {

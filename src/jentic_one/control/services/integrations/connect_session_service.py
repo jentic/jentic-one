@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 from pydantic import SecretStr
@@ -60,7 +61,6 @@ from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
     missing_scopes,
-    oauth_endpoints_of,
     oauth_scopes_of,
     require_pinnable_hosts,
     review_digest,
@@ -403,12 +403,17 @@ class SecretConfirm:
 
 @dataclass(slots=True, frozen=True)
 class OwnClientConfirm:
-    """Resolve an ``awaiting_app`` session with the approver's own OAuth client."""
+    """Resolve an ``awaiting_app`` session with the approver's own OAuth client.
+
+    The approver enters both endpoints. The API's declared OAuth endpoints are
+    never a fallback: the spec may be agent-submitted, and the token endpoint
+    receives the client secret.
+    """
 
     client_id: str
     client_secret: SecretStr
-    authorize_url: str | None
-    token_url: str | None
+    authorize_url: str
+    token_url: str
     confirmed_scopes: list[str]
     checks: ConfirmChecks
 
@@ -2137,7 +2142,7 @@ class ConnectSessionService:
             raise ConfirmKindMismatchError(kind, [_allowed_confirm_kinds(row)[0]])
         if effective_agent_id is not None:
             await self._require_agent_binding_allowed(effective_agent_id, identity)
-        view = await self._verify_review(
+        await self._verify_review(
             row,
             effective_agent_id=effective_agent_id,
             expected_agent_id=checks.expected_agent_id,
@@ -2158,7 +2163,7 @@ class ConnectSessionService:
             )
         else:
             result = await self._confirm_own_client(
-                row, variant, view, effective_agent_id, late_bound=late_bound, identity=identity
+                row, variant, effective_agent_id, late_bound=late_bound, identity=identity
             )
 
         await record_audit_best_effort(
@@ -2477,20 +2482,23 @@ class ConnectSessionService:
         self,
         row: ConnectSession,
         variant: OwnClientConfirm,
-        view: ApiSecurityView | None,
         agent_id: str | None,
         *,
         late_bound: bool,
         identity: Identity,
     ) -> AuthCodeConfirmResult:
-        spec_authorize, spec_token = oauth_endpoints_of(view) if view is not None else (None, None)
-        raw_authorize = variant.authorize_url or spec_authorize
-        raw_token = variant.token_url or spec_token
-        if not raw_authorize or not raw_token:
+        if not variant.authorize_url.strip() or not variant.token_url.strip():
             raise OwnClientInvalidError("authorize_url and token_url are required")
+        # The token endpoint receives the client secret: https only, no
+        # scheme-less input for the validator to complete.
+        if not all(
+            urlsplit(url.strip()).scheme == "https"
+            for url in (variant.authorize_url, variant.token_url)
+        ):
+            raise OwnClientInvalidError("authorize_url and token_url must be https URLs")
         try:
-            authorize_url = validate_upstream_url(raw_authorize)
-            token_url = validate_upstream_url(raw_token)
+            authorize_url = validate_upstream_url(variant.authorize_url)
+            token_url = validate_upstream_url(variant.token_url)
         except ValueError as exc:
             raise OwnClientInvalidError(str(exc)) from exc
 
