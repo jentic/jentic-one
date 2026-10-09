@@ -74,7 +74,13 @@ approves the connection and its scopes (you cannot open or approve it, and
 the tool never polls). Once they confirm, call `whoami` to see the new
 binding, then retry the blocked call. Optionally shape the ask with
 `requested_scopes` (vendor scope names; write scopes are flagged for the
-approver) and a `reason` the approver sees.
+approver), `requested_permission_rules` (the binding rules you need, e.g.
+`[{"effect": "allow", "methods": ["GET"], "path": "/repos/.*"}]` — the
+approver reviews them) and a `reason` the approver sees. If several shared
+OAuth apps serve the vendor, the error lists them in `details.candidates`
+(name and `registration_id`). Choosing the app is your user's decision, not
+yours: show them the list, ask which one to use, then call
+`request_connection` again with `oauth_app_registration_id` set to their pick.
 
 For everything else, **report the gap to your human operator in one
 complete summary** — the API (vendor/name), the auth type the spec
@@ -185,10 +191,15 @@ happens out-of-band, and re-sending duplicates the side effect.
 And know the recovery split: a `credential_not_provisioned` (424) or an
 unserved `no_credential_binding` (403) denial is **provisioning-shaped** —
 its envelope points `next_tool` at `request_connection`. When the directive
-carries a `suggested_command` naming the registry key, start the fix
-yourself (`request_connection` with that key) and relay the `approval_url`;
-a denial whose recovery carries only a `provisioning_url` is for your
-operator — relay it so they can connect the account. The denial taxonomy
+names a connect target (`parameters.connect.vendor_key`, or a
+`suggested_command` naming the key), start the fix yourself — the envelope's
+`next_tool_arguments` (`{"vendor": …}`, plus `oauth_app_registration_id`
+when the directive pins the one shared app that covers the API) are the
+`request_connection` arguments; add the directive's `suggested_rules` as
+`requested_permission_rules` — and relay the `approval_url`;
+a denial carrying a `provisioning_url` means a connect request you opened
+is still waiting — relay that link to your operator rather than calling
+`request_connection` again. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
 `credential_identity_mismatch`,
 `ambiguous_credential_binding` — the per-code meanings are surface-independent

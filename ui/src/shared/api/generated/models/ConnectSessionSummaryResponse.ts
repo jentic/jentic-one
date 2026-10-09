@@ -9,6 +9,7 @@ export type ConnectSessionSummaryResponse = {
     agent_id?: (string | null);
     connected_as?: (string | null);
     created_at: string;
+    credential_id: string;
     error_code?: (string | null);
     reason?: (string | null);
     requested_by_actor_id: string;
@@ -20,6 +21,7 @@ export type ConnectSessionSummaryResponse = {
 export namespace ConnectSessionSummaryResponse {
     export enum state {
         CREATED = 'created',
+        AWAITING_APP = 'awaiting_app',
         POLLING = 'polling',
         CONNECTED = 'connected',
     }

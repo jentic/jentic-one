@@ -232,6 +232,20 @@ export type { OAuthGrantAdminListResponse } from '@/shared/api/generated/models/
 export type { CredentialBindingResponse } from '@/shared/api/generated/models/CredentialBindingResponse';
 export type { CredentialAgentResponse } from '@/shared/api/generated/models/CredentialAgentResponse';
 export type { CredentialAgentListResponse } from '@/shared/api/generated/models/CredentialAgentListResponse';
+export type { ServedApiRef } from '@/shared/api/generated/models/ServedApiRef';
+
+// OAuth App Registrations — admin-managed shared OAuth applications that
+// users on this instance SSO through. The registrations service + its
+// request/response models are exposed here for the module's api tier;
+// views still go through the module's own hooks. Append-only.
+export { OAuthAppRegistrationsService } from '@/shared/api/generated/services/OAuthAppRegistrationsService';
+export { OAuthAppRegistrationFlowKind } from '@/shared/api/generated/models/OAuthAppRegistrationFlowKind';
+export type { OAuthAppRegistrationResponse } from '@/shared/api/generated/models/OAuthAppRegistrationResponse';
+export type { OAuthAppRegistrationListResponse } from '@/shared/api/generated/models/OAuthAppRegistrationListResponse';
+export type { OAuthAppRegistrationUpdateRequest } from '@/shared/api/generated/models/OAuthAppRegistrationUpdateRequest';
+export type { OAuthAppRegistrationRotateSecretRequest } from '@/shared/api/generated/models/OAuthAppRegistrationRotateSecretRequest';
+export type { AuthorizationCodeRegistrationCreateRequest } from '@/shared/api/generated/models/AuthorizationCodeRegistrationCreateRequest';
+export type { DeviceAuthorizationRegistrationCreateRequest } from '@/shared/api/generated/models/DeviceAuthorizationRegistrationCreateRequest';
 
 // Shared permission rule sets a direct binding can point at (the binding's
 // `rule_set_id`). Read here so a governed binding shows the set's rules — the
@@ -243,3 +257,9 @@ export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetRespo
 // RFC 9457 problem bodies: the string `detail` callers surface over the
 // transport's status text. Append-only, like the rest.
 export { problemDetailText } from '@/shared/api/problem';
+
+// Connect sessions — the open requests an agent is waiting on a human for.
+// Read by the credentials api tier (`listOpenConnectRequests`) for the
+// attention inbox and the Agents page; views use its hooks. Append-only.
+export { IntegrationsService } from '@/shared/api/generated/services/IntegrationsService';
+export type { ConnectSessionSummaryResponse } from '@/shared/api/generated/models/ConnectSessionSummaryResponse';

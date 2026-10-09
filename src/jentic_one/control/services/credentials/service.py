@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 import structlog
+from pydantic import SecretStr
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -20,6 +21,7 @@ from jentic_one.control.repos import (
     BasicCredentialRepository,
     CredentialRepository,
     CustomerAPIKeyRepository,
+    OAuthAppRegistrationRepository,
     OAuthClientCredentialRepository,
     PermissionRuleSetRepository,
     Sigv4CredentialRepository,
@@ -73,12 +75,19 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.credentials.typed_secrets import (
+    write_api_key_secret,
+    write_basic_secret,
+    write_bearer_token_secret,
+    write_sigv4_secret,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
@@ -139,6 +148,25 @@ class CredentialService:
         async with self._ctx.admin_db.session() as session:
             return await PrerequisiteRepository.list_credential_ids_for_agent(
                 session, agent_id=identity.sub
+            )
+
+    async def _owned_agent_ids(self, identity: Identity) -> list[str]:
+        """Agent ids the caller owns, for the read-only owned-agent scoping clause.
+
+        Lets a human read the pending credential of a connect session one of
+        their agents opened (see ``build_access_filters``). Only humans own
+        agents and ``org:admin`` is unrestricted already, so both skip the
+        lookup.
+        """
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.USER
+            or not identity.sub
+        ):
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_agent_ids_owned_by(
+                session, owner_id=identity.sub
             )
 
     def list_providers(
@@ -219,48 +247,39 @@ class CredentialService:
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
-                encrypted = encryption.encrypt(payload.token)
-                preview = encryption.preview(payload.token)
-                await TokenValueCredentialRepository.create(
+                secret = await write_bearer_token_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_token_value=encrypted,
-                    token_preview=preview,
+                    token=SecretStr(payload.token),
                     created_by=identity.sub,
                 )
-                secret = BearerTokenFull(token=payload.token)
 
             elif payload.type == CredentialType.API_KEY:
                 assert payload.key
                 assert payload.location
                 assert payload.field_name
-                encrypted = encryption.encrypt(payload.key)
-                preview = encryption.preview(payload.key)
-                await CustomerAPIKeyRepository.create(
+                secret = await write_api_key_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_key=encrypted,
-                    key_preview=preview,
+                    key=SecretStr(payload.key),
                     location=payload.location,
                     field_name=payload.field_name,
                     created_by=identity.sub,
-                )
-                secret = ApiKeyFull(
-                    key=payload.key, location=payload.location, field_name=payload.field_name
                 )
 
             elif payload.type == CredentialType.BASIC:
                 assert payload.username
                 assert payload.password
-                encrypted_pw = encryption.encrypt(payload.password)
-                await BasicCredentialRepository.create(
+                secret = await write_basic_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     username=payload.username,
-                    encrypted_password=encrypted_pw,
+                    password=SecretStr(payload.password),
                     created_by=identity.sub,
                 )
-                secret = BasicAuthFull(username=payload.username, password=payload.password)
 
             elif payload.type == CredentialType.OAUTH2:
                 validated_token_url: str | None = None
@@ -337,28 +356,20 @@ class CredentialService:
                 assert payload.secret_access_key
                 assert payload.aws_region
                 assert payload.aws_service
-                encrypted = encryption.encrypt(payload.secret_access_key)
-                preview = encryption.preview(payload.secret_access_key)
-                encrypted_session = (
-                    encryption.encrypt(payload.session_token) if payload.session_token else None
-                )
-                await Sigv4CredentialRepository.create(
+                secret = await write_sigv4_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     access_key_id=payload.access_key_id,
-                    encrypted_secret_access_key=encrypted,
-                    secret_preview=preview,
-                    encrypted_session_token=encrypted_session,
+                    secret_access_key=SecretStr(payload.secret_access_key),
+                    session_token=(
+                        SecretStr(payload.session_token)
+                        if payload.session_token is not None
+                        else None
+                    ),
                     region=payload.aws_region,
                     service=payload.aws_service,
                     created_by=identity.sub,
-                )
-                secret = Sigv4Full(
-                    access_key_id=payload.access_key_id,
-                    secret_access_key=payload.secret_access_key,
-                    session_token=payload.session_token,
-                    aws_region=payload.aws_region,
-                    aws_service=payload.aws_service,
                 )
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
@@ -467,6 +478,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -475,7 +487,10 @@ class CredentialService:
             )
             if credential is None:
                 raise CredentialNotFoundError(credential_id)
-            return self._to_redacted(credential)
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids([credential])
+            )
+            return self._to_redacted(credential, registration_names=names)
 
     async def list_agents(
         self,
@@ -502,6 +517,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -611,6 +627,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -1092,6 +1109,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
 
@@ -1104,7 +1122,10 @@ class CredentialService:
             if has_more:
                 rows = rows[:limit]
 
-            data = [self._to_redacted(r) for r in rows]
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids(rows)
+            )
+            data = [self._to_redacted(r, registration_names=names) for r in rows]
             next_cursor = None
             if has_more and rows:
                 last = rows[-1]
@@ -1270,7 +1291,10 @@ class CredentialService:
             if changed:
                 credential.updated_at = datetime.now(UTC)
             await session.flush()
-            view = self._to_redacted(credential)
+            names = await OAuthAppRegistrationRepository.get_names_by_ids(
+                session, _registration_ids([credential])
+            )
+            view = self._to_redacted(credential, registration_names=names)
             after_state = {"name": credential.name, "active": credential.active}
 
         # A PATCH that persisted nothing (e.g. only echoed field_name/location)
@@ -1316,7 +1340,9 @@ class CredentialService:
             origin=identity.origin.value,
         )
 
-    def _to_redacted(self, credential: Any) -> CredentialRedactedView:
+    def _to_redacted(
+        self, credential: Any, *, registration_names: dict[str, str]
+    ) -> CredentialRedactedView:
         """Project an ORM Credential to a redacted view."""
         stored_type = StoredCredentialType(credential.type)
         wire_type = to_wire(stored_type)
@@ -1411,6 +1437,14 @@ class CredentialService:
         else:
             details = BearerTokenRedacted(token_preview=None)
 
+        # Shared-registration provenance. ``registration_names`` is batch-
+        # loaded by the caller: ``Credential.oauth_app_registration`` is
+        # ``lazy="raise"`` so credential reads never drag in the registration
+        # and its sealed client secret. ``None`` when the credential wasn't
+        # minted through a shared registration.
+        oar_id = credential.oauth_app_registration_id
+        oar_name = registration_names.get(oar_id) if oar_id is not None else None
+
         return CredentialRedactedView(
             credential_id=credential.id,
             type=wire_type,
@@ -1429,6 +1463,8 @@ class CredentialService:
             updated_at=credential.updated_at,
             details=details,
             server_variables=credential.server_variables,
+            oauth_app_registration_id=oar_id,
+            oauth_app_registration_name=oar_name,
         )
 
     def _validate_create_fields(self, payload: CredentialCreate, *, managed: bool) -> None:
@@ -1572,3 +1608,8 @@ class CredentialService:
             if isinstance(name, str) and slugify_api_field(name) == scope.name:
                 return True
         return False
+
+
+def _registration_ids(credentials: Sequence[Credential]) -> list[str]:
+    """Distinct ``oauth_app_registration_id`` values across ``credentials``."""
+    return sorted({c.oauth_app_registration_id for c in credentials if c.oauth_app_registration_id})

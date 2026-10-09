@@ -40,6 +40,7 @@ import { apiIdentityTuple } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import { useImportCatalogEntry, type Credential } from '@/shared/credentials/api';
 import { useDeviceAwareConnect } from '@/shared/credentials/components/useDeviceAwareConnect';
+import type { ConnectedCredentialInfo } from '@/shared/credentials/components/VendorConnectFlow';
 import {
 	CreateCredentialFlow,
 	type CreatedCredentialInfo,
@@ -245,6 +246,20 @@ export function ApiSetupQueue({
 		void settleCreated(entry, created);
 	};
 
+	/** A vendor or shared-app sign-in from the form already bound the new
+	 * credential to this agent, and the server imported the catalog API at
+	 * connect, so the row is simply added. */
+	const handleVendorConnected = (entry: QueueEntry, info: ConnectedCredentialInfo): void => {
+		setEntries((current) =>
+			patchEntry(current, entry.key, {
+				status: 'added',
+				error: undefined,
+				credentialId: info.credentialId,
+				credentialName: info.name,
+			}),
+		);
+	};
+
 	const retry = (key: string): void => {
 		const entry = entries.find((e) => e.key === key);
 		if (entry?.created) void settleCreated(entry, entry.created);
@@ -406,6 +421,8 @@ export function ApiSetupQueue({
 					key={formEntry.key}
 					open
 					pinnedApi={formEntry.api}
+					preselectedAgentId={agentId}
+					onVendorConnected={(info): void => handleVendorConnected(formEntry, info)}
 					onClose={(): void => setFormKey(null)}
 					onCreated={(info): void => handleCreated(formEntry, info)}
 					back={onBack ? { label: 'Back to APIs', onBack: backFromForm } : undefined}

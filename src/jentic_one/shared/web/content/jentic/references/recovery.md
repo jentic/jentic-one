@@ -21,6 +21,12 @@ this file adds the lane-specific detail.
   Only a broker **denial** (an `agent_directive` on stderr, exit **2**) is
   an access/credential issue; the code names the recovery. Follow the
   directive; don't keep re-sending the same execute.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address, which the broker
+  blocks by default. Nothing in your request is wrong, so re-inspecting the
+  contract or rewriting the host (`localhost`, another private IP) won't
+  help; ask your operator to allow that range
+  (`broker.egress.allowed_private_subnets`), then retry.
 - An empty search result (`{"data": []}`) usually means **nothing is
   imported yet**, not that you lack access. Go through the catalog
   (`jentic catalog search`/`import`), then search again. Both reading the
@@ -52,19 +58,24 @@ this file adds the lane-specific detail.
   `get_execution_result` with the job id; approval happens out-of-band and
   re-sending duplicates the side effect.
 - A 424 `credential_not_provisioned` error means no account is connected
-  yet. If the denial's directive carries a `suggested_command` (`jentic
-  connect <key>`), the vendor is in the connect registry: call
-  `request_connection` with that key and relay the returned `approval_url`
-  to your operator. Otherwise relay the directive's `provisioning_url`
-  (when present) — or report the gap — so they can connect the account.
-  Either way a human approves; no tool you can call completes the
-  connection.
+  yet. If the denial's directive carries a `provisioning_url`, a connect
+  request you opened is still waiting: relay that link to your operator
+  and don't call `request_connection` again. Otherwise, if it carries a
+  `suggested_command` (`jentic connect <key>`), the vendor is in the
+  connect registry: call `request_connection` with that key and relay the
+  returned `approval_url` to your operator; otherwise report the gap so
+  they can connect the account. Either way a human approves; no tool you
+  can call completes the connection.
 - Don't call `get_started` on the HTTP mount — it isn't there. Its absence
   is a transport tell (you're on the daemon mount), not an outage; don't
   retry it or report it as a failure.
 - When an error envelope's `actionable_step` names a `jentic` CLI verb or a
   tool your session doesn't have, relay it to the operator as guidance
   instead of inventing a tool call.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address the broker blocks
+  by default — ask your operator to allow the range instead of following
+  `next_tool` or changing the host.
 - An empty `search_apis` result means nothing matching is imported yet —
   run `search_catalog` → `import_api`, then search again; no grant needed.
 - Backend mismatch: compare the `instance` stamp (`backend`/`host`/
@@ -89,25 +100,38 @@ changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
 
 - **`no_credential_binding` (403)** — no credential binding of yours covers
-  this API. The ask forks on the directive/envelope's `api_served`
-  field:
+  this API. If the directive carries a `provisioning_url`, a connect
+  request you opened for this API is still waiting for your operator:
+  relay that link to them instead of starting another connect, and retry
+  once they approve. Otherwise the ask forks on the directive/envelope's
+  `api_served` field:
   - `false` — **no** credential is provisioned for this API at all. If the
     directive carries a `suggested_command` (`jentic connect <vendor>`),
     start the connect session yourself and relay its `approval_url`;
     otherwise ask your operator to connect or provision a credential for
-    the API and bind you to it — include the auth type and permission
-    rules you read from the spec so they can set it up in one pass.
+    the API and bind you to it — include the auth type you read from the
+    spec and the directive's `suggested_rules` (the minimal rule for the
+    denied call) so they can set it up in one pass.
   - `true` — a credential already serves this API and you just aren't bound
     to it; ask your operator to bind you to the existing credential
     (binding is always theirs — a fresh `jentic connect` also works for a
     registry vendor, but prefer the existing credential).
 - **`credential_not_provisioned` (424)** — you're bound, but no
   credential (account) is connected. If the directive carries a
-  `suggested_command` (`jentic connect <key>`), the vendor is in the
-  connect registry — start the reconnect yourself (run that command, or
-  call `request_connection` with the key it names) and relay the
-  `approval_url`; otherwise hand the directive's `provisioning_url` to
-  your operator to connect the account. Then retry.
+  `provisioning_url`, your earlier connect request is still waiting: relay
+  that link to your operator instead of starting another. Otherwise, if it
+  carries a `suggested_command` (`jentic connect <key>`), the vendor is in
+  the connect registry — start the reconnect yourself (run that command,
+  or call `request_connection` with the key it names) and relay the
+  `approval_url`; otherwise ask your operator to connect the account. Then
+  retry.
+- Both provisioning denials also carry the connect target as data:
+  `parameters.connect` (`{vendor_key, registration_id?}` — the key
+  `jentic connect` / `request_connection` takes, and the shared OAuth app
+  when exactly one covers the API) and `parameters.suggested_rules` (the
+  minimal permission rule allowing the denied call). Read the key from
+  `connect` rather than parsing `suggested_command`. A denial that carries
+  a `provisioning_url` omits `connect` and `suggested_command`.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
   its stored secret can no longer be decrypted (typically the deployment's
   encryption key rotated underneath it, e.g. a reinstall over existing
@@ -156,6 +180,10 @@ the right ask, then retry once they confirm.
   `jentic execute <target>` — discover, inspect, and
   call operations through the broker (use the full upstream URL; the broker
   is a forward proxy, not a path router).
+- `jentic api GET /apis/{vendor}/{name}/{version}/security-schemes` —
+  every security scheme the API declares (with OAuth flow URLs), when you
+  need the auth type for an access report and `jentic inspect`'s per-operation
+  `auth` is not enough.
 - `jentic register` / `jentic setup` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous
   use).

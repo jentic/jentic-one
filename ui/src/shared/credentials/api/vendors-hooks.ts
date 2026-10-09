@@ -25,6 +25,7 @@ import {
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
 	listAllVendorOperations,
+	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
 	startIntegrationConnect,
@@ -32,6 +33,7 @@ import {
 } from '@/shared/credentials/api/vendors-client';
 import type {
 	AgentListResponse,
+	ConnectSessionSummaryResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
 	RuleSetResponse,
@@ -50,10 +52,15 @@ import type {
 } from '@/shared/credentials/api/vendors-types';
 
 const KEYS = {
+	// A token-less (owner / admin) read keys on `''`, apart from any token holder's.
 	session: (id: string, token: string) => ['integrations', 'session', id, token] as const,
 	status: (id: string, token: string) => ['integrations', 'status', id, token] as const,
 	vendors: ['integrations', 'vendors'] as const,
-	vendor: (key: string) => ['integrations', 'vendor', key] as const,
+	vendor: (key: string, registrationId?: string | null) =>
+		// Include the pinned registration id in the cache key so switching
+		// between two admin-registered OAuth apps for the same vendor slug
+		// misses the cache instead of showing the previous tile's scopes.
+		['integrations', 'vendor', key, registrationId ?? null] as const,
 } as const;
 
 export function useVendors() {
@@ -64,10 +71,13 @@ export function useVendors() {
 	});
 }
 
-export function useVendorAuthCapabilities(vendorKey: string | undefined) {
+export function useVendorAuthCapabilities(
+	vendorKey: string | undefined,
+	registrationId?: string | null,
+) {
 	return useQuery<VendorAuthCapabilities>({
-		queryKey: KEYS.vendor(vendorKey ?? ''),
-		queryFn: () => getVendorAuthCapabilities(vendorKey as string),
+		queryKey: KEYS.vendor(vendorKey ?? '', registrationId ?? null),
+		queryFn: () => getVendorAuthCapabilities(vendorKey as string, registrationId ?? null),
 		enabled: Boolean(vendorKey),
 		staleTime: 60_000,
 	});
@@ -81,6 +91,10 @@ export function useAgentsForPicker() {
 	});
 }
 
+/**
+ * Review data for a connect session. `pollToken` is optional: without it the
+ * read succeeds only for the target agent's owner or `org:admin`.
+ */
 export function useConnectSession(
 	sessionId: string | undefined,
 	pollToken: string | undefined,
@@ -88,13 +102,14 @@ export function useConnectSession(
 ) {
 	return useQuery<ReviewSession>({
 		queryKey: KEYS.session(sessionId ?? '', pollToken ?? ''),
-		queryFn: () => getConnectSession(sessionId as string, pollToken as string),
-		enabled: Boolean(sessionId) && Boolean(pollToken),
+		queryFn: () => getConnectSession(sessionId as string, pollToken),
+		enabled: Boolean(sessionId),
 		staleTime: 5_000,
-		// A 403 means the poll_token doesn't match or the session is gone
-		// (the backend deliberately conflates the two — no enumeration
-		// oracle). Retrying can't fix either, so fail fast; the caller
-		// surfaces "the approval link is no longer valid".
+		// A 403 means the poll_token doesn't match, the session is gone, or
+		// a token-less caller isn't the owner / admin (the backend
+		// deliberately conflates them — no enumeration oracle). Retrying
+		// can't fix any of them, so fail fast; the caller surfaces "the
+		// approval link is no longer valid".
 		retry: (failureCount, error) => {
 			const status = (error as { status?: number | null })?.status;
 			if (typeof status === 'number' && status >= 400 && status < 500) return false;
@@ -118,7 +133,7 @@ export function useConnectSession(
 	});
 }
 
-export function useConfirmConnectSession(sessionId: string, pollToken: string) {
+export function useConfirmConnectSession(sessionId: string, pollToken: string | undefined) {
 	return useMutation<ConfirmResponse, Error, ConfirmRequest>({
 		mutationFn: (body) => confirmConnectSession(sessionId, pollToken, body),
 	});
@@ -188,7 +203,7 @@ export function useStartIntegrationConnect() {
  * roster — the slice the API hub's "Who can use it" and the Library's
  * workspace agent counts read (the prefix also sweeps its all-pages variant).
  */
-function invalidateBindingSurfaces(
+export function invalidateBindingSurfaces(
 	client: QueryClient,
 	credentialId: string,
 	agentIds: readonly string[],
@@ -398,13 +413,41 @@ export function useBindingAccessStates(
  */
 export function useCancelConnectSession() {
 	const client = useQueryClient();
-	return useMutation<void, Error, { sessionId: string; pollToken: string }>({
+	return useMutation<void, Error, { sessionId: string; pollToken?: string }>({
 		mutationFn: ({ sessionId, pollToken }) => cancelConnectSession(sessionId, pollToken),
 		onSuccess: () => {
 			// The credential + session are cascade-deleted on the backend;
-			// invalidate so the credentials list drops the stale row.
+			// invalidate so the credentials list and the open-request
+			// signals drop the stale rows.
 			void client.invalidateQueries({ queryKey: ['credentials'] });
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
 		},
+	});
+}
+
+/**
+ * The open-request list's key. Under the attention root, so anything that
+ * refreshes the inbox (an approval decided elsewhere) refreshes it too.
+ */
+export const connectRequestsKey = [...sharedQueryKeys.attentionRoot, 'connect-requests'] as const;
+
+/** Same cadence as the rest of the inbox: roughly live without a push channel. */
+const CONNECT_REQUESTS_REFETCH_MS = 45_000;
+
+/**
+ * Connect sessions an agent opened and is still waiting on a human for
+ * (`created` / `polling`), oldest first — the live state behind the
+ * attention inbox's "waiting for you" rows and the Agents page section.
+ * Pass `enabled: false` for a caller who cannot read credentials (the list
+ * needs `credentials:read` or `owner:credentials:read`).
+ */
+export function useOpenConnectRequests(options?: { enabled?: boolean }) {
+	return useQuery<ConnectSessionSummaryResponse[]>({
+		queryKey: connectRequestsKey,
+		queryFn: listOpenConnectRequests,
+		enabled: options?.enabled ?? true,
+		staleTime: 30_000,
+		refetchInterval: CONNECT_REQUESTS_REFETCH_MS,
 	});
 }
 
@@ -415,14 +458,14 @@ export function useCancelConnectSession() {
  */
 export function usePollConnectSessionStatus(
 	sessionId: string,
-	pollToken: string,
+	pollToken: string | undefined,
 	options?: {
 		enabled?: boolean;
 		intervalMs?: number;
 	},
 ) {
 	return useQuery<StatusResponse>({
-		queryKey: KEYS.status(sessionId, pollToken),
+		queryKey: KEYS.status(sessionId, pollToken ?? ''),
 		queryFn: () => pollConnectSessionStatus(sessionId, pollToken),
 		enabled: options?.enabled ?? true,
 		// Default matches RFC 8628 §3.5's device-flow ``interval`` fallback

@@ -108,7 +108,7 @@ async def test_promote_draft_succeeds() -> None:
         ),
         patch(
             # Same (empty) server set on both revisions: no host change to guard.
-            "jentic_one.registry.services.revision_service.ServerRepository.list_url_specs",
+            "jentic_one.registry.ingest.host_change_guard.ServerRepository.list_url_specs",
             new_callable=AsyncMock,
             return_value=[],
         ),
@@ -175,7 +175,7 @@ async def test_promote_archives_imported_revisions() -> None:
             return_value=None,
         ),
         patch(
-            "jentic_one.registry.services.revision_service.ServerRepository.list_url_specs",
+            "jentic_one.registry.ingest.host_change_guard.ServerRepository.list_url_specs",
             new_callable=AsyncMock,
             return_value=[],
         ),

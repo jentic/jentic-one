@@ -238,3 +238,49 @@ describe('Notifications — "Finish setup" follows credentials:write', () => {
 		else expect(finish).toBeNull();
 	});
 });
+
+describe('Notifications — connect requests go to approvers', () => {
+	const openRequest = {
+		session_id: 'cs_waiting',
+		state: 'created',
+		vendor_key: 'github',
+		vendor_display_name: 'GitHub',
+		agent_id: 'agnt_pending_9',
+		requested_by_actor_id: 'agnt_pending_9',
+		reason: null,
+		connected_as: null,
+		error_code: null,
+		created_at: '2026-01-01T00:00:00Z',
+		credential_id: 'cred_pending',
+	};
+
+	it.each([
+		['admin', ['org:admin'], true],
+		['credentials:write and agents:write', [...MEMBER_DEFAULTS, 'credentials:write'], true],
+		[
+			'credentials:write without agents:write',
+			[...without('agents:write'), 'credentials:write'],
+			false,
+		],
+		['agents:write without credentials:write', MEMBER_DEFAULTS, false],
+	] as const)('%s', async (_label, permissions, listed) => {
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
+			http.get('/connect-sessions', ({ request }) => {
+				const state = new URL(request.url).searchParams.get('state');
+				const rows = !state || state === 'created' ? [openRequest] : [];
+				return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+			}),
+		);
+		trackSources();
+		renderMenu();
+
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: /^Notifications/ }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		await within(dialog).findByText('waiting-bot is waiting for approval');
+		const row = within(dialog).queryByText(/is waiting for you to connect GitHub/);
+		if (listed) expect(row).toBeInTheDocument();
+		else expect(row).toBeNull();
+	});
+});

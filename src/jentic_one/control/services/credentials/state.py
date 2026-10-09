@@ -61,6 +61,8 @@ def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
     callback time its presence routes completion to
     ``ConnectSessionService`` instead of the standalone-credential path.
     Absent for legacy credential-connect states — those keep working as-is.
+    The optional ``sag`` claim carries ``sole_agent_id`` (a re-authorize's
+    only permitted bound agent).
     """
     claims: dict[str, object] = {
         "cid": state.credential_id,
@@ -73,6 +75,8 @@ def encode_state(secret: str, state: ConnectState, ttl_seconds: int) -> str:
     }
     if state.session_id is not None:
         claims["sid"] = state.session_id
+    if state.sole_agent_id is not None:
+        claims["sag"] = state.sole_agent_id
     return issue_jwt(claims, secret, ttl_seconds)
 
 
@@ -94,6 +98,7 @@ def decode_state(secret: str, raw: str) -> ConnectState:
         nonce=claims["nonce"],
         session_id=claims.get("sid"),
         redirect_uri=claims.get("ruri"),
+        sole_agent_id=claims.get("sag"),
     )
 
 

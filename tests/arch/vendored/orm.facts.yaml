@@ -59,6 +59,11 @@ ksuid_exempt_tables:
   # (FK, CASCADE). The parent supplies the id; a ksuid server_default here
   # would generate a value that doesn't match any credentials row.
   - device_authorization_credentials
+  # OAuth app registration flow-kind extension tables — class-table inheritance
+  # 1:1 with the base ``oauth_app_registrations`` row (id = FK, CASCADE). The
+  # base supplies the id, so no ksuid server_default on the extension row.
+  - authorization_code_app_registration_details
+  - device_authorization_app_registration_details
   # Single-row sentinel tables (fixed id, not a ksuid).
   - catalog_snapshots   # SINGLETON_ID — concurrent refresh collides instead of duplicating
   - setup_sentinels     # SETUP_SENTINEL_ID — first-admin lock; a ksuid default would defeat it

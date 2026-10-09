@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.41.1](https://github.com/jentic/jentic-one/compare/v0.41.0...v0.41.1) (2026-10-07)
+
+Hotfix release cut from v0.41.0 (not main). It fixes the admin scope sweep
+that failed a PostgreSQL upgrade when an OAuth client's allowlist still listed
+a retired scope, and it scopes execution and event reads to the caller,
+without shipping main's in-flight work.
+
+### Bug Fixes
+
+* **migrations:** sweep oauth_clients.allowed_scopes as a native array on PostgreSQL ([#1546](https://github.com/jentic/jentic-one/issues/1546))
+* **admin:** scope execution and event reads to the caller ([#1547](https://github.com/jentic/jentic-one/issues/1547))
+
 ## [0.41.0](https://github.com/jentic/jentic-one/compare/v0.40.1...v0.41.0) (2026-09-30)
 
 

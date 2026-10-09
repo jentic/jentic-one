@@ -51,7 +51,7 @@ Related files: [operate.md](operate.md) (start/stop/upgrade/uninstall),
 | -------- | ------- | ----- |
 | Database: SQLite or Postgres? | SQLite | SQLite is fine for a single-host install. For an external/production Postgres follow [docker.md](../installation/docker.md) instead. |
 | Reachable from other machines, or this machine only? | This machine only (`127.0.0.1`) | Anything else → read [harden.md](harden.md) first; a LAN bind publishes the app, broker, and UI to the network. |
-| Enable anonymous usage telemetry? | Off | If yes, the config gets `enabled: true` plus a random `instance_id` (UUID) and `host_os`; if no, an explicit `enabled: false` records the decision. |
+| Enable anonymous usage telemetry? | On | If yes, the config gets `enabled: true` and `host_os` (a random `instance_id` is generated and persisted on first boot); if no, an explicit `enabled: false` records the decision. |
 | Is it acceptable that I (the installing agent) could read the instance secrets? | Ask — do not assume | The generated secrets land in files my shell writes and my OS user can read. Fine for trying things out with throwaway keys. If the answer is **no** (real credentials will be stored), follow the [hardened install](#hardened-install--the-human-holds-the-secrets) variant of Step 3. |
 
 The rest of this runbook assumes the defaults; the Postgres and hardened
@@ -209,17 +209,17 @@ search:
   search_enabled: true
   search_mode: lexical
 telemetry:
-  enabled: false
+  enabled: true                               # instance_id is generated on first boot
+  host_os: "$(uname -s | tr 'A-Z' 'a-z')"   # darwin / linux — the container would misreport linux
 EOF
 chmod 644 ~/.jentic/jentic-one.yaml   # the app container's non-root user must read it; ~/.jentic (0700) protects it host-side
 ```
 
 Adjustments from Step 0:
 
-- **Telemetry on:** replace the `telemetry` block with
-  `enabled: true`, `instance_id: "$(uuidgen | tr 'A-Z' 'a-z')"`, and
-  `host_os: <linux|darwin|windows>` (the host's OS — the container would
-  misreport Linux).
+- **Telemetry off:** replace the `telemetry` block with `enabled: false`
+  alone (no `instance_id`, no `host_os`) — an opted-out config carries no
+  instance identifier.
 - **Postgres:** generate and persist the password first:
 
   ```bash
@@ -238,8 +238,8 @@ Adjustments from Step 0:
   `$(openssl rand -base64 32)` substitutions (use a quoted heredoc,
   `<<'EOF'`, so nothing expands). Because *nothing* expands, non-secret
   substitutions must be pre-expanded before writing the file: with telemetry
-  on, run `uuidgen | tr 'A-Z' 'a-z'` first and insert the resulting value as
-  the literal `instance_id` (it is not a secret — only the four
+  on, run `uname -s | tr 'A-Z' 'a-z'` first and insert the result as the
+  literal `host_os` (it is not a secret — only the four
   `__GENERATE__` markers are left for the human). Then hand the human this
   and wait:
 

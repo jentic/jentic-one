@@ -190,6 +190,18 @@ def hosts_from_servers(servers: Iterable[ServerSpec]) -> frozenset[str]:
     return frozenset(origins)
 
 
+def unpinned_host_variables(url: str, enums: Mapping[str, list[str]]) -> list[str]:
+    """Variables in ``url``'s scheme/host position that declare no ``enum``.
+
+    ``enums`` maps each declared variable to its ``enum`` values. A variable
+    whose value is not limited to a list can point the server at any host, so
+    a credential sent there cannot be pinned to a host set. A templated name
+    the server does not declare at all counts as unlimited too.
+    """
+    prefix = _origin_prefix(url)
+    return [name for name in dict.fromkeys(_VARIABLE.findall(prefix)) if not enums.get(name)]
+
+
 def _server_specs(servers: Any) -> list[ServerSpec]:
     specs: list[ServerSpec] = []
     if not isinstance(servers, list):

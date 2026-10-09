@@ -38,10 +38,11 @@ import {
 	SheetPrimitive,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { useNoAuthPicks, type SelectedApi } from '@/shared/credentials/api';
+import { useNoAuthPicks, type SelectedApi, type VendorSummary } from '@/shared/credentials/api';
 import { apiRefKey } from '@/shared/credentials/lib/apiIdentity';
 import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { ImportSpecDialog } from '@/shared/credentials/components/ImportSpecDialog';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
 import {
 	PREFLIGHT_LABELS,
 	PREFLIGHT_TALLY_ORDER,
@@ -124,6 +125,9 @@ export function AddApisTray({
 	 * is otherwise a dead end mid-flow; a successful import lands in the selection,
 	 * so the operator never has to search for what they just uploaded. */
 	const [uploadOpen, setUploadOpen] = useState(false);
+	/** A one-click sign-in picked from the picker (e.g. a shared OAuth app): it
+	 * connects a credential straight onto this agent, outside the API batch. */
+	const [vendorPick, setVendorPick] = useState<VendorSummary | null>(null);
 	/** Where focus lands on every open — including a re-open from the queue's Back,
 	 * which can catch the sheet mid-exit with the picker still mounted. */
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -220,7 +224,11 @@ export function AddApisTray({
 	return (
 		<SheetPrimitive
 			open={open}
-			onClose={onClose}
+			// The sign-in stacks as a second sheet and both see the same Escape —
+			// dismissing it must leave the operator in the tray.
+			onClose={(): void => {
+				if (!vendorPick) onClose();
+			}}
 			ariaLabelledBy={headingId}
 			initialFocus={searchRef}
 			className="sm:w-[640px] xl:w-[760px]"
@@ -264,6 +272,7 @@ export function AddApisTray({
 					<ApiPicker
 						searchInputRef={searchRef}
 						onSelect={toggle}
+						onVendorSelect={setVendorPick}
 						selectedKeys={selectedKeys}
 						disabledKeys={lockedKeys}
 						disabledLabel="Added"
@@ -400,6 +409,16 @@ export function AddApisTray({
 				onClose={(): void => setUploadOpen(false)}
 				onImported={addImported}
 			/>
+			{vendorPick && (
+				<CreateCredentialFlow
+					key={vendorPick.entry_id}
+					open
+					initialVendor={vendorPick}
+					preselectedAgentId={agentId}
+					onClose={(): void => setVendorPick(null)}
+					onCreated={(): void => setVendorPick(null)}
+				/>
+			)}
 		</SheetPrimitive>
 	);
 }

@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **174**._
+_Total endpoints: **181**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -111,7 +111,7 @@ _Total endpoints: **174**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's SSO capabilities |
 
-## Operator-facing (typically a human operator / admin) (40)
+## Operator-facing (typically a human operator / admin) (46)
 
 
 ### `actors`
@@ -190,6 +190,17 @@ _Total endpoints: **174**._
 |---|---|---|---|---|
 | POST | `/oauth/session/continue` | _any authenticated_ | operator | Exchange a live platform session for an authorize continuation |
 
+### `oauth-app-registrations`
+
+| Method | Path | Permission(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/oauth-app-registrations` | `org:admin` | operator | List OAuth app registrations |
+| POST | `/oauth-app-registrations` | `org:admin` | operator | Register a shared OAuth application |
+| DELETE | `/oauth-app-registrations/{id}` | `org:admin` | operator | Delete an OAuth app registration |
+| GET | `/oauth-app-registrations/{id}` | `org:admin` | operator | Get an OAuth app registration |
+| PATCH | `/oauth-app-registrations/{id}` | `org:admin` | operator | Update an OAuth app registration |
+| POST | `/oauth-app-registrations/{id}:rotate-secret` | `org:admin` | operator | Rotate the client secret |
+
 ### `users`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
@@ -204,7 +215,7 @@ _Total endpoints: **174**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (72)
+## Any authenticated actor (73)
 
 
 ### `actors`
@@ -261,7 +272,8 @@ _Total endpoints: **174**._
 | GET | `/connect-sessions/{session_id}` | `credentials:write` | any | Get review data for a connect session |
 | GET | `/connect-sessions/{session_id}/status` | `credentials:connect`, `credentials:write` | any | Poll a connect session's status |
 | POST | `/connect-sessions/{session_id}:cancel` | `credentials:connect`, `credentials:write` | any | Cancel an in-flight connect session |
-| POST | `/connect-sessions/{session_id}:confirm` | `credentials:write` | any | Confirm scopes + permissions and kick off the vendor flow |
+| POST | `/connect-sessions/{session_id}:confirm` | `credentials:write` | any | Confirm a connect session |
+| POST | `/connect-sessions/{session_id}:reject` | `credentials:write` | any | Reject an agent's connect request |
 
 ### `credentials`
 

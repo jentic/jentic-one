@@ -10,10 +10,12 @@
 import {
 	AgentsService,
 	CredentialsService,
+	IntegrationsService,
 	PermissionRuleSetsService,
 	getToken,
 	problemDetailText,
 	type AgentListResponse,
+	type ConnectSessionSummaryResponse,
 	type PermissionRuleReadSchema,
 	type PermissionRuleSchema,
 	type RuleSetResponse,
@@ -112,31 +114,40 @@ export async function bindCredentialToAgentBlocked(
 }
 
 /**
- * Fetch the review data for a connect session. Gated by the session's
- * ``poll_token`` capability (it rides the ``:connect`` response for the
- * self flow and the ``?approve=…&poll_token=…`` approval URL for the
- * agent-initiated flow). Missing session and token mismatch both surface
- * as 403 — the backend deliberately doesn't distinguish them (no
- * session-id enumeration oracle), so callers treat a 403 the way a 404
- * used to be treated: session gone / terminal.
+ * A session-scoped route, with the ``poll_token`` capability on the query
+ * string when the caller holds one. Without it the backend authorises the
+ * target agent's owner (holding ``credentials:write`` and ``agents:write``)
+ * or ``org:admin`` instead; everyone else gets the same 403 as a wrong token.
  */
-export function getConnectSession(sessionId: string, pollToken: string): Promise<ReviewSession> {
-	const url = `/connect-sessions/${encodeURIComponent(sessionId)}?poll_token=${encodeURIComponent(pollToken)}`;
-	return request(url);
+function sessionUrl(sessionId: string, suffix: string, pollToken?: string): string {
+	const path = `/connect-sessions/${encodeURIComponent(sessionId)}${suffix}`;
+	return pollToken ? `${path}?poll_token=${encodeURIComponent(pollToken)}` : path;
 }
 
 /**
- * Confirm scopes + rules and kick off the vendor flow. Requires the same
- * ``poll_token`` capability as the review read (403 on mismatch or missing
- * session) and shares the ``:connect`` rate bucket (429 possible).
+ * Fetch the review data for a connect session. Gated by the session's
+ * ``poll_token`` (the self flow holds it from its own ``:connect``) or, with
+ * no token, by being the target agent's owner or ``org:admin`` — which is how
+ * a human opens an agent's ``?approve=<sid>`` approval link. Missing session,
+ * token mismatch and "neither" all surface as 403 — the backend deliberately
+ * doesn't distinguish them (no session-id enumeration oracle), so callers
+ * treat a 403 as "session gone / not yours".
+ */
+export function getConnectSession(sessionId: string, pollToken?: string): Promise<ReviewSession> {
+	return request(sessionUrl(sessionId, '', pollToken));
+}
+
+/**
+ * Confirm scopes + rules and kick off the vendor flow. Gated like the review
+ * read (403 on mismatch, missing session, or a token-less caller who is not
+ * the owner / admin) and shares the ``:connect`` rate bucket (429 possible).
  */
 export function confirmConnectSession(
 	sessionId: string,
-	pollToken: string,
+	pollToken: string | undefined,
 	body: ConfirmRequest,
 ): Promise<ConfirmResponse> {
-	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:confirm?poll_token=${encodeURIComponent(pollToken)}`;
-	return request(url, {
+	return request(sessionUrl(sessionId, ':confirm', pollToken), {
 		method: 'POST',
 		body: JSON.stringify(body),
 	});
@@ -144,10 +155,9 @@ export function confirmConnectSession(
 
 export function pollConnectSessionStatus(
 	sessionId: string,
-	pollToken: string,
+	pollToken?: string,
 ): Promise<StatusResponse> {
-	const url = `/connect-sessions/${encodeURIComponent(sessionId)}/status?poll_token=${encodeURIComponent(pollToken)}`;
-	return request(url);
+	return request(sessionUrl(sessionId, '/status', pollToken));
 }
 
 /**
@@ -156,28 +166,55 @@ export function pollConnectSessionStatus(
  * so we can fire this from unmount cleanup without needing to check
  * whether the flow already finished.
  */
-export function cancelConnectSession(sessionId: string, pollToken: string): Promise<void> {
-	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
-	return request(url, { method: 'POST' });
+export function cancelConnectSession(sessionId: string, pollToken?: string): Promise<void> {
+	return request(sessionUrl(sessionId, ':cancel', pollToken), { method: 'POST' });
 }
 
 /**
- * Fire-and-forget cancel via ``navigator.sendBeacon``. Used on tab-close
- * (``beforeunload``) where an in-flight ``fetch`` would be aborted by the
- * browser but ``sendBeacon`` is guaranteed to deliver. Returns whether the
- * browser accepted the beacon; callers should keep firing the regular
- * ``cancelConnectSession`` on in-page dismiss (dialog close, unmount) since
- * ``sendBeacon`` can't set custom headers or observe the response.
+ * Fire-and-forget cancel for tab close (``beforeunload``), where a plain
+ * ``fetch`` is aborted with the page. A ``keepalive`` fetch outlives the page
+ * like ``navigator.sendBeacon`` does, but — unlike a beacon — carries the
+ * ``Authorization`` header every route needs, so it also works without a
+ * ``poll_token`` (the owner / ``org:admin`` path). Returns whether a request
+ * was sent; the response is never observed.
  */
-export function cancelConnectSessionBeacon(sessionId: string, pollToken: string): boolean {
-	if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
-		return false;
-	}
-	const url = `/connect-sessions/${encodeURIComponent(sessionId)}:cancel?poll_token=${encodeURIComponent(pollToken)}`;
-	// The body isn't used (poll_token rides on the query string); an empty
-	// Blob keeps the browser's beacon path happy without conjuring a
-	// Content-Type the backend has to ignore.
-	return navigator.sendBeacon(url, new Blob([], { type: 'application/octet-stream' }));
+export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: string): boolean {
+	if (typeof fetch !== 'function') return false;
+	const token = getToken();
+	const headers = new Headers({ Accept: 'application/json' });
+	if (token) headers.set('Authorization', `Bearer ${token}`);
+	void fetch(sessionUrl(sessionId, ':cancel', pollToken), {
+		method: 'POST',
+		headers,
+		keepalive: true,
+	}).catch(() => {});
+	return true;
+}
+
+/** Session states in which an agent is still waiting on a human. */
+const OPEN_CONNECT_STATES = ['created', 'polling'] as const;
+
+/** Upper bound per state; open sessions expire fast, so one page holds them. */
+const OPEN_CONNECT_PAGE_LIMIT = 200;
+
+/**
+ * The connect sessions an agent opened and is still waiting on a human for
+ * (``created`` or ``polling``), oldest first. The list is scoped server-side:
+ * the caller's own sessions, plus — for a human — those of the agents they own
+ * (``org:admin`` sees all). Sessions a human started from their own dialog are
+ * dropped: nobody is waiting on them but that same human. Rows never carry the
+ * ``poll_token``.
+ */
+export async function listOpenConnectRequests(): Promise<ConnectSessionSummaryResponse[]> {
+	const pages = await Promise.all(
+		OPEN_CONNECT_STATES.map((state) =>
+			IntegrationsService.listConnectSessions({ state, limit: OPEN_CONNECT_PAGE_LIMIT }),
+		),
+	);
+	return pages
+		.flatMap((page) => page.data)
+		.filter((s) => s.agent_id != null && s.requested_by_actor_id === s.agent_id)
+		.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
 export function listVendors(): Promise<VendorListResponse> {
@@ -278,8 +315,19 @@ export async function listAllVendorOperations(
 	return { data: collected, has_more: true, next_cursor: cursor ?? null };
 }
 
-export function getVendorAuthCapabilities(vendorKey: string): Promise<VendorAuthCapabilities> {
-	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities`);
+export function getVendorAuthCapabilities(
+	vendorKey: string,
+	registrationId?: string | null,
+): Promise<VendorAuthCapabilities> {
+	// Pin the read to a specific admin-registered OAuth app when the picker
+	// tile carried one. Without the pin, the server uses the platform config
+	// entry for the slug, else its single active registration (400 when
+	// several registrations share the slug).
+	const qs =
+		registrationId != null
+			? `?oauth_app_registration_id=${encodeURIComponent(registrationId)}`
+			: '';
+	return request(`/vendors/${encodeURIComponent(vendorKey)}/auth-capabilities${qs}`);
 }
 
 /** Wrap a generated-client failure as an {@link IntegrationsApiError}. */

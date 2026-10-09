@@ -82,10 +82,9 @@ apps:
 #   control.access_requests.canonical_base_url    # approval deep links
 #   credentials.providers.<id>.redirect_uri        # OAuth callback override
 #
-# Independent of public_base_url (they name other origins, so they never
-# inherit it): broker.jobs_api_base_url (async-job _links.self; unset keeps a
-# broker-relative /jobs/{id}) and broker.account_linking_base_url (the 424
-# provisioning_url; unset omits it).
+# Independent of public_base_url (it names another origin, so it never
+# inherits it): broker.jobs_api_base_url (async-job _links.self; unset keeps a
+# broker-relative /jobs/{id}).
 
 auth:
   platform_clients:
@@ -197,3 +196,10 @@ admin:
     # Absolute cap on a web session: refresh is refused once the original
     # login is older than this window, forcing a fresh sign-in.
     session_ttl_seconds: 43200
+
+# Anonymous product telemetry: a fixed, closed-schema event set under a random
+# instance id (generated on first boot) — no credentials, request data, or PII
+# (docs/reference/config.md#telemetry). Set `enabled: false` to opt out; a
+# config that omits this block sends nothing.
+telemetry:
+  enabled: true

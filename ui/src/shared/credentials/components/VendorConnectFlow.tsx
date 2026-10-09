@@ -20,6 +20,7 @@ import {
 	Checkbox,
 	CopyButton,
 	ErrorAlert,
+	Input,
 	Label,
 	RadioCardGroup,
 	SearchInput,
@@ -29,6 +30,8 @@ import {
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
 import {
+	connectRequestsKey,
+	invalidateBindingSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -40,7 +43,7 @@ import {
 } from '@/shared/credentials/api/vendors-hooks';
 import {
 	cancelConnectSession,
-	cancelConnectSessionBeacon,
+	cancelConnectSessionOnUnload,
 } from '@/shared/credentials/api/vendors-client';
 import { OperationImpactPreview } from '@/shared/credentials/components/OperationImpactPreview';
 import {
@@ -66,9 +69,12 @@ import type {
  *  * `self` — the current user is opening the flow from the credential inventory,
  *    picks an agent + scopes, then runs start-and-confirm in one shot.
  *  * `approve` — an agent already started the session; the current user is the
- *    human owner following the emitted approval URL. Session (with the agent's
- *    requested scopes) already exists; we skip the picker, load the review data,
- *    and go straight to confirm → device code → poll.
+ *    human owner (or an org admin) following the emitted approval URL. Session
+ *    (with the agent's requested scopes) already exists; we skip the picker,
+ *    load the review data, and go straight to confirm → device code → poll.
+ *    `pollToken` is optional: the approval URL carries only the session id, and
+ *    the backend authorises the agent's owner / an org admin without it. An
+ *    older link that still carries a token keeps working for its holder.
  *
  * Both variants share the awaiting (device code + polling) and terminal
  * (success / failure) steps.
@@ -100,21 +106,35 @@ export type VendorConnectFlowProps =
 			// Extra content rendered on the terminal step's success path
 			// (typically a "Bind to more agents" CTA). See ``PostConnectInfo``.
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+			/** Fires once when the sign-in completes, with the credential it created. */
+			onConnected?: (info: ConnectedCredentialInfo) => void;
 			onBack: () => void;
 			onDone: () => void;
 	  }
 	| {
 			mode: 'approve';
 			sessionId: string;
-			pollToken: string;
+			pollToken?: string;
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 			onBack: () => void;
 			onDone: () => void;
 	  };
 
+/** The credential a completed self connect created (and bound, when an agent was set). */
+export interface ConnectedCredentialInfo {
+	credentialId: string;
+	name: string;
+}
+
 interface VendorDisplay {
 	displayName: string;
 	iconKey: string;
+	/**
+	 * The admin-registered shared app this connection goes through, when the
+	 * picked tile was one — so the configure step still says *which* app,
+	 * not just the vendor it shares a name with.
+	 */
+	sharedAppName?: string;
 }
 
 type Phase = 'configure' | 'rules' | 'awaiting' | 'terminal';
@@ -155,6 +175,7 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 			vendor={props.vendor}
 			preselectedAgentId={props.preselectedAgentId}
 			renderPostConnect={props.renderPostConnect}
+			onConnected={props.onConnected}
 			onBack={props.onBack}
 			onDone={props.onDone}
 		/>
@@ -169,16 +190,22 @@ function VendorSelfConnectFlow({
 	vendor,
 	preselectedAgentId,
 	renderPostConnect,
+	onConnected,
 	onBack,
 	onDone,
 }: {
 	vendor: VendorSummary;
 	preselectedAgentId?: string;
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	onConnected?: (info: ConnectedCredentialInfo) => void;
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	const capabilities = useVendorAuthCapabilities(vendor.key);
+	// Pin the auth-capabilities read to the picker tile's registration id
+	// (when set) so scope catalog / default_scopes come from *this* admin-
+	// registered OAuth app, not another source for the same slug. Without
+	// the pin, a config tile and a registration would share one catalog.
+	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
 	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();
@@ -188,6 +215,12 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// User-editable credential label. Pre-filled with the vendor display
+	// name so the input shows a sensible default the user can edit. Sent
+	// on the ``:connect`` payload; the backend accepts it as the credential
+	// name (falling back to the same vendor display name when omitted, so
+	// pre-filling here is functionally equivalent to omitting it).
+	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
 	// a specific agent), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
@@ -213,38 +246,40 @@ function VendorSelfConnectFlow({
 	// hit the raw client without depending on the mutation lifecycle.
 	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
 	const phaseRef = useRef<Phase>('configure');
-	// StrictMode dev-time mounts effects twice. Without this guard the
-	// ``:connect`` fires twice and we get two orphaned sessions per open.
-	const connectFiredRef = useRef(false);
 
-	// Fire ``:connect`` — called on mount (below) so the session/
-	// credential/import all exist by the time the user reaches the rules
-	// page, and again from the terminal step's "Try again" so a retry
-	// opens a FRESH session (the failed one was cascade-deleted server-
-	// side and can't be reused).
-	const startConnect = async (): Promise<void> => {
+	// Fire ``:connect`` — invoked from Continue-click on the configure
+	// step (the user's credential-name pick is captured first) and from
+	// the terminal step's "Try again" so a retry opens a FRESH session
+	// (the failed one was cascade-deleted server-side and can't be
+	// reused). Idempotent: returns the existing session id/token when
+	// one is already in ``sessionRef``.
+	const startConnect = async (): Promise<{ id: string; pollToken: string } | null> => {
+		if (sessionRef.current) return sessionRef.current;
 		try {
 			startMutation.reset();
-			const result = await startMutation.mutateAsync({ vendor: vendor.key });
-			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
-			setSession({ id: result.session_id, pollToken: result.poll_token });
+			const trimmedName = credentialName.trim();
+			const result = await startMutation.mutateAsync({
+				vendor: vendor.key,
+				// Omit ``name`` entirely when blank so the server's default
+				// (vendor display name) kicks in instead of storing an
+				// empty label.
+				...(trimmedName ? { name: trimmedName } : {}),
+				// Pin the specific admin-registered app when the picker
+				// entry references one — required to disambiguate when
+				// multiple registrations exist for the same vendor.
+				...(vendor.registration_id
+					? { oauth_app_registration_id: vendor.registration_id }
+					: {}),
+			});
+			const next = { id: result.session_id, pollToken: result.poll_token };
+			sessionRef.current = next;
+			setSession(next);
+			return next;
 		} catch {
 			// surfaced via ErrorAlert on the configure page.
+			return null;
 		}
 	};
-
-	// Fire ``:connect`` on mount so the session/credential/import all
-	// exist by the time the user reaches the rules page — the same
-	// shape the approve flow lands in when the human hits the URL.
-	useEffect(() => {
-		if (connectFiredRef.current) return;
-		connectFiredRef.current = true;
-		void startConnect();
-		// startMutation is stable across renders (react-query hook); vendor.key
-		// only changes when the parent remounts the flow, at which point the
-		// ref resets naturally.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [vendor.key]);
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -302,9 +337,15 @@ function VendorSelfConnectFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The connect bound the credential to the picked agent, so that
+				// agent's binding list (its page, the Add APIs tray) is stale too.
+				const credentialId = polling.data.credential_id;
+				if (credentialId && agentId) {
+					invalidateBindingSurfaces(queryClient, credentialId, [agentId]);
+				}
 			}
 		}
-	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient, agentId]);
 
 	// Cancel-on-unmount: if the user closes the dialog / navigates away
 	// mid-flow, the backend needs to know so the pending credential +
@@ -329,18 +370,18 @@ function VendorSelfConnectFlow({
 		};
 	}, []);
 
-	// Tab-close variant: ``fetch`` fired from unmount is aborted by the
-	// browser when the page itself is being torn down, so the pending
+	// Tab-close variant: a plain ``fetch`` fired from unmount is aborted by
+	// the browser when the page itself is being torn down, so the pending
 	// credential + session would otherwise linger until the session TTL
-	// scanner reaps them. ``sendBeacon`` is guaranteed to deliver on
-	// unload; we keep the ``fetch`` above for the in-page dismiss case
-	// (dialog close, navigation) since it can observe the response.
+	// scanner reaps them. A ``keepalive`` request outlives the page (see
+	// ``cancelConnectSessionOnUnload``); we keep the ``fetch`` above for the
+	// in-page dismiss case (dialog close, navigation).
 	useEffect(() => {
 		const onBeforeUnload = (): void => {
 			if (phaseRef.current === 'terminal') return;
 			const s = sessionRef.current;
 			if (!s) return;
-			cancelConnectSessionBeacon(s.id, s.pollToken);
+			cancelConnectSessionOnUnload(s.id, s.pollToken);
 		};
 		window.addEventListener('beforeunload', onBeforeUnload);
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
@@ -374,13 +415,21 @@ function VendorSelfConnectFlow({
 	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
 	// We do not pre-populate rules from scope classifications — the user
 	// sees exactly what they authored, nothing more.
-	const goToRules = (): void => {
+	const goToRules = async (): Promise<void> => {
+		// Fire ``:connect`` now (deferred from mount so the user's
+		// credential-name pick can be captured first). Idempotent — a
+		// re-click while the mutation is in flight resolves to the same
+		// session. Bails out on failure; the error surfaces via
+		// ``ErrorAlert`` on the configure page.
+		const s = await startConnect();
+		if (!s) return;
 		setRules((prev) => prev ?? []);
 		setPhase('rules');
 	};
 
-	// Continue on the rules page — session already exists (``:connect``
-	// fired at mount). Just POST ``:confirm`` with the human-approved
+	// Continue on the rules page — session exists by the time we reach
+	// this handler (``goToRules`` fires ``:connect`` first). Just POST
+	// ``:confirm`` with the human-approved
 	// scopes + rules + selected agent, and transition to ``awaiting``.
 	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
 	// session-on-vendor-click semantics are preserved for the self flow
@@ -407,9 +456,26 @@ function VendorSelfConnectFlow({
 		}
 	};
 
+	// Report the finished sign-in once, so a host tracking its own progress
+	// (e.g. the agent setup queue) can mark the credential added.
+	const reportedRef = useRef(false);
+	const connectedId =
+		phase === 'terminal' && polling.data?.status === 'connected'
+			? (polling.data.credential_id ?? null)
+			: null;
+	useEffect(() => {
+		if (!connectedId || reportedRef.current) return;
+		reportedRef.current = true;
+		onConnected?.({
+			credentialId: connectedId,
+			name: credentialName.trim() || vendor.display_name,
+		});
+	}, [connectedId, onConnected, credentialName, vendor.display_name]);
+
 	const display: VendorDisplay = {
 		displayName: vendor.display_name,
 		iconKey: vendor.vendor,
+		sharedAppName: vendor.source === 'db' ? vendor.name : undefined,
 	};
 	// Errors from either the on-mount ``:connect`` or the rules-page
 	// ``:confirm`` — surfaced on whichever page the user is looking at.
@@ -430,16 +496,15 @@ function VendorSelfConnectFlow({
 				onRetry={(): void => {
 					// A retry needs a FRESH session — the failed one was
 					// cascade-deleted server-side. Reset the phase refs so
-					// the unmount cleanup applies to the new session, then
-					// re-fire ``:connect`` directly (the mount effect is
-					// one-shot by design and won't run again).
+					// the unmount cleanup applies to the new session; the
+					// user then hits Continue on the configure page which
+					// fires a fresh ``:connect``.
 					phaseRef.current = 'configure';
 					sessionRef.current = null;
 					setPhase('configure');
 					setSession(null);
 					setChallenge(null);
 					confirmMutation.reset();
-					void startConnect();
 				}}
 			/>
 		);
@@ -478,9 +543,17 @@ function VendorSelfConnectFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader
+			<EditableVendorHeader
 				display={display}
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
+				name={credentialName}
+				onNameChange={setCredentialName}
+				// Disabled once the ``:connect`` session exists — the
+				// credential's name landed at ``:connect`` time and the
+				// backend doesn't accept name updates on a pending
+				// session. If the user needs to rename after connecting,
+				// they can do it from the credentials list.
+				disabled={session != null || startMutation.isPending}
 			/>
 
 			<AgentPickerField
@@ -510,17 +583,19 @@ function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={goToRules}
-					// ``:connect`` fires at mount — wait for the session id
-					// before letting the user advance so the rules page has
-					// something to attach to when it renders. Scope-less
-					// vendors (empty catalog) proceed with the vendor's
-					// defaults, so the empty-selection gate only applies
-					// when there are scopes to choose from. An agent is NOT
-					// required — ``agent_id`` is optional at ``:confirm``
-					// (connect unbound, bind later via the credentials API).
-					disabled={(scopes.length > 0 && selectedScopes.size === 0) || !session}
-					loading={startMutation.isPending && !session}
+					onClick={(): void => void goToRules()}
+					// ``:connect`` fires from this button (not on mount) so
+					// the user's credential-name pick is captured first.
+					// Scope-less vendors (empty catalog) proceed with the
+					// vendor's defaults, so the empty-selection gate only
+					// applies when there are scopes to choose from. An
+					// agent is NOT required — ``agent_id`` is optional at
+					// ``:confirm`` (connect unbound, bind later via the
+					// credentials API).
+					disabled={
+						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+					}
+					loading={startMutation.isPending}
 				>
 					Continue
 				</Button>
@@ -685,6 +760,18 @@ function AgentPickerField({
 // Agent-initiated approval flow
 // ---------------------------------------------------------------------------
 
+/**
+ * What to tell a human whose approval link did not load. A 403 is the
+ * backend's uniform "missing, not your token, or not your agent" answer, so
+ * it reads as one message; anything else surfaces the server's own detail.
+ */
+function approvalLoadError(error: unknown): string {
+	if ((error as { status?: number | null } | null)?.status === 403) {
+		return "This request is no longer open, or it isn't yours to approve.";
+	}
+	return (error as Error | null)?.message ?? 'The approval link is no longer valid.';
+}
+
 function VendorApproveFlow({
 	sessionId,
 	pollToken,
@@ -693,14 +780,17 @@ function VendorApproveFlow({
 	onDone,
 }: {
 	sessionId: string;
-	pollToken: string;
+	/** Absent for the owner / org-admin path (the approval URL carries none). */
+	pollToken?: string;
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	// The review read is poll_token-gated server-side: a missing session
-	// and a token mismatch both come back 403 (no enumeration oracle), so
-	// the error branch below treats any failure as "link no longer valid".
+	// The review read is gated server-side by the poll_token or, without
+	// one, by the caller owning the target agent (or being org:admin). A
+	// missing session, a token mismatch and a caller who is neither all come
+	// back 403 (no enumeration oracle), so the error branch below treats any
+	// 403 as "this request isn't open to you".
 	const sessionQuery = useConnectSession(sessionId, pollToken);
 	const agents = useAgentsForPicker();
 	const queryClient = useQueryClient();
@@ -730,11 +820,12 @@ function VendorApproveFlow({
 	}, [sessionId, pollToken]);
 
 	// Tab-close variant — see the sibling ``VendorSelfConnectFlow`` effect
-	// for the rationale (fetch aborts on unload; sendBeacon delivers).
+	// for the rationale (fetch aborts on unload; a keepalive request
+	// delivers, and carries the bearer the token-less path needs).
 	useEffect(() => {
 		const onBeforeUnload = (): void => {
 			if (phaseRef.current !== 'awaiting') return;
-			cancelConnectSessionBeacon(sessionId, pollToken);
+			cancelConnectSessionOnUnload(sessionId, pollToken);
 		};
 		window.addEventListener('beforeunload', onBeforeUnload);
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
@@ -780,13 +871,16 @@ function VendorApproveFlow({
 		// See ``VendorSelfConnectFlow`` for the 403-as-terminal rationale
 		// (backend cascades the session on unhappy terminal, and the
 		// service raises ``InvalidPollTokenError`` for missing sessions
-		// to close the enumeration oracle — but we know our poll_token
-		// is correct at this point, so a 403 here is unambiguously
+		// to close the enumeration oracle — but this caller already
+		// passed the same gate on the review read and ``:confirm``, with
+		// or without a poll_token, so a 403 here is unambiguously
 		// "session gone → terminal").
 		const err = polling.error as { status?: number } | undefined;
 		if (err?.status === 403) {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
+			// The request is no longer open: drop it from the waiting signals.
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			return;
 		}
 		if (!polling.data) return;
@@ -794,6 +888,7 @@ function VendorApproveFlow({
 		if (status === 'connected' || status === 'failed' || status === 'expired') {
 			phaseRef.current = 'terminal';
 			setPhase('terminal');
+			void queryClient.invalidateQueries({ queryKey: connectRequestsKey });
 			if (status === 'connected') {
 				toast({
 					title: `Connected to ${session?.vendor_display_name ?? 'the integration'}`,
@@ -861,12 +956,7 @@ function VendorApproveFlow({
 	if (sessionQuery.error || !session) {
 		return (
 			<div className="space-y-4">
-				<ErrorAlert
-					message={
-						(sessionQuery.error as Error)?.message ??
-						'The approval link is no longer valid.'
-					}
-				/>
+				<ErrorAlert message={approvalLoadError(sessionQuery.error)} />
 				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close
@@ -1108,9 +1198,60 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 	return (
 		<div className="flex items-center gap-3">
 			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
-			<div>
+			<div className="min-w-0">
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
+				<SharedAppLine display={display} />
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
+			</div>
+		</div>
+	);
+}
+
+function SharedAppLine({ display }: { display: VendorDisplay }) {
+	if (!display.sharedAppName) return null;
+	return (
+		<p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+			<Badge variant="default">Shared app</Badge>
+			<span className="text-muted-foreground truncate">via {display.sharedAppName}</span>
+		</p>
+	);
+}
+
+// Variant of :func:`VendorHeader` where the vendor name is inline-editable.
+// Renders the shared ``Input`` at heading weight so the user can type over the
+// label directly. Pre-filled with the vendor's
+// display name; the caller drives state.
+function EditableVendorHeader({
+	display,
+	subtitle,
+	name,
+	onNameChange,
+	disabled,
+}: {
+	display: VendorDisplay;
+	subtitle: string;
+	name: string;
+	onNameChange: (next: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+			<div className="min-w-0 flex-1">
+				<div className="max-w-xs">
+					<Input
+						type="text"
+						size="sm"
+						className="px-2 py-1 text-base font-semibold disabled:opacity-60"
+						value={name}
+						placeholder={display.displayName}
+						aria-label="Credential name"
+						disabled={disabled}
+						onChange={(e): void => onNameChange(e.target.value)}
+					/>
+				</div>
+				<SharedAppLine display={display} />
+				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>
 		</div>
 	);

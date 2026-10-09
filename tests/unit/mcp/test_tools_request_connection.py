@@ -23,8 +23,13 @@ from mcp.shared.exceptions import MCPError
 
 import jentic_one.mcp.tools as tools_mod
 from jentic_one.control.services.integrations.connect_session_service import CreatedSession
-from jentic_one.control.services.integrations.errors import NoOpForFlowError
+from jentic_one.control.services.integrations.errors import (
+    InvalidOAuthAppRegistrationError,
+    NoOpForFlowError,
+)
+from jentic_one.control.services.vendors.schemas import VendorEntry
 from jentic_one.control.services.vendors.service import (
+    AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
@@ -45,7 +50,11 @@ _CREATED = CreatedSession(
 
 
 def _env(
-    permissions: list[str], *, actor_type: ActorType = ActorType.AGENT, sub: str = "agnt_1"
+    permissions: list[str],
+    *,
+    actor_type: ActorType = ActorType.AGENT,
+    sub: str = "agnt_1",
+    catalog_auto_importer: Any = None,
 ) -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
@@ -57,6 +66,7 @@ def _env(
         credential="jak_test",
         base_url="https://auth.example.com",
         session_id=None,
+        catalog_auto_importer=catalog_auto_importer,
     )
 
 
@@ -71,10 +81,12 @@ class _FakeConnectSessionService:
     """ConnectSessionService stand-in: records create_session kwargs (or raises)."""
 
     calls: ClassVar[list[dict[str, Any]]] = []
+    importers: ClassVar[list[Any]] = []
     error: ClassVar[Exception | None] = None
 
-    def __init__(self, ctx: Any) -> None:
+    def __init__(self, ctx: Any, catalog_auto_importer: Any = None) -> None:
         self._ctx = ctx
+        _FakeConnectSessionService.importers.append(catalog_auto_importer)
 
     async def create_session(self, **kwargs: Any) -> CreatedSession:
         if _FakeConnectSessionService.error is not None:
@@ -86,6 +98,7 @@ class _FakeConnectSessionService:
 @pytest.fixture(autouse=True)
 def service(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeConnectSessionService.calls = []
+    _FakeConnectSessionService.importers = []
     _FakeConnectSessionService.error = None
     monkeypatch.setattr(tools_mod, "ConnectSessionService", _FakeConnectSessionService)
     # A fresh limiter per test: the module-level one is shared process state
@@ -182,8 +195,10 @@ async def test_success_returns_session_without_poll_token() -> None:
         "agent_id": "agnt_1",  # the caller IS the agent — identity injected
         "initiator_actor_id": "agnt_1",
         "requested_scopes": ["repo"],
+        "requested_permission_rules": None,
         "preferred_flow": None,
         "reason": "read PRs",
+        "oauth_app_registration_id": None,
     }
 
 
@@ -271,6 +286,179 @@ async def test_unusable_default_flow_is_resolve_failed_like_the_go_mount(
     assert payload["error_code"] == "RESOLVE_FAILED"
     assert payload["next_tool"] == "search_catalog"
     assert "operator" in payload["actionable_step"]
+
+
+def _vendor_entry(registration_id: str | None, key: str, name: str) -> VendorEntry:
+    return VendorEntry(
+        entry_id=registration_id or key,
+        registration_id=registration_id,
+        key=key,
+        display_name="Google",
+        name=name,
+        flow_kind="authorization_code",
+        flow_kinds=["authorization_code"],
+        client_id="cid",
+        source="db" if registration_id else "config",
+    )
+
+
+class _FakeVendorRegistryService:
+    entries: ClassVar[list[VendorEntry]] = []
+
+    def __init__(self, ctx: Any) -> None:
+        self._ctx = ctx
+
+    async def list_entries(self) -> list[VendorEntry]:
+        return _FakeVendorRegistryService.entries
+
+
+async def test_ambiguous_vendor_lists_candidates_and_asks_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Several shared OAuth apps serve the vendor: the error lists the ones the
+    resolver counted (name + registration_id) and tells the agent to ask its
+    user, then retry with the picked id — choosing the app is the user's call."""
+    _FakeVendorRegistryService.entries = [
+        _vendor_entry("oar_a", "googleapis-com", "Gmail (work)"),
+        _vendor_entry("oar_b", "googleapis-com", "Calendar"),
+        _vendor_entry("oar_c", "googleapis-com", "Inactive elsewhere"),
+        _vendor_entry(None, "github", "GitHub"),
+    ]
+    monkeypatch.setattr(tools_mod, "VendorRegistryService", _FakeVendorRegistryService)
+    _FakeConnectSessionService.error = AmbiguousVendorError(
+        "googleapis-com", None, ["oar_a", "oar_b"]
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect", "capabilities:read"]),
+        "request_connection",
+        {"vendor": "googleapis-com"},
+    )
+    assert result.is_error
+
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "request_connection"
+    assert payload["actionable_step"] == tools_mod._ambiguous_vendor_actionable(
+        "googleapis-com", listed=True
+    )
+    assert "your human user" in payload["actionable_step"]
+    assert "oauth_app_registration_id" in payload["actionable_step"]
+    assert payload["details"]["candidates"] == [
+        {"registration_id": "oar_a", "name": "Gmail (work)", "display_name": "Google"},
+        {"registration_id": "oar_b", "name": "Calendar", "display_name": "Google"},
+    ]
+
+
+async def test_ambiguous_vendor_without_capabilities_read_still_asks_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The candidate list rides the GET /vendors gate (capabilities:read), like
+    the Go mount's read; without it the advice still routes to the user."""
+    _FakeVendorRegistryService.entries = [_vendor_entry("oar_a", "googleapis-com", "Gmail")]
+    monkeypatch.setattr(tools_mod, "VendorRegistryService", _FakeVendorRegistryService)
+    _FakeConnectSessionService.error = AmbiguousVendorError(
+        "googleapis-com", None, ["oar_a", "oar_b"]
+    )
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]), "request_connection", {"vendor": "googleapis-com"}
+    )
+    payload = _payload(result)
+    assert "details" not in payload
+    assert payload["actionable_step"] == tools_mod._ambiguous_vendor_actionable(
+        "googleapis-com", listed=False
+    )
+
+
+async def test_ambiguous_vendor_advice_matches_the_go_mount() -> None:
+    """Cross-mount text parity with ``ambiguousVendorActionable`` (Go)."""
+    assert tools_mod._ambiguous_vendor_actionable("googleapis-com", listed=True) == (
+        'Several shared OAuth apps serve vendor "googleapis-com", and choosing one is '
+        "your user's decision, not yours: show your human user the apps in "
+        "details.candidates (name and registration_id) and ask which one to use, then "
+        "call request_connection again with oauth_app_registration_id set to the "
+        "registration_id they pick."
+    )
+
+
+async def test_invalid_registration_points_at_the_unpinned_retry() -> None:
+    _FakeConnectSessionService.error = InvalidOAuthAppRegistrationError("oar_x", "inactive")
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"]),
+        "request_connection",
+        {"vendor": "googleapis-com", "oauth_app_registration_id": "oar_x"},
+    )
+    payload = _payload(result)
+    assert payload["error_code"] == "RESOLVE_FAILED"
+    assert payload["next_tool"] == "request_connection"
+    assert "without oauth_app_registration_id" in payload["actionable_step"]
+    # The route's uniform refusal: the cause never reaches the caller.
+    assert "inactive" not in json.dumps(payload)
+
+
+# ── pin, rules, and the auto-importer (parity with the HTTP route) ───────────
+
+
+async def test_pin_rules_and_auto_importer_reach_create_session() -> None:
+    importer = object()
+    result = await dispatch_tool_call(
+        _env(["credentials:connect"], catalog_auto_importer=importer),
+        "request_connection",
+        {
+            "vendor": "googleapis-com",
+            "registration_id": "oar_a",
+            "permission_rules": json.dumps(
+                [{"effect": "allow", "methods": ["GET"], "path": "/gmail/.*"}]
+            ),
+        },
+    )
+    assert not result.is_error, result.content
+
+    (call,) = _FakeConnectSessionService.calls
+    assert call["oauth_app_registration_id"] == "oar_a"
+    # The route's wire shape: model_dump(exclude_none=True), match_mode defaulted.
+    assert call["requested_permission_rules"] == [
+        {"effect": "allow", "methods": ["GET"], "path": "/gmail/.*", "match_mode": "regex"}
+    ]
+    assert _FakeConnectSessionService.importers == [importer]
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        {"effect": "allow"},  # not a list
+        [{"effect": "allow", "pattern": "/x"}],  # unknown key
+        [{"methods": ["GET"]}],  # missing effect
+        [{"effect": "allow"}],  # condition-less allow
+        [{"effect": "allow", "path": "("}],  # invalid regex
+    ],
+)
+async def test_malformed_rules_are_invalid_params(rules: Any) -> None:
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]),
+            {"vendor": "github", "requested_permission_rules": rules},
+        )
+    assert "requested_permission_rules" in str(err.value)
+    assert _FakeConnectSessionService.calls == []
+
+
+async def test_too_many_rules_is_invalid_params() -> None:
+    rules = [{"effect": "deny", "methods": ["DELETE"]}] * 101
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]),
+            {"vendor": "github", "requested_permission_rules": rules},
+        )
+    assert "100" in str(err.value)
+
+
+async def test_overlong_registration_is_invalid_params() -> None:
+    with pytest.raises(MCPError) as err:
+        await tools_mod.handle_request_connection(
+            _env(["credentials:connect"]),
+            {"vendor": "github", "oauth_app_registration_id": "x" * 31},
+        )
+    assert "30" in str(err.value)
 
 
 async def test_vendor_not_configured_is_broker_denied_operator_action() -> None:

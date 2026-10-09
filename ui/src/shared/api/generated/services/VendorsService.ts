@@ -9,9 +9,13 @@ import { request as __request } from '../core/request';
 export class VendorsService {
     /**
      * List verified vendors
-     * Public metadata for every vendor in the config-seeded registry.
+     * Public metadata for every vendor known to the platform.
      *
-     * Used by the UI's "Add integration" picker. Never returns secrets.
+     * Unioned across two sources: admin-registered ``oauth_app_registrations``
+     * rows and the platform-shipped ``vendors`` config. The two never dedupe —
+     * each active registration and each config entry is its own picker card,
+     * and ``flow_kinds`` lists every flow that card can run. Never returns
+     * secrets.
      * @returns VendorListResponse Successful Response
      * @throws ApiError
      */
@@ -41,14 +45,22 @@ export class VendorsService {
      */
     public static getAuthCapabilities({
         vendorKey,
+        oauthAppRegistrationId,
     }: {
         vendorKey: string,
+        /**
+         * Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
+         */
+        oauthAppRegistrationId?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/vendors/{vendor_key}/auth-capabilities',
             path: {
                 'vendor_key': vendorKey,
+            },
+            query: {
+                'oauth_app_registration_id': oauthAppRegistrationId,
             },
             errors: {
                 400: `Bad Request`,
