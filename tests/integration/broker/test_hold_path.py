@@ -245,6 +245,27 @@ async def test_pending_cap_is_a_distinct_403_denial(
     assert len(jobs) == 1
 
 
+async def test_identical_retry_at_the_pending_cap_joins_its_hold(
+    integration_context: Context, clean: None
+) -> None:
+    """The join runs before the cap: retrying a call that is already held
+    returns its hold even when the agent has no pending slot left."""
+    ctx = integration_context
+    ctx.config.execution_approvals.max_pending_per_agent = 1
+    try:
+        first = await _hold(ctx, b'{"n": 1}')
+        again = await _hold(ctx, b'{"n": 1}')
+        with pytest.raises(ApprovalPendingLimitError):
+            await _hold(ctx, b'{"n": 2}')
+    finally:
+        ctx.config.execution_approvals.max_pending_per_agent = 10
+    assert again["job_id"] == first["job_id"]
+    assert again["approval"]["id"] == first["approval"]["id"]
+    async with ctx.admin_db.session() as session:
+        jobs = (await session.execute(select(Job))).scalars().all()
+    assert len(jobs) == 1
+
+
 async def test_a_different_query_or_body_files_a_new_hold(
     integration_context: Context, clean: None
 ) -> None:

@@ -945,7 +945,8 @@ async def _handle_hold(
     key — it can sit for the whole approval TTL — and the worker decrypts it on
     claim. Filing, the approval row and ``execution.approval_requested`` share
     one admin-DB transaction; an identical pending request joins its existing
-    hold, and an agent at its pending cap is denied before anything is written.
+    hold (even at the cap), and an agent at its pending cap is otherwise denied
+    before anything is written.
     """
     if not ctx.has_encryption_keyset:
         raise ApprovalHoldUnavailableError(
