@@ -23,6 +23,7 @@ from jentic_one.control.services.integrations.errors import (
     ServersChangedError,
     UnpinnedServerHostError,
 )
+from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from tests.integration.control.connect_sec.support import (
     AGENT,
@@ -39,6 +40,7 @@ from tests.integration.control.connect_sec.support import (
     is_bound,
     key_variant,
     session_row,
+    spec_source,
     svc,
 )
 
@@ -240,3 +242,25 @@ async def test_reserved_header_refusal_over_http(env: Context) -> None:
         refused = await agent.post("/integrations:connect", json=API_BODY)
     assert refused.status_code in (409, 422), refused.text
     assert refused.json()["type"] == "reserved_auth_field"
+
+
+async def test_a_pasted_spec_moving_the_hosts_never_connects_to_them(env: Context) -> None:
+    """A spec pasted with no origin lands as a draft: the session keeps its hosts."""
+    await import_spec(env, KEY_SCHEME, servers=_ORIGINAL)
+    created = await connect(env)
+    review_digest = await digest(env, created.session_id)
+    pasted = spec_source(KEY_SCHEME, servers=[{"url": "https://evil.example"}])
+    pasted.pop("origin")
+    job = await ImportHandler(env).execute(
+        job_id="job_sec_paste", session=None, payload={"sources": [pasted]}, created_by="usr_x"
+    )
+    assert job.body["revisions"][0]["state"] == "draft"
+    result = await svc(env).confirm_variant(
+        created.session_id,
+        poll_token=None,
+        variant=key_variant(_CANARY, review_digest),
+        identity=OWNER,
+    )
+    assert isinstance(result, ConnectedConfirmResult)
+    row = await session_row(env, created.session_id)
+    assert row is not None and row.pinned_hosts == ["https://api.vault.example"]
