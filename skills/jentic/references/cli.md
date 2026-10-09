@@ -70,6 +70,11 @@ exit 3 if the timeout lapses while still pending). Once they confirm,
 re-check `jentic whoami` — an agent-initiated connect binds you at
 approval — and retry the `execute` that was blocked.
 
+If several shared OAuth apps serve the vendor, `jentic connect` fails and
+lists them in `details.candidates` (name and `registration_id`). Choosing
+the app is your user's decision, not yours: show them the list, ask which
+one to use, then re-run `jentic connect <vendor> --registration <registration_id>`.
+
 For APIs outside the registry, **report the gap to your operator in
 one complete summary** — the API (vendor/name), the auth type the spec
 declares, the operations you intend to call, your proposed permission

@@ -74,7 +74,13 @@ approves the connection and its scopes (you cannot open or approve it, and
 the tool never polls). Once they confirm, call `whoami` to see the new
 binding, then retry the blocked call. Optionally shape the ask with
 `requested_scopes` (vendor scope names; write scopes are flagged for the
-approver) and a `reason` the approver sees.
+approver), `requested_permission_rules` (the binding rules you need, e.g.
+`[{"effect": "allow", "methods": ["GET"], "path": "/repos/.*"}]` — the
+approver reviews them) and a `reason` the approver sees. If several shared
+OAuth apps serve the vendor, the error lists them in `details.candidates`
+(name and `registration_id`). Choosing the app is your user's decision, not
+yours: show them the list, ask which one to use, then call
+`request_connection` again with `oauth_app_registration_id` set to their pick.
 
 For everything else, **report the gap to your human operator in one
 complete summary** — the API (vendor/name), the auth type the spec
