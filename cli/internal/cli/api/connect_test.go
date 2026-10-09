@@ -223,18 +223,37 @@ func TestConnect_UnknownVendor404IsResolveFailed(t *testing.T) {
 	}
 }
 
+// ambiguousVendorsBody is a GET /vendors page with two shared apps for
+// googleapis-com, one for another vendor, and a config entry — only the first
+// two are candidates.
+const ambiguousVendorsBody = `{"data":[
+	{"entry_id":"oar_gmail","registration_id":"oar_gmail","key":"googleapis-com","vendor":"googleapis-com",
+	 "display_name":"Google","name":"Gmail (work)","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"oar_cal","registration_id":"oar_cal","key":"googleapis-com","vendor":"googleapis-com",
+	 "display_name":"Google","name":"Calendar","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"oar_other","registration_id":"oar_other","key":"slack-com","vendor":"slack-com",
+	 "display_name":"Slack","name":"Slack","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"github","key":"github","vendor":"github.com/github","display_name":"GitHub",
+	 "name":"GitHub","source":"config","flow_kinds":["device_authorization"]}]}`
+
 // Several shared OAuth apps for one vendor answer 400 ambiguous_vendor; the
-// advice must route to the operator, not suggest another registry key.
-func TestConnect_AmbiguousVendorRoutesToOperator(t *testing.T) {
+// error lists them and tells the agent to ask its user, then retry with
+// --registration (choosing the app is the user's call).
+func TestConnect_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
 	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'github' is ambiguous"}`))
+		_, _ = w.Write([]byte(`{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps"}`))
 	}))
 	defer srv.Close()
 
-	_, err := runConnectTree(t, srv.URL, "connect", "github")
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
 	var coded *ux.CodedError
 	if !errors.As(err, &coded) {
 		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
@@ -242,8 +261,107 @@ func TestConnect_AmbiguousVendorRoutesToOperator(t *testing.T) {
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want %q", coded.Code, ux.CodeResolveFailed)
 	}
-	if coded.Actionable != ambiguousVendorActionable {
-		t.Errorf("actionable = %q, want the ask-your-operator advice", coded.Actionable)
+	for _, want := range []string{"your human user", "details.candidates",
+		"jentic connect googleapis-com --registration <registration_id>"} {
+		if !strings.Contains(coded.Actionable, want) {
+			t.Errorf("actionable %q missing %q", coded.Actionable, want)
+		}
+	}
+	if strings.Contains(coded.Actionable, "cannot pick") {
+		t.Errorf("actionable %q must route the choice to the user, not declare it impossible", coded.Actionable)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_cal", Name: "Calendar", DisplayName: "Google"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (registration rows for this vendor only)", got, want)
+	}
+}
+
+// When GET /vendors is unavailable the advice still routes the choice to the
+// user, just without the list.
+func TestConnect_AmbiguousVendorWithoutVendorListStillAsksTheUser(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/vendors" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"ambiguous"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if _, has := coded.Details["candidates"]; has {
+		t.Errorf("details = %v, want no candidates when the vendor list is unreadable", coded.Details)
+	}
+	if !strings.Contains(coded.Actionable, "your human user") || !strings.Contains(coded.Actionable, "--registration") {
+		t.Errorf("actionable %q must ask the user and name --registration", coded.Actionable)
+	}
+}
+
+func TestConnect_RegistrationFlagPinsTheSharedApp(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"session_id":"cs_r","approval_url":"https://one.example/c/r","poll_token":"pt","resolved_flow":"authorization_code"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "connect", "googleapis-com", "--registration", "oar_gmail")
+	if err != nil {
+		t.Fatalf("connect --registration: %v\n%s", err, out)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	if wire["oauth_app_registration_id"] != "oar_gmail" || wire["vendor"] != "googleapis-com" {
+		t.Errorf("wire body = %v, want vendor + oauth_app_registration_id from --registration", wire)
+	}
+}
+
+func TestConnect_InvalidRegistrationIsResolveFailed(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"invalid_oauth_app_registration","detail":"oauth_app_registration 'oar_x' is not usable for this vendor"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com", "--registration", "oar_x")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("invalid registration returned %T (%v), want RESOLVE_FAILED", err, err)
+	}
+	if !strings.Contains(coded.Actionable, "without --registration") {
+		t.Errorf("actionable %q must point at the unpinned retry that lists the apps", coded.Actionable)
+	}
+}
+
+func TestConnect_OverlongRegistrationIsArgumentError(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("an overlong --registration must never reach the wire")
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "github", "--registration", strings.Repeat("x", connectRegistrationMax+1))
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("overlong registration returned %T (%v), want MISSING_ARGUMENT", err, err)
 	}
 }
 
