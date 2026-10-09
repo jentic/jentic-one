@@ -55,7 +55,7 @@ from jentic_one.control.services.credentials.schemas.connect import (
     AuthCodeChallenge,
     ConnectRequest,
 )
-from jentic_one.control.services.credentials.state import consume_callback_state
+from jentic_one.control.services.credentials.state import consume_callback_state, decode_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
@@ -469,6 +469,10 @@ _BOUND_AGENTS_LIMIT = 200
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _state_secret(ctx: Context) -> str:
+    return ctx.config.credentials.connect.state_secret.get_secret_value()
 
 
 def _session_app_from_registration(ctx: Context, registration: OAuthAppRegistration) -> SessionApp:
@@ -2357,9 +2361,12 @@ class ConnectSessionService:
                 )
                 raise ReauthorizeUnavailableError(chosen.credential_id, reason)
             scopes = sorted(set(chosen.granted_scopes or []) | set(row.requested_scopes or []))
+            # The callback re-checks that this agent is still the only one bound
+            # (``sole_agent_id`` rides the signed state), so a binding made while
+            # the approver is at the vendor's consent screen cannot widen.
             challenge = await ConnectService(self._ctx).begin(
                 chosen.credential_id,
-                ConnectRequest(scopes=scopes),
+                ConnectRequest(scopes=scopes, extra={"sole_agent_id": agent_id}),
                 actor_id=identity.sub,
                 actor_type=identity.actor_type,
                 redirect_uri=platform_redirect_uri(self._ctx),
@@ -2367,6 +2374,11 @@ class ConnectSessionService:
             if not isinstance(challenge, AuthCodeChallenge):
                 raise ReauthorizeUnavailableError(
                     chosen.credential_id, "it is not an OAuth authorization-code credential"
+                )
+            if decode_state(_state_secret(self._ctx), challenge.state).sole_agent_id != agent_id:
+                # Fail closed on a provider whose state cannot carry the re-check.
+                raise ReauthorizeUnavailableError(
+                    chosen.credential_id, "its provider cannot re-check the bound agents"
                 )
             authorize_url = challenge.authorize_url
         elif not chosen.can_bind:
