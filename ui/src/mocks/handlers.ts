@@ -1,11 +1,17 @@
 import { http, HttpResponse } from 'msw';
-import { agentsHandlers, agentsE2eHooks } from '@/modules/agents/mocks/handlers';
+import {
+	agentsHandlers,
+	agentsE2eHooks,
+	installDevBigFleet,
+	installDevFleet,
+} from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 import { settingsHandlers } from '@/modules/settings/mocks/handlers';
+import { readLocalPreference } from '@/shared/lib/localPreference';
 
 /**
  * Root MSW handler table.
@@ -233,4 +239,24 @@ export function installE2eTestHooks(target: Record<string, unknown>): void {
 		...credentialsE2eHooks,
 		...agentsE2eHooks,
 	};
+}
+
+/**
+ * MOCKED-DEV OPT-IN (DEV + VITE_ENABLE_MSW + VITE_MSW_DEV_SEED=1): layer extra,
+ * hand-review-oriented fixtures onto the default stores before the worker
+ * starts — the busy fleet agent whose "Can call" area shows the list⇄cards
+ * toggle with real data, and (behind the `agents.devBigFleet` local preference)
+ * a fleet large enough to page and scroll the agent strip.
+ *
+ * Nothing loads it by default: the mocked e2e suite runs on the same MSW dev
+ * server and must see the default fixtures, and component tests never call it.
+ * It stays out of `installE2eTestHooks` (those are reset/seed hooks the e2e
+ * specs drive by hand). Each module that needs dev-only review data adds one
+ * line here, exactly like a handler — so the app root (`main.tsx`) stays
+ * module-agnostic. The caller owns the env gate.
+ */
+export function installDevSeed(): void {
+	installDevFleet();
+	// `localStorage.setItem('agents.devBigFleet', '1')`, then reload.
+	if (readLocalPreference('agents.devBigFleet') === '1') installDevBigFleet();
 }

@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
+		"dev:mock": "VITE_ENABLE_MSW=1 VITE_MSW_DEV_SEED=1 vite",
 		"build": "tsc && vite build",
 		"preview": "vite preview",
 		"lint": "eslint .",

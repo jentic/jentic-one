@@ -23,7 +23,8 @@
  */
 import { http, HttpResponse } from 'msw';
 import { SERVICE_ACCOUNT_SUCCESSOR_REGISTRAR } from '@/shared/lib';
-import { findMockCredential } from '@/shared/credentials/mocks/handlers';
+import { CredentialType, type Credential } from '@/shared/credentials/api';
+import { findMockCredential, seedMockCredentials } from '@/shared/credentials/mocks/handlers';
 import { DEFAULT_AGENT_PERMISSIONS } from '@/modules/agents/lib/requestedPermissions';
 
 type Status = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';
@@ -428,6 +429,66 @@ export function selfRegisterAgent(
 	return id;
 }
 
+/**
+ * Mocked dev only, opt-in (the dev seed, plus `localStorage['agents.devBigFleet'] = '1'`):
+ * grow the seed to a 38-agent fleet with the near-identical names a real one
+ * grows (`my-agent-34` / `my-agent-34-staging`, `support-triage` /
+ * `support-triage-eu`), so the strip's overflow, linkage and initials can be
+ * reviewed by hand. Opt-in so the default dev fleet stays small.
+ */
+export function installDevBigFleet(): void {
+	const NAMES = [
+		'docs-indexer',
+		'my-agent-1',
+		'my-agent-2',
+		'my-agent-3',
+		'lead-enricher',
+		'churn-watcher',
+		'my-agent-12',
+		'oncall-pager',
+		'my-agent-21',
+		'contract-reader',
+		'my-agent-34',
+		'my-agent-35',
+		'vendor-onboarder',
+		'my-agent-34-staging',
+		'support-triage',
+		'metrics-digest',
+		'support-triage-eu',
+		'backlog-groomer',
+		'refund-handler',
+		'release-notes',
+		'renewal-nudger',
+		'compliance-check',
+		'my-agent-7',
+		'status-reporter',
+		'hiring-screener',
+		'data-janitor',
+		'my-agent-old',
+		'price-monitor',
+		'feedback-router',
+		'security-scout',
+		'deploy-guardian',
+		'research-bot-v2',
+	];
+	NAMES.forEach((name, i) => {
+		const id = `agnt_fleet_${String(i).padStart(2, '0')}`;
+		if (agents.some((a) => a.id === id)) return;
+		const archived = name === 'my-agent-old';
+		agents.push(
+			seedAgent({
+				id,
+				name,
+				status: archived ? 'archived' : 'active',
+				approved_by: ADMIN,
+				approved_at: now(-300 - i * 7),
+				created_at: now(-300 - i * 7),
+				has_api_key: !archived,
+			}),
+		);
+	});
+}
+
 /** Mocked e2e/dev hooks for the agents store (aggregated in `mocks/handlers`). */
 export const agentsE2eHooks = {
 	clearAgentsStore,
@@ -572,6 +633,330 @@ export function seedServiceAccountSuccessor(): AgentRow {
 	});
 	agents.push(row);
 	return row;
+}
+
+/**
+ * MOCKED-DEV ONLY (never the test seed): a fleet agent carrying ~12 real-shaped
+ * bindings, so the "Can call" list⇄cards toggle and the dense cards grid have a
+ * busy agent to review by hand on `VITE_ENABLE_MSW=1 npm run dev`. Shapes match
+ * the backend exactly (credentials via the credentials store, bindings via the
+ * same binding rows), so nothing here is special-cased by the app — the tiles
+ * are composed from the same reads as any other agent.
+ *
+ * It covers the states the cards grid must render: a many-rule Ready binding
+ * (GitHub, 7 rules), a Blocked one (Stripe, no rules), a multi-credential API
+ * (two Slack accounts), a paused binding (Zendesk), a sign-in-needed one (Zoom),
+ * and several APIs that are/aren't imported into the workspace registry.
+ *
+ * Added as a NEW agent so the default `agnt_active_1` fixture (which existing
+ * tests assert against) is untouched. Call once, before the worker starts.
+ */
+export function installDevFleet(): void {
+	const FLEET_ID = 'agnt_fleet_ops';
+	if (agents.some((a) => a.id === FLEET_ID)) return;
+	agents.push(
+		seedAgent({
+			id: FLEET_ID,
+			name: 'fleet-ops-agent',
+			description: 'Runs the day-to-day integrations across the stack.',
+			status: 'active',
+			approved_by: ADMIN,
+			approved_at: now(-200),
+			created_at: now(-200),
+			has_api_key: true,
+		}),
+	);
+	actorPermissions[FLEET_ID] = [...DEFAULT_AGENT_PERMISSIONS];
+
+	const staticCred = {
+		provider: 'static',
+		active: true,
+		provider_account_ref: null,
+		updated_at: null,
+	} as const;
+	// Credentials the fleet binds that aren't in the default vault seed. The
+	// others (GitHub, Slack, Stripe, BigCo, NYT, Sheets, Zoom, AWS, Zendesk)
+	// already exist in `devCredentialsSeed`.
+	const fleetCredentials: Credential[] = [
+		{
+			...staticCred,
+			credential_id: 'cred_slack_2',
+			name: 'Slack notify token',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+			catalog_api_id: 'slack.com',
+			details: { hint: '••••xoxb2' },
+			created_at: now(-150),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_ks_1',
+			name: 'Kitchen Sink key',
+			type: CredentialType.API_KEY,
+			api: { vendor: 'showcase', name: 'kitchen-sink', version: '1.0.0' },
+			details: { location: 'header', field_name: 'X-Api-Key', hint: '••••ksnk' },
+			created_at: now(-140),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_stripe_connect',
+			name: 'Stripe Connect platform key',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'stripe', name: 'connect', version: '2024-01-01' },
+			details: { hint: '••••cnct' },
+			created_at: now(-130),
+		},
+	];
+	seedMockCredentials(fleetCredentials);
+
+	// One allow + a few extra rules — the summary counts non-system rules, and a
+	// Ready tile needs at least one allow.
+	const allow = (path: string): BindingRule => ({
+		effect: 'allow',
+		match_mode: 'prefix',
+		methods: ['GET', 'POST'],
+		path,
+	});
+	const deny = (path: string): BindingRule => ({
+		effect: 'deny',
+		match_mode: 'prefix',
+		methods: ['DELETE'],
+		path,
+	});
+
+	const bind = (
+		over: Partial<CredentialBindingRow> &
+			Pick<CredentialBindingRow, 'credential_id' | 'serves'>,
+	) => credentialBindings.push(seedBinding({ agent_id: FLEET_ID, bound_at: now(-120), ...over }));
+
+	// 1 — GitHub: seven rules, Ready.
+	bind({
+		credential_id: 'cred_github_1',
+		name: 'GitHub PAT',
+		serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
+		permissions: [
+			allow('/repos'),
+			allow('/issues'),
+			allow('/pulls'),
+			allow('/user'),
+			allow('/orgs'),
+			deny('/repos/{owner}/{repo}'),
+			deny('/admin'),
+		],
+	});
+	// 2 — Slack (account one): Ready.
+	bind({
+		credential_id: 'cred_slack_1',
+		name: 'Slack bot token',
+		serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
+		permissions: [allow('/chat.'), allow('/conversations.')],
+	});
+	// 3 — Slack (account two): same API → a two-credential tile.
+	bind({
+		credential_id: 'cred_slack_2',
+		name: 'Slack notify token',
+		serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
+		permissions: [allow('/chat.postMessage')],
+	});
+	// 4 — Stripe: no rules → Blocked.
+	bind({
+		credential_id: 'cred_stripe_1',
+		name: 'Stripe live key',
+		serves: [{ api_vendor: 'stripe', api_name: 'stripe-api', api_version: null }],
+		permissions: [],
+	});
+	// 5 — BigCo: Ready.
+	bind({
+		credential_id: 'cred_bigco_1',
+		name: 'BigCo reporting service account',
+		serves: [{ api_vendor: 'bigco', api_name: 'big-api', api_version: null }],
+		permissions: [allow('/reports'), allow('/exports')],
+	});
+	// 6 — Kitchen Sink showcase API: Ready.
+	bind({
+		credential_id: 'cred_ks_1',
+		name: 'Kitchen Sink key',
+		serves: [{ api_vendor: 'showcase', api_name: 'kitchen-sink', api_version: null }],
+		permissions: [allow('/items')],
+	});
+	// 7 — NYT: not imported into the registry → a bare-tuple tile, Ready.
+	bind({
+		credential_id: 'cred_nyt_1',
+		name: 'NYT article search key',
+		serves: [{ api_vendor: 'nytimes.com', api_name: 'article_search', api_version: null }],
+		permissions: [allow('/articlesearch.json')],
+	});
+	// 8 — AWS S3: not imported → bare-tuple tile, Ready.
+	bind({
+		credential_id: 'cred_aws_1',
+		name: 'AWS reporting signer',
+		serves: [{ api_vendor: 'amazonaws.com', api_name: 's3', api_version: null }],
+		permissions: [allow('/'), allow('/{bucket}'), deny('/{bucket}?delete')],
+	});
+	// 9 — Zoom: stored but never signed in → Sign-in needed.
+	bind({
+		credential_id: 'cred_zoom_1',
+		name: 'Zoom OAuth app',
+		serves: [{ api_vendor: 'zoom.us', api_name: null, api_version: null }],
+		permissions: [allow('/meetings')],
+	});
+	// 10 — Google Sheets: Ready.
+	bind({
+		credential_id: 'cred_sheets_1',
+		name: 'Google Sheets (Pipedream)',
+		serves: [{ api_vendor: 'googleapis.com', api_name: 'sheets', api_version: null }],
+		permissions: [allow('/spreadsheets')],
+	});
+	// 11 — Zendesk: paused binding.
+	bind({
+		credential_id: 'cred_zendesk_legacy',
+		name: 'Retired Zendesk token',
+		suspended: true,
+		serves: [{ api_vendor: 'zendesk.com', api_name: 'support', api_version: null }],
+		permissions: [allow('/tickets')],
+	});
+	// 12 — Stripe Connect: a different Stripe API (bare tuple), Ready.
+	bind({
+		credential_id: 'cred_stripe_connect',
+		name: 'Stripe Connect platform key',
+		serves: [{ api_vendor: 'stripe', api_name: 'connect', api_version: null }],
+		permissions: [allow('/accounts'), allow('/transfers')],
+	});
+
+	// 13–20 — the busy multi-credential shapes a real agent ends up with (as on
+	// the real backend): one API reached through four credentials (two sharing a
+	// name, so the id tail disambiguates, plus a no-auth one), another through
+	// three, and a second GitHub account. Mixed statuses, so the grid shows
+	// Ready / Blocked / Paused side by side.
+	const holidays = { vendor: 'canada-holidays.ca', name: 'main', version: '1.0.0' };
+	const horoscope = { vendor: 'freehoroscopeapi.com', name: 'main', version: '1.0.0' };
+	const busyCredentials: Credential[] = [
+		{
+			...staticCred,
+			credential_id: 'cred_hol_6ac5f2b1a4492',
+			name: 'canada-holidays.ca',
+			type: CredentialType.API_KEY,
+			api: holidays,
+			details: { location: 'header', field_name: 'X-Api-Key', hint: '••••4492' },
+			created_at: now(-110),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_hol_6ac5f2b1a4239',
+			name: 'canada-holidays.ca',
+			type: CredentialType.API_KEY,
+			api: holidays,
+			details: { location: 'header', field_name: 'X-Api-Key', hint: '••••4239' },
+			created_at: now(-109),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_hol_2',
+			name: 'canada-holidays.ca 2',
+			type: CredentialType.API_KEY,
+			api: holidays,
+			details: { location: 'header', field_name: 'X-Api-Key', hint: '••••hol2' },
+			created_at: now(-108),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_hol_noauth',
+			name: 'canada-holidays.ca (no auth)',
+			type: CredentialType.NO_AUTH,
+			api: holidays,
+			details: {},
+			created_at: now(-107),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_horo_1',
+			name: 'freehoroscopeapi',
+			type: CredentialType.API_KEY,
+			api: horoscope,
+			details: { location: 'query', field_name: 'key', hint: '••••horo' },
+			created_at: now(-106),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_horo_2',
+			name: 'freehoroscopeapi 2',
+			type: CredentialType.API_KEY,
+			api: horoscope,
+			details: { location: 'query', field_name: 'key', hint: '••••hor2' },
+			created_at: now(-105),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_horo_6ac5f9e548c8',
+			name: 'freehoroscopeapi',
+			type: CredentialType.API_KEY,
+			api: horoscope,
+			details: { location: 'query', field_name: 'key', hint: '••••48c8' },
+			created_at: now(-104),
+		},
+		{
+			...staticCred,
+			credential_id: 'cred_github_2',
+			name: 'GitHub',
+			type: CredentialType.BEARER_TOKEN,
+			api: { vendor: 'github', name: 'github-api', version: '1.0.0' },
+			details: { hint: '••••ghp2' },
+			created_at: now(-103),
+		},
+	];
+	seedMockCredentials(busyCredentials);
+	const servesHolidays = [{ api_vendor: holidays.vendor, api_name: null, api_version: null }];
+	const servesHoroscope = [{ api_vendor: horoscope.vendor, api_name: null, api_version: null }];
+	bind({
+		credential_id: 'cred_hol_2',
+		name: 'canada-holidays.ca 2',
+		serves: servesHolidays,
+		permissions: [allow('/api/v1/holidays')],
+	});
+	bind({
+		credential_id: 'cred_hol_6ac5f2b1a4492',
+		name: 'canada-holidays.ca',
+		serves: servesHolidays,
+		permissions: [],
+	});
+	bind({
+		credential_id: 'cred_hol_6ac5f2b1a4239',
+		name: 'canada-holidays.ca',
+		suspended: true,
+		serves: servesHolidays,
+		permissions: [allow('/api/v1/provinces')],
+	});
+	bind({
+		credential_id: 'cred_hol_noauth',
+		name: 'canada-holidays.ca (no auth)',
+		suspended: true,
+		serves: servesHolidays,
+		permissions: [allow('/api/v1')],
+	});
+	bind({
+		credential_id: 'cred_horo_1',
+		name: 'freehoroscopeapi',
+		serves: servesHoroscope,
+		permissions: [],
+	});
+	bind({
+		credential_id: 'cred_horo_2',
+		name: 'freehoroscopeapi 2',
+		serves: servesHoroscope,
+		permissions: [],
+	});
+	bind({
+		credential_id: 'cred_horo_6ac5f9e548c8',
+		name: 'freehoroscopeapi',
+		serves: servesHoroscope,
+		permissions: [allow('/api/v1/get-horoscope')],
+	});
+	bind({
+		credential_id: 'cred_github_2',
+		name: 'GitHub',
+		serves: [{ api_vendor: 'github', api_name: null, api_version: null }],
+		permissions: [],
+	});
 }
 
 /**
@@ -729,6 +1114,90 @@ const ACTOR_USAGE: Record<
 	},
 };
 
+/**
+ * Per-actor, per-API split of `ACTOR_USAGE` for the "Can call" rows
+ * (`GET /monitoring/usage?agent_id=…&api_id=…&group_by=credential`). Each API
+ * takes a share of every bucket and the last API takes the remainder, so the
+ * rows always sum to the card's totals. Keyed by the `api_id` the page sends
+ * (`vendor/name`); the credential is the binding seeded in `seedDefaults`.
+ */
+const ACTOR_API_USAGE: Record<
+	string,
+	{
+		apiId: string;
+		credentialId: string;
+		label: string;
+		share: number;
+		avgMs: number;
+		p50Ms: number;
+		p95Ms: number;
+	}[]
+> = {
+	agnt_active_1: [
+		// Paused and rule-less: nothing gets through, so no calls this week.
+		{
+			apiId: 'github/github-api',
+			credentialId: 'cred_github_1',
+			label: 'GitHub PAT',
+			share: 0,
+			avgMs: 0,
+			p50Ms: 0,
+			p95Ms: 0,
+		},
+		{
+			apiId: 'slack.com/web-api',
+			credentialId: 'cred_slack_1',
+			label: 'Slack bot token',
+			share: 1,
+			avgMs: 118,
+			p50Ms: 96,
+			p95Ms: 274,
+		},
+	],
+};
+
+/** One API's slice of an actor's buckets (see `ACTOR_API_USAGE`). */
+function apiUsageBuckets(actorId: string, apiId: string) {
+	const split = ACTOR_API_USAGE[actorId] ?? [];
+	const index = split.findIndex((s) => s.apiId === apiId);
+	if (index < 0) return null;
+	const buckets = (ACTOR_USAGE[actorId]?.buckets ?? []).map((bucket) => {
+		let total = bucket.total;
+		let success = bucket.success;
+		// Earlier APIs take their share; the last one keeps what is left.
+		for (let i = 0; i < split.length; i += 1) {
+			const takeTotal =
+				i === split.length - 1 ? total : Math.round(bucket.total * split[i].share);
+			const takeSuccess =
+				i === split.length - 1
+					? success
+					: Math.min(takeTotal, Math.round(bucket.success * split[i].share));
+			if (i === index)
+				return { total: takeTotal, success: takeSuccess, failed: takeTotal - takeSuccess };
+			total -= takeTotal;
+			success -= takeSuccess;
+		}
+		return { total: 0, success: 0, failed: 0 };
+	});
+	return { buckets, meta: split[index] };
+}
+
+/** The API a seeded credential's calls went to, for the execution fixtures.
+ * The GitHub rows keep a legacy credential id (`github`) bound to nothing
+ * now, so no row claims them and the record carries no API. */
+const EXECUTION_API: Record<
+	string,
+	{ vendor: string; name: string; version: string; host: string }
+> = {
+	cred_github_1: {
+		vendor: 'github',
+		name: 'github-api',
+		version: '1.1.4',
+		host: 'api.github.com',
+	},
+	cred_slack_1: { vendor: 'slack.com', name: 'web-api', version: '1.0.0', host: 'slack.com' },
+};
+
 /** One execution feed row (shape mirrors the generated `ExecutionResponse`). */
 function executionRow(opts: {
 	id: string;
@@ -745,11 +1214,12 @@ function executionRow(opts: {
 	error?: string;
 	origin?: string;
 }) {
+	const api = EXECUTION_API[opts.credentialId] ?? null;
 	return {
 		_links: { self: `/executions/${opts.id}` },
 		actor_id: opts.actorId,
 		actor_type: 'agent',
-		api: null,
+		api,
 		created_at: now(-opts.minutesAgo),
 		duration_ms: opts.durationMs,
 		error: opts.error ?? null,
@@ -813,13 +1283,41 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			id: 'exec_agnt_2',
 			actorId: 'agnt_active_1',
 			status: 'failed',
-			credentialId: 'slack',
+			credentialId: 'cred_slack_1',
 			credentialName: 'slack',
 			operationId: 'post_message',
+			operationPath: '/chat.postMessage',
+			operationMethod: 'POST',
 			durationMs: 38,
 			httpStatus: 403,
 			minutesAgo: 9,
 			error: 'pbac_denied: scope violation chat:write',
+		}),
+		executionRow({
+			id: 'exec_agnt_slack_1',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			credentialId: 'cred_slack_1',
+			credentialName: 'slack',
+			operationId: 'post_message',
+			operationPath: '/chat.postMessage',
+			operationMethod: 'POST',
+			durationMs: 104,
+			httpStatus: 200,
+			minutesAgo: 10,
+		}),
+		executionRow({
+			id: 'exec_agnt_slack_2',
+			actorId: 'agnt_active_1',
+			status: 'completed',
+			credentialId: 'cred_slack_1',
+			credentialName: 'slack',
+			operationId: 'post_message',
+			operationPath: '/chat.postMessage',
+			operationMethod: 'POST',
+			durationMs: 131,
+			httpStatus: 200,
+			minutesAgo: 27,
 		}),
 		executionRow({
 			id: 'exec_agnt_3',
@@ -828,6 +1326,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			credentialId: 'github',
 			credentialName: 'github',
 			operationId: 'list_pull_requests',
+			operationPath: '/repos/{owner}/{repo}/pulls',
+			operationMethod: 'GET',
 			durationMs: 220,
 			httpStatus: 200,
 			minutesAgo: 11,
@@ -839,6 +1339,8 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 			credentialId: 'github',
 			credentialName: 'github',
 			operationId: 'get_repo',
+			operationPath: '/repos/{owner}/{repo}',
+			operationMethod: 'GET',
 			durationMs: 145,
 			httpStatus: 200,
 			minutesAgo: 34,
@@ -985,8 +1487,54 @@ export const agentsHandlers = [
 	// handlers (agents registers before monitor in src/mocks/handlers.ts) —
 	// so Monitor's fixtures and tests are untouched.
 	http.get('/monitoring/usage', ({ request }) => {
-		const actorId = new URL(request.url).searchParams.get('agent_id');
+		const params = new URL(request.url).searchParams;
+		const actorId = params.get('agent_id');
 		if (!actorId || !findActor(actorId)) return undefined;
+		const apiId = params.get('api_id');
+		if (apiId) {
+			// The "Can call" row read: one API, grouped by credential.
+			const nowSec = Math.floor(Date.now() / 60_000) * 60;
+			const slice = apiUsageBuckets(actorId, apiId);
+			const rows = slice?.buckets ?? [];
+			const total = rows.reduce((sum, b) => sum + b.total, 0);
+			const success = rows.reduce((sum, b) => sum + b.success, 0);
+			const avgMs = total && slice ? slice.meta.avgMs : 0;
+			return HttpResponse.json({
+				since: nowSec - 7 * 86_400,
+				until: nowSec,
+				bucket_seconds: 21_600,
+				group_by: params.get('group_by') ?? 'api',
+				buckets: rows.map((b, i, all) => ({
+					ts: nowSec - (all.length - i) * 21_600,
+					...b,
+					avg_ms: avgMs,
+				})),
+				stats: {
+					total,
+					success,
+					failed: total - success,
+					pending: 0,
+					active_now: 0,
+					avg_ms: avgMs,
+					p50_ms: total && slice ? slice.meta.p50Ms : null,
+					p95_ms: total && slice ? slice.meta.p95Ms : null,
+				},
+				top:
+					total && slice
+						? [
+								{
+									key: slice.meta.credentialId,
+									label: slice.meta.label,
+									total,
+									success,
+									failed: total - success,
+									avg_ms: avgMs,
+									trend: rows.map((b) => b.total),
+								},
+							]
+						: [],
+			});
+		}
 		const usage = ACTOR_USAGE[actorId];
 		const nowSec = Math.floor(Date.now() / 60_000) * 60;
 		const since = nowSec - 7 * 86_400;

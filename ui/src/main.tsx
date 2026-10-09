@@ -27,8 +27,13 @@ async function enableMocking() {
 	// fixtures) on `window` so mocked e2e specs can drive them via
 	// page.evaluate. Aggregated by the shared MSW root so this app root stays
 	// module-agnostic — DEV + MSW only, tree-shaken from production builds.
-	const { installE2eTestHooks } = await import('@/mocks/handlers');
+	const { installE2eTestHooks, installDevSeed } = await import('@/mocks/handlers');
 	installE2eTestHooks(window as unknown as Record<string, unknown>);
+	// Opt-in hand-review fixtures (the busy fleet agent) layered over the
+	// defaults before the worker starts (`VITE_MSW_DEV_SEED=1`, which
+	// `npm run dev:mock` sets). Off otherwise, so the mocked e2e suite — the
+	// same MSW dev server — sees the default fixtures only.
+	if (import.meta.env.VITE_MSW_DEV_SEED === '1') installDevSeed();
 	// Opt-in review data layered over the defaults (`VITE_MSW_SCENARIO=review`).
 	if (import.meta.env.VITE_MSW_SCENARIO === 'review') {
 		const { installReviewScenario, reviewScenarioHandlers } =
