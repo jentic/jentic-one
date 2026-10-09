@@ -25,6 +25,8 @@ from sqlalchemy import delete, select, update
 from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
+from jentic_one.broker.core.exceptions import UnauthorizedRevisionPinError
+from jentic_one.broker.services.discovery import discover_via_pins
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
@@ -38,11 +40,12 @@ from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.services.inspect.registry_service import RegistryService
 from jentic_one.registry.services.revision_service import RevisionService
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.broker.protocols import RevisionPinOutcome
+from jentic_one.shared.broker.protocols import RevisionPinOutcome, RevisionPinResult
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType, ApiRevisionState, StoredCredentialType
+from jentic_one.wiring import InProcessRegistryResolver
 
 pytestmark = pytest.mark.integration
 
@@ -489,6 +492,94 @@ async def test_held_draft_is_not_routable_or_pinnable_until_promoted(
             method="GET", url="https://new.example.com/v1/widgets"
         )
         assert moved is not None
+
+
+async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    """A submitter's own draft (no origin) is held by the host guard when pinned.
+
+    Pinning routes calls through the draft without a promote, so a draft that
+    moves the API to new hosts would carry its bound credentials there. Only an
+    operator may pin it; a draft on the live hosts still resolves for its owner.
+    """
+    handler, _ = await _base_then_bind(integration_context, control_db, admin_db)
+    # The submitter itself, also holding the operator scope.
+    writer_operator = Identity(
+        sub=_WRITER.sub, actor_type=ActorType.USER, permissions=_OPERATOR.permissions
+    )
+    moved_source = _source("new.example.com", marker="manual-moved")
+    moved_source.pop("origin")
+    moved = await _run(handler, moved_source)
+    same_source = _source("old.example.com", marker="manual-same")
+    same_source.pop("origin")
+    same = await _run(handler, same_source)
+    assert moved["state"] == same["state"] == ApiRevisionState.DRAFT
+
+    async def _pin(revision_id: str, identity: Identity) -> RevisionPinResult:
+        async with registry_db.session() as session:
+            return await RegistryService(session, ctx=integration_context).resolve_revision_pin(
+                vendor=_VENDOR,
+                name=_NAME,
+                version=_VERSION,
+                rev_label=f"rev_{uuid.UUID(revision_id).hex}",
+                identity=identity,
+            )
+
+    held = await _pin(moved["revision_id"], _WRITER)
+    assert held.outcome is RevisionPinOutcome.HOST_CHANGE_HELD
+    assert held.revision_id == uuid.UUID(moved["revision_id"])
+    assert (await _pin(moved["revision_id"], writer_operator)).outcome is RevisionPinOutcome.RESOLVED
+    assert (await _pin(same["revision_id"], _WRITER)).outcome is RevisionPinOutcome.RESOLVED
+
+    # The broker refuses the held draft when it is the one serving the URL.
+    resolver = InProcessRegistryResolver(registry_db, ctx=integration_context)
+    pins = {(_VENDOR, _NAME, _VERSION): f"rev_{uuid.UUID(moved['revision_id']).hex}"}
+    with pytest.raises(UnauthorizedRevisionPinError) as refused:
+        await discover_via_pins(
+            resolver,
+            method="GET",
+            url="https://new.example.com/v1/widgets",
+            pins=pins,
+            identity=_WRITER,
+        )
+    assert refused.value.type == "host_change_requires_operator"
+    routed = await discover_via_pins(
+        resolver,
+        method="GET",
+        url="https://new.example.com/v1/widgets",
+        pins=pins,
+        identity=writer_operator,
+    )
+    assert routed is not None and routed[1] == uuid.UUID(moved["revision_id"])
+
+
+async def test_own_draft_with_new_hosts_is_pinnable_when_nothing_is_bound(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+    clean_state: None,
+) -> None:
+    handler = ImportHandler(integration_context)
+    await _run(handler, _source("old.example.com", marker="base"))
+    await _bind_credential(control_db, admin_db, bind=False)
+    moved_source = _source("new.example.com", marker="manual-moved")
+    moved_source.pop("origin")
+    moved = await _run(handler, moved_source)
+    async with registry_db.session() as session:
+        pin = await RegistryService(session, ctx=integration_context).resolve_revision_pin(
+            vendor=_VENDOR,
+            name=_NAME,
+            version=_VERSION,
+            rev_label=f"rev_{uuid.UUID(moved['revision_id']).hex}",
+            identity=_WRITER,
+        )
+    assert pin.outcome is RevisionPinOutcome.RESOLVED
 
 
 async def test_reimport_host_change_with_unbound_credential_flows_automatically(

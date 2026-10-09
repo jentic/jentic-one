@@ -55,8 +55,9 @@ class InProcessRegistryResolver:
     factory (not a live session) so it is safe to share across requests.
     """
 
-    def __init__(self, registry_db: DatabaseSession) -> None:
+    def __init__(self, registry_db: DatabaseSession, *, ctx: Context | None = None) -> None:
         self._registry_db = registry_db
+        self._ctx = ctx
 
     async def resolve_operation(
         self, *, method: str, url: str, revision_id: uuid.UUID | None = None
@@ -76,7 +77,7 @@ class InProcessRegistryResolver:
         identity: Identity,
     ) -> RevisionPinResult:
         async with self._registry_db.session() as session:
-            return await RegistryService(session).resolve_revision_pin(
+            return await RegistryService(session, ctx=self._ctx).resolve_revision_pin(
                 vendor=vendor,
                 name=name,
                 version=version,
@@ -87,7 +88,7 @@ class InProcessRegistryResolver:
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
     """Inject the in-process registry resolver onto the broker app state."""
-    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db)
+    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
 
 
 class InProcessCatalogAutoImporter:

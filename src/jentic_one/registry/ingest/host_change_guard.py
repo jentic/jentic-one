@@ -12,6 +12,10 @@ credentials are sent. That step needs an operator: a caller holding
   operator reviews and promotes it.
 - **Promote** without the operator scope: refused with
   ``HostChangeRequiresOperatorError`` (403 ``host_change_requires_operator``).
+- **Pinning a draft** (``Jentic-Revision``) routes calls through it without a
+  promote, so the same check applies: a draft whose hosts need review on a
+  credential-bound API resolves only for the operator scope
+  (``RegistryService.resolve_revision_pin``).
 
 ``credentials:write`` is the gate because the decision is about where stored
 credentials go, it is not a default agent scope, and ``apis:write`` cannot be
@@ -20,11 +24,17 @@ the gate since promote already requires it.
 
 from __future__ import annotations
 
+import uuid
+from typing import Any
+
 import structlog
 
+from jentic_one.registry.core.server_hosts import hosts_from_servers, needs_review
 from jentic_one.registry.repos.credential_binding_presence_repo import (
     CredentialBindingPresenceRepository,
 )
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.repos.server_repo import ServerRepository
 from jentic_one.shared.auth.permission_catalog import CREDENTIALS_WRITE
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
@@ -78,3 +88,40 @@ async def api_has_bound_credentials(ctx: Context, *, vendor: str, name: str, ver
             exc_info=True,
         )
         return True
+
+
+async def pending_host_change(
+    ctx: Context | None,
+    session: Any,
+    *,
+    api_id: uuid.UUID,
+    revision_id: uuid.UUID,
+    vendor: str,
+    name: str,
+    version: str,
+) -> tuple[list[str], list[str]] | None:
+    """``(current_hosts, new_hosts)`` when serving ``revision_id`` needs an operator.
+
+    The baseline is the API's current revision, else its most recently live one,
+    so archiving the current revision first does not skip the check. When the API
+    has never been live every origin of the revision is new. Review is needed when
+    the host set changes or a host moves to plaintext ``http`` and the API has
+    bound credentials or an open connect session (``api_has_bound_credentials``).
+    Without a ``ctx`` the binding check cannot run, so the API counts as bound.
+    """
+    baseline = await ApiRevisionRepository.host_baseline_revision_id(
+        session, api_id, exclude=revision_id
+    )
+    current = (
+        hosts_from_servers(await ServerRepository.list_url_specs(session, baseline))
+        if baseline is not None
+        else frozenset()
+    )
+    new = hosts_from_servers(await ServerRepository.list_url_specs(session, revision_id))
+    if not needs_review(current, new):
+        return None
+    if ctx is not None and not await api_has_bound_credentials(
+        ctx, vendor=vendor, name=name, version=version
+    ):
+        return None
+    return sorted(current), sorted(new)
