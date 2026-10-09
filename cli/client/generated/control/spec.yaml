@@ -4972,8 +4972,10 @@ components:
 
         The client is stored on the session's credential (the same shape as a
         ``direct_oauth2`` credential) and the session continues as an
-        authorization-code connect. Endpoints default to the API's declared
-        authorization-code flow.
+        authorization-code connect. Both endpoints are required: the API's
+        declared OAuth endpoints are never used for the approver's client, since
+        the spec may be agent-submitted and the token endpoint receives the
+        client secret.
       properties:
         agent_id:
           anyOf:
@@ -4981,11 +4983,10 @@ components:
           - type: 'null'
           title: Agent Id
         authorize_url:
-          anyOf:
-          - maxLength: 2048
-            type: string
-          - type: 'null'
+          maxLength: 2048
+          minLength: 1
           title: Authorize Url
+          type: string
         client_id:
           maxLength: 255
           minLength: 1
@@ -5026,17 +5027,18 @@ components:
           title: Permission Rules
           type: array
         token_url:
-          anyOf:
-          - maxLength: 2048
-            type: string
-          - type: 'null'
+          maxLength: 2048
+          minLength: 1
           title: Token Url
+          type: string
       required:
       - permission_rules
       - digest
       - kind
       - client_id
       - client_secret
+      - authorize_url
+      - token_url
       title: OwnOAuthClientConfirmSessionRequest
       type: object
     PermissionListResponse:
