@@ -364,7 +364,7 @@ describe('a governed binding on a credential shared with the viewer', () => {
 					active: true,
 					// A member: manages agents and credentials, but is not an org admin.
 					// `apis:read` included because `GET /apis` requires it and the page
-					// no longer sends that read without it (#1543) — without it a tile
+					// sends that read only to a viewer who holds it (#1543) — without it a tile
 					// falls back to its vendor host and never reads "Stripe".
 					permissions: ['agents:read', 'agents:write', 'apis:read', 'credentials:write'],
 					must_change_password: false,

@@ -17,8 +17,8 @@
  * digest the docked panel reads), NOT the manifest's `registered_count`. The
  * manifest figure counts how many PUBLIC CATALOG entries match a local spec
  * URL, so it silently excludes every locally-added or pasted spec
- * (`source_url IS NULL`) — the header said 4 while the panel beside it listed 6
- * (#1543). The two now read the same number by construction.
+ * (`source_url IS NULL`), and the header would disagree with the panel beside
+ * it (#1543). Reading the same digest makes the two agree by construction.
  */
 import { ArrowUpCircle } from 'lucide-react';
 import { CountLine, Skeleton } from '@/shared/ui';

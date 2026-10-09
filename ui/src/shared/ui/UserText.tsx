@@ -4,9 +4,9 @@
  * Unicode carries directional formatting characters (U+202A–U+202E
  * LRE/RLE/PDF/LRO/RLO, U+2066–U+2069) whose effect runs to the end of the
  * enclosing bidi paragraph, not to the end of the string that contained them.
- * A name such as `invoice\u202ebot` therefore reverses the COPY AROUND IT: the
- * agents grid rendered "Agent can reach nothing yet" backwards because the
- * agent's name and that sentence share one element. The same applies to any
+ * A name such as `invoice\u202ebot` therefore reverses the COPY AROUND IT:
+ * wherever an agent's name and "… can reach nothing yet" share one element,
+ * the sentence renders backwards. The same applies to any
  * right-to-left text, which flips neighbouring punctuation without any control
  * character at all.
  *

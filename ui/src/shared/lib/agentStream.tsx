@@ -363,7 +363,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 	// top-level `actor_id` back-fills the token there and only there. Every
 	// other namespace gets its subject from `data`: `credential.accessed` names
 	// a credential and rides on the USING agent's actor id, and treating that
-	// actor as the subject sent the row to `/agents?agent=<actor>` — which
+	// actor as the subject would send the row to `/agents?agent=<actor>` — which
 	// answers "Agent not found" whenever the actor sits outside the reader's
 	// roster (#1543).
 	const actorAgentId =

@@ -170,7 +170,7 @@ export function ApiAccessSidebar({
 	// closed. `credentialCreatedBy` is absent (not null) when no credential row
 	// backed the tile at all, which is exactly what an owner-scoped
 	// `GET /credentials` returns for someone else's credential bound to this
-	// agent: offering Edit there opened a blank sheet and both verbs 404ed (#1543).
+	// agent: offering Edit there would open a blank sheet, and both verbs 404 (#1543).
 	const viewer = useOptionalCurrentUser();
 	const credentialReadOnly =
 		shown != null && !credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);

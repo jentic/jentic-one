@@ -124,9 +124,9 @@ export interface AgentCredentialBinding {
 	/**
 	 * The shared permission rule set governing this binding, or `null` when its
 	 * inline `agent_permission_rules` apply. Carried through because the broker
-	 * evaluates the SET in preference to the inline rules: a surface that judged
-	 * access from the inline list alone called a rule-set-governed binding
-	 * "Blocked" while the set was in fact allowing the call (#1543).
+	 * evaluates the SET in preference to the inline rules: a surface judging
+	 * access from the inline list alone would call a rule-set-governed binding
+	 * "Blocked" while the set allows the call (#1543).
 	 */
 	ruleSetId: string | null;
 }

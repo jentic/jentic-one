@@ -640,10 +640,10 @@ describe('ApiDetailPage', () => {
 		 * A binding's rules come from EITHER its attached shared rule set or its
 		 * own inline list, and the broker evaluates the SET whenever one is
 		 * attached — the inline rules then decide nothing. `GET
-		 * /credentials/{cid}/agents` reports the attachment as `rule_set_id`; the
-		 * hub's adapter used to drop it, so the chip was computed from the dormant
-		 * inline list and said "Blocked" over a set that allows every call. The
-		 * fix carries the field through and reads whatever the broker reads.
+		 * /credentials/{cid}/agents` reports the attachment as `rule_set_id`, and
+		 * the hub must carry it through and read whatever the broker reads: a chip
+		 * computed from the dormant inline list says "Blocked" over a set that
+		 * allows every call.
 		 */
 		describe('a binding governed by a shared rule set', () => {
 			const RULE_SET = 'prs_allow_all';

@@ -793,11 +793,11 @@ describe('CredentialInventorySheet — what a reader may see and send', () => {
 
 	/**
 	 * Item 5. The sheet's "used by N agents" figure is a JOIN over every agent's
-	 * bindings, so it reads `GET /agents`, which needs `agents:read`. A
-	 * credentials-only viewer used to fire that roster read unconditionally and
-	 * take a 403 — and because the join treats a missing roster as an empty one,
-	 * the 403 rendered as "nothing is bound", which is a WRONG answer, not just a
-	 * missing one. The read is therefore gated, and the figure withheld.
+	 * bindings, so it reads `GET /agents`, which needs `agents:read`. Fired for a
+	 * credentials-only viewer, that roster read takes a 403 — and because the
+	 * join treats a missing roster as an empty one, the 403 would render as
+	 * "nothing is bound", a WRONG answer rather than a missing one. So the read
+	 * is gated, and the figure withheld.
 	 */
 	it('sends no roster read, and asserts no binding count, without agents:read', async () => {
 		const paths = trackRequests();
@@ -820,8 +820,8 @@ describe('CredentialInventorySheet — what a reader may see and send', () => {
 
 	/**
 	 * Item 4. "Connect" runs the provider sign-in and WRITES the resulting
-	 * tokens onto the credential, so it needs `credentials:write`. A reader used
-	 * to be shown the button and got an error on click.
+	 * tokens onto the credential, so it needs `credentials:write`. Shown to a
+	 * reader, the button would only produce an error on click.
 	 */
 	it('offers no Connect and no Add credential to a viewer without credentials:write', async () => {
 		seedViewer(['agents:read', 'credentials:read']);

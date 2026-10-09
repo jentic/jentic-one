@@ -113,9 +113,9 @@ async def _revocation_summary(
     Composed inside the revocation body, not at the call sites: the four causes
     (manual ``:revoke``, agent sweep, RFC 7009 disconnect, client delete) each
     supply only their cause clause, so there is exactly one definition of how
-    the client is named and how wide the sentence can get. Four hand-written
-    copies of this sentence is how the client came to be named by its raw
-    ``oc_…`` id while the rest of the summary vocabulary names entities through
+    the client is named and how wide the sentence can get. Hand-written copies
+    at each call site drift apart — one names the client by its raw ``oc_…`` id
+    while the rest of the summary vocabulary names entities through
     :func:`summary_label` (#1543).
 
     The client row is read here rather than passed in, so no caller can supply

@@ -334,8 +334,8 @@ export interface BindingAccessPair {
  * Read from whatever the BROKER evaluates, which is the attached rule set when
  * there is one and the binding's inline rules otherwise — a set takes
  * precedence and leaves the inline list dormant. Judging a governed binding by
- * its dormant inline rules is what made the API hub read "Blocked" over a rule
- * set that allowed the call (#1543). Both reads use the same cache slices as
+ * its dormant inline rules would read "Blocked" over a rule set that allows the
+ * call (#1543). Both reads use the same cache slices as
  * the agent's rules editor and its rule-set panel, so a save there shows here.
  */
 export function useBindingAccessStates(

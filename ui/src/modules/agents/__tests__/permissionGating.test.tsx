@@ -80,8 +80,8 @@ const BINDING_VIEWERS: Record<string, readonly string[]> = {
 	...VIEWERS,
 	'member without credentials:write': without('credentials:write'),
 	// Reads only — no write anywhere. `apis:read` is a READ and belongs here:
-	// `GET /apis` requires it, and the page no longer sends that request without
-	// it (#1543), so a fixture that omitted it was modelling a viewer who cannot
+	// `GET /apis` requires it, and the page sends that request only to a viewer
+	// who holds it (#1543), so a fixture that omits it models a viewer who cannot
 	// resolve an API's display name at all — a different spec from this one.
 	'member with reads only': [
 		'agents:read',
@@ -442,9 +442,8 @@ describe("a tile's pause and resume follow agents:write", () => {
 	 * Pins #1543 item 9. `GET /apis` needs `apis:read`; the registry join is an
 	 * ENRICHMENT (it supplies an API's display name and operation count), never
 	 * the source of the tiles themselves, which come from the agent's bindings.
-	 * A viewer without the permission used to see the whole grid replaced by
-	 * "Couldn't load the credential and API details behind these tiles" over a
-	 * "Try again" that could never succeed — a 403 is a standing fact about the
+	 * A viewer without the permission must still see the grid, not an error card
+	 * whose "Try again" can never succeed — a 403 is a standing fact about the
 	 * viewer, not a transient failure.
 	 */
 	it('still draws the tiles for a viewer who may not read /apis, and sends no request', async () => {

@@ -80,9 +80,9 @@ describe('LibraryPage', () => {
 	 *
 	 * The manifest's `registered_count` counts CATALOG entries whose spec url
 	 * matches something local — so a locally-imported or pasted spec, which has
-	 * no catalog entry to match, is invisible to it. The header said "N in your
-	 * workspace" over that number while the docked panel said something else
-	 * from `GET /apis`, and the panel was right: the label is a claim about the
+	 * no catalog entry to match, is invisible to it. A header reading "N in your
+	 * workspace" over that number disagrees with the docked panel's `GET /apis`
+	 * figure, and the panel is right: the label is a claim about the
 	 * WORKSPACE, so the number must be the workspace's own.
 	 *
 	 * The NUMBER is what changes, not the label: a reader of "in your workspace"
