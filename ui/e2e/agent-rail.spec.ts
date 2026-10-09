@@ -37,7 +37,7 @@ async function login(page: Page) {
  * Agents auto-selects an agent at xl, which points the lens at it.
  */
 async function gotoRailPage(page: Page) {
-	await page.goto('/app/workspace');
+	await page.goto('/app/library');
 	await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 }
 

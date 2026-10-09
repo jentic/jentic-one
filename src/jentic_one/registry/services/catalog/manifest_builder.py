@@ -13,9 +13,11 @@ scope (workflows stay deferred per D-001).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.vendor_domain import vendor_from_api_id
 
 # api_id is parsed out of an apis.json `include[].url` of the shape
@@ -301,6 +303,42 @@ def is_registered(entry: ManifestEntry, registered_spec_urls: set[str]) -> bool:
     ``googleapis.com/*`` import hiding every sibling) and false negatives.
     """
     return entry.spec_url is not None and entry.spec_url in registered_spec_urls
+
+
+def catalog_api_name(api_id: str, manifest_api_ids: Iterable[str]) -> str:
+    """The ingest ``api_name`` seed for catalog entry ``api_id`` (#1020).
+
+    A ``domain/sub`` id seeds the **sub segment** (``posthog.com/posthog-api`` →
+    ``posthog-api``): the vendor half is carried separately, so slugifying the
+    full id would fuse it into the name and yield a vendor-doubled identity
+    (``posthog-com/posthog-com-posthog-api``). A bare-domain id has no sub
+    segment and seeds the full id (``coincap.io`` → ``coincap-io``).
+
+    Vendor extraction reduces hosts to their registrable domain, so distinct
+    entries can collapse onto one identity (``stripe.com/checkout`` and
+    ``api.stripe.com/checkout`` both reduce to ``stripe-com/checkout``). When
+    another manifest entry collapses onto the same ``(vendor, slug(sub))``, every
+    member of that clash group seeds its **full, host-qualified** id instead
+    (``stripe-com-checkout`` / ``api-stripe-com-checkout``), so each stays
+    importable and the choice does not depend on which one is imported first.
+    """
+    host, sep, sub = api_id.partition("/")
+    if not sep or not sub:
+        return api_id
+    vendor = vendor_from_api_id(host)
+    key = slugify_api_field(sub)
+    for other in manifest_api_ids:
+        if other == api_id:
+            continue
+        other_host, other_sep, other_sub = other.partition("/")
+        if (
+            other_sep
+            and other_sub
+            and slugify_api_field(other_sub) == key
+            and vendor_from_api_id(other_host) == vendor
+        ):
+            return api_id
+    return sub
 
 
 def filter_unregistered(

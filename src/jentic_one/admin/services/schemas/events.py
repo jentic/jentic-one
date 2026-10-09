@@ -20,9 +20,6 @@ class EventView(BaseModel):
     severity: EventSeverity
     summary: str
     requires_action: bool
-    acknowledged: bool
-    acknowledged_at: datetime | None = None
-    acknowledged_by: str | None = None
     trace_id: str | None = None
     detail: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
@@ -39,19 +36,11 @@ class EventFilter(BaseModel):
     event_type: list[str] | None = None
     severity: list[EventSeverity] | None = None
     requires_action: bool | None = None
-    acknowledged: bool | None = None
     from_dt: datetime | None = None
     to_dt: datetime | None = None
     trace_id: str | None = None
     actor_id: str | None = None
     actor_type: str | None = None
-
-
-class EventAcknowledgePayload(BaseModel):
-    """Payload for acknowledging an event."""
-
-    acknowledged: bool
-    note: str | None = None
 
 
 class Heartbeat(BaseModel):

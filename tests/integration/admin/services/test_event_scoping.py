@@ -1,10 +1,9 @@
-"""Integration tests for owner scoping of event reads and acknowledgement.
+"""Integration tests for owner scoping of event reads.
 
 An event is visible to the actor it names (``actor_id`` or ``created_by``), to
 the human owner of that agent, and to ``org:admin``. System events with no
 subject are visible only to ``org:admin``. Everyone else gets nothing from the
-list or stream and a 404-equivalent ``EventNotFoundError`` from a direct read
-or acknowledgement.
+list or stream and a 404-equivalent ``EventNotFoundError`` from a direct read.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from jentic_one.admin.services.errors import EventNotFoundError
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.event_stream_service import EventStreamService
 from jentic_one.admin.services.schemas.events import (
-    EventAcknowledgePayload,
     EventFilter,
     EventView,
     Heartbeat,
@@ -196,9 +194,7 @@ async def _streamed_ids(ctx: Context, identity: Identity) -> set[str]:
     return ids
 
 
-async def test_outsiders_see_nothing_and_cannot_acknowledge(
-    integration_context: Context, seed: _Seed
-) -> None:
+async def test_outsiders_see_nothing(integration_context: Context, seed: _Seed) -> None:
     ctx = integration_context
     outsiders = [
         _user(_OTHER_SUB, "events:read", "events:write"),
@@ -213,16 +209,11 @@ async def test_outsiders_see_nothing_and_cannot_acknowledge(
         for event_id in seed.all:
             with pytest.raises(EventNotFoundError):
                 await EventService(ctx).get_by_id(event_id, identity=identity)
-            with pytest.raises(EventNotFoundError):
-                await EventService(ctx).acknowledge(
-                    event_id,
-                    EventAcknowledgePayload(acknowledged=True),
-                    identity=identity,
-                )
 
     admin = _user("usr_evtscope_admin", "org:admin")
     for event_id in seed.all:
-        assert (await EventService(ctx).get_by_id(event_id, identity=admin)).acknowledged is False
+        # Admin can read every event regardless of subject.
+        assert (await EventService(ctx).get_by_id(event_id, identity=admin)).id == event_id
 
 
 async def test_subject_owner_and_admin_visibility(
@@ -239,26 +230,18 @@ async def test_subject_owner_and_admin_visibility(
     # creator — but not the system event.
     owner = _user(seed.owner_id, "events:read", "events:write")
     assert await _listed_ids(ctx, owner) == seed.owner_visible
-    assert await _listed_ids(ctx, owner, requires_action=True, acknowledged=False) == {
+    assert await _listed_ids(ctx, owner, requires_action=True) == {
         seed.agent_event_id,
         seed.subject_event_id,
     }
     assert await _streamed_ids(ctx, owner) == seed.owner_visible
     with pytest.raises(EventNotFoundError):
         await EventService(ctx).get_by_id(seed.system_event_id, identity=owner)
-    acked = await EventService(ctx).acknowledge(
-        seed.agent_event_id, EventAcknowledgePayload(acknowledged=True), identity=owner
-    )
-    assert acked.acknowledged is True
 
     # org:admin is unrestricted, system events included.
     admin = _user("usr_evtscope_admin", "org:admin")
     assert await _listed_ids(ctx, admin) == seed.all
     assert await _streamed_ids(ctx, admin) == seed.all
-    acked = await EventService(ctx).acknowledge(
-        seed.system_event_id, EventAcknowledgePayload(acknowledged=True), identity=admin
-    )
-    assert acked.acknowledged is True
 
 
 async def test_stream_ignores_an_invisible_resume_point(
@@ -545,6 +528,17 @@ async def test_credential_use_events_reach_the_credential_owner(
         assert event.actor_id == cross_owner.agent_id
         assert event.created_by == cross_owner.credential_owner_id
         event_ids.add(event.id)
+    # Summaries name the stored credential; its id stays in ``data``.
+    [accessed] = grouped[EventType.CREDENTIAL_ACCESSED]
+    assert accessed.summary == (
+        f"Credential 'cred-{_CRED_OK}' accessed by {cross_owner.agent_id} for {_CRED_VENDOR}"
+    )
+    assert accessed.data["credential_id"] == _CRED_OK
+    [undecryptable] = grouped[EventType.CREDENTIAL_UNDECRYPTABLE]
+    assert undecryptable.summary == (
+        f"Credential 'cred-{_CRED_BAD}' cannot be decrypted for '{_CRED_VENDOR}'"
+    )
+    assert undecryptable.data == {"credential_id": _CRED_BAD, "api_vendor": _CRED_VENDOR}
 
     credential_owner = _user(cross_owner.credential_owner_id, "events:read")
     agent_owner = _user(cross_owner.agent_owner_id, "events:read")
@@ -598,6 +592,20 @@ async def test_binding_events_reach_the_agent_owner(
         assert event.created_by == cross_owner.agent_id
     assert rules.actor_id == cross_owner.credential_owner_id
     assert rules.created_by == cross_owner.agent_id
+
+    # Summaries name the credential and the agent; both ids stay in ``data``.
+    ids = {"agent_id": cross_owner.agent_id, "credential_id": _CRED_OK}
+    credential, agent_name = f"'cred-{_CRED_OK}'", "'evtscope-cross-agent'"
+    assert sorted(e.summary for e in bound) == [
+        f"Credential {credential} binding resumed for agent {agent_name}",
+        f"Credential {credential} bound to agent {agent_name}",
+    ]
+    assert unbound[0].summary == f"Credential {credential} suspended for agent {agent_name}"
+    assert rules.summary == (
+        f"Permission rules set on agent {agent_name} for credential {credential}"
+    )
+    for event in (*bound, *unbound, rules):
+        assert event.data == ids
 
     every_id = {e.id for e in (*bound, *unbound, rules)}
     assert await _listed_ids(ctx, _user(cross_owner.agent_owner_id, "events:read")) == every_id

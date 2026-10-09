@@ -16,6 +16,7 @@ import { animate, useReducedMotionConfig } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { pendingAgentsCountKey } from '@/shared/hooks';
 import { useAgentStreamOptional } from '@/shared/lib';
+import { AGENTS_READ, useCanAccess } from '@/shared/auth';
 import type { SelectedApi } from '@/shared/credentials/api';
 import {
 	useAgentCredentialBindings,
@@ -73,8 +74,13 @@ export function useFirstAgentLanding({
 	const stream = useAgentStreamOptional();
 	const polling = up && pollPhase !== 'approved' && stream?.status !== 'live';
 
+	// Without `agents:read` the roster is never asked for: the server would refuse
+	// it, and the page says so without the round trip. Until the permissions are
+	// known it waits, so nothing is sent early.
+	const canReadAgents = useCanAccess(AGENTS_READ);
 	const query = useAgents({
 		status: 'all',
+		enabled: canReadAgents,
 		refetchInterval: polling ? FIRST_AGENT_POLL_MS : false,
 	});
 	const agents = useMemo(

@@ -115,6 +115,12 @@ observability:
     exporter: none     # or "otlp" / "prometheus"
   tracing:
     exporter: none     # or "otlp"
+
+# Anonymous product telemetry: a fixed, closed-schema event set under a random
+# instance id (generated on first boot) — no credentials, request data, or PII
+# (docs/reference/config.md#telemetry). Set `enabled: false` to opt out.
+telemetry:
+  enabled: true
 ```
 
 **Connection-pool sizing:** each process holds up to `pool_max` connections

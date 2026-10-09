@@ -31,15 +31,17 @@ import {
 	Input,
 	Label,
 	Skeleton,
+	Tag,
 	VendorMark,
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { ROUTES } from '@/shared/app/routes';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	useAgentApiKeyInfo,
-	useAgentScopes,
+	useAgentPermissions,
 	usePermissionCatalogue,
 	type AgentEntity,
 } from '@/modules/agents/api';
@@ -49,7 +51,12 @@ import { AGENT_NAME_MAX_LENGTH, agentNameError } from '@/modules/agents/lib/agen
 import type { FirstAgentExit, FirstAgentPhase } from '@/modules/agents/lib/firstRun';
 import { useGithubPick } from '@/modules/agents/lib/githubPick';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
-import { approvalGrant, scopeRisk, type ScopeRisk } from '@/modules/agents/lib/requestedScopes';
+import {
+	approvalGrant,
+	groupPermissionsByArea,
+	permissionRisk,
+	type PermissionRisk,
+} from '@/modules/agents/lib/requestedPermissions';
 import {
 	commandText,
 	registerCommandTokens,
@@ -103,7 +110,7 @@ function CardHeader({
 const TONE_CLASS: Record<CommandTone, string | undefined> = {
 	program: 'text-accent-yellow',
 	plain: undefined,
-	flag: 'text-muted-foreground/70',
+	flag: 'text-muted-foreground',
 	url: 'text-accent-blue',
 	value: 'text-success',
 	placeholder: 'text-muted-foreground',
@@ -148,6 +155,8 @@ export function RegisterCommand({
 	const nameError = agentNameError(name);
 	const target = useRegisterTarget();
 	const tokens = registerCommandTokens({ ...target, name: commandName });
+	// Approving needs `agents:write` (or `org:admin`): anyone else is told who does.
+	const canApprove = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div>
@@ -156,13 +165,17 @@ export function RegisterCommand({
 				glyph={
 					<span
 						aria-hidden="true"
-						className="text-primary bg-primary/10 ring-primary/25 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ring-1 ring-inset"
+						className="text-primary bg-primary/10 grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
 					>
 						<Terminal className="h-4 w-4" />
 					</span>
 				}
 				title="Let your agent register itself"
-				detail="Run one command where your agent runs. It signs up with its own key and shows up here for you to approve."
+				detail={
+					canApprove
+						? 'Run one command where your agent runs. It signs up with its own key and shows up here for you to approve.'
+						: 'Run one command where your agent runs. It signs up with its own key and shows up here, pending until someone who can manage agents approves it.'
+				}
 				badge={
 					surface === 'landing' ? (
 						<Badge className="font-sans text-[11px] font-semibold">Recommended</Badge>
@@ -205,8 +218,16 @@ export function RegisterCommand({
 							<span key={i} className="bg-border h-[9px] w-[9px] rounded-full" />
 						))}
 					</span>
-					<span className="text-muted-foreground/70 flex-1 text-center font-mono text-[11px]">
+					<span className="text-muted-foreground flex-1 text-center font-mono text-[11px]">
 						where your agent runs
+					</span>
+					{/* The quoting is POSIX (sh, bash, zsh) — not PowerShell or cmd. */}
+					<span
+						className="text-foreground-faint font-mono text-[10.5px]"
+						data-testid="register-command-shell"
+						title="Quoted for a POSIX shell (sh, bash, zsh)"
+					>
+						POSIX shell
 					</span>
 					<CopyButton
 						value={commandText(tokens)}
@@ -217,17 +238,21 @@ export function RegisterCommand({
 						className="text-muted-foreground hover:text-foreground h-6 gap-1.5 px-2 text-xs font-semibold [&_svg]:h-3.5 [&_svg]:w-3.5"
 					/>
 				</div>
+				{/* A hanging indent: when the command wraps, it breaks only between
+				    a flag and the next (see `commandWordGroups`), and each
+				    continuation line sits under `jentic`, clear of the `$`. */}
 				<pre
 					data-testid="register-command"
-					className="text-foreground/90 px-3.5 py-3 font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
+					className="text-foreground/90 py-3 pr-3.5 pl-[calc(0.875rem+2ch)] [text-indent:-2ch] font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap"
 				>
 					<span className="text-success select-none">$</span>
 					{commandWordGroups(tokens).map((group, i) => (
 						<span key={i}>
 							{' '}
 							{/* A line breaks only between groups; a group wider than the
-							    whole line (a long URL) still breaks inside. */}
-							<span className="inline-block max-w-full">
+							    whole line (a long URL) still breaks inside. Its own
+							    lines take no indent of their own. */}
+							<span className="inline-block max-w-full [text-indent:0]">
 								{group.map((token, j) => (
 									<span key={j}>
 										{j > 0 && ' '}
@@ -332,6 +357,8 @@ export function CliInstallHint({ reducedMotion }: { reducedMotion: boolean }) {
 // ---------------------------------------------------------------------------
 
 const STEPS: Array<{
+	/** Names the approval step, which reads differently for a viewer who cannot approve. */
+	id?: 'approve';
 	icon: LucideIcon;
 	title: string;
 	detail: string | Record<RegisterSurface, string>;
@@ -345,9 +372,22 @@ const STEPS: Array<{
 			panel: 'And in your fleet, with no access',
 		},
 	},
-	{ icon: CircleCheck, title: 'You approve it', detail: 'Then it can authenticate' },
+	{
+		id: 'approve',
+		icon: CircleCheck,
+		title: 'You approve it',
+		detail: 'Then it can authenticate',
+	},
 	{ icon: KeyRound, title: 'Give it an API', detail: 'With the credential it calls through' },
 ];
+
+/** The approval step for a viewer who cannot approve. */
+const APPROVED_BY_OTHERS: (typeof STEPS)[number] = {
+	id: 'approve',
+	icon: CircleCheck,
+	title: 'It gets approved',
+	detail: 'By someone who can manage agents',
+};
 
 type StepState = 'done' | 'current' | 'upcoming';
 
@@ -378,23 +418,31 @@ export function Stepper({
 }: {
 	phase: FirstAgentPhase;
 	reducedMotion: boolean;
-	/** The landing goes to four columns on a `sm` viewport; the panel goes by its
-	 * own width (its host is an `@container`), so a narrow sheet keeps two. */
+	/** The landing goes to a row of four on a `sm` viewport; the panel goes by
+	 * its own width (its host is an `@container`), so the sheet keeps the
+	 * compact list, where each step's words have a full line to sit on. */
 	surface?: RegisterSurface;
 }) {
 	const inPanel = surface === 'panel';
+	// The approval step names who approves: the viewer only with `agents:write`.
+	const canApprove = useCanAccess(AGENTS_WRITE);
+	const steps = canApprove
+		? STEPS
+		: STEPS.map((step) => (step.id === 'approve' ? APPROVED_BY_OTHERS : step));
 	const states = STEP_STATES[phase];
 	const fills = SEGMENT_FILL[phase];
+	// Below the breakpoint the steps stack (marker beside the words); at it
+	// they sit in a row, markers joined by a hairline track.
 	return (
 		<ol
 			aria-label="Registration progress"
 			data-testid="register-stepper"
 			className={cn(
-				'mt-4 grid grid-cols-2 gap-x-3 gap-y-4',
-				inPanel ? '@[32rem]:grid-cols-4' : 'sm:grid-cols-4',
+				'mt-4 grid grid-cols-1 gap-y-2.5',
+				inPanel ? '@[40rem]:grid-cols-4 @[40rem]:gap-x-3' : 'sm:grid-cols-4 sm:gap-x-3',
 			)}
 		>
-			{STEPS.map(({ icon: Icon, title, detail }, i) => {
+			{steps.map(({ icon: Icon, title, detail }, i) => {
 				const state = states[i];
 				const fill = i > 0 ? fills[i - 1] : 0;
 				// A connector that starts filling in this phase waits for the one
@@ -407,21 +455,23 @@ export function Stepper({
 						key={title}
 						data-state={state}
 						aria-current={state === 'current' ? 'step' : undefined}
-						className="relative flex flex-col items-start gap-2"
+						className={cn(
+							'relative flex items-start gap-3',
+							inPanel ? '@[40rem]:flex-col @[40rem]:gap-2' : 'sm:flex-col sm:gap-2',
+						)}
 					>
 						{i > 0 && (
-							// The connector from the previous step's icon to this one. On
-							// two columns the third step starts a row, with nothing to its left.
+							// The track from the previous step's marker to this one —
+							// only in the row; the stacked list reads top to bottom.
 							<span
 								aria-hidden="true"
 								className={cn(
-									'bg-border absolute top-3.5 right-[calc(100%+6px)] h-px w-[calc(100%-28px)] overflow-hidden',
-									i === 2 &&
-										(inPanel ? 'hidden @[32rem]:block' : 'hidden sm:block'),
+									'bg-hairline-field absolute top-3 right-[calc(100%+6px)] hidden h-px w-[calc(100%-24px)] overflow-hidden',
+									inPanel ? '@[40rem]:block' : 'sm:block',
 								)}
 							>
 								<motion.span
-									className="bg-success absolute inset-0 origin-left"
+									className="bg-primary/40 absolute inset-0 origin-left"
 									initial={false}
 									animate={{ scaleX: fill }}
 									transition={
@@ -432,34 +482,38 @@ export function Stepper({
 								/>
 							</span>
 						)}
+						{/* A tonal marker, no ring: the current step takes the accent
+						    tint, a done one goes quiet behind its check. */}
 						<span
 							aria-hidden="true"
 							className={cn(
-								'bg-card relative z-[1] grid h-7 w-7 shrink-0 place-items-center rounded-full transition-[color,box-shadow,background-color] duration-500 ease-(--ease-out-soft) ring-inset',
-								state === 'done' &&
-									'text-success bg-success/10 ring-success/45 ring-1',
-								state === 'current' &&
-									'text-primary ring-primary shadow-[0_0_0_4px_hsl(var(--primary)/0.14)] ring-2',
-								state === 'upcoming' && 'text-muted-foreground ring-border ring-1',
+								'relative z-[1] grid h-6 w-6 shrink-0 place-items-center rounded-full transition-colors duration-500 ease-(--ease-out-soft)',
+								state === 'done' && 'bg-surface-tonal text-foreground-sub',
+								state === 'current' && 'bg-primary/15 text-primary',
+								state === 'upcoming' && 'bg-surface-field text-foreground-faint',
 							)}
 						>
 							{state === 'done' ? (
-								<Check className="h-3.5 w-3.5" />
+								<Check className="h-3 w-3" />
 							) : (
-								<Icon className="h-3.5 w-3.5" />
+								<Icon className="h-3 w-3" />
 							)}
 						</span>
-						<span>
+						<span
+							className={cn('min-w-0 pt-0.5', inPanel ? '@[40rem]:pt-0' : 'sm:pt-0')}
+						>
 							<span
 								className={cn(
-									'block text-[13px] font-semibold transition-colors duration-500',
-									state === 'done' ? 'text-success' : 'text-foreground',
+									'block text-[13px] leading-5 font-semibold transition-colors duration-500',
+									state === 'current' && 'text-foreground',
+									state === 'done' && 'text-foreground-sub',
+									state === 'upcoming' && 'text-muted-foreground',
 								)}
 							>
 								{title}
 								{state === 'done' && <span className="sr-only"> (done)</span>}
 							</span>
-							<span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
+							<span className="text-muted-foreground block text-xs leading-snug">
 								{typeof detail === 'string' ? detail : detail[surface]}
 							</span>
 						</span>
@@ -474,39 +528,41 @@ export function Stepper({
 // The live status line
 // ---------------------------------------------------------------------------
 
-/** The card's one live line: what the landing is waiting on now. */
+/** The card's one live line: what the landing is waiting on now. Once an
+ * agent is on the card its header already says so, so the line is only
+ * announced (the live region stays), not drawn a second time. */
 export function StatusLine({ phase, name }: { phase: FirstAgentPhase; name: string | null }) {
 	return (
-		<div className="border-border/60 mt-3.5 border-t pt-3">
+		<div className={phase === 'listening' ? 'border-hairline mt-4 border-t pt-3' : 'sr-only'}>
 			<p
 				role="status"
 				aria-live="polite"
 				data-testid="register-status"
 				className={cn(
 					'flex items-center gap-2 text-xs transition-colors duration-300',
-					phase === 'listening' ? 'text-muted-foreground' : 'text-foreground/90',
+					'text-muted-foreground',
 				)}
 			>
 				<span
 					aria-hidden="true"
 					className={cn(
-						'h-[7px] w-[7px] shrink-0 rounded-full transition-colors duration-300',
-						phase === 'listening' && 'bg-primary animate-soft-pulse',
-						phase === 'arrived' && 'bg-accent-orange',
-						phase === 'approved' && 'bg-success',
+						'h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-300',
+						phase === 'listening' && 'bg-primary/70 animate-soft-pulse',
+						phase === 'arrived' && 'bg-warning',
+						phase === 'approved' && 'bg-success/80',
 					)}
 				/>
 				{phase === 'listening' || name == null ? (
 					<span>Listening for new agents…</span>
 				) : phase === 'arrived' ? (
 					<span>
-						<b className="text-foreground font-mono font-medium">{name}</b> just
+						<b className="text-foreground-sub font-mono font-medium">{name}</b> just
 						registered · awaiting your approval
 					</span>
 				) : (
 					<span>
-						<b className="text-foreground font-mono font-medium">{name}</b> is approved
-						· it can authenticate now
+						<b className="text-foreground-sub font-mono font-medium">{name}</b> is
+						approved · it can authenticate now
 					</span>
 				)}
 			</p>
@@ -526,6 +582,32 @@ function relativeTime(iso: string): string {
 	return ago === 'now' ? 'just now' : `${ago} ago`;
 }
 
+/** The step the card is on, for its one-line progress (the stepper's four
+ * steps, which only the listening card draws in full). */
+const PROGRESS: Record<Exclude<FirstAgentPhase, 'listening'>, { step: number; label: string }> = {
+	arrived: { step: 3, label: 'Approve it' },
+	approved: { step: 4, label: 'Give it an API' },
+};
+
+/** "Step 3 of 4 · Approve it" — where the flow is, in place of the stepper. */
+export function StepProgress({ phase }: { phase: Exclude<FirstAgentPhase, 'listening'> }) {
+	const { step, label } = PROGRESS[phase];
+	return (
+		<p
+			data-testid="register-progress"
+			data-step={step}
+			className="text-foreground-faint text-[11.5px] font-medium"
+		>
+			Step {step} of {STEPS.length} · {label}
+		</p>
+	);
+}
+
+/**
+ * The arrived agent, decision first: its name and status, then what it can't
+ * do yet and Approve / Deny (or, once approved, its first API); below that
+ * the quiet facts — where it came from, its id, the permissions approval grants.
+ */
 export function AgentDetails({
 	titleId,
 	agent,
@@ -562,47 +644,46 @@ export function AgentDetails({
 		return () => window.clearInterval(id);
 	}, [phase]);
 	const selfRegistered = agent.attribution.registeredBy === 'self';
-	// Approval makes the requested scopes live (or the defaults, when there are
-	// none), so Approve waits until what it grants is read and on screen — the
-	// catalogue included, since it tells which requested scopes count.
-	const scopes = useAgentScopes(agent.id);
+	// Approval makes the requested permissions live (or the defaults, when there
+	// are none), so Approve waits until what it grants is read and on screen — the
+	// catalogue included, since it tells which requested permissions count.
+	const permissions = useAgentPermissions(agent.id);
 	const catalogue = usePermissionCatalogue();
-	const scopesUnread =
-		scopes.isPending || scopes.isError || catalogue.isPending || catalogue.isError;
+	const permissionsUnread =
+		permissions.isPending || permissions.isError || catalogue.isPending || catalogue.isError;
+	// Approve and Deny need `agents:write` (or `org:admin`).
+	const canDecide = useCanAccess(AGENTS_WRITE);
 
 	return (
 		<div data-testid="arrival-card">
-			<CardHeader
-				titleId={titleId}
-				glyph={
-					// Neutral on purpose: anyone who can reach `/register` can arrive
-					// here under any name, so the card lends it no brand.
-					<span
-						aria-hidden="true"
-						className="text-muted-foreground bg-muted/60 ring-border grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ring-1 ring-inset"
-					>
-						<Bot className="h-4 w-4" />
-					</span>
-				}
-				title={<span className="font-mono">{agent.name}</span>}
-				detail={
-					// When it registered, in full: the time is how an operator tells
-					// their own run from someone else's.
-					<span data-testid="arrival-registered">
-						Registered {relativeTime(agent.createdAt)} ·{' '}
-						<time dateTime={agent.createdAt} className="text-foreground/90 font-medium">
-							{formatTimestamp(agent.createdAt)}
-						</time>
-					</span>
-				}
-				badge={<ActorStatusBadge status={agent.status} />}
-			/>
-			<AgentFacts
-				agent={agent}
-				selfRegistered={selfRegistered}
-				scopes={scopes}
-				catalogue={catalogue}
-			/>
+			<StepProgress phase={phase} />
+			<div className="mt-2.5">
+				<CardHeader
+					titleId={titleId}
+					glyph={
+						// Neutral on purpose: anyone who can reach `/register` can arrive
+						// here under any name, so the card lends it no brand.
+						<span
+							aria-hidden="true"
+							className="text-foreground-sub bg-surface-tonal grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
+						>
+							<Bot className="h-4 w-4" />
+						</span>
+					}
+					title={<span className="font-mono">{agent.name}</span>}
+					detail={
+						// When it registered, in full: the time is how an operator tells
+						// their own run from someone else's.
+						<span data-testid="arrival-registered" className="text-[13px]">
+							Registered {relativeTime(agent.createdAt)} ·{' '}
+							<time dateTime={agent.createdAt}>
+								{formatTimestamp(agent.createdAt)}
+							</time>
+						</span>
+					}
+					badge={<ActorStatusBadge status={agent.status} dot />}
+				/>
+			</div>
 
 			<AnimatePresence mode="wait" initial={false}>
 				<motion.div
@@ -613,41 +694,48 @@ export function AgentDetails({
 					transition={fade}
 				>
 					{phase === 'arrived' ? (
-						<div className="mt-4">
+						<div data-testid="arrival-decision" className="mt-5">
 							<ArrivalWarnings
 								agentName={agent.name}
 								expectedName={expectedName}
 								morePending={morePending}
 							/>
-							<p className="text-foreground/90 text-sm">
-								It has its own key but can&apos;t make calls until you approve it.
+							<p className="text-foreground text-sm">
+								{canDecide
+									? "It has its own key but can't make any calls until you approve."
+									: "It has its own key but can't make any calls until someone who can manage agents approves it."}
 							</p>
-							<div className="mt-3 flex flex-wrap items-center gap-2">
-								<Button
-									variant={ACTION_VARIANT.approve}
-									loading={approvePending}
-									disabled={scopesUnread}
-									onClick={onApprove}
-									aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
-								>
-									<CircleCheck className="h-4 w-4" />
-									{ACTION_LABEL.approve}
-								</Button>
-								<Button
-									variant={ACTION_VARIANT.deny}
-									disabled={approvePending}
-									onClick={onDeny}
-									aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
-								>
-									{ACTION_LABEL.deny}
-								</Button>
-							</div>
-							{scopesUnread && (
+							{canDecide && (
+								<div className="mt-3 flex flex-wrap items-center gap-2">
+									<Button
+										variant={ACTION_VARIANT.approve}
+										loading={approvePending}
+										disabled={permissionsUnread}
+										onClick={onApprove}
+										aria-label={`${ACTION_LABEL.approve} ${agent.name}`}
+									>
+										<CircleCheck className="h-4 w-4" />
+										{ACTION_LABEL.approve}
+									</Button>
+									{/* Tonal, not the red fill, as on every approval surface:
+									    the deny dialog carries the destructive red. */}
+									<Button
+										variant={ACTION_VARIANT.deny}
+										disabled={approvePending}
+										onClick={onDeny}
+										aria-label={`${ACTION_LABEL.deny} ${agent.name}`}
+									>
+										{ACTION_LABEL.deny}
+									</Button>
+								</div>
+							)}
+							{canDecide && permissionsUnread && (
 								<p
-									data-testid="approve-waits-for-scopes"
+									data-testid="approve-waits-for-permissions"
 									className="text-muted-foreground mt-2 text-xs"
 								>
-									Approve is available once the scopes it would grant are read.
+									Approve is available once the permissions it would grant are
+									read.
 								</p>
 							)}
 						</div>
@@ -656,6 +744,14 @@ export function AgentDetails({
 					)}
 				</motion.div>
 			</AnimatePresence>
+
+			<AgentFacts
+				agent={agent}
+				phase={phase}
+				selfRegistered={selfRegistered}
+				permissions={permissions}
+				catalogue={catalogue}
+			/>
 			{morePending > 0 && (
 				<Button
 					variant="ghost"
@@ -691,14 +787,14 @@ function ArrivalWarnings({
 	return (
 		<div
 			data-testid="arrival-warnings"
-			className="border-warning/40 bg-warning/5 mb-3 space-y-1.5 rounded-lg border px-3 py-2.5"
+			className="bg-surface-tonal mb-3 space-y-1.5 rounded-lg px-3 py-2.5"
 		>
 			{nameDiffers && (
 				<p
 					data-testid="arrival-name-warning"
 					className="text-foreground flex items-start gap-2 text-xs"
 				>
-					<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+					<TriangleAlert className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
 					<span>
 						It registered as <b className="font-mono font-medium">{agentName}</b>, not{' '}
 						<b className="font-mono font-medium">{expectedName}</b> — the name in your
@@ -711,7 +807,7 @@ function ArrivalWarnings({
 					data-testid="arrival-others-warning"
 					className="text-foreground flex items-start gap-2 text-xs"
 				>
-					<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+					<TriangleAlert className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
 					<span>
 						Other agents are also waiting — check the name and time before approving.
 					</span>
@@ -721,42 +817,49 @@ function ArrivalWarnings({
 	);
 }
 
-/** One fact about the agent. */
+/** One fact about the agent: a tight label/value pair on one line. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		<div className="min-w-0">
-			<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{children}</dd>
+		<div className="flex min-w-0 items-baseline gap-2">
+			<dt className="text-foreground-faint w-24 shrink-0">{label}</dt>
+			<dd className="text-foreground-sub min-w-0 truncate">{children}</dd>
 		</div>
 	);
 }
 
 /**
- * What the API says about where the agent came from — only the facts it has.
- * A self-registration carries no owner, no API key and usually no scopes, so
- * most rows only show for an agent someone set up.
+ * What the API says about where the agent came from — only the facts it has,
+ * quiet, under the decision. A self-registration carries no owner, no API key
+ * and usually no permissions, so the extra pairs only show for an agent someone
+ * set up.
  */
 function AgentFacts({
 	agent,
+	phase,
 	selfRegistered,
-	scopes,
+	permissions,
 	catalogue,
 }: {
 	agent: AgentEntity;
+	phase: Exclude<FirstAgentPhase, 'listening'>;
 	selfRegistered: boolean;
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
 }) {
 	const keyInfo = useAgentApiKeyInfo(agent.hasApiKey ? agent.id : null);
+	const signsIn = agent.hasApiKey
+		? 'signs in with an API key'
+		: selfRegistered
+			? 'signs in with its own keypair'
+			: 'no way to sign in yet';
+	const extras = keyInfo.data || agent.ownerId || agent.parentAgentId || agent.description;
 
 	return (
-		<dl
+		<div
 			data-testid="agent-facts"
-			className="border-border/60 bg-background/35 mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 sm:grid-cols-3"
+			className="border-hairline text-muted-foreground mt-5 space-y-2 border-t pt-4 text-xs"
 		>
-			<Fact label="How">
+			<p data-testid="agent-provenance">
 				{selfRegistered ? (
 					// Not "from the CLI": anything that can reach `POST /register`
 					// arrives this way.
@@ -767,115 +870,167 @@ function AgentFacts({
 					</>
 				) : (
 					'Created here'
-				)}
-			</Fact>
-			<Fact label="Signs in with">
-				{agent.hasApiKey
-					? 'An API key'
-					: selfRegistered
-						? 'Its own keypair'
-						: 'Nothing yet'}
-			</Fact>
-			{/* Its own row, in full and copyable: a narrow card would otherwise
-			    cut the id short with no way to read or copy the rest. */}
-			<div data-testid="agent-id-fact" className="col-span-full min-w-0">
-				<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
-					Agent ID
-				</dt>
-				<dd className="text-foreground/90 mt-0.5 flex min-w-0 items-center gap-2 text-xs">
-					<code className="min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">
-						{agent.id}
-					</code>
-					<CopyButton
-						value={agent.id}
-						size="icon"
-						variant="ghost"
-						ariaLabel="Copy the agent ID"
-						toastMessage="Agent ID copied"
-					/>
-				</dd>
-			</div>
-			{keyInfo.data && (
-				<Fact label="Key ID">
-					<span className="font-mono">{keyInfo.data.id}</span>
-				</Fact>
+				)}{' '}
+				· {signsIn}
+			</p>
+			{/* In full and copyable: a narrow card would otherwise cut the id
+			    short with no way to read or copy the rest. */}
+			<p data-testid="agent-id-fact" className="flex min-w-0 items-center gap-1.5">
+				<span className="sr-only">Agent ID: </span>
+				<code className="min-w-0 font-mono [overflow-wrap:anywhere]">{agent.id}</code>
+				<CopyButton
+					value={agent.id}
+					size="icon"
+					variant="ghost"
+					ariaLabel="Copy the agent ID"
+					toastMessage="Agent ID copied"
+					className="-my-1.5 h-7 w-7 shrink-0 p-0 [&_svg]:h-3.5 [&_svg]:w-3.5"
+				/>
+			</p>
+			{extras && (
+				<dl className="space-y-1">
+					{keyInfo.data && (
+						<Fact label="Key ID">
+							<span className="font-mono">{keyInfo.data.id}</span>
+						</Fact>
+					)}
+					{agent.ownerId && (
+						<Fact label="Owner">
+							<ActorLabel actorId={agent.ownerId} />
+						</Fact>
+					)}
+					{agent.parentAgentId && (
+						<Fact label="Parent agent">
+							<ActorLabel actorId={agent.parentAgentId} />
+						</Fact>
+					)}
+					{agent.description && <Fact label="Description">{agent.description}</Fact>}
+				</dl>
 			)}
-			{agent.ownerId && (
-				<Fact label="Owner">
-					<ActorLabel actorId={agent.ownerId} />
-				</Fact>
-			)}
-			{agent.parentAgentId && (
-				<Fact label="Parent agent">
-					<ActorLabel actorId={agent.parentAgentId} />
-				</Fact>
-			)}
-			{agent.description && <Fact label="Description">{agent.description}</Fact>}
-			<RequestedScopes scopes={scopes} catalogue={catalogue} />
-		</dl>
+			{/* Keyed by phase: an approval starts the review folded again. */}
+			<RequestedPermissions
+				key={phase}
+				permissions={permissions}
+				catalogue={catalogue}
+				phase={phase}
+			/>
+		</div>
 	);
 }
 
-const RISK_VARIANT: Record<ScopeRisk, 'danger' | 'warning'> = {
-	admin: 'danger',
-	write: 'warning',
+/** The flag's glyph tone: administering the org is the red one; a write or
+ * an upstream call is a state to note, in the low-chroma caution. */
+const RISK_TINT: Record<PermissionRisk, string> = {
+	admin: 'text-danger',
+	write: 'text-caution',
+	execute: 'text-caution',
 };
 
-const RISK_LABEL: Record<ScopeRisk, string> = {
+const RISK_LABEL: Record<PermissionRisk, string> = {
 	admin: 'administers the organisation',
 	write: 'can change data',
+	execute: 'runs calls to connected APIs',
 };
 
-/** One scope as a badge, flagged when it changes data or administers the org. */
-function ScopeBadge({ scope }: { scope: string }) {
-	const risk = scopeRisk(scope);
+/** A permission chip: the neutral tag, mono, wrapping when a permission is long. */
+const PERMISSION_CHIP =
+	'max-w-full font-mono font-medium whitespace-normal [overflow-wrap:anywhere]';
+
+/** A flagged permission as a quiet chip; only its glyph is tinted. */
+function RiskChip({ permission, risk }: { permission: string; risk: PermissionRisk }) {
 	return (
-		<li className="max-w-full">
-			<Badge
-				variant={risk ? RISK_VARIANT[risk] : 'default'}
-				data-risk={risk ?? undefined}
-				className="max-w-full [overflow-wrap:anywhere]"
-			>
-				{risk && <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden="true" />}
-				{scope}
+		<li className="max-w-full" data-permission={permission} data-risk={risk}>
+			<Tag className={PERMISSION_CHIP}>
+				<TriangleAlert
+					className={cn('h-3 w-3 shrink-0', RISK_TINT[risk])}
+					aria-hidden="true"
+				/>
+				{permission}
+				<span className="sr-only"> ({RISK_LABEL[risk]})</span>
+			</Tag>
+		</li>
+	);
+}
+
+/** One permission in the review: what it allows in words, its id in muted mono. */
+function PermissionRow({ permission, description }: { permission: string; description?: string }) {
+	const risk = permissionRisk(permission);
+	return (
+		<li
+			data-permission={permission}
+			data-risk={risk ?? undefined}
+			className="flex min-w-0 items-start gap-2 py-0.5 leading-snug"
+		>
+			<span aria-hidden="true" className="mt-px grid h-3.5 w-3.5 shrink-0 place-items-center">
+				{risk ? (
+					<TriangleAlert className={cn('h-3.5 w-3.5', RISK_TINT[risk])} />
+				) : (
+					<span className="bg-foreground-faint/50 h-1 w-1 rounded-full" />
+				)}
+			</span>
+			<span className="min-w-0">
+				{description && <span className="text-foreground-sub block">{description}</span>}
+				<code
+					className={cn(
+						'font-mono text-[11px] [overflow-wrap:anywhere]',
+						description ? 'text-foreground-faint' : 'text-foreground-sub',
+					)}
+				>
+					{permission}
+				</code>
 				{risk && <span className="sr-only"> ({RISK_LABEL[risk]})</span>}
-			</Badge>
+			</span>
 		</li>
 	);
 }
 
 /**
- * Every scope approval grants, in full: they go live at once, so none may hide
- * behind an ellipsis. An agent that requests none gets the default agent
- * scopes; requested strings outside the permission catalogue grant nothing and
- * are listed apart, and they don't bring the defaults back — so a request made
- * only of those approves an agent with no scopes, which the card says. Scopes
- * that change data or administer the organisation are flagged; an unread list
- * says so rather than reading as "no scopes".
+ * What approval grants, as a summary with the full list one click away.
+ *
+ * Approval makes the permissions live at once, so the approver must be able to see
+ * exactly what they are granting before the click — never an unexplained
+ * "and N more". The summary gives the count and the source (the default agent
+ * permissions, or what the agent requested); any permission that can change data, run
+ * upstream calls or administer the organisation (`permissionRisk`) is never folded
+ * away: it stays on the summary, flagged, and while approval is pending such a
+ * request — the defaults among them, which include `capabilities:execute` —
+ * opens the full review by default. A request of plain read permissions waits
+ * behind "Review permissions", grouped by area with what each one allows.
+ *
+ * An agent that requests none gets the default agent permissions; requested
+ * strings outside the permission catalogue grant nothing and are listed
+ * apart, always visible, and they don't bring the defaults back — so a
+ * request made only of those approves an agent with no permissions, which the card
+ * says. An unread list says so rather than reading as "no permissions".
  */
-function RequestedScopes({
-	scopes,
+function RequestedPermissions({
+	permissions,
 	catalogue,
+	phase,
 }: {
-	scopes: ReturnType<typeof useAgentScopes>;
+	permissions: ReturnType<typeof useAgentPermissions>;
 	catalogue: ReturnType<typeof usePermissionCatalogue>;
+	phase: Exclude<FirstAgentPhase, 'listening'>;
 }) {
-	const failed = scopes.isError ? scopes : catalogue.isError ? catalogue : null;
+	// null: the default for the request (open when it holds a flagged permission
+	// and is still pending); a click makes it the operator's choice.
+	const [expandedChoice, setExpanded] = useState<boolean | null>(null);
+	const reviewId = useId();
+	const failed = permissions.isError ? permissions : catalogue.isError ? catalogue : null;
 	let body: ReactNode;
-	if (scopes.isPending || catalogue.isPending) {
+	if (permissions.isPending || catalogue.isPending) {
 		body = (
 			<span aria-busy="true" className="flex flex-wrap gap-1.5">
-				<span className="sr-only">Reading the scopes it requests…</span>
-				<Skeleton className="h-5 w-24 rounded-full" />
-				<Skeleton className="h-5 w-32 rounded-full" />
+				<span className="sr-only">Reading the permissions it requests…</span>
+				<Skeleton className="h-4 w-48 rounded-full" />
 			</span>
 		);
 	} else if (failed) {
 		body = (
 			<ErrorAlert
 				message={
-					failed === scopes
-						? 'Could not read the scopes this agent requests.'
+					failed === permissions
+						? 'Could not read the permissions this agent requests.'
 						: 'Could not read the permission catalogue.'
 				}
 				onRetry={() => void failed.refetch()}
@@ -884,67 +1039,138 @@ function RequestedScopes({
 		);
 	} else {
 		const grant = approvalGrant(
-			scopes.data ?? [],
+			permissions.data ?? [],
 			(catalogue.data ?? []).map((p) => p.name),
 		);
-		const risky = grant.granted.filter((scope) => scopeRisk(scope) != null).length;
+		const descriptions = new Map((catalogue.data ?? []).map((p) => [p.name, p.description]));
+		const flagged = grant.granted.flatMap((permission) => {
+			const risk = permissionRisk(permission);
+			return risk ? [{ permission, risk }] : [];
+		});
+		const pending = phase === 'arrived';
+		const expanded = expandedChoice ?? (pending && flagged.length > 0);
+		const count = grant.granted.length;
+		const listLabel = !pending
+			? 'Granted permissions'
+			: grant.kind === 'defaults'
+				? 'Default agent permissions'
+				: 'Requested permissions';
+		const summary = !pending
+			? grant.kind === 'defaults'
+				? `Has the default agent permissions · ${count}`
+				: `Granted ${count === 1 ? '1 permission' : `${count} permissions`}`
+			: grant.kind === 'defaults'
+				? `Gets the default agent permissions · ${count}`
+				: `Gets the ${count === 1 ? 'permission' : `${count} permissions`} it requests`;
 		const riskNote =
-			risky === 0
+			flagged.length === 0
 				? null
-				: risky === 1
-					? '1 of these can change data or administer your organisation.'
-					: `${risky} of these can change data or administer your organisation.`;
+				: flagged.length === 1
+					? '1 of these can change data, run upstream calls or administer your organisation.'
+					: `${flagged.length} of these can change data, run upstream calls or administer your organisation.`;
 		body = (
 			<>
-				{grant.kind === 'defaults' ? (
-					<p className="mb-1.5">Requests none, so it gets the default agent scopes:</p>
-				) : null}
-				{grant.granted.length > 0 && (
-					<ul
-						aria-label={
-							grant.kind === 'defaults' ? 'Default agent scopes' : 'Requested scopes'
-						}
-						className="flex flex-wrap gap-1.5"
+				{count > 0 && (
+					<p
+						data-testid="permissions-summary"
+						className="flex flex-wrap items-center gap-x-2"
 					>
-						{grant.granted.map((scope) => (
-							<ScopeBadge key={scope} scope={scope} />
+						<span className="text-foreground-sub">{summary}</span>
+						<Button
+							variant="ghost"
+							size="xs"
+							aria-expanded={expanded}
+							aria-controls={reviewId}
+							onClick={() => setExpanded(!expanded)}
+							className="text-muted-foreground hover:text-foreground -my-1 h-6 gap-1 px-1.5 text-xs font-medium"
+						>
+							<ChevronRight
+								aria-hidden="true"
+								className={cn(
+									'h-3.5 w-3.5 transition-transform duration-200',
+									expanded && 'rotate-90',
+								)}
+							/>
+							{expanded ? 'Hide permissions' : 'Review permissions'}
+						</Button>
+					</p>
+				)}
+				{/* Flagged permissions never fold away. */}
+				{flagged.length > 0 && !expanded && (
+					<ul
+						aria-label="Permissions that can change data, run calls or administer"
+						className="mt-2 flex flex-wrap gap-1.5"
+					>
+						{flagged.map(({ permission, risk }) => (
+							<RiskChip key={permission} permission={permission} risk={risk} />
 						))}
 					</ul>
 				)}
-				{grant.granted.length > 0 && (
-					<p className="text-muted-foreground mt-1.5">
-						{riskNote}
-						{riskNote && ' '}
-						{grant.kind === 'defaults'
-							? 'Approving grants the default agent scopes.'
-							: 'Approving grants the recognised scopes listed.'}
-					</p>
-				)}
-				{grant.unrecognised.length > 0 && (
-					<div data-testid="unrecognised-scopes" className="mt-2.5">
-						<p className="text-muted-foreground mb-1.5">
-							Not recognised — won&apos;t be granted:
+				{riskNote && <p className="mt-1.5">{riskNote}</p>}
+				<div
+					id={reviewId}
+					role="group"
+					aria-label={listLabel}
+					hidden={!expanded}
+					data-testid="permission-review"
+					className="mt-2 space-y-2.5"
+				>
+					{expanded &&
+						groupPermissionsByArea(grant.granted).map(
+							({ area, permissions: inArea }) => (
+								<div key={area}>
+									<p
+										aria-hidden="true"
+										className="text-foreground-faint text-[11px] font-semibold"
+									>
+										{area}
+									</p>
+									<ul aria-label={area}>
+										{inArea.map((permission) => (
+											<PermissionRow
+												key={permission}
+												permission={permission}
+												description={descriptions.get(permission)}
+											/>
+										))}
+									</ul>
+								</div>
+							),
+						)}
+					{expanded && pending && (
+						<p>
+							{grant.kind === 'defaults'
+								? 'Approving grants the default agent permissions.'
+								: 'Approving grants the recognised permissions listed.'}
 						</p>
-						<ul aria-label="Unrecognised scopes" className="flex flex-wrap gap-1.5">
-							{grant.unrecognised.map((scope) => (
-								<li key={scope} className="max-w-full">
-									<Badge className="bg-muted text-muted-foreground border-border max-w-full [overflow-wrap:anywhere]">
-										{scope}
-									</Badge>
+					)}
+				</div>
+				{grant.unrecognised.length > 0 && (
+					<div data-testid="unrecognised-permissions" className="mt-2.5">
+						<p className="mb-1.5">Not recognised — won&apos;t be granted:</p>
+						<ul
+							aria-label="Unrecognised permissions"
+							className="flex flex-wrap gap-1.5"
+						>
+							{grant.unrecognised.map((permission) => (
+								<li key={permission} className="max-w-full">
+									<Tag className={cn(PERMISSION_CHIP, 'text-foreground-faint')}>
+										{permission}
+									</Tag>
 								</li>
 							))}
 						</ul>
 					</div>
 				)}
-				{grant.kind === 'requested' && grant.granted.length === 0 && (
+				{grant.kind === 'requested' && count === 0 && (
 					<p
-						data-testid="no-scopes-warning"
+						data-testid="no-permissions-warning"
 						className="text-foreground mt-2 flex items-start gap-2"
 					>
-						<TriangleAlert className="text-warning mt-0.5 h-3.5 w-3.5 shrink-0" />
+						<TriangleAlert className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0" />
 						<span>
-							None of these are recognised, so the agent will get no scopes. A request
-							that names any scope gets no defaults.
+							None of these are recognised, so the agent will get no permissions. A
+							request that names any permission gets no defaults.
 						</span>
 					</p>
 				)}
@@ -952,11 +1178,8 @@ function RequestedScopes({
 		);
 	}
 	return (
-		<div data-testid="requested-scopes" className="col-span-full min-w-0">
-			<dt className="text-muted-foreground/80 text-[10px] font-medium tracking-wider uppercase">
-				Scopes
-			</dt>
-			<dd className="text-foreground/90 mt-1 text-xs">{body}</dd>
+		<div data-testid="requested-permissions" className="min-w-0">
+			{body}
 		</div>
 	);
 }
@@ -975,11 +1198,7 @@ function FirstApiPanel({
 	const github = useGithubPick();
 	const offerGithub = !github.loading && github.pick != null;
 	const skip = (
-		<Button
-			variant="ghost"
-			onClick={() => onExit({ kind: 'skip' })}
-			className="text-muted-foreground hover:text-foreground"
-		>
+		<Button variant="ghost" size="sm" onClick={() => onExit({ kind: 'skip' })}>
 			Skip for now
 		</Button>
 	);
@@ -989,18 +1208,20 @@ function FirstApiPanel({
 			aria-labelledby={headingId}
 			aria-busy={github.loading || undefined}
 			data-testid="first-api-panel"
-			className="border-border/70 bg-background/40 mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[10px] border p-4"
+			className="bg-field mt-4 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg p-4"
 		>
-			<span
-				aria-hidden="true"
-				className="ring-border/60 grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white ring-1"
-			>
-				{github.loading ? null : offerGithub ? (
-					<VendorMark slug="github" size="md" />
-				) : (
-					<Plus className="h-4 w-4 text-neutral-700" />
-				)}
-			</span>
+			{github.loading ? (
+				<span aria-hidden="true" className="h-7 w-7 shrink-0" />
+			) : offerGithub ? (
+				<VendorMark slug="github" size="md" className="shrink-0" />
+			) : (
+				<span
+					aria-hidden="true"
+					className="bg-surface-tonal text-foreground-sub grid h-7 w-7 shrink-0 place-items-center rounded-md"
+				>
+					<Plus className="h-3.5 w-3.5" />
+				</span>
+			)}
 			<div className="min-w-[220px] flex-1">
 				<h3 id={headingId} className="text-foreground text-sm font-semibold">
 					{github.loading ? (
@@ -1034,18 +1255,23 @@ function FirstApiPanel({
 				{github.loading ? null : offerGithub && github.pick ? (
 					<>
 						<Button
+							size="sm"
 							onClick={() => {
 								if (github.pick) onExit({ kind: 'queue', apis: [github.pick] });
 							}}
 						>
 							Continue with GitHub
 						</Button>
-						<Button variant="secondary" onClick={() => onExit({ kind: 'tray' })}>
+						<Button
+							size="sm"
+							variant="secondary"
+							onClick={() => onExit({ kind: 'tray' })}
+						>
 							Add another API
 						</Button>
 					</>
 				) : (
-					<Button onClick={() => onExit({ kind: 'tray' })}>
+					<Button size="sm" onClick={() => onExit({ kind: 'tray' })}>
 						<Plus className="h-4 w-4" />
 						Add an API
 					</Button>

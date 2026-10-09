@@ -33,8 +33,8 @@ import structlog
 
 from jentic_one.control.repos import PermissionRuleSetRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.context import Context
-from jentic_one.shared.scopes import ORG_ADMIN
 
 logger = structlog.get_logger(__name__)
 

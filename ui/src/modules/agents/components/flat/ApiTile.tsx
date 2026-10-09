@@ -1,32 +1,45 @@
 /**
  * ApiTile — one API on the flat Agents surface; the credential serving it is a
- * labelled entry in the tile's footer, not a card of its own.
+ * labelled entry on the tile, not a card of its own.
  *
- * A dashed border means no calls are flowing, and its tint says why: amber for an
- * unfinished sign-in on this API, neutral when the agent above it is not serving.
+ * A borderless tonal card: identity on top, the facts (auth · operations, then
+ * credential · rules) under it, and one status marker with the quiet tonal verbs
+ * along the bottom. A tile that carries no calls — a paused binding, or an agent
+ * that is not serving — dims and desaturates, and its marker says which; an
+ * unfinished sign-in keeps full strength with a warning marker and the fix.
  * A suspension outranks the agent-level state.
  */
 import type { ReactNode } from 'react';
-import { KeyRound, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
+import { KeyRound, LogIn, PauseCircle, PlayCircle, Settings2 } from 'lucide-react';
 import { Button, Card, StatusText, Tag, Tooltip, VendorIcon } from '@/shared/ui';
-import { formatApiVersion } from '@/shared/lib';
+import { formatApiVersion, vendorIconPropsFor } from '@/shared/lib';
 import { cn, timeAgo } from '@/shared/lib/utils';
-import type { BindingRuleSummary } from '@/modules/agents/api';
+import type { BindingRuleSummary, BindingRulesState } from '@/modules/agents/api';
 import { idTail } from '@/shared/credentials/lib/credentialIdentity';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
+import { deriveTileStatus, ruleSummaryOf } from '@/modules/agents/lib/tileStatus';
+import { TileStatusText } from '@/modules/agents/components/flat/TileStatusMarker';
 import { multiCredentialExplanation } from '@/modules/agents/components/flat/MultiCredentialNote';
 
 interface ApiTileProps {
 	tile: ApiTileModel;
-	/** Effect breakdown of the operator rules on the tile's binding; undefined while
-	 * unknown, where the summary line is omitted rather than guessed. */
-	rules: BindingRuleSummary | undefined;
+	/** Effect breakdown of the operator rules on the tile's binding, or where its
+	 * read stands — the summary line is omitted rather than guessed while unknown. */
+	rules: BindingRulesState | undefined;
+	/** Re-read the binding's rules after a failed read. */
+	onRetryRules?: () => void;
 	/** Open the access sidebar for this tile's binding. */
 	onOpen: () => void;
-	/** Pause this binding (reversible — rules survive). */
-	onSuspend: () => void;
-	/** Lift a suspension on this binding. */
-	onResume: () => void;
+	/** Open the access sidebar focused on its rules editor (the Blocked fix). */
+	onOpenRules?: () => void;
+	/** Pause this binding (reversible — rules survive). Omitted when the viewer
+	 * may not manage the agent's bindings: the tile then offers no pause. */
+	onSuspend?: () => void;
+	/** Lift a suspension on this binding. Omitted like `onSuspend`. */
+	onResume?: () => void;
+	/** Whether to offer "Finish connecting" for a binding awaiting sign-in. Off
+	 * for a viewer who may not write credentials, matching the sidebar. */
+	canConnect?: boolean;
 	/** A suspend/resume on THIS tile's credential is in flight. */
 	bindingPending: boolean;
 	/** Whether the AGENT this tile belongs to is serving traffic. False for
@@ -44,7 +57,7 @@ interface ApiTileProps {
 	accountCount?: number;
 }
 
-/** The grant summary after the credential in the footer. A deny split rides
+/** The grant summary after the credential name. A deny split rides
  * along when one exists — an all-allow grant stays the plain count. A binding
  * governed by a shared rule set is summarised from the set, named first. */
 function grantSummary(rules: BindingRuleSummary | undefined): string | null {
@@ -109,7 +122,9 @@ function CredentialDetails({ tile, name }: { tile: ApiTileModel; name: string })
 export function ApiTile({
 	tile,
 	rules,
+	onRetryRules,
 	onOpen,
+	onOpenRules,
 	onSuspend,
 	onResume,
 	bindingPending,
@@ -118,8 +133,18 @@ export function ApiTile({
 	sidebarId,
 	accountLabel,
 	accountCount = 1,
+	canConnect = true,
 }: ApiTileProps) {
-	const summary = grantSummary(rules);
+	// The tile's ONE status, in precedence order — see `deriveTileStatus`.
+	const status = deriveTileStatus({
+		suspended: tile.suspended,
+		agentServing,
+		awaitingConsent: tile.awaitingConsent,
+		rules,
+	});
+	// The status already says "Blocked · no rules", so the meta line doesn't
+	// repeat it; elsewhere (e.g. a paused binding) it is the only place it shows.
+	const summary = status === 'blocked-no-rules' ? null : grantSummary(ruleSummaryOf(rules));
 	// The host is dropped when the title is only a humanisation of it (`slack.com` →
 	// `Slack.Com`), which would stack the same word twice.
 	const identity = [
@@ -128,9 +153,8 @@ export function ApiTile({
 	]
 		.filter(Boolean)
 		.join(' · ');
-	// Every tile names its credential, labelled, in its footer. With several
-	// credentials for one API the account label (which may carry an id tail) says
-	// which one this tile is.
+	// Every tile names its credential, labelled. With several credentials for one
+	// API the account label (which may carry an id tail) says which one this is.
 	const credentialLabel = (accountLabel ?? tile.credentialName).trim() || null;
 	// What the access IS, beside the status chip.
 	const capability = [
@@ -140,23 +164,29 @@ export function ApiTile({
 		.filter(Boolean)
 		.join(' · ');
 
+	// What stops calls on this tile right now: a pause on the binding, or an agent
+	// that serves nothing. Either way the card dims; the marker says which.
+	const idle = tile.suspended || !agentServing;
+
 	return (
 		<Card
 			data-testid="api-tile"
 			data-not-usable={tile.awaitingConsent || undefined}
 			data-not-serving={!agentServing || undefined}
+			data-suspended={tile.suspended || undefined}
+			selected={expanded}
 			className={cn(
-				'focus-within:ring-ring/50 hover:border-primary/50 relative flex h-full flex-col gap-3 p-4 transition-colors focus-within:ring-2',
-				// Neutral dash: the tile is intact and editable, it just isn't carrying
-				// calls. An unfinished sign-in tints the dash amber instead.
-				!agentServing && 'border-border bg-muted/25 border-dashed',
-				tile.awaitingConsent && 'border-warning/60 border-dashed',
+				'card-hover relative flex h-full flex-col gap-3 px-5 pt-5 pb-[18px]',
+				'focus-within:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
+				// Borderless, so "not carrying calls" can't be a dashed edge: the
+				// surface steps back (dimmer, desaturated) and the marker names why.
+				idle && 'bg-surface-1/55 hover:bg-surface-1/80',
 			)}
 		>
 			{/* Stretched overlay: the whole tile opens the sidebar. */}
 			<button
 				type="button"
-				className="absolute inset-0 cursor-pointer rounded-xl focus:outline-none"
+				className="absolute inset-0 cursor-pointer rounded-lg focus:outline-none"
 				aria-haspopup="dialog"
 				aria-expanded={expanded}
 				aria-controls={expanded ? sidebarId : undefined}
@@ -164,11 +194,22 @@ export function ApiTile({
 			>
 				<span className="sr-only">{tile.title} — open access details</span>
 			</button>
-			<div className="flex items-start gap-3">
-				<VendorIcon name={tile.title} vendor={tile.vendor} iconUrl={tile.iconUrl} />
-				<div className="min-w-0 flex-1">
+			<div className="grid grid-cols-[36px_minmax(0,1fr)] items-start gap-3">
+				<VendorIcon
+					{...vendorIconPropsFor(tile)}
+					size="md"
+					className={cn(idle && 'saturate-[.3]')}
+				/>
+				<div className="min-w-0">
 					<div className="flex min-w-0 items-center gap-1.5">
-						<h3 className="truncate text-sm font-semibold">{tile.title}</h3>
+						<h3
+							className={cn(
+								'font-heading mt-px truncate text-[14.5px] leading-[1.3] font-semibold',
+								idle ? 'text-foreground-idle' : 'text-foreground-name',
+							)}
+						>
+							{tile.title}
+						</h3>
 						{accountCount > 1 && (
 							// Above the overlay, so hover and focus reach the tooltip.
 							<Tooltip
@@ -184,174 +225,161 @@ export function ApiTile({
 					</div>
 					{/* Reserved whether or not the registry proves an identity pair,
 					    so an API without one doesn't sit shorter than its neighbours. */}
-					<p className="text-muted-foreground h-[1.125rem] truncate text-xs">
+					<p className="text-foreground-sub mt-0.5 h-[1.125rem] truncate text-[12.5px] leading-[1.4]">
 						{identity}
 					</p>
+					<p
+						className="text-foreground-sub h-[1.125rem] truncate text-xs leading-[1.5]"
+						data-testid="tile-capability"
+					>
+						{capability}
+					</p>
+					{/* A fixed ONE-line detail slot: grid rows size to their tallest cell,
+					    so an extra line here would stretch every tile beside it. */}
+					<div
+						className="flex h-[1.125rem] min-w-0 items-center gap-1.5 text-xs"
+						data-testid="tile-detail-slot"
+					>
+						{tile.awaitingConsent ? (
+							<StatusText
+								tone="warning"
+								size="sm"
+								plain
+								icon={LogIn}
+								className="min-w-0 truncate"
+							>
+								<span className="truncate">
+									Sign-in at {tile.vendor} unfinished
+								</span>
+							</StatusText>
+						) : (
+							<>
+								{credentialLabel ? (
+									// Above the overlay, so hover and focus reach the details. It
+									// gives way first: the name truncates before the rules do.
+									<Tooltip
+										content={
+											<CredentialDetails tile={tile} name={credentialLabel} />
+										}
+										className="relative z-10 min-w-0 shrink-[1000] items-center rounded-sm"
+										bubbleClassName="max-w-xs"
+									>
+										<span
+											className="flex min-w-0 items-center gap-1"
+											data-testid="tile-credential"
+										>
+											<KeyRound
+												aria-hidden="true"
+												className="text-foreground-faint h-3 w-3 shrink-0"
+											/>
+											<span className="text-foreground-sub shrink-0">
+												Credential<span className="sr-only">: </span>
+											</span>
+											<span
+												className="text-foreground-lighter min-w-0 truncate font-semibold"
+												data-testid="tile-credential-label"
+											>
+												{credentialLabel}
+											</span>
+										</span>
+									</Tooltip>
+								) : (
+									<span
+										className="text-foreground-sub flex shrink-0 items-center gap-1"
+										data-testid="tile-credential"
+									>
+										<KeyRound aria-hidden="true" className="h-3 w-3 shrink-0" />
+										No credential
+									</span>
+								)}
+								{summary && (
+									<>
+										<span
+											aria-hidden="true"
+											className="text-foreground-faint shrink-0"
+										>
+											·
+										</span>
+										<span
+											className="text-foreground-sub min-w-0 truncate"
+											data-testid="tile-rules-summary"
+										>
+											{summary}
+										</span>
+									</>
+								)}
+							</>
+						)}
+					</div>
 				</div>
-				{/* Above the overlay, so these verbs are reachable — and so the
-				    tile advertises that it can be acted on at all. */}
-				<div className="relative z-10 flex shrink-0 items-center gap-0.5">
-					{tile.suspended ? (
-						<Tooltip
-							content="Resume this binding — rules survived; access is restored."
-							interactiveChild
-						>
-							<Button
-								variant="ghost"
-								size="sm"
-								loading={bindingPending}
-								onClick={onResume}
-								aria-label={`Resume ${tile.title} access`}
-								className="text-muted-foreground hover:text-foreground px-1.5"
-							>
-								<PlayCircle className="h-4 w-4" />
-							</Button>
-						</Tooltip>
-					) : (
-						<Tooltip
-							content="Pause this binding — reversible; rules survive and resume restores access."
-							interactiveChild
-						>
-							<Button
-								variant="ghost"
-								size="sm"
-								loading={bindingPending}
-								onClick={onSuspend}
-								aria-label={`Pause ${tile.title} access`}
-								className="text-muted-foreground hover:text-foreground px-1.5"
-							>
-								<PauseCircle className="h-4 w-4" />
-							</Button>
-						</Tooltip>
+			</div>
+
+			<div className="mt-auto flex items-center justify-end gap-1.5">
+				{/* Exactly one marker (`deriveTileStatus`): suspended → not serving →
+				    sign-in needed → checking / unavailable → blocked → ready. Blocked is
+				    a button to the rules; unavailable carries a Retry. */}
+				<span className="mr-auto min-w-0">
+					<TileStatusText
+						status={status}
+						apiTitle={tile.title}
+						onOpenRules={onOpenRules ?? onOpen}
+						onRetry={onRetryRules}
+					/>
+				</span>
+				{/* Above the overlay, so these verbs are reachable — and so the tile
+				    advertises that it can be acted on at all. */}
+				<div className="relative z-10 flex shrink-0 items-center gap-1.5">
+					{tile.awaitingConsent && canConnect && (
+						<Button variant="tonal" size="xs" onClick={onOpen}>
+							Finish connecting →
+						</Button>
 					)}
+					{tile.suspended
+						? onResume && (
+								<Tooltip
+									content="Resume this binding — rules survived; access is restored."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="icon-xs"
+										loading={bindingPending}
+										onClick={onResume}
+										aria-label={`Resume ${tile.title} access`}
+									>
+										<PlayCircle className="h-3.5 w-3.5" />
+									</Button>
+								</Tooltip>
+							)
+						: onSuspend && (
+								<Tooltip
+									content="Pause this binding — reversible; rules survive and resume restores access."
+									interactiveChild
+								>
+									<Button
+										variant="tonal"
+										size="icon-xs"
+										loading={bindingPending}
+										onClick={onSuspend}
+										aria-label={`Pause ${tile.title} access`}
+									>
+										<PauseCircle className="h-3.5 w-3.5" />
+									</Button>
+								</Tooltip>
+							)}
 					<Tooltip
 						content="Manage access — credential, rules and tester."
 						interactiveChild
 					>
 						<Button
-							variant="ghost"
-							size="sm"
+							variant="tonal"
+							size="icon-xs"
 							onClick={onOpen}
 							aria-label={`Manage ${tile.title} access`}
-							className="text-muted-foreground hover:text-foreground px-1.5"
 						>
-							<Settings2 className="h-4 w-4" />
+							<Settings2 className="h-3.5 w-3.5" />
 						</Button>
 					</Tooltip>
-				</div>
-			</div>
-
-			<div className="border-border/60 mt-auto space-y-1.5 border-t pt-3">
-				<div className="flex items-center justify-between gap-2">
-					{/* Exactly one chip, in precedence order: an unfinished sign-in outranks a
-					    pause, which outranks the agent's own state. */}
-					{tile.awaitingConsent ? (
-						<StatusText tone="warning" data-testid="tile-status-chip">
-							Sign-in needed
-						</StatusText>
-					) : tile.suspended ? (
-						// Muted, not tinted: a pause is a state, not a fault, and it ranks
-						// above the agent's own state.
-						<StatusText tone="muted" data-testid="tile-status-chip">
-							Suspended · not serving
-						</StatusText>
-					) : !agentServing ? (
-						// A green `Ready` on an agent that serves nothing is the one claim
-						// this tile must never make.
-						<StatusText tone="muted" data-testid="tile-status-chip">
-							Not serving
-						</StatusText>
-					) : (
-						<StatusText tone="success" data-testid="tile-status-chip">
-							Ready
-						</StatusText>
-					)}
-					{capability && (
-						<span className="text-muted-foreground truncate text-xs">{capability}</span>
-					)}
-				</div>
-				{/* A fixed ONE-line detail slot: grid rows size to their tallest cell, so an
-				    extra line here would stretch every tile beside it. */}
-				<div
-					className="flex h-[1.125rem] min-w-0 items-center gap-1.5 text-xs"
-					data-testid="tile-detail-slot"
-				>
-					{tile.awaitingConsent ? (
-						<>
-							<span className="text-warning truncate">
-								Sign-in at {tile.vendor} unfinished
-							</span>
-							<button
-								type="button"
-								className="text-primary relative z-10 w-fit shrink-0 cursor-pointer font-medium hover:underline"
-								onClick={onOpen}
-							>
-								Finish connecting →
-							</button>
-						</>
-					) : (
-						<>
-							{credentialLabel ? (
-								// Above the overlay, so hover and focus reach the details. It
-								// gives way first: the name truncates before the rules do.
-								<Tooltip
-									content={
-										<CredentialDetails tile={tile} name={credentialLabel} />
-									}
-									className="relative z-10 min-w-0 shrink-[1000] items-center rounded-sm"
-									bubbleClassName="max-w-xs"
-								>
-									<span
-										className="flex min-w-0 items-center gap-1"
-										data-testid="tile-credential"
-									>
-										<KeyRound
-											aria-hidden="true"
-											className="text-muted-foreground h-3 w-3 shrink-0"
-										/>
-										<span className="text-muted-foreground shrink-0">
-											Credential<span className="sr-only">: </span>
-										</span>
-										<span
-											className="text-foreground min-w-0 truncate font-medium"
-											data-testid="tile-credential-label"
-										>
-											{credentialLabel}
-										</span>
-									</span>
-								</Tooltip>
-							) : (
-								<span
-									className="text-muted-foreground flex shrink-0 items-center gap-1"
-									data-testid="tile-credential"
-								>
-									<KeyRound aria-hidden="true" className="h-3 w-3 shrink-0" />
-									No credential
-								</span>
-							)}
-							{summary && (
-								<>
-									<span
-										aria-hidden="true"
-										className="text-muted-foreground shrink-0"
-									>
-										·
-									</span>
-									<span
-										data-testid="tile-rules-summary"
-										className={cn(
-											'min-w-0 truncate',
-											rules?.total === 0
-												? 'text-warning'
-												: 'text-muted-foreground',
-										)}
-									>
-										{summary}
-									</span>
-								</>
-							)}
-						</>
-					)}
 				</div>
 			</div>
 		</Card>

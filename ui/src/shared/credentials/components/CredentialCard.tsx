@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Link2, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { AgentBadge, Badge, Button, Skeleton } from '@/shared/ui';
+import { Link2, Moon, RefreshCw, Settings, Trash2, Users } from 'lucide-react';
+import { Badge, Button, Card, Skeleton, StatusText, Tag, VendorIcon } from '@/shared/ui';
 import { apiRefDisplayName, formatApiVersion } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import {
@@ -25,6 +25,9 @@ interface CredentialCardProps {
 	/** How many agents hold this credential: `undefined` still resolving
 	 * (skeleton), `null` unprovable (the clause is omitted), a number exact. */
 	usedByAgentCount?: number | null;
+	/** `usedByAgentCount` covers only the viewer's own agents, so it reads "of
+	 * your agents" (see `CredentialMetaLine`). */
+	usedByYoursOnly?: boolean;
 	/** Calls brokered with this credential over the last 7 days — same contract. */
 	callsLast7d?: number | null;
 	/** Shared with the viewer rather than theirs to change: the card carries a
@@ -37,7 +40,7 @@ interface CredentialCardProps {
  *
  * Anatomy mirrors the rest of jentic-one's resource cards:
  *
- *   [vendor badge] [name (own line, wraps by word)]
+ *   [vendor icon] [name (own line, wraps by word)]
  *                  [status badge · type badge (wrapping row)]
  *                  [api name · version]
  *   [where the secret is injected, in plain language]
@@ -57,6 +60,7 @@ export function CredentialCard({
 	onDelete,
 	onConnect,
 	usedByAgentCount,
+	usedByYoursOnly = false,
 	callsLast7d,
 	readOnly = false,
 }: CredentialCardProps) {
@@ -86,11 +90,13 @@ export function CredentialCard({
 	const subtitle = credentialAuthPlacement(cred);
 
 	return (
-		<div
+		<Card
+			hoverable
+			outlined={pendingSignIn}
 			data-testid="credential-card"
 			title={tuple}
 			className={cn(
-				'group border-border/60 bg-card hover:border-border focus-within:border-primary/50 relative flex h-full min-w-0 flex-col gap-3 overflow-hidden rounded-xl border p-4 text-left transition-all hover:shadow-sm',
+				'group relative flex h-full min-w-0 flex-col gap-3 p-4 text-left focus-within:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
 				pendingSignIn && 'border-dashed opacity-80',
 			)}
 		>
@@ -105,31 +111,52 @@ export function CredentialCard({
 					aria-hidden="true"
 					data-testid="credential-card-overlay"
 					onClick={(): void => onEdit(cred)}
-					className="absolute inset-0 z-0 rounded-xl focus:outline-none"
+					className="absolute inset-0 z-0 cursor-pointer rounded-lg focus:outline-none"
 				/>
 			)}
 
 			<div className="pointer-events-none relative flex items-start gap-3">
-				<AgentBadge id={vendor} name={vendor} kind="API" size="lg" className="rounded-xl" />
+				<VendorIcon name={vendor} vendor={vendor} size="md" />
 				<div className="min-w-0 flex-1">
 					{/* Wraps rather than truncates: the tail of a name ("… staging" vs
 					    "… prod") is often the only thing telling two cards apart. The
 					    title owns its full line — sharing it with the status/type chips
 					    starved it to one character per line in narrow grid columns. */}
-					<h3 className="font-heading text-foreground text-sm leading-snug font-semibold break-words">
+					<h3 className="font-heading text-foreground-name text-sm leading-snug font-semibold break-words">
 						{title}
 					</h3>
 					<div
-						className="mt-1 flex flex-wrap items-center gap-1.5"
+						className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5"
 						data-testid="credential-card-badges"
 					>
-						{connected && <Badge variant="success">Connected</Badge>}
-						{pendingSignIn && <Badge variant="pending">Pending sign-in</Badge>}
+						{connected && (
+							<StatusText tone="success" size="xs">
+								Connected
+							</StatusText>
+						)}
+						{pendingSignIn && (
+							<StatusText tone="warning" size="xs">
+								Pending sign-in
+							</StatusText>
+						)}
 						<CredentialTypeBadge credential={cred} />
+						{cred.oauth_app_registration_name && (
+							<Badge
+								variant="default"
+								// Caps at the row, not a fixed width, so a phone-width card
+								// doesn't clip a name that would fit.
+								className="max-w-full min-w-0"
+								title={cred.oauth_app_registration_name}
+							>
+								<span className="truncate">
+									Source: {cred.oauth_app_registration_name}
+								</span>
+							</Badge>
+						)}
 						{readOnly && <SharedWithYouBadge />}
 					</div>
 					{apiLine && (
-						<p className="text-muted-foreground mt-1 truncate text-xs">{apiLine}</p>
+						<p className="text-foreground-sub mt-1 truncate text-xs">{apiLine}</p>
 					)}
 				</div>
 			</div>
@@ -138,10 +165,11 @@ export function CredentialCard({
 				{subtitle}
 			</p>
 
-			<div className="border-border/50 relative mt-auto flex items-center gap-2 border-t pt-3">
+			<div className="border-hairline relative mt-auto flex items-center gap-2 border-t pt-3">
 				<CredentialMetaLine
 					cred={cred}
 					usedByAgentCount={usedByAgentCount}
+					yoursOnly={usedByYoursOnly}
 					callsLast7d={callsLast7d}
 					stacked
 					className="flex-1"
@@ -154,20 +182,20 @@ export function CredentialCard({
 					readOnly={readOnly}
 				/>
 			</div>
-		</div>
+		</Card>
 	);
 }
 
 /** Marks a credential listed for the viewer that someone else owns. */
 export function SharedWithYouBadge() {
 	return (
-		<Badge
-			variant="default"
+		<Tag
+			icon={Users}
 			data-testid="credential-shared-badge"
 			title="Shared with you — only its owner or an admin can edit or delete it"
 		>
 			Shared with you
-		</Badge>
+		</Tag>
 	);
 }
 
@@ -210,6 +238,9 @@ export function credentialIsPendingSignIn(cred: Credential): boolean {
 interface CredentialMetaLineProps {
 	cred: Credential;
 	usedByAgentCount?: number | null;
+	/** The count covers only the viewer's own agents — the host counts from a
+	 * roster that holds no other user's agents — so it reads "of your agents". */
+	yoursOnly?: boolean;
 	callsLast7d?: number | null;
 	/** Print the id tail — for siblings of one API that may share a name. */
 	showIdTail?: boolean;
@@ -230,6 +261,7 @@ type MetaClause = { key: string; node: ReactNode };
 export function CredentialMetaLine({
 	cred,
 	usedByAgentCount,
+	yoursOnly = false,
 	callsLast7d,
 	showIdTail = false,
 	stacked = false,
@@ -239,7 +271,11 @@ export function CredentialMetaLine({
 	if (!cred.active)
 		usage.push({
 			key: 'inactive',
-			node: <span className="text-warning font-medium">Inactive</span>,
+			node: (
+				<StatusText tone="caution" icon={Moon} plain>
+					Inactive
+				</StatusText>
+			),
 		});
 	if (usedByAgentCount === undefined)
 		usage.push({ key: 'used-by', node: <Skeleton className="h-3 w-24" /> });
@@ -248,9 +284,13 @@ export function CredentialMetaLine({
 			key: 'used-by',
 			node: (
 				<span data-testid="cred-used-by">
-					{usedByAgentCount === 0
-						? 'used by no agents'
-						: `used by ${usedByAgentCount} agent${usedByAgentCount === 1 ? '' : 's'}`}
+					{yoursOnly
+						? usedByAgentCount === 0
+							? 'used by none of your agents'
+							: `used by ${usedByAgentCount} of your agents`
+						: usedByAgentCount === 0
+							? 'used by no agents'
+							: `used by ${usedByAgentCount} agent${usedByAgentCount === 1 ? '' : 's'}`}
 				</span>
 			),
 		});
@@ -346,8 +386,8 @@ export function CredentialActions({
 		<div className="relative z-10 flex shrink-0 items-center gap-1">
 			{isOAuth && (
 				<Button
-					variant={connected ? 'secondary' : 'primary'}
-					size="sm"
+					variant={connected ? 'tonal' : 'outline'}
+					size="icon-xs"
 					onClick={stop((): void => onConnect(cred))}
 					aria-label={`${connected ? 'Reconnect' : 'Connect'} ${cred.name}`}
 					title={
@@ -358,26 +398,30 @@ export function CredentialActions({
 								: 'Connect via OAuth'
 					}
 				>
-					{managed ? <Link2 className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
+					{managed ? (
+						<Link2 className="h-3.5 w-3.5" />
+					) : (
+						<RefreshCw className="h-3.5 w-3.5" />
+					)}
 				</Button>
 			)}
 			{!readOnly && (
 				<>
 					<Button
-						variant="secondary"
-						size="sm"
+						variant="tonal"
+						size="icon-xs"
 						onClick={stop((): void => onEdit(cred))}
 						aria-label={`Edit credential ${cred.name}`}
 					>
-						<Settings className="h-4 w-4" />
+						<Settings className="h-3.5 w-3.5" />
 					</Button>
 					<Button
 						variant="danger"
-						size="sm"
+						size="icon-xs"
 						onClick={stop((): void => onDelete(cred))}
 						aria-label={`Delete credential ${cred.name}`}
 					>
-						<Trash2 className="h-4 w-4" />
+						<Trash2 className="h-3.5 w-3.5" />
 					</Button>
 				</>
 			)}
@@ -422,9 +466,9 @@ export function credentialAuthPlacement(cred: Credential): string {
 /** Card-shaped skeleton matching `CredentialCard`'s layout. */
 export function CredentialCardSkeleton() {
 	return (
-		<div className="border-border/60 bg-card flex h-full min-w-0 flex-col gap-3 rounded-xl border p-4">
+		<div className="bg-surface-1 flex h-full min-w-0 flex-col gap-3 rounded-lg p-4">
 			<div className="flex items-center gap-3">
-				<div className="bg-muted h-11 w-11 shrink-0 animate-pulse rounded-xl" />
+				<div className="bg-muted rounded-field h-9 w-9 shrink-0 animate-pulse" />
 				<div className="min-w-0 flex-1 space-y-2">
 					<div className="bg-muted h-4 w-2/3 animate-pulse rounded" />
 					<div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
@@ -434,7 +478,7 @@ export function CredentialCardSkeleton() {
 				<div className="bg-muted h-3 w-full animate-pulse rounded" />
 				<div className="bg-muted h-3 w-3/5 animate-pulse rounded" />
 			</div>
-			<div className="border-border/50 mt-auto flex items-center gap-3 border-t pt-3">
+			<div className="border-hairline mt-auto flex items-center gap-3 border-t pt-3">
 				<div className="bg-muted h-3 w-24 animate-pulse rounded" />
 				<div className="ml-auto flex gap-1">
 					<div className="bg-muted h-7 w-7 animate-pulse rounded-md" />

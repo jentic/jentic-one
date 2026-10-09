@@ -16,7 +16,6 @@ import {
 } from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
 import {
-	acknowledgeEvent,
 	cancelJob,
 	getExecution,
 	getJob,
@@ -27,6 +26,7 @@ import {
 	listEvents,
 	listExecutions,
 	listJobs,
+	MonitorApiError,
 	resolveActor,
 	streamEvents,
 	type ListActorsParams,
@@ -37,7 +37,6 @@ import {
 	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
 import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
-import { useAgentStreamOptional } from '@/shared/lib';
 import { useCanListActors } from '@/shared/hooks';
 import { toJobStatus } from '@/modules/monitor/api/types';
 import type {
@@ -59,11 +58,10 @@ export const monitorKeys = {
 	execution: (id: string) => [...monitorKeys.all, 'execution', id] as const,
 	jobs: (params: ListJobsParams) => [...monitorKeys.all, 'jobs', params] as const,
 	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
-	// Derives from the shared cross-module root: the agent-stream provider's
-	// `acknowledge` (rail/toast) invalidates that root, so the two prefixes
-	// must be the same list or they'd silently drift apart.
+	// Derives from the shared cross-module root, so a cross-module
+	// invalidation of that root reaches every events list here too.
 	events: (params: ListEventsParams) => [...sharedQueryKeys.monitorEventsRoot, params] as const,
-	// Same root, so an acknowledge anywhere also refreshes the Activity feed.
+	// Same root, so that invalidation also refreshes the Activity feed.
 	eventFeed: (params: Omit<ListEventsParams, 'cursor'>) =>
 		[...sharedQueryKeys.monitorEventsRoot, 'feed', params] as const,
 	audit: (params: ListAuditParams) => [...monitorKeys.all, 'audit', params] as const,
@@ -93,11 +91,24 @@ export function useExecutions(
 	});
 }
 
+/**
+ * One execution by id. A 404 is the answer (the record does not exist or is
+ * not visible to the caller), so it is never retried: the detail shows "Call
+ * not found" at once. Any other failure follows the client's default retry.
+ */
 export function useExecution(executionId: string | null) {
+	const defaultRetry = useQueryClient().getDefaultOptions().queries?.retry;
 	return useQuery<ExecutionResponse>({
 		queryKey: monitorKeys.execution(executionId ?? ''),
 		queryFn: () => getExecution(executionId as string),
 		enabled: executionId != null,
+		retry: (failureCount, error) => {
+			if (error instanceof MonitorApiError && error.status === 404) return false;
+			if (typeof defaultRetry === 'function') return defaultRetry(failureCount, error);
+			if (typeof defaultRetry === 'number') return failureCount < defaultRetry;
+			// TanStack's own default when the client sets none: three retries.
+			return defaultRetry ?? failureCount < 3;
+		},
 	});
 }
 
@@ -132,12 +143,17 @@ export function useUsageStats(
 /**
  * `pollWhileActive` (ms) re-polls only while the loaded page still holds a
  * queued/running job, so a settled queue stops hitting the backend.
+ * `enabled: false` (a caller without `jobs:read`) sends nothing.
  */
 export function useJobs(
 	params: ListJobsParams = {},
-	{ pollWhileActive = false }: { pollWhileActive?: number | false } = {},
+	{
+		pollWhileActive = false,
+		enabled = true,
+	}: { pollWhileActive?: number | false; enabled?: boolean } = {},
 ) {
 	return useQuery<JobListResponse>({
+		enabled,
 		queryKey: monitorKeys.jobs(params),
 		queryFn: () => listJobs(params),
 		placeholderData: keepPreviousData,
@@ -212,36 +228,6 @@ export function useEventFeed(
 		initialPageParam: null as string | null,
 		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
 		placeholderData: keepPreviousData,
-	});
-}
-
-/** Acknowledge an event (`PATCH /events/{id}`); invalidates the events feeds. */
-export function useAcknowledgeEvent() {
-	const queryClient = useQueryClient();
-	// Provider-optional: when the app shell's stream is mounted, flip its
-	// in-memory copy too — the SSE watermark poll never re-delivers an old
-	// event on an ack flip, so without this the rail's failure pill keeps
-	// counting an event the operator just acknowledged from the Events tab.
-	const stream = useAgentStreamOptional();
-	return useMutation({
-		mutationFn: (eventId: string) => acknowledgeEvent(eventId),
-		onSuccess: (event) => {
-			toast({
-				title: 'Event acknowledged',
-				description: event.summary,
-				variant: 'success',
-			});
-			queryClient.invalidateQueries({ queryKey: [...monitorKeys.all, 'events'] });
-			stream?.resolveEvent(event.event_id);
-		},
-		onError: (error: unknown) => {
-			toast({
-				title: 'Acknowledge failed',
-				description:
-					error instanceof Error ? error.message : 'Could not acknowledge the event.',
-				variant: 'error',
-			});
-		},
 	});
 }
 

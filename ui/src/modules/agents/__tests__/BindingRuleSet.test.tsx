@@ -140,6 +140,14 @@ async function tileSummary(title: string): Promise<HTMLElement> {
 	return within(tile).findByTestId('tile-rules-summary');
 }
 
+async function tileStatus(title: string): Promise<HTMLElement> {
+	const tile = (await screen.findAllByTestId('api-tile')).find((el) =>
+		within(el).queryByRole('heading', { name: title }),
+	);
+	if (!tile) throw new Error(`no tile titled ${title}`);
+	return within(tile).findByTestId('tile-status-chip');
+}
+
 describe('a credential binding governed by a shared rule set', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
@@ -226,10 +234,11 @@ describe('a credential binding governed by a shared rule set', () => {
 
 		expect(await screen.findByText('Rule set detached')).toBeInTheDocument();
 		// The inline editor takes over, and the empty inline list is now the truth.
-		expect(await inDialog.findByText('No rules yet — add one below.')).toBeInTheDocument();
+		expect(await inDialog.findByText('No rules yet')).toBeInTheDocument();
 		expect(inDialog.queryByTestId('binding-rule-set-panel')).not.toBeInTheDocument();
+		// The tile's status chip now says it: every call is blocked.
 		await waitFor(async () => {
-			expect(await tileSummary('Stripe')).toHaveTextContent('No rules — all calls blocked');
+			expect(await tileStatus('Stripe')).toHaveTextContent('Blocked · no rules');
 		});
 	});
 
@@ -353,7 +362,8 @@ describe('a governed binding on a credential shared with the viewer', () => {
 					first_name: 'View',
 					last_name: 'Er',
 					active: true,
-					permissions: [],
+					// A member: manages agents and credentials, but is not an org admin.
+					permissions: ['agents:read', 'agents:write', 'credentials:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,

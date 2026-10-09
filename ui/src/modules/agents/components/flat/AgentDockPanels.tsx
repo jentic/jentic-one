@@ -2,10 +2,11 @@
  * AgentDockPanels — the dock's sheet surfaces, each hosting one agent panel (the
  * API key's metadata-always, plaintext-once rule lives in its panel). An archived
  * agent can never authenticate, so for it the MCP sheet drops the connect
- * invitation and Permissions drops the scope editor — both keep the history.
+ * invitation and Permissions drops the permission editor — both keep the history.
  */
 import { Fingerprint, X } from 'lucide-react';
-import { Button, DetailSection, SheetPrimitive } from '@/shared/ui';
+import { Button, DetailSection, SheetBody, SheetHeader, SheetPrimitive } from '@/shared/ui';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { useIsGeneratingAgentApiKey, type AgentEntity } from '@/modules/agents/api';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
@@ -13,7 +14,7 @@ import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPa
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { AgentProvenance } from '@/modules/agents/components/detail/AgentProvenance';
 import { McpPanel, McpSessionsCard } from '@/modules/agents/components/detail/McpPanel';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { PermissionsCard } from '@/modules/agents/components/PermissionsCard';
 import { ConnectedClientsCard } from '@/modules/agents/components/detail/ConnectedClientsCard';
 
 /** Shared chrome: header with title/subtitle + close, scrollable body. */
@@ -32,24 +33,27 @@ function DockSheetFrame({
 }) {
 	return (
 		<div className="flex h-full flex-col">
-			<header className="border-border flex items-start justify-between gap-3 border-b px-5 py-4">
+			<SheetHeader className="justify-between">
 				<div className="min-w-0">
-					<h2 id={headingId} className="text-foreground text-base font-semibold">
+					<h2
+						id={headingId}
+						className="font-heading text-foreground-name text-base font-semibold"
+					>
 						{title}
 					</h2>
 					<p className="text-muted-foreground truncate text-xs">{subtitle}</p>
 				</div>
 				<Button
 					variant="ghost"
-					size="sm"
+					size="icon-xs"
 					aria-label="Close"
 					onClick={onClose}
-					className="text-muted-foreground hover:text-foreground"
+					className="shrink-0"
 				>
 					<X className="h-4 w-4" />
 				</Button>
-			</header>
-			<div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+			</SheetHeader>
+			<SheetBody>{children}</SheetBody>
 		</div>
 	);
 }
@@ -128,7 +132,9 @@ export function AgentPermissionsSheet({
 	onClose: () => void;
 }) {
 	const headingId = 'agent-permissions-sheet-title';
-	// Archive sweeps this agent's scope grants and OAuth consents, so for an
+	// Replacing an agent's permissions needs `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
+	// Archive sweeps this agent's permission grants and OAuth consents, so for an
 	// archived agent the sheet is a record, never a grant invite.
 	const isArchived = agent.status === 'archived';
 	return (
@@ -145,21 +151,26 @@ export function AgentPermissionsSheet({
 				onClose={onClose}
 			>
 				<div className="space-y-4">
-					{/* Platform scopes and upstream API access are different permission models
+					{/* Platform permissions and upstream API access are different models
 					    and users conflate them — the copy must name the difference. */}
 					<p className="text-muted-foreground text-sm">
-						Scopes govern what {agent.name} may do on the Jentic control plane itself —
-						they have nothing to do with any upstream API. What it may call upstream is
-						set by the API tiles on the main screen (each tile&rsquo;s credential and
-						rules).
+						Permissions govern what {agent.name} may do on the Jentic control plane
+						itself — they have nothing to do with any upstream API. What it may call
+						upstream is set by the API tiles on the main screen (each tile&rsquo;s
+						credential and rules).
 					</p>
 					{isArchived && (
 						<p className="text-muted-foreground text-sm">
-							Archiving swept this agent&rsquo;s scope grants and OAuth consents —
-							what remains below is history.
+							Archiving swept this agent&rsquo;s permission grants and OAuth consents
+							— what remains below is history.
 						</p>
 					)}
-					<ScopesCard actorId={agent.id} actorName={agent.name} canEdit={!isArchived} />
+					<PermissionsCard
+						actorId={agent.id}
+						actorName={agent.name}
+						canEdit={!isArchived && canManage}
+						pending={agent.status === 'pending'}
+					/>
 					<ConnectedClientsCard agentId={agent.id} agentName={agent.name} />
 				</div>
 			</DockSheetFrame>

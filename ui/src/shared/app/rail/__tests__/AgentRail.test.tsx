@@ -24,10 +24,8 @@ import {
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
-	severityStripeClass,
 	streamDayKey,
-	unacknowledgedFailureCount,
-	useAgentStream,
+	recentFailureCount,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	writeToastScope,
@@ -68,7 +66,6 @@ function wireEvent(
 ): EventResponse {
 	return {
 		_links: { self: `/events/${over.event_id}` },
-		acknowledged: false,
 		created_at: new Date().toISOString(),
 		requires_action: false,
 		severity: 'info' as EventResponse['severity'],
@@ -88,7 +85,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		acknowledged: false,
 		groupKey: 'execution:execution.completed:',
 	};
 	return { ...base, ...partial };
@@ -135,26 +131,6 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(severityForWire('error')).toBe('error');
 		expect(severityForWire('warning')).toBe('warning');
 		expect(severityForWire('info')).toBe('info');
-	});
-
-	// Issue #907: critical and error shared an IDENTICAL rail stripe
-	// (`border-l-danger` for both, same width) — an operator had no visual way
-	// to tell a single failure from a chronic-failure escalation without
-	// opening the row. Critical now renders a wider stripe on top of the same
-	// danger colour, so the two failure tiers stay visually related but not
-	// indistinguishable.
-	it('severityStripeClass gives critical a distinct treatment from error', () => {
-		const critical = severityStripeClass('critical');
-		const error = severityStripeClass('error');
-		expect(critical).not.toBe(error);
-		// Both stay in the danger colour family — they're still both failures.
-		expect(critical).toContain('border-l-danger');
-		expect(error).toContain('border-l-danger');
-	});
-
-	it('severityStripeClass gives warning and info their own colours', () => {
-		expect(severityStripeClass('warning')).toContain('border-l-warning');
-		expect(severityStripeClass('info')).toContain('border-l-primary');
 	});
 
 	it('adaptEvent lifts tokens, links and flags off the wire shape', () => {
@@ -239,20 +215,16 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(isFailureSeverity('info')).toBe(false);
 	});
 
-	it('unacknowledgedFailureCount counts only unacked error/critical (#671)', () => {
+	it('recentFailureCount counts error/critical in the loaded window (#671)', () => {
 		const events = [
 			makeEvent({ id: 'e1', severity: 'error' }),
 			makeEvent({ id: 'c1', severity: 'critical' }),
-			makeEvent({ id: 'e2', severity: 'error', acknowledged: true }),
+			makeEvent({ id: 'e2', severity: 'error' }),
 			makeEvent({ id: 'w1', severity: 'warning' }),
 			makeEvent({ id: 'i1', severity: 'info' }),
 		];
-		expect(unacknowledgedFailureCount(events)).toBe(2);
-		expect(unacknowledgedFailureCount([])).toBe(0);
-		// Acknowledging every failure drops the count to zero.
-		expect(unacknowledgedFailureCount(events.map((e) => ({ ...e, acknowledged: true })))).toBe(
-			0,
-		);
+		expect(recentFailureCount(events)).toBe(3);
+		expect(recentFailureCount([])).toBe(0);
 	});
 
 	it('formatFailurePillCount caps at 99+ and clamps pathological inputs', () => {
@@ -354,7 +326,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 	});
 
-	it('inlineActionsFor falls back to Acknowledge for action-required non-decision events', () => {
+	it('inlineActionsFor gives an action-required non-decision event only a passive deep-link', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
 			kind: 'execution',
@@ -362,12 +334,16 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			requiresAction: true,
 			tokens: { execution_id: 'exec_1' },
 		});
-		expect(inlineActionsFor(ev).map((a) => a.kind)).toContain('acknowledge');
+		const kinds = inlineActionsFor(ev).map((a) => a.kind);
+		// A bare failure offers the record it references, nothing emphasised.
+		expect(kinds).toContain('view_execution');
+		expect(kinds).not.toContain('view_agent');
+		expect(inlineActionsFor(ev).every((a) => !a.primary)).toBe(true);
 	});
 
 	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
 		// A DCR self-registration event carries the agent as the ACTOR, not in
-		// `data` — the token must still land so Review can deep-link.
+		// `data` — the token must still land so View agent can deep-link.
 		const ev = adaptEvent(
 			wireEvent({
 				event_id: 'evt_agent',
@@ -392,7 +368,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(explicit.tokens.agent_id).toBe('agt_43');
 		// But an unguarded `data.actor_id` must NOT outrank the guarded actor:
 		// some emitters put the deciding USER's id in data.actor_id, and routing
-		// Review to /agents/<user_id> would 404.
+		// View agent to /agents/<user_id> would 404.
 		const mixed = adaptEvent(
 			wireEvent({
 				event_id: 'evt_agent3',
@@ -417,25 +393,18 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(unguarded.tokens.agent_id).toBeUndefined();
 	});
 
-	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {
+	it('inlineActionsFor links a self-registered agent to the Agents page', () => {
 		const ev = makeEvent({
 			type: 'agent.self_registered',
 			kind: 'agent',
 			requiresAction: true,
 			tokens: { agent_id: 'agt_42' },
 		});
+		// A plain deep-link: the Agents page carries whether it is still pending.
 		const actions = inlineActionsFor(ev);
-		const kinds = actions.map((a) => a.kind);
-		expect(kinds).toContain('view_agent');
-		expect(kinds).toContain('acknowledge');
-		// Review deep-links to the agent as selected on the Agents page.
-		const review = actions.find((a) => a.kind === 'view_agent');
-		expect(review?.label).toBe('Review');
-		expect(review?.href?.(ev)).toBe('/agents?agent=agt_42');
-		// Once acknowledged the row keeps only the passive deep-link.
-		const acked = inlineActionsFor({ ...ev, acknowledged: true });
-		expect(acked.map((a) => a.kind)).toEqual(['view_agent']);
-		expect(acked[0]?.label).toBe('View agent');
+		expect(actions.map((a) => a.kind)).toEqual(['view_agent']);
+		expect(actions[0]?.label).toBe('View agent');
+		expect(actions[0]?.href?.(ev)).toBe('/agents?agent=agt_42');
 	});
 
 	it('adaptEvent lifts the approval id, falling back to the review_url', () => {
@@ -471,13 +440,9 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			},
 		});
 		const actions = inlineActionsFor(ev);
-		expect(actions.map((a) => a.kind)).toEqual(['view_approval', 'acknowledge']);
+		expect(actions.map((a) => a.kind)).toEqual(['view_approval']);
 		expect(actions[0]?.label).toBe('Review');
 		expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/exap_1');
-		// Once settled the row keeps a passive link to the approval only.
-		const acked = inlineActionsFor({ ...ev, acknowledged: true });
-		expect(acked.map((a) => a.kind)).toEqual(['view_approval']);
-		expect(acked[0]?.label).toBe('View approval');
 		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
 	});
 
@@ -553,6 +518,22 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 	});
 
+	it('primaryDestinationFor routes credential events to a page that exists', () => {
+		const bound = makeEvent({
+			type: 'credential.bound_to_agent',
+			kind: 'credential',
+			tokens: { credential_id: 'cred_1', agent_id: 'agt_42' },
+		});
+		expect(primaryDestinationFor(bound)).toBe('/agents?agent=agt_42');
+		const stored = makeEvent({
+			type: 'credential.stored',
+			kind: 'credential',
+			tokens: { credential_id: 'cred_1' },
+		});
+		expect(primaryDestinationFor(stored)).toBe('/agents?credentials=1');
+		expect(primaryDestinationFor(stored)).not.toContain('/credentials/');
+	});
+
 	it('primaryDestinationFor routes execution events to the monitor executions tab', () => {
 		const ev = makeEvent({
 			type: 'execution.failed',
@@ -595,14 +576,14 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(primaryDestinationFor(ev)).toBe('/monitor?show=jobs&job_id=job_7');
 	});
 
-	it('primaryDestinationFor routes credential events to the credential detail', () => {
+	it('primaryDestinationFor routes credential-only events to the credential inventory', () => {
 		const ev = makeEvent({
 			type: 'credential.expired',
 			kind: 'credential',
 			severity: 'critical',
 			tokens: { credential_id: 'cred_x' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/credentials/cred_x');
+		expect(primaryDestinationFor(ev)).toBe('/agents?credentials=1');
 	});
 
 	it('buildGroupKey prefers the most specific token', () => {
@@ -705,7 +686,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		// One expand control; its name carries the failure signal (red dot).
 		expect(
 			await screen.findByRole('button', {
-				name: /^Show live activity.*1 unacknowledged failure/,
+				name: /^Show live activity.*1 recent failure/,
 			}),
 		).toBeInTheDocument();
 		await waitFor(() =>
@@ -806,14 +787,14 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(link).toHaveAttribute('href', '/monitor?view=activity');
 	});
 
-	it('"Failures only" hides non-failures and counts unacknowledged ones (#671)', async () => {
+	it('"Failures only" hides non-failures and counts recent ones (#671)', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
 		await screen.findByText(/Imported petstore/i);
 
 		const toggle = screen.getByRole('button', { name: /^Failures only/ });
 		expect(toggle).toHaveAttribute('aria-pressed', 'false');
-		expect(toggle).toHaveAccessibleName(/1 unacknowledged/);
+		expect(toggle).toHaveAccessibleName(/1 recent/);
 		await user.click(toggle);
 		expect(toggle).toHaveAttribute('aria-pressed', 'true');
 		await waitFor(() =>
@@ -822,21 +803,13 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(screen.getByText(/Failed: slack\.postMessage/i)).toBeInTheDocument();
 	});
 
-	it('acknowledging a failure dims the row (no "Acked" label) and clears the count', async () => {
-		const user = userEvent.setup();
+	it('a failure keeps its row and its count — events are append-only history', async () => {
 		renderRail(<AgentRail />);
 		await screen.findByText(/Failed: slack\.postMessage/i);
-		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
-		await user.click(ack);
-		// The row re-renders as the compact line, so re-query it.
-		await waitFor(() =>
-			expect(
-				screen.getByText(/Failed: slack\.postMessage/i).closest('.opacity-55'),
-			).not.toBeNull(),
-		);
-		expect(screen.queryByText('Acked')).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /^Failures only/ })).not.toHaveAccessibleName(
-			/unacknowledged/,
+		// No inline dismiss exists any more; the failure is history, not an inbox.
+		expect(screen.queryByRole('button', { name: 'Acknowledge' })).toBeNull();
+		expect(screen.getByRole('button', { name: /^Failures only/ })).toHaveAccessibleName(
+			/1 recent/,
 		);
 	});
 
@@ -1101,9 +1074,6 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 			detail: 'boom',
 			created_at: new Date().toISOString(),
 			requires_action: true,
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			trace_id: 'tr_solo',
 			data: { execution_id: 'exec_solo' },
 			_links: { self: '/events/evt_only_failure' },
@@ -1137,9 +1107,6 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 			detail: 'boom',
 			created_at: new Date().toISOString(),
 			requires_action: true,
-			acknowledged: false,
-			acknowledged_at: null,
-			acknowledged_by: null,
 			trace_id: 'tr_ttl',
 			data: { execution_id: 'exec_ttl' },
 			_links: { self: '/events/evt_ttl_failure' },
@@ -1252,18 +1219,6 @@ function renderLiveRailWithToasts() {
 describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 	const OAUTH_CLIENT_ID = 'oc_dcr_app';
 
-	function registeredWire(over: Partial<EventResponse> = {}): EventResponse {
-		return wireEvent({
-			event_id: 'evt_oauth_registered',
-			type: 'oauth_client.registered',
-			severity: 'info' as EventResponse['severity'],
-			summary: 'OAuth client registered: MCP App',
-			requires_action: true,
-			data: { oauth_client_id: OAUTH_CLIENT_ID },
-			...over,
-		});
-	}
-
 	it('kindForType buckets the oauth_client.* / oauth_grant.* namespaces into oauth', () => {
 		expect(kindForType('oauth_client.registered')).toBe('oauth');
 		expect(kindForType('oauth_client.approved')).toBe('oauth');
@@ -1271,7 +1226,7 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 		expect(kindForType('oauth_grant.revoked')).toBe('oauth');
 	});
 
-	it('inlineActionsFor offers Review (→ Settings queue) + Acknowledge for a DCR registration', () => {
+	it('inlineActionsFor links a pending DCR registration to the Settings queue', () => {
 		const ev = makeEvent({
 			type: 'oauth_client.registered',
 			kind: 'oauth',
@@ -1280,15 +1235,11 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 			groupKey: `oauth:oauth_client.registered:${OAUTH_CLIENT_ID}`,
 		});
 		const actions = inlineActionsFor(ev);
-		const review = actions.find((a) => a.kind === 'view_oauth_queue');
-		expect(review?.label).toBe('Review');
-		// The D7 approve/deny verbs live on the Settings approval queue tab.
-		expect(review?.href?.(ev)).toBe('/settings?tab=queue');
-		expect(actions.map((a) => a.kind)).toContain('acknowledge');
-		// Once settled the actionable slot goes passive.
-		expect(inlineActionsFor({ ...ev, acknowledged: true }).map((a) => a.kind)).not.toContain(
-			'view_oauth_queue',
-		);
+		const queue = actions.find((a) => a.kind === 'view_oauth_queue');
+		expect(queue?.label).toBe('View queue');
+		// The D7 approve/deny verbs live on the Settings approval queue tab,
+		// which lists only the clients still pending.
+		expect(queue?.href?.(ev)).toBe('/settings?tab=queue');
 	});
 
 	it('primaryDestinationFor deep-links grant events to the agent, client events to the queue', () => {
@@ -1307,103 +1258,6 @@ describe('rail — oauth additions (3a-5, phase-3a §4.8)', () => {
 			tokens: { oauth_client_id: OAUTH_CLIENT_ID },
 		});
 		expect(primaryDestinationFor(registered)).toBe('/settings?tab=queue');
-	});
-
-	it('settles the actionable registration row when the APPROVE event arrives over SSE', async () => {
-		// Backlog: the actionable registration alone. SSE then delivers the
-		// approve decision — the live mirror must settle the registered row
-		// (drop its Review prompt) without waiting for a backlog refetch.
-		const registered = registeredWire();
-		const approved = wireEvent({
-			event_id: 'evt_oauth_approved',
-			type: 'oauth_client.approved',
-			summary: 'OAuth client approved: MCP App',
-			data: { oauth_client_id: OAUTH_CLIENT_ID },
-		});
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({ data: [registered], has_more: false, next_cursor: null }),
-			),
-			http.get('/events/stream', () => {
-				const frames = [registered, approved]
-					.map(
-						(e) =>
-							`event: ${e.type}\nid: ${e.event_id}\ndata: ${JSON.stringify(e)}\n\n`,
-					)
-					.join('');
-				const encoder = new TextEncoder();
-				const stream = new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(encoder.encode(frames));
-					},
-				});
-				return new HttpResponse(stream, {
-					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-				});
-			}),
-		);
-		render(
-			<QueryClientProvider
-				client={
-					new QueryClient({
-						defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-					})
-				}
-			>
-				<MemoryRouter initialEntries={['/dashboard']}>
-					<AgentStreamProvider live={true}>
-						<Routes>
-							<Route path="/*" element={<AgentRail />} />
-						</Routes>
-					</AgentStreamProvider>
-				</MemoryRouter>
-			</QueryClientProvider>,
-		);
-		// Both rows land in the feed…
-		await screen.findByText(/OAuth client registered: MCP App/i);
-		await screen.findByText(/OAuth client approved: MCP App/i);
-		// …and the registration's actionable Review prompt is gone (settled).
-		await waitFor(() =>
-			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
-		);
-	});
-
-	it('settles the actionable registration row on DENY via the context (no SSE event exists)', async () => {
-		// A deny emits no oauth_client.* event (§4.8/D7) — the deny mutation
-		// calls `settleOAuthClientRegistration` itself. Drive the context handle
-		// exactly like `useDenyOAuthClient` does and watch the row settle.
-		worker.use(
-			http.get('/events', () =>
-				HttpResponse.json({
-					data: [registeredWire()],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
-		);
-		let settle: ((oauthClientId: string) => void) | undefined;
-		function SettleProbe() {
-			settle = useAgentStream().settleOAuthClientRegistration;
-			return null;
-		}
-		renderRail(
-			<>
-				<AgentRail />
-				<SettleProbe />
-			</>,
-		);
-		await screen.findByRole('button', { name: 'Review' });
-
-		// A settle for a DIFFERENT client must not touch the row.
-		act(() => settle?.('oc_other_client'));
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
-
-		act(() => settle?.(OAUTH_CLIENT_ID));
-		await waitFor(() =>
-			expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument(),
-		);
-		// The row itself stays in the feed — only its actionable slot settled.
-		expect(screen.getByText(/OAuth client registered: MCP App/i)).toBeInTheDocument();
 	});
 });
 

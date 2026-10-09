@@ -20,7 +20,6 @@ def _make_response() -> EventResponse:
         severity=EventSeverity.INFO,
         summary="Import completed",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         trace_id="a" * 32,
         links=EventLinks(
@@ -53,10 +52,13 @@ def test_event_response_links_execution_and_job() -> None:
     assert data["_links"]["job"] == "/jobs/job_456"
 
 
-def test_event_response_no_acknowledgement_note() -> None:
+def test_event_response_has_no_acknowledgement_fields() -> None:
     resp = _make_response()
     data = resp.model_dump(by_alias=True)
     assert "acknowledgement_note" not in data
+    assert "acknowledged" not in data
+    assert "acknowledged_at" not in data
+    assert "acknowledged_by" not in data
 
 
 def test_event_response_no_flat_execution_id_or_job_id() -> None:
@@ -80,7 +82,6 @@ def test_event_response_invalid_severity_rejected() -> None:
             severity="invalid",  # type: ignore[arg-type]
             summary="test",
             requires_action=False,
-            acknowledged=False,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             links=EventLinks(self_="/events/evt_abc123"),
         )
@@ -152,7 +153,6 @@ def test_event_view_includes_actor_fields() -> None:
         severity=EventSeverity.INFO,
         summary="test",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         data={},
         actor_id="agt_123",
@@ -169,7 +169,6 @@ def test_event_view_actor_fields_default_to_none() -> None:
         severity=EventSeverity.INFO,
         summary="test",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         data={},
     )
@@ -184,7 +183,6 @@ def test_event_response_includes_actor_fields() -> None:
         severity=EventSeverity.INFO,
         summary="test",
         requires_action=False,
-        acknowledged=False,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         actor_id="usr_456",
         actor_type="user",

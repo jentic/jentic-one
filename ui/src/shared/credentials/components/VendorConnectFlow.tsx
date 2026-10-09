@@ -20,6 +20,7 @@ import {
 	Checkbox,
 	CopyButton,
 	ErrorAlert,
+	Input,
 	Label,
 	RadioCardGroup,
 	SearchInput,
@@ -29,6 +30,7 @@ import {
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
 import {
+	invalidateBindingSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -100,6 +102,8 @@ export type VendorConnectFlowProps =
 			// Extra content rendered on the terminal step's success path
 			// (typically a "Bind to more agents" CTA). See ``PostConnectInfo``.
 			renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+			/** Fires once when the sign-in completes, with the credential it created. */
+			onConnected?: (info: ConnectedCredentialInfo) => void;
 			onBack: () => void;
 			onDone: () => void;
 	  }
@@ -112,9 +116,21 @@ export type VendorConnectFlowProps =
 			onDone: () => void;
 	  };
 
+/** The credential a completed self connect created (and bound, when an agent was set). */
+export interface ConnectedCredentialInfo {
+	credentialId: string;
+	name: string;
+}
+
 interface VendorDisplay {
 	displayName: string;
 	iconKey: string;
+	/**
+	 * The admin-registered shared app this connection goes through, when the
+	 * picked tile was one — so the configure step still says *which* app,
+	 * not just the vendor it shares a name with.
+	 */
+	sharedAppName?: string;
 }
 
 type Phase = 'configure' | 'rules' | 'awaiting' | 'terminal';
@@ -155,6 +171,7 @@ export function VendorConnectFlow(props: VendorConnectFlowProps) {
 			vendor={props.vendor}
 			preselectedAgentId={props.preselectedAgentId}
 			renderPostConnect={props.renderPostConnect}
+			onConnected={props.onConnected}
 			onBack={props.onBack}
 			onDone={props.onDone}
 		/>
@@ -169,16 +186,22 @@ function VendorSelfConnectFlow({
 	vendor,
 	preselectedAgentId,
 	renderPostConnect,
+	onConnected,
 	onBack,
 	onDone,
 }: {
 	vendor: VendorSummary;
 	preselectedAgentId?: string;
 	renderPostConnect?: (info: PostConnectInfo) => ReactNode;
+	onConnected?: (info: ConnectedCredentialInfo) => void;
 	onBack: () => void;
 	onDone: () => void;
 }) {
-	const capabilities = useVendorAuthCapabilities(vendor.key);
+	// Pin the auth-capabilities read to the picker tile's registration id
+	// (when set) so scope catalog / default_scopes come from *this* admin-
+	// registered OAuth app, not another source for the same slug. Without
+	// the pin, a config tile and a registration would share one catalog.
+	const capabilities = useVendorAuthCapabilities(vendor.key, vendor.registration_id);
 	const agents = useAgentsForPicker();
 
 	const queryClient = useQueryClient();
@@ -188,6 +211,12 @@ function VendorSelfConnectFlow({
 	const [rules, setRules] = useState<PermissionRule[] | null>(null);
 	const [session, setSession] = useState<{ id: string; pollToken: string } | null>(null);
 	const [challenge, setChallenge] = useState<ConfirmResponse | null>(null);
+	// User-editable credential label. Pre-filled with the vendor display
+	// name so the input shows a sensible default the user can edit. Sent
+	// on the ``:connect`` payload; the backend accepts it as the credential
+	// name (falling back to the same vendor display name when omitted, so
+	// pre-filling here is functionally equivalent to omitting it).
+	const [credentialName, setCredentialName] = useState<string>(vendor.display_name);
 	// When ``preselectedAgentId`` is supplied by the caller (entry from
 	// a specific agent), the picker starts locked to that id.
 	// Otherwise it starts empty and the user must pick before Continue.
@@ -213,38 +242,40 @@ function VendorSelfConnectFlow({
 	// hit the raw client without depending on the mutation lifecycle.
 	const sessionRef = useRef<{ id: string; pollToken: string } | null>(null);
 	const phaseRef = useRef<Phase>('configure');
-	// StrictMode dev-time mounts effects twice. Without this guard the
-	// ``:connect`` fires twice and we get two orphaned sessions per open.
-	const connectFiredRef = useRef(false);
 
-	// Fire ``:connect`` — called on mount (below) so the session/
-	// credential/import all exist by the time the user reaches the rules
-	// page, and again from the terminal step's "Try again" so a retry
-	// opens a FRESH session (the failed one was cascade-deleted server-
-	// side and can't be reused).
-	const startConnect = async (): Promise<void> => {
+	// Fire ``:connect`` — invoked from Continue-click on the configure
+	// step (the user's credential-name pick is captured first) and from
+	// the terminal step's "Try again" so a retry opens a FRESH session
+	// (the failed one was cascade-deleted server-side and can't be
+	// reused). Idempotent: returns the existing session id/token when
+	// one is already in ``sessionRef``.
+	const startConnect = async (): Promise<{ id: string; pollToken: string } | null> => {
+		if (sessionRef.current) return sessionRef.current;
 		try {
 			startMutation.reset();
-			const result = await startMutation.mutateAsync({ vendor: vendor.key });
-			sessionRef.current = { id: result.session_id, pollToken: result.poll_token };
-			setSession({ id: result.session_id, pollToken: result.poll_token });
+			const trimmedName = credentialName.trim();
+			const result = await startMutation.mutateAsync({
+				vendor: vendor.key,
+				// Omit ``name`` entirely when blank so the server's default
+				// (vendor display name) kicks in instead of storing an
+				// empty label.
+				...(trimmedName ? { name: trimmedName } : {}),
+				// Pin the specific admin-registered app when the picker
+				// entry references one — required to disambiguate when
+				// multiple registrations exist for the same vendor.
+				...(vendor.registration_id
+					? { oauth_app_registration_id: vendor.registration_id }
+					: {}),
+			});
+			const next = { id: result.session_id, pollToken: result.poll_token };
+			sessionRef.current = next;
+			setSession(next);
+			return next;
 		} catch {
 			// surfaced via ErrorAlert on the configure page.
+			return null;
 		}
 	};
-
-	// Fire ``:connect`` on mount so the session/credential/import all
-	// exist by the time the user reaches the rules page — the same
-	// shape the approve flow lands in when the human hits the URL.
-	useEffect(() => {
-		if (connectFiredRef.current) return;
-		connectFiredRef.current = true;
-		void startConnect();
-		// startMutation is stable across renders (react-query hook); vendor.key
-		// only changes when the parent remounts the flow, at which point the
-		// ref resets naturally.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [vendor.key]);
 
 	const scopes = useMemo<VendorScopeCatalog[]>(
 		() => capabilities.data?.scopes ?? [],
@@ -302,9 +333,15 @@ function VendorSelfConnectFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The connect bound the credential to the picked agent, so that
+				// agent's binding list (its page, the Add APIs tray) is stale too.
+				const credentialId = polling.data.credential_id;
+				if (credentialId && agentId) {
+					invalidateBindingSurfaces(queryClient, credentialId, [agentId]);
+				}
 			}
 		}
-	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient, agentId]);
 
 	// Cancel-on-unmount: if the user closes the dialog / navigates away
 	// mid-flow, the backend needs to know so the pending credential +
@@ -374,13 +411,21 @@ function VendorSelfConnectFlow({
 	// leaving it empty falls back to allow-all-GETs at ``:confirm`` time.
 	// We do not pre-populate rules from scope classifications — the user
 	// sees exactly what they authored, nothing more.
-	const goToRules = (): void => {
+	const goToRules = async (): Promise<void> => {
+		// Fire ``:connect`` now (deferred from mount so the user's
+		// credential-name pick can be captured first). Idempotent — a
+		// re-click while the mutation is in flight resolves to the same
+		// session. Bails out on failure; the error surfaces via
+		// ``ErrorAlert`` on the configure page.
+		const s = await startConnect();
+		if (!s) return;
 		setRules((prev) => prev ?? []);
 		setPhase('rules');
 	};
 
-	// Continue on the rules page — session already exists (``:connect``
-	// fired at mount). Just POST ``:confirm`` with the human-approved
+	// Continue on the rules page — session exists by the time we reach
+	// this handler (``goToRules`` fires ``:connect`` first). Just POST
+	// ``:confirm`` with the human-approved
 	// scopes + rules + selected agent, and transition to ``awaiting``.
 	// ``agent_id`` lands at ``:confirm`` (not ``:connect``) so the
 	// session-on-vendor-click semantics are preserved for the self flow
@@ -407,9 +452,26 @@ function VendorSelfConnectFlow({
 		}
 	};
 
+	// Report the finished sign-in once, so a host tracking its own progress
+	// (e.g. the agent setup queue) can mark the credential added.
+	const reportedRef = useRef(false);
+	const connectedId =
+		phase === 'terminal' && polling.data?.status === 'connected'
+			? (polling.data.credential_id ?? null)
+			: null;
+	useEffect(() => {
+		if (!connectedId || reportedRef.current) return;
+		reportedRef.current = true;
+		onConnected?.({
+			credentialId: connectedId,
+			name: credentialName.trim() || vendor.display_name,
+		});
+	}, [connectedId, onConnected, credentialName, vendor.display_name]);
+
 	const display: VendorDisplay = {
 		displayName: vendor.display_name,
 		iconKey: vendor.vendor,
+		sharedAppName: vendor.source === 'db' ? vendor.name : undefined,
 	};
 	// Errors from either the on-mount ``:connect`` or the rules-page
 	// ``:confirm`` — surfaced on whichever page the user is looking at.
@@ -430,16 +492,15 @@ function VendorSelfConnectFlow({
 				onRetry={(): void => {
 					// A retry needs a FRESH session — the failed one was
 					// cascade-deleted server-side. Reset the phase refs so
-					// the unmount cleanup applies to the new session, then
-					// re-fire ``:connect`` directly (the mount effect is
-					// one-shot by design and won't run again).
+					// the unmount cleanup applies to the new session; the
+					// user then hits Continue on the configure page which
+					// fires a fresh ``:connect``.
 					phaseRef.current = 'configure';
 					sessionRef.current = null;
 					setPhase('configure');
 					setSession(null);
 					setChallenge(null);
 					confirmMutation.reset();
-					void startConnect();
 				}}
 			/>
 		);
@@ -478,9 +539,17 @@ function VendorSelfConnectFlow({
 
 	return (
 		<div className="space-y-5">
-			<VendorHeader
+			<EditableVendorHeader
 				display={display}
 				subtitle={`You'll approve this connection on ${display.displayName} in a moment.`}
+				name={credentialName}
+				onNameChange={setCredentialName}
+				// Disabled once the ``:connect`` session exists — the
+				// credential's name landed at ``:connect`` time and the
+				// backend doesn't accept name updates on a pending
+				// session. If the user needs to rename after connecting,
+				// they can do it from the credentials list.
+				disabled={session != null || startMutation.isPending}
 			/>
 
 			<AgentPickerField
@@ -502,7 +571,7 @@ function VendorSelfConnectFlow({
 
 			{flowError && <ErrorAlert message={flowError} />}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
 					<ArrowLeft className="h-4 w-4" />
 					Back
@@ -510,17 +579,19 @@ function VendorSelfConnectFlow({
 				<Button
 					type="button"
 					variant="primary"
-					onClick={goToRules}
-					// ``:connect`` fires at mount — wait for the session id
-					// before letting the user advance so the rules page has
-					// something to attach to when it renders. Scope-less
-					// vendors (empty catalog) proceed with the vendor's
-					// defaults, so the empty-selection gate only applies
-					// when there are scopes to choose from. An agent is NOT
-					// required — ``agent_id`` is optional at ``:confirm``
-					// (connect unbound, bind later via the credentials API).
-					disabled={(scopes.length > 0 && selectedScopes.size === 0) || !session}
-					loading={startMutation.isPending && !session}
+					onClick={(): void => void goToRules()}
+					// ``:connect`` fires from this button (not on mount) so
+					// the user's credential-name pick is captured first.
+					// Scope-less vendors (empty catalog) proceed with the
+					// vendor's defaults, so the empty-selection gate only
+					// applies when there are scopes to choose from. An
+					// agent is NOT required — ``agent_id`` is optional at
+					// ``:confirm`` (connect unbound, bind later via the
+					// credentials API).
+					disabled={
+						(scopes.length > 0 && selectedScopes.size === 0) || startMutation.isPending
+					}
+					loading={startMutation.isPending}
 				>
 					Continue
 				</Button>
@@ -584,7 +655,7 @@ function AgentPickerField({
 		return (
 			<div className="space-y-2">
 				<Label>Which agent uses this credential?</Label>
-				<div className="border-border bg-muted/30 rounded-lg border border-dashed p-3">
+				<div className="bg-surface-inset rounded-lg p-3">
 					<p className="text-muted-foreground text-xs">
 						You don&apos;t have any agents yet — you can still connect without one and
 						bind an agent later, or{' '}
@@ -640,7 +711,7 @@ function AgentPickerField({
 				leading: (
 					<span
 						aria-hidden="true"
-						className="border-border text-muted-foreground flex h-7 w-7 items-center justify-center rounded-lg border border-dashed"
+						className="bg-surface-chip text-muted-foreground flex h-7 w-7 items-center justify-center rounded-[7px]"
 					>
 						<Unlink className="h-3.5 w-3.5" />
 					</span>
@@ -867,7 +938,7 @@ function VendorApproveFlow({
 						'The approval link is no longer valid.'
 					}
 				/>
-				<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
+				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close
 					</Button>
@@ -950,7 +1021,7 @@ function VendorApproveFlow({
 				agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
 			/>
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
 					Cancel
 				</Button>
@@ -1076,7 +1147,7 @@ function RulesStep({
 
 			{error && <ErrorAlert message={error} />}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button
 					type="button"
 					variant="ghost"
@@ -1108,9 +1179,60 @@ function VendorHeader({ display, subtitle }: { display: VendorDisplay; subtitle:
 	return (
 		<div className="flex items-center gap-3">
 			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
-			<div>
+			<div className="min-w-0">
 				<p className="text-foreground text-base font-semibold">{display.displayName}</p>
+				<SharedAppLine display={display} />
 				<p className="text-muted-foreground text-xs">{subtitle}</p>
+			</div>
+		</div>
+	);
+}
+
+function SharedAppLine({ display }: { display: VendorDisplay }) {
+	if (!display.sharedAppName) return null;
+	return (
+		<p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+			<Badge variant="default">Shared app</Badge>
+			<span className="text-muted-foreground truncate">via {display.sharedAppName}</span>
+		</p>
+	);
+}
+
+// Variant of :func:`VendorHeader` where the vendor name is inline-editable.
+// Renders the shared ``Input`` at heading weight so the user can type over the
+// label directly. Pre-filled with the vendor's
+// display name; the caller drives state.
+function EditableVendorHeader({
+	display,
+	subtitle,
+	name,
+	onNameChange,
+	disabled,
+}: {
+	display: VendorDisplay;
+	subtitle: string;
+	name: string;
+	onNameChange: (next: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<div className="flex items-center gap-3">
+			<VendorIcon name={display.displayName} vendor={display.iconKey} size="lg" />
+			<div className="min-w-0 flex-1">
+				<div className="max-w-xs">
+					<Input
+						type="text"
+						size="sm"
+						className="px-2 py-1 text-base font-semibold disabled:opacity-60"
+						value={name}
+						placeholder={display.displayName}
+						aria-label="Credential name"
+						disabled={disabled}
+						onChange={(e): void => onNameChange(e.target.value)}
+					/>
+				</div>
+				<SharedAppLine display={display} />
+				<p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>
 			</div>
 		</div>
 	);
@@ -1134,13 +1256,13 @@ function AgentRequestCard({
 	return (
 		<div className="space-y-2">
 			<Label>Requested by</Label>
-			<div className="bg-muted/40 border-border flex items-center gap-2.5 rounded-lg border px-3 py-2">
+			<div className="bg-surface-inset flex items-center gap-2.5 rounded-lg px-3 py-2">
 				{loading ? (
 					<Skeleton className="h-7 w-7 rounded-md" />
 				) : agent ? (
 					<AgentBadge id={agent.id} name={agent.name} size="sm" />
 				) : (
-					<div className="bg-muted flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
+					<div className="bg-surface-chip flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
 						<Bot className="text-muted-foreground h-3.5 w-3.5" />
 					</div>
 				)}
@@ -1154,8 +1276,8 @@ function AgentRequestCard({
 				</div>
 			</div>
 			{reason && (
-				<div className="bg-muted/20 border-border rounded-lg border px-3 py-2">
-					<p className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+				<div className="bg-surface-inset rounded-lg px-3 py-2">
+					<p className="text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase">
 						Reason
 					</p>
 					<p className="text-foreground mt-1 text-sm whitespace-pre-wrap">{reason}</p>
@@ -1198,7 +1320,7 @@ function ScopeChooseField({
 	if (error) return <ErrorAlert message={error.message} />;
 	if (scopes.length === 0) {
 		return (
-			<div className="border-border bg-muted/30 rounded-lg border border-dashed p-4">
+			<div className="bg-surface-inset rounded-lg p-4">
 				<p className="text-muted-foreground text-xs">
 					This integration doesn&apos;t expose any scopes — the connection will use the
 					vendor&apos;s defaults.
@@ -1214,7 +1336,7 @@ function ScopeChooseField({
 					{selected.size} of {scopes.length} selected
 				</span>
 			</div>
-			<div className="border-border divide-border divide-y overflow-hidden rounded-lg border">
+			<div className="bg-surface-inset divide-hairline-row divide-y overflow-hidden rounded-lg">
 				{scopes.map((scope) => (
 					<ScopeRow
 						key={scope.name}
@@ -1241,17 +1363,13 @@ function ScopeRow({
 	agentRequested: boolean;
 }) {
 	return (
-		<label className="hover:bg-muted/40 flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors">
+		<label className="hover:bg-tint-2 flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors">
 			<Checkbox checked={checked} onChange={onToggle} className="mt-0.5" />
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					<code className="text-foreground text-sm font-medium">{scope.name}</code>
 					<ScopeClassificationBadge classification={scope.classification} />
-					{agentRequested && (
-						<Badge variant="default" className="text-[10px]">
-							requested
-						</Badge>
-					)}
+					{agentRequested && <Badge variant="default">requested</Badge>}
 				</div>
 				{scope.description && (
 					<p className="text-muted-foreground mt-0.5 text-xs">{scope.description}</p>
@@ -1265,11 +1383,7 @@ function ScopeClassificationBadge({ classification }: { classification: ScopeCla
 	const variant =
 		classification === 'read' ? 'success' : classification === 'write' ? 'warning' : 'danger';
 	const label = classification.charAt(0).toUpperCase() + classification.slice(1);
-	return (
-		<Badge variant={variant} className="text-[10px]">
-			{label}
-		</Badge>
-	);
+	return <Badge variant={variant}>{label}</Badge>;
 }
 
 /**
@@ -1337,12 +1451,12 @@ function DeviceCodeAwaitingStep({
 			</div>
 
 			{challenge.user_code && (
-				<div className="border-border bg-muted/30 flex flex-col items-center gap-3 rounded-xl border border-dashed p-6">
-					<p className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase">
+				<div className="bg-surface-inset flex flex-col items-center gap-3 rounded-lg p-6">
+					<p className="text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase">
 						Your one-time code
 					</p>
 					<div className="flex items-center gap-3">
-						<code className="text-foreground bg-background border-border rounded-lg border px-4 py-2 font-mono text-2xl font-semibold tracking-widest">
+						<code className="text-foreground bg-surface-chip rounded-lg px-4 py-2 font-mono text-2xl font-semibold tracking-widest">
 							{challenge.user_code}
 						</code>
 						<CopyButton value={challenge.user_code} />
@@ -1426,7 +1540,7 @@ function RedirectAwaitingStep({
  */
 function UnsafeVendorUrlNotice() {
 	return (
-		<div className="border-destructive/40 bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs">
+		<div className="bg-destructive/10 text-destructive flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs">
 			<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
 			<p>
 				The vendor returned a sign-in link that isn't a secure HTTPS URL. For safety we
@@ -1438,7 +1552,7 @@ function UnsafeVendorUrlNotice() {
 
 function PollingStatusLine({ display, status }: { display: VendorDisplay; status: string }) {
 	return (
-		<div className="border-border bg-muted/20 flex items-center gap-2.5 rounded-lg border px-3 py-2.5">
+		<div className="bg-surface-inset flex items-center gap-2.5 rounded-lg px-3 py-2.5">
 			<Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
 			<p className="text-muted-foreground text-xs">
 				{status === 'polling' || status === 'pending'
@@ -1451,7 +1565,7 @@ function PollingStatusLine({ display, status }: { display: VendorDisplay; status
 
 function CancelBar({ onCancel }: { onCancel: () => void }) {
 	return (
-		<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3">
+		<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
 				Cancel
 			</Button>
@@ -1525,7 +1639,7 @@ function TerminalStep({
 
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
-			<div className="border-border bg-muted/20 -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3">
+			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again

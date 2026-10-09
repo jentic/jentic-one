@@ -21,7 +21,7 @@ import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 
 /** The `view-transition-name` every docking of the activity stream shares. */
-export const ACTIVITY_STREAM_VT = 'activity-stream';
+const ACTIVITY_STREAM_VT = 'activity-stream';
 
 /** Spread onto the element that currently hosts the stream. */
 export const activityStreamVtStyle = { viewTransitionName: ACTIVITY_STREAM_VT } as const;

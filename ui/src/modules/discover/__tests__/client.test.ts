@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
-import { listCatalog } from '@/modules/discover/api/client';
+import { catalogCursorAfter, listCatalog } from '@/modules/discover/api/client';
 
 /**
  * Repository-tier coverage for the catalog list call. We can't `vi.spyOn` the
@@ -36,7 +36,8 @@ describe('listCatalog', () => {
 
 		expect(seen!.get('outdated_only')).toBe('true');
 		// The other registration flags stay off so the backend only narrows to
-		// the outdated set.
+		// the outdated set (the UI never sets registered_only; the generated
+		// client sends its `false` default).
 		expect(seen!.get('registered_only')).toBe('false');
 		expect(seen!.get('unregistered_only')).toBe('false');
 	});
@@ -58,7 +59,7 @@ describe('listCatalog', () => {
 			}),
 		);
 
-		await listCatalog({ filter: 'registered' });
+		await listCatalog({ filter: 'unregistered' });
 		expect(captured.outdatedOnly).toBe('false');
 	});
 
@@ -79,5 +80,30 @@ describe('listCatalog', () => {
 
 		const page = await listCatalog({ filter: 'all' });
 		expect(page.outdatedCount).toBe(2);
+	});
+});
+
+/**
+ * Contract: the rail's jump cursor must match the backend's
+ * `encode_catalog_cursor` (`src/jentic_one/shared/pagination.py`) byte for
+ * byte — base64 of Python's `json.dumps({"id": api_id})`. The expected tokens
+ * below are that encoder's output; a format change on either side fails here.
+ */
+describe('catalogCursorAfter', () => {
+	it.each([
+		['y', 'eyJpZCI6ICJ5In0='],
+		['{', 'eyJpZCI6ICJ7In0='],
+		['googleapis.com/gmail', 'eyJpZCI6ICJnb29nbGVhcGlzLmNvbS9nbWFpbCJ9'],
+		// json.dumps escapes non-ASCII (ensure_ascii) — so must we.
+		['café.io/api', 'eyJpZCI6ICJjYWZcdTAwZTkuaW8vYXBpIn0='],
+		['😀.dev', 'eyJpZCI6ICJcdWQ4M2RcdWRlMDAuZGV2In0='],
+		['a"b\\c', 'eyJpZCI6ICJhXCJiXFxjIn0='],
+	])('encodes %s like the backend', (apiId, token) => {
+		expect(catalogCursorAfter(apiId)).toBe(token);
+	});
+
+	it('never throws on an id btoa cannot take raw (non-Latin-1)', () => {
+		expect(() => catalogCursorAfter('日本.jp')).not.toThrow();
+		expect(catalogCursorAfter('日本.jp')).not.toBeNull();
 	});
 });

@@ -7,6 +7,7 @@ import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 import { settingsHandlers } from '@/modules/settings/mocks/handlers';
 import { approvalsHandlers } from '@/modules/agents/mocks/approvalsHandlers';
+import { oauthAppRegistrationsHandlers } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -208,6 +209,8 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// OAuth app registrations: admin-managed shared OAuth apps.
+	...oauthAppRegistrationsHandlers,
 	// Extensibility seam: `handlers` is exported (not module-private) so a
 	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
 	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —

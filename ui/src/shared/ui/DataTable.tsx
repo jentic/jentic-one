@@ -73,7 +73,7 @@ export function DataTable<T>({
 			<ul className="space-y-2" aria-label={ariaLabel}>
 				{data.map((row) => {
 					const card = (
-						<div className="border-border bg-card rounded-xl border p-3">
+						<div className="bg-surface-1 rounded-lg p-3 transition-colors duration-[140ms]">
 							{renderCard(row)}
 						</div>
 					);
@@ -84,7 +84,7 @@ export function DataTable<T>({
 									type="button"
 									onClick={() => onRowClick(row)}
 									aria-label={getRowLabel?.(row)}
-									className="focus-visible:ring-ring hover:border-primary/40 block w-full rounded-xl text-left transition-colors outline-none focus-visible:ring-2"
+									className="focus-visible:ring-ring [&:hover>div]:bg-surface-1-hover block w-full rounded-lg text-left outline-none focus-visible:ring-2"
 								>
 									{card}
 								</button>
@@ -110,12 +110,12 @@ export function DataTable<T>({
 		>
 			<table className="w-full border-collapse">
 				<thead>
-					<tr className="border-border bg-muted/40 border-b text-left">
+					<tr className="text-left shadow-[0_1px_0_hsl(185_20%_60%/0.08)]">
 						{columns.map((col) => (
 							<th
 								key={String(col.key)}
 								className={cn(
-									'text-muted-foreground px-4 py-2.5 text-[11px] font-semibold tracking-wider uppercase',
+									'text-foreground-faint h-9 px-4 text-[10.5px] font-bold tracking-[0.08em] uppercase',
 									col.className,
 								)}
 							>
@@ -143,9 +143,9 @@ export function DataTable<T>({
 							tabIndex={onRowClick ? 0 : undefined}
 							aria-label={onRowClick ? getRowLabel?.(row) : undefined}
 							className={cn(
-								'border-border/60 hover:bg-muted/30 border-b transition-colors last:border-0',
+								'border-hairline-row hover:bg-surface-1-hover border-b transition-colors duration-[140ms] last:border-0',
 								onRowClick &&
-									'hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-ring cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset',
+									'focus-visible:bg-surface-1-hover cursor-pointer outline-none focus-visible:shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.35)]',
 							)}
 						>
 							{columns.map((col) => (

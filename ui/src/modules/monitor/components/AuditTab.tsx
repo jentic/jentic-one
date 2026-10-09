@@ -1,7 +1,7 @@
 /**
  * Audit log — the actor lens, one source of the Activity view.
  *
- * Read-only, org:admin-only view over `GET /audit`: who did what. Each entry
+ * Read-only view over `GET /audit` (`audit:read` or `org:admin`): who did what. Each entry
  * reads as a sentence ("Cancelled a job", "Signed in" — see
  * lib/describeAudit) with its actor, target and the reason or change on the
  * second line; the raw action, ids, IP and client are one click away in the
@@ -37,7 +37,7 @@ import { LogLayout } from '@/modules/monitor/components/LogDetailPane';
 import { AuditDetail } from '@/modules/monitor/components/AuditDetail';
 import { hasTrace, monitorHref } from '@/modules/monitor/lib/links';
 import { originLabel } from '@/modules/monitor/lib/logVocabulary';
-import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
+import { AUDIT_READ, useCanAccess } from '@/shared/auth';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
 import { useLogDetail } from '@/modules/monitor/lib/useLogDetail';
@@ -83,7 +83,7 @@ function CrossLink({ row }: { row: AuditResponse }) {
 }
 
 export function AuditTab() {
-	const isAdmin = usePermission(ORG_ADMIN);
+	const canReadAudit = useCanAccess(AUDIT_READ);
 	const [searchParams, setSearchParams] = useSearchParams();
 	const filters = useMonitorFilters();
 	const { detail, open, close, docked } = useLogDetail('audit');
@@ -120,7 +120,7 @@ export function AuditTab() {
 		until: filters.to,
 		cursor: pager.cursor,
 	};
-	const query = useAudit(params, { enabled: isAdmin });
+	const query = useAudit(params, { enabled: canReadAudit });
 
 	const rows = useMemo(() => {
 		const data = query.data?.data ?? [];
@@ -128,12 +128,12 @@ export function AuditTab() {
 	}, [query.data, traceId]);
 	const days = useMemo(() => groupByDay(rows, (r) => Date.parse(r.occurred_at)), [rows]);
 
-	if (!isAdmin) {
+	if (!canReadAudit) {
 		return (
 			<EmptyState
 				icon={<ShieldX className="h-8 w-8" />}
-				title="Admin only"
-				description="The audit log is restricted to organisation admins."
+				title="No access to the audit log"
+				description="Your account doesn't have permission to view the audit log. An organisation admin can grant audit:read."
 			/>
 		);
 	}
@@ -199,8 +199,8 @@ export function AuditTab() {
 				{isForbidden ? (
 					<EmptyState
 						icon={<ShieldX className="h-8 w-8" />}
-						title="Admin only"
-						description="The audit log is restricted to organisation admins."
+						title="No access to the audit log"
+						description="Your account doesn't have permission to view the audit log. An organisation admin can grant audit:read."
 					/>
 				) : query.isError ? (
 					<ErrorAlert
@@ -263,7 +263,7 @@ export function AuditTab() {
 														<span className="shrink-0">
 															{auditTargetLabel(row.target_type)}
 														</span>
-														<span className="text-muted-foreground/80 truncate font-mono">
+														<span className="text-muted-foreground truncate font-mono">
 															{row.target_id}
 														</span>
 													</>

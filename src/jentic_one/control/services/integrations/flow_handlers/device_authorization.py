@@ -15,8 +15,12 @@ from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.device_authorization_credentials import (
     DeviceAuthorizationCredential,
 )
+from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.device_authorization_credential_repo import (
     DeviceAuthorizationCredentialRepository,
+)
+from jentic_one.control.repos.oauth_app_registration_repo import (
+    OAuthAppRegistrationRepository,
 )
 from jentic_one.control.services.integrations import device_authorization
 from jentic_one.control.services.integrations.flow_handlers.base import (
@@ -25,7 +29,7 @@ from jentic_one.control.services.integrations.flow_handlers.base import (
     StatusReport,
     SuccessTokens,
 )
-from jentic_one.shared.config import VendorDeviceAuthorizationFlowConfig, VendorFlowConfig
+from jentic_one.control.services.integrations.flow_handlers.session_app import SessionApp
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import StoredCredentialType
 
@@ -53,38 +57,55 @@ class DeviceAuthorizationHandler:
         db_session: Any,
         *,
         credential_id: str,
-        flow: VendorFlowConfig,
+        app: SessionApp,
         requested_scopes: list[str],
         created_by: str,
     ) -> None:
+        # Device flow (RFC 8628) needs the aux row unconditionally: it carries
+        # the transient device_code / poll bookkeeping that has no home on the
+        # credential row. Its ``client_id`` / ``token_url`` /
+        # ``authorization_endpoint`` columns are non-null, so we populate them
+        # from either source (the ``advance`` path prefers the registration
+        # when the credential's FK is set — see ``_load_endpoints_for_credential``).
         # ``requested_scopes`` lives on the connect_sessions row now
         # (flow-agnostic); pass an empty list to the aux row so the column
         # sees no stale copy. Left non-NULL to preserve the schema shape.
-        assert isinstance(flow, VendorDeviceAuthorizationFlowConfig)
+        assert app.authorization_endpoint is not None and app.token_endpoint is not None, (
+            "device_authorization SessionApp requires authorization_endpoint + token_endpoint"
+        )
         await DeviceAuthorizationCredentialRepository.create(
             db_session,
             credential_id=credential_id,
-            client_id=flow.client_id,
-            token_url=flow.token_endpoint,
-            authorization_endpoint=flow.authorization_endpoint,
+            client_id=app.client_id,
+            token_url=app.token_endpoint,
+            authorization_endpoint=app.authorization_endpoint,
             requested_scopes=[],
             created_by=created_by,
         )
+        if app.registration_id is not None:
+            # Shared-registration path: stamp the FK so the refresh / advance
+            # paths can dereference the registration for current endpoints
+            # even if the aux row has drifted.
+            await CredentialRepository.set_oauth_app_registration(
+                db_session, credential_id, registration_id=app.registration_id
+            )
 
     async def begin(
         self,
         row: ConnectSession,
         *,
-        flow: VendorFlowConfig,
+        app: SessionApp,
         confirmed_scopes: list[str],
     ) -> BeginResult:
-        assert isinstance(flow, VendorDeviceAuthorizationFlowConfig)
+        assert app.authorization_endpoint is not None, (
+            "device_authorization SessionApp requires authorization_endpoint"
+        )
 
         # Talk to the vendor OUTSIDE the DB transaction — network latency
         # has no business holding a control-DB row lock.
         result = await device_authorization.begin_device_authorization(
-            authorization_endpoint=flow.authorization_endpoint,
-            client_id=flow.client_id,
+            authorization_endpoint=app.authorization_endpoint,
+            client_id=app.client_id,
             scopes=confirmed_scopes,
         )
         encrypted_device_code = self._ctx.encryption.encrypt(result.device_code)
@@ -191,10 +212,20 @@ class DeviceAuthorizationHandler:
         assert dfc is not None
         assert dfc.encrypted_device_code is not None
 
+        endpoints = await self._resolve_poll_endpoints(credential_id, dfc)
+        if endpoints is None:
+            # The shared registration was disabled mid-flow: stop polling so
+            # no token is minted through the killed app.
+            return StatusReport(
+                kind="failed",
+                error_code="registration_inactive",
+                terminal_detail="oauth_app_registration is inactive",
+            )
+        client_id, token_endpoint = endpoints
         device_code = self._ctx.encryption.decrypt(dfc.encrypted_device_code)
         result = await device_authorization.poll_device_authorization(
-            token_endpoint=dfc.token_url,
-            client_id=dfc.client_id,
+            token_endpoint=token_endpoint,
+            client_id=client_id,
             device_code=device_code,
         )
 
@@ -267,3 +298,33 @@ class DeviceAuthorizationHandler:
         # transient artefacts have no operational value after ``connected``
         # and shouldn't hang around encrypted.
         await DeviceAuthorizationCredentialRepository.clear_transient(db_session, credential_id)
+
+    async def _resolve_poll_endpoints(
+        self,
+        credential_id: str,
+        dfc: DeviceAuthorizationCredential,
+    ) -> tuple[str, str] | None:
+        """Return the ``(client_id, token_endpoint)`` used for one poll tick.
+
+        Dereferences through ``oauth_app_registrations`` when the credential
+        was minted through a shared registration (``credentials.oauth_app_registration_id``
+        set) — that keeps rotated endpoints or a rotated client_id in effect
+        for in-flight sessions even if the aux row's copy has drifted. Falls
+        back to the aux row for legacy embedded credentials. Returns ``None``
+        when the referenced registration is inactive.
+        """
+        async with self._ctx.control_db.session() as session:
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            if credential is None or credential.oauth_app_registration_id is None:
+                return dfc.client_id, dfc.token_url
+            registration = await OAuthAppRegistrationRepository.get_by_id(
+                session, credential.oauth_app_registration_id
+            )
+            if registration is not None and not registration.is_active:
+                return None
+            if registration is None or registration.device_authorization_details is None:
+                return dfc.client_id, dfc.token_url
+            return (
+                registration.client_id,
+                registration.device_authorization_details.token_endpoint,
+            )

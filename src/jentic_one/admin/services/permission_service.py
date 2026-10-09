@@ -25,10 +25,10 @@ from jentic_one.admin.services.schemas.permissions import (
     PermissionsView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
-from jentic_one.shared.auth.agent_scope_ceiling import is_agent_scope_grantable
+from jentic_one.shared.auth.agent_permission_ceiling import is_agent_permission_grantable
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import RETIRED_PERMISSIONS
 from jentic_one.shared.context import Context
-from jentic_one.shared.scopes import RETIRED_SCOPES
 
 
 class PermissionService:
@@ -40,10 +40,10 @@ class PermissionService:
     async def list_catalogue(self, caller_user_id: str) -> list[PermissionCatalogueEntry]:
         """The permission catalogue as seen by the caller.
 
-        ``grantable_by_caller`` follows the agent scope ceiling
-        (``is_agent_scope_grantable``) — the only UI consumer is the agent
-        scope picker, and the flag must never offer a scope that
-        ``POST /agents`` / ``PUT /agents/{id}/scopes`` would reject.
+        ``grantable_by_caller`` follows the agent permission ceiling
+        (``is_agent_permission_grantable``) — the only UI consumer is the agent
+        permission picker, and the flag must never offer a permission that
+        ``POST /agents`` / ``PUT /agents/{id}/permissions`` would reject.
         """
         caller_effective = await self.get_effective_for_user(caller_user_id)
         caller_effective_set = set(caller_effective.effective)
@@ -52,7 +52,7 @@ class PermissionService:
         for perm in ALL_PERMISSIONS.values():
             if perm.name == ORG_ADMIN and ORG_ADMIN not in caller_effective_set:
                 continue
-            grantable = is_agent_scope_grantable(perm.name, caller_effective_set)
+            grantable = is_agent_permission_grantable(perm.name, caller_effective_set)
             entries.append(
                 PermissionCatalogueEntry(
                     name=perm.name,
@@ -154,8 +154,8 @@ class PermissionService:
     async def validate_grants(self, granter_user_id: str, permissions: list[str]) -> None:
         """Validate that all permissions exist and the granter can grant them.
 
-        ``RETIRED_SCOPES`` members are accepted and skipped: a stored grant
-        set written before a scope retirement (theme-5 Phase 5b) must
+        ``RETIRED_PERMISSIONS`` members are accepted and skipped: a stored grant
+        set written before a permission retirement (theme-5 Phase 5b) must
         re-submit unchanged without a 422. The retired string is stored
         as-is and grants nothing — Phase 6b sweeps it.
         """
@@ -163,7 +163,7 @@ class PermissionService:
         granter_set = set(granter_effective.effective)
 
         for perm in permissions:
-            if perm in RETIRED_SCOPES:
+            if perm in RETIRED_PERMISSIONS:
                 continue
             if perm not in ALL_PERMISSIONS:
                 raise UnknownPermissionError(perm)

@@ -38,7 +38,7 @@ function serveOps() {
 function leaf(method: string, path: string): HTMLElement {
 	const row = screen
 		.getAllByText(path)
-		.map((el) => el.closest('div.rounded-md') as HTMLElement)
+		.map((el) => el.closest('[data-testid="op-impact-row"]') as HTMLElement)
 		.find((r) => within(r).queryByText(method) != null);
 	if (!row) throw new Error(`no ${method} ${path} row`);
 	return row;

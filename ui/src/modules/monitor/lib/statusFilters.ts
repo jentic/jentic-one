@@ -7,7 +7,7 @@
  * genuinely has. Switching source drops the param, so a value never leaks
  * into a source that can't read it.
  *
- *   all    failed | action                (Everything feed: "Needs you")
+ *   all    failed | action                (Everything feed: "Flagged")
  *   calls  failed | completed             (API calls)
  *   jobs   failed | active | completed    (Jobs: "In progress")
  *   audit  —                              (no status axis)
@@ -27,7 +27,7 @@ export const STATUS_OPTIONS: Record<ActivitySource, { value: string; label: stri
 	all: [
 		{ value: 'all', label: 'All' },
 		{ value: 'failed', label: 'Failed' },
-		{ value: 'action', label: 'Needs you' },
+		{ value: 'action', label: 'Flagged' },
 	],
 	calls: [
 		{ value: 'all', label: 'All' },

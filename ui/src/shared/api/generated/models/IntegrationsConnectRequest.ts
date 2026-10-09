@@ -5,6 +5,8 @@
 import type { PermissionRuleSchema } from './PermissionRuleSchema';
 export type IntegrationsConnectRequest = {
     agent_id?: (string | null);
+    name?: (string | null);
+    oauth_app_registration_id?: (string | null);
     preferred_flow?: (string | null);
     reason?: (string | null);
     requested_permission_rules?: Array<PermissionRuleSchema>;

@@ -5,6 +5,7 @@ import { consumeCodeVerifier, ssoRedirectUri, SPA_CLIENT_ID } from '@/shared/aut
 import { exchangeAuthCode } from '@/shared/api';
 import { ROUTES } from '@/shared/app/routes';
 import { AppLink } from '@/shared/ui/AppLink';
+import { AuthCard } from '@/shared/ui/AuthCard';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
 /**
@@ -56,31 +57,30 @@ export function SsoCallbackPage() {
 	}, [params, loginWithSession, navigate]);
 
 	return (
-		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
-			<div
-				className="border-border bg-card w-full max-w-sm rounded-xl border p-6 text-center shadow-sm"
-				role={error ? undefined : 'status'}
-			>
-				{error === null ? (
-					<>
-						<h1 className="font-display text-lg font-semibold">Signing you in…</h1>
-						<p className="text-muted-foreground mt-2 text-sm">
-							Completing sign-in, one moment.
-						</p>
-					</>
-				) : (
-					<>
-						<h1 className="font-display text-lg font-semibold">Sign-in failed</h1>
-						<ErrorAlert message={error} className="mt-4" />
-						<AppLink
-							href={ROUTES.login}
-							className="text-muted-foreground hover:text-foreground mt-5 inline-block text-sm underline-offset-2 hover:underline"
-						>
-							Back to sign in
-						</AppLink>
-					</>
-				)}
-			</div>
-		</main>
+		<AuthCard as="div" centered className="overflow-hidden" role={error ? undefined : 'status'}>
+			{error === null ? (
+				<>
+					<h1 className="font-heading text-foreground-name text-lg font-semibold">
+						Signing you in…
+					</h1>
+					<p className="text-muted-foreground mt-2 text-sm">
+						Completing sign-in, one moment.
+					</p>
+				</>
+			) : (
+				<>
+					<h1 className="font-heading text-foreground-name text-lg font-semibold">
+						Sign-in failed
+					</h1>
+					<ErrorAlert message={error} className="mt-4" />
+					<AppLink
+						href={ROUTES.login}
+						className="text-muted-foreground hover:text-foreground mt-5 inline-block text-sm underline-offset-2 hover:underline"
+					>
+						Back to sign in
+					</AppLink>
+				</>
+			)}
+		</AuthCard>
 	);
 }

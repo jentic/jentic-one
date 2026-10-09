@@ -39,6 +39,32 @@ from jentic_one.shared.context import Context
 _KEY_MATERIAL = base64.b64encode(os.urandom(32)).decode()
 
 
+def _legacy_credential() -> MagicMock:
+    """Credential mock for the legacy embedded path (no shared registration)."""
+    credential = MagicMock()
+    credential.oauth_app_registration_id = None
+    return credential
+
+
+@pytest.fixture(autouse=True)
+def _patch_credential_lookup():
+    """Return a legacy credential when ``_resolve_poll_endpoints`` reads it.
+
+    ``advance`` now dereferences ``credentials.oauth_app_registration_id`` at
+    poll time to prefer the shared registration's endpoints when set. Every
+    existing test in this file exercises the legacy path — pin a credential
+    with the FK NULL so ``_resolve_poll_endpoints`` falls straight back to
+    the aux row.
+    """
+    with patch(
+        "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+        "CredentialRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=_legacy_credential(),
+    ) as mock:
+        yield mock
+
+
 def _make_context() -> Context:
     cfg = AppConfig(
         databases=DatabasesConfig(
@@ -411,3 +437,42 @@ async def test_advance_maps_other_upstream_error_to_vendor_error_terminal() -> N
         report = await handler.advance("cred_1")
     assert report.kind == "failed"
     assert report.error_code == "vendor_error"
+
+
+@pytest.mark.asyncio()
+async def test_advance_fails_when_shared_registration_inactive(
+    _patch_credential_lookup: AsyncMock,
+) -> None:
+    # Disabling a shared registration mid-flow must stop polling: no token
+    # is minted through the killed app and the session terminates cleanly.
+    ctx = _make_context()
+    handler = DeviceAuthorizationHandler(ctx)
+    dfc = _make_dfc(ctx, last_polled_at=None)
+    credential = MagicMock()
+    credential.oauth_app_registration_id = "oar_1"
+    _patch_credential_lookup.return_value = credential
+    with (
+        patch(
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=dfc,
+        ),
+        patch(
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "DeviceAuthorizationCredentialRepository.try_claim_poll_slot",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "jentic_one.control.services.integrations.flow_handlers.device_authorization."
+            "OAuthAppRegistrationRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=MagicMock(is_active=False),
+        ),
+        patch.object(df, "poll_device_authorization", new_callable=AsyncMock) as poll_mock,
+    ):
+        report = await handler.advance("cred_1")
+    assert report.kind == "failed"
+    assert report.error_code == "registration_inactive"
+    poll_mock.assert_not_awaited()

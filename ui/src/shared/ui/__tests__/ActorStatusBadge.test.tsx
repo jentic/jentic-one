@@ -20,6 +20,23 @@ describe('ActorStatusBadge', () => {
 		expect(screen.getByText('Pending')).toBeInTheDocument();
 	});
 
+	it('tells Pending and Disabled apart without the word: filled vs hollow dot', () => {
+		renderWithProviders(
+			<>
+				<ActorStatusBadge status="pending" />
+				<ActorStatusBadge status="disabled" />
+			</>,
+		);
+		const dotOf = (name: string) =>
+			screen.getByText(name).querySelector<HTMLElement>('span[aria-hidden="true"]')!;
+		const pending = getComputedStyle(dotOf('Pending'));
+		const disabled = getComputedStyle(dotOf('Disabled'));
+		expect(pending.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+		expect(disabled.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+		expect(disabled.borderTopWidth).toBe('1px');
+		expect(disabled.borderTopColor).not.toBe(pending.backgroundColor);
+	});
+
 	it('normalizes an unknown status to the terminal archived state', () => {
 		expect(toActorStatus('totally-unknown')).toBe('archived');
 		renderWithProviders(<ActorStatusBadge status="totally-unknown" />);

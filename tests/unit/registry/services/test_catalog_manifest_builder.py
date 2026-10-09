@@ -483,3 +483,32 @@ def test_preview_unresolvable_ref_param_dropped() -> None:
     proj = mb.project_preview(doc)
     [op] = proj.operations
     assert op.parameters == []
+
+
+# ── catalog_api_name (#1020) ─────────────────────────────────────────────────
+
+
+def test_catalog_api_name_seeds_sub_segment() -> None:
+    assert mb.catalog_api_name("posthog.com/posthog-api", []) == "posthog-api"
+
+
+def test_catalog_api_name_keeps_bare_domain_id() -> None:
+    assert mb.catalog_api_name("coincap.io", ["coincap.io"]) == "coincap.io"
+
+
+def test_catalog_api_name_ignores_itself_and_unrelated_entries() -> None:
+    manifest = ["posthog.com/posthog-api", "posthog.com/other", "stripe.com/posthog-api"]
+    assert mb.catalog_api_name("posthog.com/posthog-api", manifest) == "posthog-api"
+
+
+@pytest.mark.parametrize("api_id", ["stripe.com/checkout", "api.stripe.com/checkout"])
+def test_catalog_api_name_host_qualifies_every_member_of_a_clash_group(api_id: str) -> None:
+    """Entries that differ only by subdomain reduce to the same vendor; both keep
+    their host-qualified id so each stays importable, whichever lands first."""
+    manifest = ["stripe.com/checkout", "api.stripe.com/checkout"]
+    assert mb.catalog_api_name(api_id, manifest) == api_id
+
+
+def test_catalog_api_name_clash_compares_slugified_subs() -> None:
+    manifest = ["stripe.com/Check_Out", "api.stripe.com/check-out"]
+    assert mb.catalog_api_name("stripe.com/Check_Out", manifest) == "stripe.com/Check_Out"

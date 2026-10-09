@@ -10,13 +10,13 @@ import { cn } from '@/shared/lib/utils';
 export type StatAccent = 'neutral' | 'primary' | 'orange' | 'green' | 'blue' | 'pink' | 'danger';
 
 const ACCENT_MEDALLION: Record<StatAccent, string> = {
-	neutral: 'bg-muted text-muted-foreground ring-border',
-	primary: 'bg-primary/12 text-primary ring-primary/20',
-	orange: 'bg-accent-orange/12 text-accent-orange ring-accent-orange/20',
-	green: 'bg-accent-green/12 text-accent-green ring-accent-green/20',
-	blue: 'bg-accent-blue/12 text-accent-blue ring-accent-blue/20',
-	pink: 'bg-accent-pink/12 text-accent-pink ring-accent-pink/20',
-	danger: 'bg-danger/12 text-danger ring-danger/20',
+	neutral: 'bg-surface-tonal text-foreground-sub',
+	primary: 'bg-primary/10 text-primary',
+	orange: 'bg-accent-orange/10 text-accent-orange',
+	green: 'bg-accent-green/10 text-accent-green',
+	blue: 'bg-accent-blue/10 text-accent-blue',
+	pink: 'bg-accent-pink/10 text-accent-pink',
+	danger: 'bg-danger/10 text-danger',
 };
 
 interface StatCardProps {
@@ -72,15 +72,15 @@ export function StatCard({
 	const clickable = Boolean(href) && !isLoading && !error;
 
 	const body = (
-		<div className="relative flex flex-col gap-2 p-4">
+		<div className="relative flex flex-col gap-2 px-5 py-4">
 			<div className="flex items-start justify-between gap-2">
-				<span className="text-muted-foreground font-mono text-[11px] leading-none font-medium tracking-wider uppercase">
+				<span className="text-foreground-faint text-[10.5px] leading-none font-bold tracking-[0.08em] uppercase">
 					{label}
 				</span>
 				{icon && (
 					<span
 						className={cn(
-							'-mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
+							'-mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
 							ACCENT_MEDALLION[accent],
 						)}
 					>

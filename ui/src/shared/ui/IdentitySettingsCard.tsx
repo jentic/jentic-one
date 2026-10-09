@@ -131,7 +131,7 @@ export function IdentitySettingsCard({
 					<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 					{idLabel}
 				</span>
-				<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
+				<span className="bg-surface-field text-foreground-sub inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
 					{idValue}
 					<CopyButton value={idValue} size="icon" variant="ghost" />
 				</span>

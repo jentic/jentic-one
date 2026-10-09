@@ -147,19 +147,19 @@ def test_registry_surface_gets_admin_and_control_db_access(app_config: AppConfig
     _ = ctx.control_db
 
 
-def test_reference_endpoint_serves_scope_join(ctx: Context) -> None:
-    """GET /reference/endpoints.json serves the canonical scope reference."""
+def test_reference_endpoint_serves_permission_join(ctx: Context) -> None:
+    """GET /reference/endpoints.json serves the canonical permission reference."""
     app = create_combined_app(ctx, ["registry", "admin", "control", "auth"])
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/reference/endpoints.json")
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["schema"] == "jentic.endpoint-scope-tree/v1"
+    assert payload["schema"] == "jentic.endpoint-permission-tree/v1"
     assert payload["total"] == len(payload["endpoints"])
     assert payload["total"] > 10
     # Every row carries the fields the CLI / docs SPA need.
     for ep in payload["endpoints"]:
-        assert {"method", "path", "public", "required_scopes", "group"} <= ep.keys()
+        assert {"method", "path", "public", "required_permissions", "group"} <= ep.keys()
 
 
 def test_reference_endpoint_hidden_from_schema(ctx: Context) -> None:

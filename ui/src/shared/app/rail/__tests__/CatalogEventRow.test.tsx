@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@/__tests__/test-utils';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import { adaptEvent, kindForType } from '@/shared/lib/agentStream';
+import {
+	adaptEvent,
+	inlineActionsFor,
+	kindForType,
+	primaryDestinationFor,
+} from '@/shared/lib/agentStream';
 import type { EventResponse } from '@/shared/api';
 import type { StreamEvent } from '@/shared/lib/agentStream';
 
@@ -21,7 +26,6 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 		},
 		links: {},
 		requiresAction: true,
-		acknowledged: false,
 		groupKey: 'catalog:catalog.update_available:',
 	};
 	return { ...base, ...partial };
@@ -43,7 +47,6 @@ describe('catalog/overlay stream kind (L5)', () => {
 			summary: 'Update available',
 			created_at: '2026-01-01T00:00:00Z',
 			requires_action: true,
-			acknowledged: false,
 			data: {
 				api_id: 'stripe.com',
 				vendor: 'stripe.com',
@@ -61,10 +64,9 @@ describe('catalog/overlay stream kind (L5)', () => {
 		expect(ev.tokens.version).toBe('1');
 	});
 
-	it('renders a Review action for a catalog.update_available event', () => {
+	it('links a catalog.update_available event to its API page', () => {
 		render(<RailEventRow ev={makeEvent({})} onAction={() => {}} />);
-		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'View API' })).toBeInTheDocument();
 	});
 
 	it('surfaces the conflict "why" hint for a catalog.update_conflicts_overlay event', () => {
@@ -75,7 +77,6 @@ describe('catalog/overlay stream kind (L5)', () => {
 			summary: 'Update conflicts with overlay',
 			created_at: '2026-01-01T00:00:00Z',
 			requires_action: true,
-			acknowledged: false,
 			data: {
 				api_id: 'stripe.com',
 				vendor: 'stripe.com',
@@ -97,5 +98,30 @@ describe('catalog/overlay stream kind (L5)', () => {
 		).toBeInTheDocument();
 		// Short 12-char digest prefix is shown, not the full digest.
 		expect(screen.getByText(/basedigest00/)).toBeInTheDocument();
+	});
+
+	describe('hub deep-links', () => {
+		const HUB = '/library/workspace/stripe.com/stripe-api/1';
+		const reviewHref = (ev: StreamEvent) => {
+			const action = inlineActionsFor(ev).find((a) => a.kind === 'view_api');
+			return action?.href?.(ev);
+		};
+
+		it('sends a plain update-available event to the Overview (Re-import lives there)', () => {
+			const ev = makeEvent({});
+			expect(primaryDestinationFor(ev)).toBe(HUB);
+			expect(reviewHref(ev)).toBe(HUB);
+		});
+
+		it.each(['catalog.update_conflicts_overlay', 'overlay.deprecated'])(
+			'sends %s to the Versions tab (where overlays live)',
+			(type) => {
+				const ev = makeEvent({ type });
+				expect(primaryDestinationFor(ev)).toBe(`${HUB}?tab=versions`);
+				if (type === 'catalog.update_conflicts_overlay') {
+					expect(reviewHref(ev)).toBe(`${HUB}?tab=versions`);
+				}
+			},
+		);
 	});
 });

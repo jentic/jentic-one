@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 import structlog
 from alembic import command
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, insert, select, text
 
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.permission_rule_sets import (
@@ -178,8 +178,10 @@ async def _seed_graph(control_db: DatabaseSession, admin_db: DatabaseSession) ->
             (_CRED_DUP1, "fl-dup"),
             (_CRED_DUP2, "fl-dup"),
         ):
-            session.add(
-                Credential(
+            # Core insert (not ``session.add``): renders only the given columns,
+            # so it works on the downgraded schema, which lacks later columns.
+            await session.execute(
+                insert(Credential).values(
                     id=cred_id,
                     type="token_value",
                     name=name,
@@ -719,8 +721,10 @@ async def test_cross_owner_pair_is_bound_and_reported_for_review(
             # Another vendor, so the pair adds no pooled-rule drift line.
             (foreign_cred, "fltest-foreign.local", other_user),
         ):
-            session.add(
-                Credential(
+            # Core insert (not ``session.add``): renders only the given columns,
+            # so it works on the downgraded schema, which lacks later columns.
+            await session.execute(
+                insert(Credential).values(
                     id=cred_id,
                     type="token_value",
                     name=cred_id,

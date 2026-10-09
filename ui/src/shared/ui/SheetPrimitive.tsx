@@ -14,6 +14,10 @@
  *   - Body scroll lock via `overscroll-behavior: contain`
  *   - ARIA dialog semantics
  *   - Children unmount on close; `keepMounted` holds a form's draft
+ *   - `size` picks the side-panel width (`sm` forms, `md` previews)
+ *
+ * `SheetHeader` / `SheetBody` / `SheetFooter` are optional borderless layout
+ * slots for a `flex flex-col` panel; `SheetCloseButton` is the header's ✕.
  */
 
 import {
@@ -24,9 +28,13 @@ import {
 	type ReactNode,
 	type RefObject,
 	type JSX,
+	type HTMLAttributes,
+	type ButtonHTMLAttributes,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { Button } from '@/shared/ui/Button';
 import { useCoversRightEdge } from '@/shared/ui/rightEdge';
 
 export interface SheetPrimitiveProps {
@@ -38,6 +46,11 @@ export interface SheetPrimitiveProps {
 	children: ReactNode;
 	/** Which side the sheet slides from. */
 	side?: 'right' | 'bottom' | 'left';
+	/**
+	 * Panel width for a side sheet: `sm` (480px, the default — forms) or `md`
+	 * (36rem — previews). A width in `className` still wins over either.
+	 */
+	size?: 'sm' | 'md';
 	/** Extra classes for the sheet panel. */
 	className?: string;
 	/** Extra classes for the backdrop overlay. */
@@ -73,34 +86,51 @@ const FOCUSABLE_SELECTOR = [
 	'[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
-const ANIMATION_DURATION = 300;
+/**
+ * How long the sheet stays mounted after `open` goes false — long enough for
+ * the exit slide (which itself runs a little shorter) to finish. Exported so
+ * tests and stacked-sheet hand-offs wait on the real number, not a guess.
+ */
+export const SHEET_EXIT_MS = 220;
 
 const SIDE_STYLES = {
 	right: {
 		container: 'inset-y-0 inset-x-0 sm:left-auto sm:right-0',
-		panel: 'h-full w-full max-w-full sm:w-[480px] sm:max-w-[90vw]',
+		panel: 'h-full w-full max-w-full',
+		shadow: 'shadow-[-24px_0_60px_-20px_rgba(0,0,0,.7)]',
 		enter: 'translate-x-0',
 		exit: 'translate-x-full',
 	},
 	left: {
 		container: 'inset-y-0 inset-x-0 sm:right-auto sm:left-0',
-		panel: 'h-full w-full max-w-full sm:w-[480px] sm:max-w-[90vw]',
+		panel: 'h-full w-full max-w-full',
+		shadow: 'shadow-[24px_0_60px_-20px_rgba(0,0,0,.7)]',
 		enter: 'translate-x-0',
 		exit: '-translate-x-full',
 	},
 	bottom: {
 		container: 'inset-x-0 bottom-0',
 		panel: 'flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-xl',
+		shadow: 'shadow-[0_-24px_60px_-20px_rgba(0,0,0,.7)]',
 		enter: 'translate-y-0',
 		exit: 'translate-y-full',
 	},
 };
+
+/** Side-panel widths (left/right only; a bottom sheet is always full width). */
+const SIZE_WIDTHS = {
+	// Forms: the long-standing 480px panel.
+	sm: 'sm:w-[480px] sm:max-w-[90vw]',
+	// Read-only previews (e.g. the catalog API sheet) get a little more room.
+	md: 'sm:w-[min(36rem,100vw)]',
+} as const;
 
 export function SheetPrimitive({
 	open,
 	onClose,
 	children,
 	side = 'right',
+	size = 'sm',
 	className,
 	overlayClassName,
 	preventClose = false,
@@ -147,7 +177,7 @@ export function SheetPrimitive({
 	}, [open]);
 
 	// `onAfterClose` lives in a ref so callers can pass an inline closure
-	// without resetting the 300ms exit timer on every parent render.
+	// without resetting the exit timer on every parent render.
 	const onAfterCloseRef = useRef(onAfterClose);
 	useEffect(() => {
 		onAfterCloseRef.current = onAfterClose;
@@ -175,7 +205,7 @@ export function SheetPrimitive({
 			const exitTimer = setTimeout(() => {
 				setAnimationState('closed');
 				onAfterCloseRef.current?.();
-			}, ANIMATION_DURATION);
+			}, SHEET_EXIT_MS);
 			return (): void => clearTimeout(exitTimer);
 		}
 	}, [animationState]);
@@ -303,6 +333,7 @@ export function SheetPrimitive({
 	if (isClosed && !keepMounted) return null;
 
 	const isVisible = animationState === 'open';
+	const isExiting = animationState === 'exiting';
 
 	return createPortal(
 		<div
@@ -312,8 +343,10 @@ export function SheetPrimitive({
 		>
 			<div
 				className={cn(
-					'absolute inset-0 overflow-hidden bg-black/50 backdrop-blur-sm',
-					'transition-opacity duration-300 ease-out',
+					// Page-tinted scrim with a light blur, rather than flat black.
+					'absolute inset-0 overflow-hidden bg-[hsl(192_35%_4%/.55)] backdrop-blur-[3px]',
+					'ease-out-soft transition-opacity duration-[220ms]',
+					'motion-reduce:duration-[10ms]',
 					isVisible ? 'opacity-100' : 'opacity-0',
 					overlayClassName,
 				)}
@@ -333,12 +366,17 @@ export function SheetPrimitive({
 					aria-label={ariaLabel}
 					aria-labelledby={ariaLabelledBy}
 					className={cn(
-						'bg-card border-border overflow-x-hidden shadow-xl',
-						'transition-transform duration-300 ease-out',
+						'bg-surface-sheet overflow-x-hidden [--field-bg:var(--surface-field)]',
+						styles.shadow,
+						// Slides in on a soft ease-out; leaves faster, accelerating away.
+						isExiting
+							? 'ease-in-exit transition-[translate,transform,opacity] duration-[180ms]'
+							: 'ease-out-soft transition-[translate,transform,opacity] duration-[220ms]',
+						// Reduced motion: no slide, just a near-instant fade.
+						'motion-reduce:translate-none motion-reduce:duration-[10ms]',
+						!isVisible && 'motion-reduce:opacity-0',
 						styles.panel,
-						side === 'right' && 'border-l',
-						side === 'left' && 'border-r',
-						side === 'bottom' && 'border-t',
+						side !== 'bottom' && SIZE_WIDTHS[size],
 						isVisible ? styles.enter : styles.exit,
 						className,
 					)}
@@ -354,5 +392,71 @@ export function SheetPrimitive({
 			</div>
 		</div>,
 		document.body,
+	);
+}
+
+type SlotProps = HTMLAttributes<HTMLElement>;
+
+/**
+ * Top band of a sheet (identity + close). Borderless: the panel's tonal steps
+ * separate the regions, not rules. Put it inside a `flex flex-col` panel.
+ * A plain `div`, not `<header>`: inside a dialog a `<header>` can surface as a
+ * second `banner` landmark beside the app's own.
+ */
+export function SheetHeader({ className, ...props }: SlotProps): JSX.Element {
+	return (
+		<div
+			data-sheet-header=""
+			className={cn('flex shrink-0 items-start gap-4 px-5 pt-5 pb-[18px]', className)}
+			{...props}
+		/>
+	);
+}
+
+export type SheetCloseButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'>;
+
+/**
+ * The ✕ that closes a form sheet, aligned to the top-right of a `SheetHeader`.
+ * A 40px touch target on mobile, 32px from `sm` up. Its accessible name
+ * defaults to "Close".
+ */
+export function SheetCloseButton({
+	className,
+	'aria-label': ariaLabel = 'Close',
+	...props
+}: SheetCloseButtonProps): JSX.Element {
+	return (
+		<Button
+			variant="ghost"
+			size="icon"
+			aria-label={ariaLabel}
+			className={cn('-mt-1 -mr-2 h-10 w-10 shrink-0 p-0 sm:h-8 sm:w-8', className)}
+			{...props}
+		>
+			<X className="h-4 w-4" aria-hidden="true" />
+		</Button>
+	);
+}
+
+/** The scrolling middle of a sheet; grows to fill the space between header and footer. */
+export function SheetBody({ className, ...props }: HTMLAttributes<HTMLDivElement>): JSX.Element {
+	return (
+		<div
+			className={cn('min-h-0 flex-1 overflow-y-auto px-5 pt-1 pb-5', className)}
+			{...props}
+		/>
+	);
+}
+
+/** Action band pinned to the sheet's bottom: a slightly darker strip, actions right-aligned. */
+export function SheetFooter({ className, ...props }: SlotProps): JSX.Element {
+	return (
+		<footer
+			className={cn(
+				'bg-surface-sheet-foot border-hairline-field flex shrink-0 items-center justify-end gap-3.5 border-t px-5 py-3.5',
+				className,
+			)}
+			{...props}
+		/>
 	);
 }

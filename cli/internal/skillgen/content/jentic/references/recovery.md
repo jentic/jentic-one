@@ -21,13 +21,19 @@ this file adds the lane-specific detail.
   Only a broker **denial** (an `agent_directive` on stderr, exit **2**) is
   an access/credential issue; the code names the recovery. Follow the
   directive; don't keep re-sending the same execute.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address, which the broker
+  blocks by default. Nothing in your request is wrong, so re-inspecting the
+  contract or rewriting the host (`localhost`, another private IP) won't
+  help; ask your operator to allow that range
+  (`broker.egress.allowed_private_subnets`), then retry.
 - An empty search result (`{"data": []}`) usually means **nothing is
   imported yet**, not that you lack access. Go through the catalog
   (`jentic catalog search`/`import`), then search again. Both reading the
   registry and importing a cataloged API need no grant — an approved agent
   already holds `apis:read` and `catalog:import` by default. (Importing
   arbitrary URL/inline specs via `POST /apis` is the only import path that
-  needs `apis:write`.) Don't invent other "catalog read" scopes; they're
+  needs `apis:write`.) Don't invent other "catalog read" permissions; they're
   rejected.
 - Address operations by a search hit's `target` — pass it verbatim. It is
   the `METHOD:url` pair (or, when the hit's url is host-relative because the
@@ -65,6 +71,10 @@ this file adds the lane-specific detail.
 - When an error envelope's `actionable_step` names a `jentic` CLI verb or a
   tool your session doesn't have, relay it to the operator as guidance
   instead of inventing a tool call.
+- A `RESOLVE_FAILED` ending in "upstream URL resolves to a blocked address
+  range" means the target is a private or loopback address the broker blocks
+  by default — ask your operator to allow the range instead of following
+  `next_tool` or changing the host.
 - An empty `search_apis` result means nothing matching is imported yet —
   run `search_catalog` → `import_api`, then search again; no grant needed.
 - Backend mismatch: compare the `instance` stamp (`backend`/`host`/
@@ -84,7 +94,7 @@ credential-*provisioning* denials below you can now start the fix yourself
 when the vendor is in the connect registry: run `jentic connect <vendor>`
 (CLI) or call `request_connection` (MCP), relay the returned `approval_url`
 to your operator, confirm with `whoami` once they approve, then retry.
-Everything else (binding an existing credential, scope grants, rule
+Everything else (binding an existing credential, permission grants, rule
 changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
 
@@ -138,12 +148,12 @@ the right ask, then retry once they confirm.
   rendered for humans, next to the HTTP API and Broker API references.
 - `jentic context view` — the active context (environment + identity +
   base_url); start here in a CLI session.
-- `jentic whoami` — your identity, status, scopes, and credential
+- `jentic whoami` — your identity, status, permissions, and credential
   bindings with the APIs each one **serves** (check this before executing;
   it renders the same `GET /me` view `jentic api GET /me` returns). When
   access is missing, start a registry vendor's connect yourself
   (`jentic connect <vendor>`) or report the gap to your operator —
-  approval, binding, and scope grants happen in the dashboard.
+  approval, binding, and permission grants happen in the dashboard.
 - `jentic connect <vendor>` — start a connect session for a registry
   vendor (e.g. `jentic connect github`): prints the `approval_url` a human
   approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
@@ -218,7 +228,7 @@ re-send while pending).
 
 ## Verification — MCP session
 
-- `whoami` answers with your identity (id, status, scopes, bindings) and an
+- `whoami` answers with your identity (id, status, permissions, bindings) and an
   `instance` stamp.
 - After `import_api`, `search_apis` finds operations from that API.
 - A known-allowed `execute_read` returns a 2xx response body.

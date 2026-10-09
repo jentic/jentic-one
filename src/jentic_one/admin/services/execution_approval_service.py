@@ -36,7 +36,7 @@ from jentic_one.admin.services.schemas.execution_approvals import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.hold import (
     ENCRYPTED_PAYLOAD_KEY,
     PROBLEM_CONTENT_TYPE,
@@ -220,17 +220,6 @@ class ExecutionApprovalService:
                     "path": updated.path,
                 },
             )
-            try:
-                async with session.begin_nested():
-                    await settle_actionable_events(
-                        session,
-                        event_type=EventType.EXECUTION_APPROVAL_REQUESTED,
-                        acknowledged_by=identity.sub,
-                        acknowledgement_note=f"Approval {new_state.value}",
-                        data_match={"approval_id": approval_id},
-                    )
-            except Exception:
-                logger.warning("approval_event_settle_failed", approval_id=approval_id)
             view = ExecutionApprovalView.model_validate(updated)
         logger.info(
             "execution_approval_decided",
@@ -295,17 +284,6 @@ class ExecutionApprovalService:
                     "path": updated.path,
                 },
             )
-            try:
-                async with session.begin_nested():
-                    await settle_actionable_events(
-                        session,
-                        event_type=EventType.EXECUTION_APPROVAL_REQUESTED,
-                        acknowledged_by=identity.sub,
-                        acknowledgement_note="Approval withdrawn",
-                        data_match={"approval_id": approval_id},
-                    )
-            except Exception:
-                logger.warning("approval_event_settle_failed", approval_id=approval_id)
             view = ExecutionApprovalView.model_validate(updated)
         logger.info(
             "execution_approval_withdrawn",

@@ -428,7 +428,7 @@ def _synthesized_denial_hint(status: int, problem_type: str) -> str:
         )
     if status == 403:
         return (
-            "The broker denied this call. Call whoami to see your bindings and scopes; "
+            "The broker denied this call. Call whoami to see your bindings and permissions; "
             "if a permission rule forbids this operation, ask your operator to adjust "
             "it — do not try to route around a rule by connecting a new credential."
         )

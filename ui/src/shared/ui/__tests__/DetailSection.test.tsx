@@ -41,11 +41,11 @@ describe('DetailSection', () => {
 
 	it('is accessible (with an EmptyRow body)', async () => {
 		const { container } = renderWithProviders(
-			<DetailSection title="Scopes" icon={<Shield className="h-4 w-4" />}>
-				<EmptyRow icon={<Shield />}>No scopes granted.</EmptyRow>
+			<DetailSection title="Permissions" icon={<Shield className="h-4 w-4" />}>
+				<EmptyRow icon={<Shield />}>No permissions granted.</EmptyRow>
 			</DetailSection>,
 		);
-		expect(screen.getByText('No scopes granted.')).toBeInTheDocument();
+		expect(screen.getByText('No permissions granted.')).toBeInTheDocument();
 		await checkA11y(container);
 	});
 });

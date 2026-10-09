@@ -209,6 +209,10 @@ class CredentialFullView(BaseModel):
     created_at: datetime
     server_variables: dict[str, str] | None = None
     secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
+    # Advisory only — e.g. the API scope covers no imported registry API
+    # identity (#1020). The credential is created regardless; None when there
+    # is nothing to flag (or the check could not run).
+    warnings: list[str] | None = None
 
 
 class CredentialRedactedView(BaseModel):
@@ -234,6 +238,12 @@ class CredentialRedactedView(BaseModel):
         | Sigv4Redacted
     )
     server_variables: dict[str, str] | None = None
+    # Populated when the credential was minted through a shared
+    # ``oauth_app_registrations`` row (either via the connect-session flow
+    # or by an admin's toggle-on create). ``None`` for legacy embedded
+    # OAuth credentials and every non-OAuth type.
+    oauth_app_registration_id: str | None = None
+    oauth_app_registration_name: str | None = None
 
     model_config = {"from_attributes": True}
 

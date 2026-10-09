@@ -2,8 +2,9 @@
  * apiSpec — parse an OpenAPI document into the structured model our native API
  * reference renders. The spec is the source of truth: we render *everything*
  * that's in it (tags, tag groups, every operation, request/response bodies, and
- * the component schemas / "Models"), then enrich each operation with our scope
- * reference (the one thing the spec doesn't carry) by joining on `(method,path)`.
+ * the component schemas / "Models"), then enrich each operation with our
+ * permission reference (the one thing the spec doesn't carry) by joining on
+ * `(method,path)`.
  *
  * Ordering is the standard OpenAPI/Redoc convention:
  *   x-tagGroups (top-level groups) → tags (in each group's declared order) →
@@ -15,7 +16,6 @@
  * sparser model rather than throwing.
  */
 import type { OpenApiDocument } from '@/modules/docs/api/types';
-import { lookupKey } from '@/modules/docs/lib/anchor';
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 
@@ -469,15 +469,4 @@ export function derefSchema(
 	const name = refName(node);
 	if (name) return { schema: deref(spec, node), name };
 	return { schema: node };
-}
-
-/** Build a `(method,path)` → parsed operation index (for joining elsewhere). */
-export function indexParsedOperations(parsed: ParsedSpec): Map<string, SpecOperation> {
-	const index = new Map<string, SpecOperation>();
-	for (const g of parsed.groups) {
-		for (const t of g.tags) {
-			for (const op of t.operations) index.set(lookupKey(op.method, op.path), op);
-		}
-	}
-	return index;
 }

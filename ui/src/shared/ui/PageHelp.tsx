@@ -3,11 +3,23 @@ import { HelpCircle } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Kbd } from '@/shared/ui/Kbd';
-import type { KeyboardShortcut } from '@/shared/ui/KeyboardShortcutsBar';
 import { isTypingTarget } from '@/shared/lib/keyboard';
 import { cn } from '@/shared/lib/utils';
 
-export type { KeyboardShortcut };
+export interface KeyboardShortcut {
+	/**
+	 * Keys that make up the shortcut. Multiple entries render as separate
+	 * pills with no separator (reads as "any of these keys"); set
+	 * `chord: true` to render a `+` between pills (e.g. ⌘ + /).
+	 */
+	keys: string[];
+	/** Plain-language description of what the shortcut does. */
+	label: string;
+	/** Render `keys` as a chord with `+` between pills. */
+	chord?: boolean;
+	/** Optional synonym trigger, rendered after a thin "or". */
+	altKeys?: string[];
+}
 
 export interface PageHelpSection {
 	/** Optional eyebrow / heading shown above the body. */
@@ -124,7 +136,7 @@ export function PageHelp({
 								Keyboard shortcuts
 							</h3>
 							<ul
-								className="border-border/40 divide-border/40 divide-y rounded-md border"
+								className="bg-surface-field divide-hairline-row divide-y rounded-md"
 								data-testid="page-help-shortcuts"
 							>
 								{shortcuts.map((s) => (
@@ -140,7 +152,7 @@ export function PageHelp({
 													className="flex items-center gap-1"
 												>
 													{s.chord && idx > 0 && (
-														<span className="text-muted-foreground/50 text-xs">
+														<span className="text-foreground-faint text-xs">
 															+
 														</span>
 													)}
@@ -151,7 +163,7 @@ export function PageHelp({
 											))}
 											{s.altKeys && (
 												<>
-													<span className="text-muted-foreground/60 mx-1 text-[10px] uppercase">
+													<span className="text-muted-foreground mx-1 text-[10px] uppercase">
 														or
 													</span>
 													{s.altKeys.map((k, idx) => (

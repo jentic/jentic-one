@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { captureConsoleErrors } from './helpers';
+import { captureConsoleErrors, dismissFirstRunFor } from './helpers';
 import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
@@ -42,6 +42,10 @@ test('a DCR-registered agent opens on the Agents page and can be renamed', async
 }) => {
 	const errors = captureConsoleErrors(page);
 	const agent = await provisionAdminOwnedAgent(request);
+	// On a fresh DB this is the org's only agent — active, with no APIs — which
+	// resumes the first-run landing rather than the fleet. This spec is about
+	// the fleet view, so the operator has left that suggestion.
+	await dismissFirstRunFor(page, agent.clientId);
 
 	await page.goto(`/app/agents/${agent.clientId}`);
 	await expect(page).toHaveURL(new RegExp(`/app/agents\\?agent=${agent.clientId}$`));

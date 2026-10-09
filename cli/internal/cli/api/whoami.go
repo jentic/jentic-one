@@ -18,10 +18,10 @@ import (
 func newWhoamiCmd(_ *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
-		Short: "Show who you are: identity, status, scopes, and credential bindings",
+		Short: "Show who you are: identity, status, permissions, and credential bindings",
 		Long: "whoami answers with your identity as the control plane sees it — the\n" +
 			"authenticated GET /me response, verbatim. For an agent that is the id,\n" +
-			"status, scopes, and credential bindings with the APIs each one serves;\n" +
+			"status, permissions, and credential bindings with the APIs each one serves;\n" +
 			"a user token renders its own /me variant. Check it before executing\n" +
 			"anything new — access is decided from your bindings, never by probing\n" +
 			"with execute.",

@@ -20,7 +20,6 @@ function ev(partial: Partial<StreamEvent> & Pick<StreamEvent, 'id' | 'tsMs'>): S
 		tokens: {},
 		links: {},
 		requiresAction: false,
-		acknowledged: false,
 		groupKey: `execution:execution.completed:${partial.id}`,
 		...partial,
 	};

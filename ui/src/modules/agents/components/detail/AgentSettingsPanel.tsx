@@ -22,6 +22,7 @@
  */
 import type { ReactNode } from 'react';
 import { DangerZone, IdentitySettingsCard, type DangerZoneAction } from '@/shared/ui';
+import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	useUpdateAgent,
 	ACTIONS_FOR_STATUS,
@@ -50,20 +51,23 @@ export function AgentSettingsPanel({
 	// Archived is terminal and immutable — `AgentService.update_agent`
 	// rejects it with 409 — so the identity card must not invite edits.
 	const isArchived = agent.status === 'archived';
+	// Renaming and archiving need `agents:write` (or `org:admin`).
+	const canManage = useCanAccess(AGENTS_WRITE);
 
 	const actions = ACTIONS_FOR_STATUS[agent.status];
-	const dangerActions: DangerZoneAction[] = actions.includes('archive')
-		? [
-				{
-					key: 'archive',
-					title: 'Archive agent',
-					description:
-						'Removes this agent from the fleet and cascades to its bindings. This cannot be undone.',
-					buttonLabel: 'Archive',
-					ariaLabel: `Archive ${agent.name}`,
-				},
-			]
-		: [];
+	const dangerActions: DangerZoneAction[] =
+		canManage && actions.includes('archive')
+			? [
+					{
+						key: 'archive',
+						title: 'Archive agent',
+						description:
+							'Removes this agent from the fleet and cascades to its bindings. This cannot be undone.',
+						buttonLabel: 'Archive',
+						ariaLabel: `Archive ${agent.name}`,
+					},
+				]
+			: [];
 
 	return (
 		<div className="space-y-4">
@@ -77,10 +81,12 @@ export function AgentSettingsPanel({
 				readOnlyNote={
 					isArchived
 						? 'This agent is archived — its name and description are frozen.'
-						: undefined
+						: !canManage
+							? 'Renaming this agent needs permission to manage agents.'
+							: undefined
 				}
 				onSave={
-					isArchived
+					isArchived || !canManage
 						? undefined
 						: async (draft) => {
 								// PATCH semantics: only ship the fields that changed;

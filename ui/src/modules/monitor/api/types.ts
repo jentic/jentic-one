@@ -108,14 +108,3 @@ export function isCancellableJob(status: JobStatusUi, kind: string): boolean {
 	if (status === 'held') return kind !== 'execution';
 	return status === 'queued' || status === 'running';
 }
-
-/**
- * An actor that performed an audited action, resolved from `AuditResponse`.
- * Jobs/executions carry no actor on the wire (STATUS.md decision: actor
- * attribution lives only in the audit log), so trace/job detail views resolve
- * the actor by cross-referencing audit entries on `trace_id` / `job_id`.
- */
-export interface AuditActor {
-	actorId: string | null;
-	actorType: string;
-}

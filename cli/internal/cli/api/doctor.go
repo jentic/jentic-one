@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -260,17 +262,26 @@ func (d *agentDoctor) checkReachability(ctx context.Context, baseURL, token stri
 		return
 	}
 	me, err := d.app.getMe(ctx)
+	var coded *ux.CodedError
+	if errors.As(err, &coded) && coded.Code == ux.CodeServerIncompatible {
+		// The server answered, so it is reachable; the failure is a release
+		// mismatch, and its remedy is the guard's own actionable step.
+		d.add(section, "reachability", agentPass, baseURL, "")
+		d.add(section, "compatibility", agentFail, coded.Msg, coded.Actionable)
+		return
+	}
 	if err != nil {
 		d.add(section, "reachability", agentFail, baseURL+": "+err.Error(),
 			"check the base URL and that the control plane is running")
 		return
 	}
 	d.add(section, "reachability", agentPass, baseURL, "")
-	scopes := "none"
-	if len(me.Scopes) > 0 {
-		scopes = strings.Join(me.Scopes, ", ")
+	permissions := "none"
+	if len(me.Permissions) > 0 {
+		permissions = strings.Join(me.Permissions, ", ")
 	}
-	d.add(section, "identity", agentPass, fmt.Sprintf("%s (status %s; scopes: %s)", me.Id, me.Status, scopes), "")
+	d.add(section, "identity", agentPass,
+		fmt.Sprintf("%s (status %s; permissions: %s)", me.Id, me.Status, permissions), "")
 }
 
 // jwtIssuedAt best-effort extracts the `iat` claim (seconds since epoch) from a

@@ -9,5 +9,9 @@ import type { CredentialRedactedResponse } from './CredentialRedactedResponse';
 export type CredentialCreateResponse = {
     credential: CredentialRedactedResponse;
     secret: Record<string, any>;
+    /**
+     * Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
+     */
+    warnings?: (Array<string> | null);
 };
 

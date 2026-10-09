@@ -20,8 +20,8 @@ from pathlib import Path
 
 from jentic_one.migrations.run import downgrade, upgrade
 
-_ADMIN_PARENT_REV = "0679072d60eb"  # pragma: allowlist secret
-_CONTROL_PARENT_REV = "g4d5e6f7a8b9"  # pragma: allowlist secret
+_ADMIN_PARENT_REV = "d2e3f4a5b6c7"  # pragma: allowlist secret
+_CONTROL_PARENT_REV = "aa1b2c3d4e5f"  # pragma: allowlist secret
 
 _APPROVAL_INDEXES = {
     "ix_execution_approvals_agent_state",

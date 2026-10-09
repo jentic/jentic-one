@@ -8,6 +8,6 @@
 export type AgentCreateRequest = {
     description?: (string | null);
     name: string;
-    scopes?: (Array<string> | null);
+    permissions?: (Array<string> | null);
 };
 

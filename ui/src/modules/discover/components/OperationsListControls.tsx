@@ -7,7 +7,11 @@
  * so a search covers every operation in the spec — not just the loaded page.
  * Presentational only.
  */
+import type React from 'react';
+import { Filter } from 'lucide-react';
 import { Button, SearchInput } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
+import { OPERATION_PREVIEW_PAGE_SIZE } from '@/modules/discover/api';
 
 /**
  * Row shape the list renders. The sheet projects each
@@ -21,7 +25,7 @@ export interface OpRow {
 	tags: string[];
 }
 
-export const TAG_CHIP_LIMIT = 8;
+const TAG_CHIP_LIMIT = 8;
 
 /**
  * Most-frequent tags first, then alphabetical; de-duplicated. The caller
@@ -40,10 +44,10 @@ export function topTags(tags: string[]): string[] {
 }
 
 /**
- * Search input + tag chip bar above the operations list. Always renders the
- * search box (it filters the whole spec server-side, so it's useful even when
- * few ops are loaded yet); the tag bar only shows when ≥2 tags are known from
- * the loaded operations.
+ * Filter field + tag chip bar above the operations list. The filter is always
+ * there (it searches the whole spec server-side, so it's useful even when few
+ * ops are loaded yet); the tag bar only shows when ≥2 tags are known from the
+ * loaded operations.
  */
 export function OperationsListToolbar({
 	filter,
@@ -51,58 +55,43 @@ export function OperationsListToolbar({
 	tags,
 	activeTag,
 	onTagChange,
-	totalOps,
 }: {
 	filter: string;
 	onFilterChange: (next: string) => void;
 	tags: string[];
 	activeTag: string | null;
 	onTagChange: (next: string | null) => void;
-	/** Full (filtered) operation count in the spec — shown in the placeholder. */
-	totalOps: number;
 }) {
 	const visibleTags = tags.slice(0, TAG_CHIP_LIMIT);
 	const showTags = visibleTags.length >= 2 || activeTag !== null;
 
-	const chipClass = (active: boolean) =>
-		'rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ' +
-		(active
-			? 'bg-primary/15 text-foreground ring-primary/30 ring-1'
-			: 'bg-muted/60 text-muted-foreground hover:bg-muted');
-
 	return (
-		<div className="mb-3 space-y-2">
+		<div className="mb-3">
 			<SearchInput
 				value={filter}
 				onValueChange={onFilterChange}
-				placeholder={totalOps > 0 ? `Search ${totalOps} operations…` : 'Search operations…'}
-				aria-label="Search operations"
-				size="sm"
+				placeholder="Filter operations"
+				aria-label="Filter operations"
+				tone="inset"
+				icon={<Filter className="h-3.5 w-3.5" aria-hidden="true" />}
 				data-testid="ops-filter-input"
 			/>
 			{showTags && (
-				<div className="flex flex-wrap gap-1" data-testid="ops-tag-bar">
-					<button
-						type="button"
-						onClick={() => onTagChange(null)}
-						aria-pressed={activeTag === null}
-						className={chipClass(activeTag === null)}
-					>
+				<div className="mt-2.5 flex flex-wrap gap-1.5" data-testid="ops-tag-bar">
+					<TagChip active={activeTag === null} onClick={() => onTagChange(null)}>
 						All
-					</button>
+					</TagChip>
 					{visibleTags.map((tag) => {
 						const active = activeTag === tag;
 						return (
-							<button
-								type="button"
+							<TagChip
 								key={tag}
+								active={active}
 								onClick={() => onTagChange(active ? null : tag)}
-								aria-pressed={active}
 								data-testid="ops-tag-chip"
-								className={chipClass(active)}
 							>
 								{tag}
-							</button>
+							</TagChip>
 						);
 					})}
 				</div>
@@ -111,9 +100,39 @@ export function OperationsListToolbar({
 	);
 }
 
+/** A toggle pill in the tag bar; `aria-pressed` carries the selection. */
+function TagChip({
+	active,
+	onClick,
+	children,
+	...rest
+}: {
+	active: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+	'data-testid'?: string;
+}) {
+	return (
+		<Button
+			variant="ghost"
+			onClick={onClick}
+			aria-pressed={active}
+			className={cn(
+				'h-auto rounded-full px-2.5 py-[3px] text-xs font-semibold active:scale-100',
+				active
+					? 'bg-surface-chip-active hover:bg-surface-chip-active text-white hover:text-white'
+					: 'bg-surface-field text-muted-foreground hover:bg-surface-chip hover:text-foreground-lighter',
+			)}
+			{...rest}
+		>
+			{children}
+		</Button>
+	);
+}
+
 /**
- * Footer beneath the operations list: shows how many of the (filtered) total
- * are loaded and a "Load more" button to page in the next 25.
+ * Footer beneath the operations list: how many of the (filtered) total are
+ * loaded, and a "Load N more" control that pages in the next batch.
  */
 export function OperationsListFooter({
 	loaded,
@@ -129,23 +148,23 @@ export function OperationsListFooter({
 	onLoadMore: () => void;
 }) {
 	if (total === 0) return null;
+	const nextBatch = Math.min(OPERATION_PREVIEW_PAGE_SIZE, Math.max(0, total - loaded));
 	return (
-		<div className="border-border/40 mt-3 border-t pt-2">
-			<p className="text-muted-foreground text-xs">
+		<div className="mt-2 flex items-center justify-between gap-3">
+			<p className="text-foreground-faint text-xs">
 				Showing {loaded} of {total}
 			</p>
 			{hasNextPage && (
-				<div className="mt-2 flex justify-center">
-					<Button
-						variant="ghost"
-						size="sm"
-						loading={isFetchingNextPage}
-						onClick={onLoadMore}
-						data-testid="ops-load-more"
-					>
-						{isFetchingNextPage ? 'Loading…' : 'Load more'}
-					</Button>
-				</div>
+				<Button
+					variant="ghost"
+					size="sm"
+					loading={isFetchingNextPage}
+					onClick={onLoadMore}
+					className="text-muted-foreground hover:bg-tint-2 rounded-field text-[13px] font-semibold hover:text-white"
+					data-testid="ops-load-more"
+				>
+					{isFetchingNextPage ? 'Loading…' : `Load ${nextBatch} more`}
+				</Button>
 			)}
 		</div>
 	);

@@ -6,15 +6,14 @@
  */
 import type { ReactNode } from 'react';
 import type { PermissionRule as DisplayRule } from '@/shared/lib';
+import type { PermissionRule as EditorRule } from '@/shared/credentials/api/vendors-types';
 import type { BindingPermissionRule } from '@/modules/agents/api';
 
 /** A compact label/value pair used in the attribution / key meta grids. */
 export function MetaItem({ label, value }: { label: string; value: ReactNode }) {
 	return (
 		<div className="min-w-0">
-			<dt className="text-muted-foreground/70 text-[10px] tracking-wider uppercase">
-				{label}
-			</dt>
+			<dt className="text-muted-foreground text-[10px] tracking-wider uppercase">{label}</dt>
 			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{value}</dd>
 		</div>
 	);
@@ -27,44 +26,65 @@ export function successShare(success: number, total: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Direct-binding surfaces (theme 5 phase 5a) — motion presets and the rule
-// display projection the "Bound credentials" card and its rule editor share.
+// Direct-binding surfaces — the rule projections (display and editor shapes)
+// and the motion preset shared by the API access sheet and its rule editor and
+// tester.
 // ---------------------------------------------------------------------------
+
+/** The condition fields every rule shape here carries — the stored read rule and
+ * the write input alike (their `effect`/`match_mode` are distinct generated
+ * string enums with identical values). */
+interface RuleConditions {
+	effect: string;
+	methods?: string[] | null;
+	path?: string | null;
+	match_mode?: string | null;
+	operations?: string[] | null;
+}
+
+/** An effect neither shape knows reads as allow. */
+function toEditorEffect(effect: string): EditorRule['effect'] {
+	return effect === 'deny' || effect === 'require-approval' ? effect : 'allow';
+}
+
+/** One rule in the shared display shape `ruleSummary` reads.
+ * Regex is the default; only non-default modes change how the path reads, so
+ * they alone survive into the display shape. */
+export function toDisplayRule(rule: RuleConditions): DisplayRule {
+	const mode = String(rule.match_mode ?? 'regex');
+	return {
+		effect: toEditorEffect(String(rule.effect)),
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode: mode === 'prefix' || mode === 'exact' ? mode : null,
+		operations: rule.operations ?? null,
+	};
+}
 
 /**
  * Project a binding's stored rules into the shared display shape consumed by
- * `OperationsSummary`/`OperationsDialog` — so "what can this credential do"
- * reads identically wherever the grant is shown. System safety rules are
- * dropped: they are backend-owned plumbing, not part of the operator's grant.
+ * `ruleSummary` — so "what can this credential do" reads identically wherever
+ * the grant is shown. System safety rules are dropped: they are backend-owned
+ * plumbing, not part of the operator's grant.
  */
 export function toDisplayRules(rules: BindingPermissionRule[] | null | undefined): DisplayRule[] {
-	return (rules ?? [])
-		.filter((rule) => !rule._system)
-		.map((rule) => {
-			const mode = String(rule.match_mode ?? 'regex');
-			return {
-				// The generated read enum and the display union share the same
-				// 'allow'/'deny' strings; String() bridges the nominal enum type.
-				effect: String(rule.effect) === 'deny' ? ('deny' as const) : ('allow' as const),
-				methods: rule.methods ?? null,
-				path: rule.path ?? null,
-				// regex is the default; only non-default modes change how the path
-				// reads, so they alone survive into the display shape.
-				match_mode: mode === 'prefix' || mode === 'exact' ? mode : null,
-				operations: rule.operations ?? null,
-			};
-		});
+	return (rules ?? []).filter((rule) => !rule._system).map(toDisplayRule);
 }
 
-/** Row enter/exit motion for binding rows. */
-export const rowMotion = {
-	initial: { opacity: 0, y: -4, height: 0 },
-	animate: { opacity: 1, y: 0, height: 'auto' as const },
-	exit: { opacity: 0, y: -4, height: 0 },
-	transition: { duration: 0.18, ease: 'easeOut' as const },
-};
+/** One rule in the credentials kit's shape (`RuleListEditor`,
+ * `OperationImpactPreview`). */
+export function toEditorRule(rule: RuleConditions): EditorRule {
+	const mode = rule.match_mode;
+	return {
+		effect: toEditorEffect(String(rule.effect)),
+		methods: rule.methods ?? null,
+		path: rule.path ?? null,
+		match_mode: mode === 'prefix' || mode === 'exact' || mode === 'regex' ? mode : undefined,
+		operations: rule.operations ?? null,
+	};
+}
 
-/** Expand/collapse motion for inline panels (rule editor, tester disclosure). */
+/** Expand/collapse motion for inline panels (the rule editor's pending-changes diff). */
 export const panelMotion = {
 	initial: { opacity: 0, height: 0 },
 	animate: { opacity: 1, height: 'auto' as const },

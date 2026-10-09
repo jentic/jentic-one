@@ -213,6 +213,31 @@ func TestMCPRequestConnection_UnknownVendor404IsResolveFailedPointingAtSearchCat
 	}
 }
 
+func TestMCPRequestConnection_AmbiguousVendorRoutesToOperator(t *testing.T) {
+	cp := &connectControlPlane{status: http.StatusBadRequest, body: `{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'github' is ambiguous"}`}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", `{"vendor":"github"}`))
+	if err != nil {
+		t.Fatalf("an ambiguous vendor must be a soft error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("want IsError result")
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeResolveFailed {
+		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
+	}
+	if payload["next_tool"] == "search_catalog" {
+		t.Errorf("next_tool = search_catalog, but discovery can't resolve an ambiguous app")
+	}
+	if payload["actionable_step"] != ambiguousVendorActionable {
+		t.Errorf("actionable_step = %v, want the ask-your-operator advice", payload["actionable_step"])
+	}
+}
+
 func TestMCPRequestConnection_403IsOperatorScopeGrant(t *testing.T) {
 	cp := &connectControlPlane{status: http.StatusForbidden, body: `{"detail":"requires one of: credentials:connect"}`}
 	srv := httptest.NewServer(cp.handler())
@@ -228,13 +253,13 @@ func TestMCPRequestConnection_403IsOperatorScopeGrant(t *testing.T) {
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["error_code"] != ux.CodeBrokerDenied {
-		t.Errorf("error_code = %v, want %q (a missing scope is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
+		t.Errorf("error_code = %v, want %q (a missing permission is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
 	}
 	if _, has := payload["next_tool"]; has {
-		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
+		t.Errorf("next_tool = %v, want none (the permission grant is an operator action, not a tool call)", payload["next_tool"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "credentials:connect") || !strings.Contains(step, "operator") || !strings.Contains(step, "jentic logout") {
-		t.Errorf("actionable_step %q must name the credentials:connect scope, route to the operator, and re-mint the token", step)
+		t.Errorf("actionable_step %q must name the credentials:connect permission, route to the operator, and re-mint the token", step)
 	}
 }
 

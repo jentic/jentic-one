@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.core.schema.oauth_app_registrations import OAuthAppRegistration
 from jentic_one.shared.models.api_identity import slugify_api_field
 
 
@@ -150,6 +151,46 @@ class CredentialRepository:
         stmt = select(Credential.id, Credential.created_by).where(Credential.id.in_(ids))
         result = await session.execute(stmt)
         return {row.id: row.created_by for row in result}
+
+    @staticmethod
+    async def get_registration_display_names(
+        session: AsyncSession, ids: list[str]
+    ) -> dict[str, str]:
+        """Batch-resolve credential IDs to the display name of their OAuth app registration.
+
+        Credentials with no registration (or missing ids) are omitted.
+        """
+        if not ids:
+            return {}
+        stmt = (
+            select(Credential.id, OAuthAppRegistration.display_name)
+            .join(
+                OAuthAppRegistration,
+                OAuthAppRegistration.id == Credential.oauth_app_registration_id,
+            )
+            .where(Credential.id.in_(ids))
+        )
+        result = await session.execute(stmt)
+        return {row.id: row.display_name for row in result}
+
+    @staticmethod
+    async def set_oauth_app_registration(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        registration_id: str,
+    ) -> Credential | None:
+        """Bind a credential to a shared ``oauth_app_registrations`` row.
+
+        Sanctioned writer for ``credentials.oauth_app_registration_id`` — see
+        ``tests/arch/test_oauth_app_registration_invariants.py``.
+        """
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.oauth_app_registration_id = registration_id
+        await session.flush()
+        return credential
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

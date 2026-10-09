@@ -108,7 +108,7 @@ export function RadioCardGroup<T extends string = string>({
 			aria-disabled={disabled || undefined}
 			data-testid={dataTestId}
 			className={cn(
-				'border-border divide-border divide-y overflow-hidden rounded-lg border',
+				'bg-field divide-hairline divide-y overflow-hidden rounded-lg',
 				maxHeightClass && cn(maxHeightClass, 'overflow-y-auto'),
 				className,
 			)}
@@ -138,7 +138,7 @@ export function RadioCardGroup<T extends string = string>({
 						className={cn(
 							'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
 							'focus-visible:ring-primary/60 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
-							checked ? 'bg-primary/[0.07]' : enabled && 'hover:bg-muted/40',
+							checked ? 'bg-primary/[0.07]' : enabled && 'hover:bg-tint-2',
 							enabled ? 'cursor-pointer' : 'cursor-not-allowed',
 							!enabled && !checked && 'opacity-50',
 						)}

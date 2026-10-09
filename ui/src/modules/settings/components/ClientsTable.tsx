@@ -131,7 +131,7 @@ function RowActionsMenu({
 		<div ref={triggerRef} className="relative inline-block">
 			<Button
 				variant="ghost"
-				size="sm"
+				size="icon-xs"
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-label={`Actions for ${client.name}`}

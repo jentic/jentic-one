@@ -119,6 +119,8 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
         updated_at=view.updated_at,
         details=details.model_dump(exclude_none=True) if details else None,
         server_variables=view.server_variables,
+        oauth_app_registration_id=view.oauth_app_registration_id,
+        oauth_app_registration_name=view.oauth_app_registration_name,
     )
 
 
@@ -211,6 +213,7 @@ async def create_credential(
     return CredentialCreateResponse(
         credential=redacted,
         secret=result.secret.model_dump(),
+        warnings=result.warnings,
     )
 
 

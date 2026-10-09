@@ -60,6 +60,43 @@ class NoOpForFlowError(ConnectSessionServiceError):
         self.flow = flow
 
 
+class InvalidOAuthAppRegistrationError(ConnectSessionServiceError):
+    """The pinned ``oauth_app_registration_id`` on ``:connect`` is not usable.
+
+    Raised when the caller supplied a registration id that either does not
+    exist, is inactive, or references a different ``api_vendor`` than
+    ``body.vendor`` — a mismatch that would otherwise silently mint
+    credentials against the wrong vendor's OAuth app.
+
+    The message is deliberately the same for every cause, so the response
+    can't be used to probe which registration ids exist or which vendor they
+    belong to; ``reason`` carries the specific cause for logs.
+    """
+
+    def __init__(self, registration_id: str, reason: str) -> None:
+        super().__init__(
+            f"oauth_app_registration {registration_id!r} is not usable for this vendor"
+        )
+        self.registration_id = registration_id
+        self.reason = reason
+
+
+class OAuthAppChangedError(ConnectSessionServiceError):
+    """The OAuth app resolved at confirm differs from the one used at ``:connect``.
+
+    The session is cancelled; the caller must start a new one so the
+    credential, its aux rows, and the vendor conversation all agree on a
+    single OAuth app.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(
+            f"session {session_id!r} was cancelled: its OAuth app changed since "
+            "it was created; start a new session"
+        )
+        self.session_id = session_id
+
+
 class CredentialMissingCreatorError(ConnectSessionServiceError):
     """A credential with no ``created_by`` cannot finalise a connect flow.
 

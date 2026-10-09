@@ -85,7 +85,7 @@ export function getProviders(): Promise<ProviderDiscoveryResponse> {
 
 /**
  * GET /credentials/{id}/agents — agents directly bound to a credential
- * (theme 5 phase 1's reverse lookup; suspended bindings included with their
+ * (the binding's reverse lookup; suspended bindings included with their
  * flag set). Cursor-paginated like `listCredentials`.
  */
 export function listCredentialAgents(

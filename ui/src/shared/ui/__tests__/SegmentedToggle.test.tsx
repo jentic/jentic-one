@@ -37,6 +37,28 @@ describe('SegmentedToggle', () => {
 		expect(onChange).toHaveBeenCalledWith('grid');
 	});
 
+	it('disabled: every segment is disabled, the group aria-disabled, and clicks do nothing', async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		renderWithProviders(
+			<SegmentedToggle
+				options={options}
+				value="list"
+				onChange={onChange}
+				ariaLabel="View"
+				disabled
+			/>,
+		);
+		expect(screen.getByRole('group', { name: 'View' })).toHaveAttribute(
+			'aria-disabled',
+			'true',
+		);
+		expect(screen.getByRole('button', { name: 'List' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Grid' })).toBeDisabled();
+		await user.click(screen.getByRole('button', { name: 'Grid' }));
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it('has no critical a11y violations', async () => {
 		const { container } = renderWithProviders(
 			<SegmentedToggle options={options} value="list" onChange={() => {}} layoutId="view3" />,
@@ -90,5 +112,59 @@ describe('SegmentedToggle', () => {
 		// The pill sits inside the root's 1px border + 2px padding; it must
 		// never even reach the border box edge, let alone poke past it.
 		expect(maxBleed).toBeLessThanOrEqual(0);
+	});
+
+	it('defaults to a borderless control one step lighter than its container', () => {
+		const { container } = renderWithProviders(
+			<SegmentedToggle options={options} value="list" onChange={() => {}} />,
+		);
+		const root = container.querySelector('[data-tone]') as HTMLElement;
+		expect(root).toHaveAttribute('data-tone', 'default');
+		expect(root).toHaveClass('bg-field', 'border-0');
+		expect(getComputedStyle(root).borderTopWidth).toBe('0px');
+	});
+
+	it('`field` draws the form-field resting edge', () => {
+		const { container } = renderWithProviders(
+			<SegmentedToggle options={options} value="list" onChange={() => {}} field />,
+		);
+		const root = container.querySelector('[data-tone]') as HTMLElement;
+		expect(root).toHaveClass('border', 'border-control-edge');
+		expect(root).not.toHaveClass('border-0');
+	});
+
+	it.each([
+		['surface', 'bg-surface-1'],
+		['inset', 'bg-surface-field'],
+	] as const)('tone="%s" is a borderless tonal control, same behaviour', async (tone, bg) => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		const { container } = renderWithProviders(
+			<div className="bg-surface-1 p-4">
+				<SegmentedToggle
+					options={options}
+					value="list"
+					onChange={onChange}
+					ariaLabel="View"
+					tone={tone}
+				/>
+			</div>,
+		);
+		const root = screen.getByRole('group', { name: 'View' });
+		expect(root).toHaveAttribute('data-tone', tone);
+		expect(root).toHaveClass(bg, 'border-0');
+		expect(getComputedStyle(root).borderTopWidth).toBe('0px');
+		// The pill carries no ring or shadow in the tonal looks.
+		const pill = root.querySelector('[aria-hidden="true"]') as HTMLElement;
+		expect(pill).toHaveClass('bg-surface-tonal-hover');
+		expect(pill).not.toHaveClass('ring-1');
+		expect(pill).not.toHaveClass('shadow-sm');
+		expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+		await user.click(screen.getByRole('button', { name: 'Grid' }));
+		expect(onChange).toHaveBeenCalledWith('grid');
+		await checkA11y(container);
 	});
 });

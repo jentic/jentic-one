@@ -87,7 +87,7 @@ reference names the exact recovery for each state.
 ### 2. Check what you can do, and report access gaps to your operator
 
 Your identity view (CLI `jentic api GET /me`; MCP `whoami`) lists your
-status, scopes, and credential bindings; each binding lists the APIs it
+status, permissions, and credential bindings; each binding lists the APIs it
 **serves** (`serves: [{api_vendor, api_name, api_version}]`). This tells you
 exactly what you can already call. Combined with the catalog (what's
 available to add — step 3), it's your map of the workspace.
@@ -120,7 +120,7 @@ their browser and approves the connection and its scopes; you never open
 or approve it. Once they confirm, re-check your identity view (`whoami`) —
 an agent-initiated connect binds you at approval — and retry the blocked
 call. For APIs outside the registry, and always for **binding an existing
-credential or granting scopes**, the operator acts in the Jentic One
+credential or granting permissions**, the operator acts in the Jentic One
 dashboard: granting is always a human action — you report (or start the
 connect) and wait, you never grant yourself anything. Bindings take effect
 live: once the operator confirms, retry the call that was blocked.
@@ -172,7 +172,7 @@ state **converges** either way — but the surfaces report the duplicate
 differently (a success on the HTTP mount, a dead-letter "identical content
 already exists" error on the stdio server and the CLI); your lane's
 reference names the exact shape. Treat it as "already there" — don't retry,
-and don't invent a made-up "catalog read" scope to ask for: reading
+and don't invent a made-up "catalog read" permission to ask for: reading
 the registry and importing a cataloged API need no grant.
 
 **Before concluding "the data is gone", confirm which backend you're on.**
@@ -250,7 +250,7 @@ a failure by its symptom, not by assuming access: transport failures
   binds you in the dashboard. You can *start* a registry vendor's connect
   session yourself (`jentic connect <vendor>` / `request_connection`), but
   you can't approve it, bind an existing credential, or grant yourself
-  scopes.
+  permissions.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one
   surface for the whole task.

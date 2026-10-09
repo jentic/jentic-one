@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { PauseCircle, Plus, X } from 'lucide-react';
 import { Button, Input, Select } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
 import {
@@ -8,16 +8,18 @@ import {
 	type BindingPermissionTestResult,
 } from '@/modules/agents/api';
 import { toDisplayRules } from '@/modules/agents/components/detail/shared';
+import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
+import type { OpsApiReference } from '@/shared/credentials/components/OperationImpactPreview';
+import { examplePath } from '@/shared/credentials/lib/path-completion';
 
 /**
  * Rule tester for one direct agent↔credential binding — the broker's own
  * dry-run (`POST /credentials/{cid}/agents/{aid}/permissions:test`) surfaced
  * next to the rule editor, so authoring becomes write→test→save instead of
  * write-and-pray. Rendered headless (the host's disclosure carries the "Test
- * a request" title). Transplanted from the toolkit rule tester, minus its
- * vendor-pooling disambiguation: the direct `:test` evaluates exactly this
- * binding's ordered rules, so a matched user rule always anchors to the same
- * `#N` the editor rows carry.
+ * a request" title). The direct `:test` evaluates exactly this binding's
+ * ordered rules, so a matched user rule always anchors to the same `#N` the
+ * editor rows carry.
  *
  * The verdict evaluates the SAVED rules (what the broker sees at request
  * time), not the editor's unsaved draft — the caption says so.
@@ -38,6 +40,8 @@ export interface AgentBindingRuleTesterProps {
 	 * dry-run evaluates SAVED rules, so a verdict against a stale set would
 	 * mislead. The caption names the reason. */
 	disabled?: boolean;
+	/** The API the binding covers — its real paths seed the path placeholder. */
+	apiReference?: OpsApiReference | null;
 }
 
 /** The matched rule resolved to the editor's visible numbering, when possible. */
@@ -83,13 +87,13 @@ function VerdictChip({
 	const chip = VERDICT_CHIP[outcome];
 	return (
 		<p
-			className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+			className="bg-surface-sheet flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-2.5 py-2 text-xs"
 			data-testid="rule-verdict"
 		>
-			<span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${chip.className}`}>
+			<span className={`rounded-[5px] px-2 py-0.5 text-xs font-semibold ${chip.className}`}>
 				{chip.label}
 			</span>{' '}
-			<span className="text-muted-foreground min-w-0">{children}</span>
+			<span className="text-foreground-sub min-w-0">{children}</span>
 		</p>
 	);
 }
@@ -134,7 +138,14 @@ export function AgentBindingRuleTester({
 	credentialId,
 	savedRules,
 	disabled = false,
+	apiReference,
 }: AgentBindingRuleTesterProps) {
+	// Same query key as the rule editor's suggestions, so this reads the cache.
+	const opsQuery = useVendorOperations(apiReference ?? undefined, { enabled: !!apiReference });
+	const pathPlaceholder = useMemo(
+		() => examplePath(opsQuery.data?.data?.map((op) => op.path)),
+		[opsQuery.data],
+	);
 	const [method, setMethod] = useState<string>('GET');
 	const [path, setPath] = useState('');
 	const [operationId, setOperationId] = useState('');
@@ -165,7 +176,9 @@ export function AgentBindingRuleTester({
 	};
 
 	return (
-		<div className="border-border/60 bg-card space-y-2 rounded-lg border border-dashed p-3">
+		// Same borderless card as the rule editor above; only the controls carry
+		// an edge (`.edged-controls`).
+		<div className="bg-surface-inset edged-controls space-y-2.5 rounded-lg p-3 sm:p-4">
 			<div className="flex items-center gap-2">
 				<div className="w-24 shrink-0">
 					<Select
@@ -187,7 +200,7 @@ export function AgentBindingRuleTester({
 						aria-label="Request path"
 						value={path}
 						onChange={(e) => setPath(e.target.value)}
-						placeholder="/repos/acme/site/issues"
+						placeholder={pathPlaceholder}
 						className="px-2.5 py-1.5 font-mono text-xs"
 						disabled={disabled}
 						onKeyDown={(e) => {
@@ -198,6 +211,7 @@ export function AgentBindingRuleTester({
 				<Button
 					variant="secondary"
 					size="sm"
+					className="shrink-0"
 					onClick={run}
 					loading={test.isPending}
 					disabled={disabled || !path.trim()}
@@ -241,7 +255,7 @@ export function AgentBindingRuleTester({
 			)}
 
 			{test.isError && (
-				<p className="text-danger text-xs">
+				<p className="text-danger text-xs" role="alert">
 					{test.error instanceof Error ? test.error.message : 'Test failed.'}
 				</p>
 			)}
@@ -249,23 +263,30 @@ export function AgentBindingRuleTester({
 
 			<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
 				{disabled ? (
-					<p className="text-warning text-xs" data-testid="rule-tester-disabled-note">
+					<p
+						className="text-foreground-sub text-xs"
+						data-testid="rule-tester-disabled-note"
+					>
+						<PauseCircle
+							className="text-caution -mt-px mr-1 inline h-3.5 w-3.5 align-middle"
+							aria-hidden="true"
+						/>
 						Paused while the editor holds unsaved changes — the dry-run evaluates the{' '}
 						<strong>saved</strong> rules only.
 					</p>
 				) : (
-					<p className="text-muted-foreground text-xs">
+					<p className="text-foreground-sub text-xs">
 						Dry-runs the broker's decision against the <strong>saved</strong> rules.
 						Nothing is sent upstream.
 					</p>
 				)}
 				{!operationOpen && (
 					<Button
-						variant="ghost"
-						size="sm"
+						variant="tonal"
+						size="xs"
 						disabled={disabled}
 						onClick={() => setOperationOpen(true)}
-						className="text-muted-foreground hover:text-foreground h-auto shrink-0 px-1.5 py-0.5 text-xs"
+						className="shrink-0"
 					>
 						<Plus className="h-3 w-3" /> operation id
 					</Button>

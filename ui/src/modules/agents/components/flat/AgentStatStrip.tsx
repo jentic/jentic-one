@@ -36,7 +36,8 @@ interface Clause {
 }
 
 const TONE_CLASS: Record<NonNullable<Clause['tone']>, string> = {
-	warning: 'text-warning',
+	// Words stay neutral; the clause is set apart by weight, not hue.
+	warning: 'text-foreground-lighter font-semibold',
 	danger: 'text-danger',
 };
 
@@ -60,15 +61,23 @@ export function AgentStatStrip({
 				tone: 'warning',
 			});
 		}
+		// Blocked tiles (no rules / all denied) reach nothing — named, so the
+		// reachable figure below them doesn't read as a contradiction.
+		if (access && access.blocked > 0) {
+			clauses.push({ key: 'blocked', text: `${access.blocked} blocked`, tone: 'warning' });
+		}
 		// "reachable" is load-bearing: the figure excludes paused bindings, so a bare
 		// `0 operations` beside a tile advertising 900 would read as a contradiction.
-		// A partly provable count takes the `+` that says the sum is only a floor.
-		if (access?.operations !== null) {
+		// A partly provable count takes the `+` that says the sum is only a floor;
+		// a tile still checking its rules holds the clause on a skeleton, and one
+		// that can't read them ("Status unavailable") claims nothing.
+		if (!access || access.operationsChecking || access.operations !== null) {
 			clauses.push({
 				key: 'operations',
 				text:
-					access &&
-					`${access.operations.toLocaleString()}${access.operationsAtLeast ? '+' : ''} operations reachable`,
+					access && !access.operationsChecking && access.operations !== null
+						? `${access.operations.toLocaleString()}${access.operationsAtLeast ? '+' : ''} operations reachable`
+						: undefined,
 			});
 		}
 	}

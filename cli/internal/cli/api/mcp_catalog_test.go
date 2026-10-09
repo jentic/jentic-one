@@ -321,7 +321,7 @@ func TestMCPImportAPI_404IsResolveFailedPointingAtSearchCatalog(t *testing.T) {
 	}
 }
 
-func TestMCPImportAPI_403IsOperatorScopeGrant(t *testing.T) {
+func TestMCPImportAPI_403IsOperatorPermissionGrant(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"detail":"requires one of: catalog:import"}`))
@@ -338,13 +338,13 @@ func TestMCPImportAPI_403IsOperatorScopeGrant(t *testing.T) {
 	}
 	payload := decodeToolJSON(t, res)
 	if payload["error_code"] != ux.CodeBrokerDenied {
-		t.Errorf("error_code = %v, want %q (a missing scope is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
+		t.Errorf("error_code = %v, want %q (a missing permission is an access gap, not a revoked identity)", payload["error_code"], ux.CodeBrokerDenied)
 	}
 	if _, has := payload["next_tool"]; has {
-		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
+		t.Errorf("next_tool = %v, want none (the permission grant is an operator action, not a tool call)", payload["next_tool"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "catalog:import") || !strings.Contains(step, "operator") {
-		t.Errorf("actionable_step %q must name the catalog:import scope and route to the operator", step)
+		t.Errorf("actionable_step %q must name the catalog:import permission and route to the operator", step)
 	}
 }
 
@@ -429,11 +429,11 @@ func TestMCPImportAPI_TraversalAPIIDIsInvalidParams(t *testing.T) {
 	}
 }
 
-// TestMCPSearchCatalog_403IsOperatorScopeGrant mirrors the import
-// mapping: a 403 on GET /catalog is the missing capabilities:read scope — an
-// access gap the operator closes with a dashboard grant — not a revoked
+// TestMCPSearchCatalog_403IsOperatorPermissionGrant mirrors the import
+// mapping: a 403 on GET /catalog is the missing capabilities:read permission —
+// an access gap the operator closes with a dashboard grant — not a revoked
 // identity.
-func TestMCPSearchCatalog_403IsOperatorScopeGrant(t *testing.T) {
+func TestMCPSearchCatalog_403IsOperatorPermissionGrant(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"detail":"requires one of: capabilities:read"}`))
@@ -453,10 +453,10 @@ func TestMCPSearchCatalog_403IsOperatorScopeGrant(t *testing.T) {
 		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeBrokerDenied)
 	}
 	if _, has := payload["next_tool"]; has {
-		t.Errorf("next_tool = %v, want none (the scope grant is an operator action, not a tool call)", payload["next_tool"])
+		t.Errorf("next_tool = %v, want none (the permission grant is an operator action, not a tool call)", payload["next_tool"])
 	}
 	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "capabilities:read") || !strings.Contains(step, "operator") {
-		t.Errorf("actionable_step %q must name the capabilities:read scope and route to the operator", step)
+		t.Errorf("actionable_step %q must name the capabilities:read permission and route to the operator", step)
 	}
 }
 

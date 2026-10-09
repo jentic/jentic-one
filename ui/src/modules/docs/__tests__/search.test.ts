@@ -4,7 +4,7 @@ import { modelAnchorId, operationAnchorId } from '@/modules/docs/lib/anchor';
 import type { ReferencePayload } from '@/modules/docs/api/types';
 
 const reference: ReferencePayload = {
-	schema: 'jentic.endpoint-scope-tree/v1',
+	schema: 'jentic.endpoint-permission-tree/v1',
 	total: 1,
 	groups: ['g'],
 	endpoints: [
@@ -17,8 +17,8 @@ const reference: ReferencePayload = {
 			authenticated: true,
 			public: false,
 			actor_types: [],
-			required_scopes: ['x'],
-			implied_scopes: {},
+			required_permissions: ['x'],
+			implied_permissions: {},
 			auth_note: null,
 			typical_caller: null,
 			group: 'g',

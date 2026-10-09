@@ -12,12 +12,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { EventSeverity, type EventResponse } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { useCanReadEvents } from '@/shared/auth/useCanReadEvents';
-import {
-	acknowledgeEvent,
-	isEventAccessDenied,
-	listEvents,
-	streamEvents,
-} from '@/shared/lib/railEvents';
+import { isEventAccessDenied, listEvents, streamEvents } from '@/shared/lib/railEvents';
 
 /*
   SSE → QUERY-CACHE BRIDGE.
@@ -121,7 +116,9 @@ export type StreamLinks = {
 /**
  * UI-shaped view of a single platform event. A faithful adaptation of
  * `EventResponse` — `id`/`tsMs`/`title` map to `event_id`/`created_at`/
- * `summary`; `acknowledged` + `requiresAction` drive the inline action slot.
+ * `summary`. Events are append-only history: `requiresAction` records that the
+ * event asked for a human when it was emitted, not that anything is still
+ * outstanding — the destination an event links to carries the live state.
  */
 export type StreamEvent = {
 	id: string;
@@ -134,8 +131,6 @@ export type StreamEvent = {
 	tokens: StreamTokens;
 	links: StreamLinks;
 	requiresAction: boolean;
-	acknowledged: boolean;
-	acknowledgedAt?: number;
 	/** Who caused the event (`actor_id`/`actor_type` on the wire), when known. */
 	actorId?: string;
 	actorType?: string;
@@ -307,7 +302,7 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
  * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
  * links with the same rules instead of re-deriving them.
  */
-export function idFromLink(link: string | null | undefined): string | undefined {
+function idFromLink(link: string | null | undefined): string | undefined {
 	if (!link) return undefined;
 	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
 	return id.length > 0 ? id : undefined;
@@ -440,8 +435,6 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 			job: e._links?.job ?? null,
 		},
 		requiresAction: e.requires_action,
-		acknowledged: e.acknowledged,
-		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
 		actorId: e.actor_id ?? undefined,
 		actorType: e.actor_type ?? undefined,
 		conflict,
@@ -508,7 +501,7 @@ type AgentStreamValue = {
 	 * The rest of the Activity view state, owned here with the lens so it's ONE
 	 * choice everywhere — the docked rail, the drawer and Monitor's panel, on
 	 * every page. `paused` holds back what arrives after the pause (`frozen`);
-	 * rows keep reading their live objects, so an acknowledge still reflects.
+	 * rows keep reading their live objects, so a resolve still reflects.
 	 */
 	failuresOnly: boolean;
 	setFailuresOnly: (next: boolean) => void;
@@ -520,27 +513,6 @@ type AgentStreamValue = {
 	frozen: FeedFreeze | null;
 	latest: StreamEvent | null;
 	status: StreamStatus;
-	/** Acknowledge an event against the real backend (`PATCH /events/{id}`). */
-	acknowledge: (eventId: string) => Promise<void>;
-	/**
-	 * Settle every unacknowledged actionable `oauth_client.registered` row for
-	 * one client (matched on the internal `oauth_client_id` token). The approve
-	 * arm gets this mirror for free from the `oauth_client.approved` SSE event;
-	 * a DENY emits no event (§4.8 / D7), so the deny mutation — which knows the
-	 * client id — calls this on success. The backend settles the row inside the
-	 * decision transaction either way; this only syncs the live session's local
-	 * copy so a stale "Review" prompt doesn't linger until the next backlog
-	 * fetch.
-	 */
-	settleOAuthClientRegistration: (oauthClientId: string) => void;
-	/**
-	 * Flip an event's local acknowledged flag WITHOUT issuing the PATCH —
-	 * for consumers that acknowledged the event through their own mutation
-	 * (e.g. the Monitor Events tab) and only need the live session's in-memory
-	 * copy to stay in sync (the SSE watermark poll never re-delivers an event
-	 * on an ack flip).
-	 */
-	resolveEvent: (eventId: string) => void;
 	/** Fetch one older page from `GET /events?cursor=…` and append it. */
 	loadOlderEvents: () => Promise<void>;
 	canLoadOlder: boolean;
@@ -559,8 +531,7 @@ const MAX_EVENTS = 300;
  *   2. Subscribe to the live SSE (`GET /events/stream`); each new event is
  *      prepended (deduped by id) and exposed as `latest` so the ToastHost +
  *      audio cue can react.
- *   3. `acknowledge` PATCHes the event and optimistically flips its local flag.
- *   4. `loadOlderEvents` pages backwards via the list cursor.
+ *   3. `loadOlderEvents` pages backwards via the list cursor.
  *
  * `live` defaults to `true`; tests pass `live={false}` to skip the SSE
  * subscription and drive a deterministic, backlog-only feed.
@@ -631,32 +602,6 @@ export function AgentStreamProvider({
 		void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
 	}, [queryClient]);
 
-	/**
-	 * Flip a single event by id with `fn`, leaving the rest untouched. Centralises
-	 * the optimistic-update / rollback pattern used by acknowledge so the
-	 * map-by-id boilerplate isn't repeated (and can't drift between flip and undo).
-	 */
-	const patchEvent = useCallback((eventId: string, fn: (ev: StreamEvent) => StreamEvent) => {
-		setEvents((prev) => prev.map((ev) => (ev.id === eventId ? fn(ev) : ev)));
-	}, []);
-
-	const markResolved = useCallback(
-		(ev: StreamEvent): StreamEvent => ({
-			...ev,
-			acknowledged: true,
-			acknowledgedAt: Date.now(),
-		}),
-		[],
-	);
-	const markUnresolved = useCallback(
-		(ev: StreamEvent): StreamEvent => ({
-			...ev,
-			acknowledged: false,
-			acknowledgedAt: undefined,
-		}),
-		[],
-	);
-
 	const upsert = useCallback((incoming: StreamEvent[], front: boolean) => {
 		setEvents((prev) => {
 			const byId = new Map(prev.map((e) => [e.id, e] as const));
@@ -671,10 +616,9 @@ export function AgentStreamProvider({
 					continue;
 				}
 				// Same id already present. Live upserts (`front`) are authoritative
-				// — a re-delivered event carries the server's current truth (e.g. an
-				// acknowledged flag set elsewhere), so reconcile in place. Backlog
-				// pages (`!front`) are historical and must NOT clobber a local
-				// optimistic flip, so they're ignored on collision.
+				// — a re-delivered event carries the server's current truth, so
+				// reconcile in place. Backlog pages (`!front`) are historical and
+				// are ignored on collision.
 				if (front && existing !== ev) {
 					byId.set(ev.id, ev);
 					changed = true;
@@ -693,24 +637,6 @@ export function AgentStreamProvider({
 			return merged.slice(0, cap);
 		});
 	}, []);
-
-	// One definition for both `oauth_client.registered` settle arms (approve
-	// via its SSE event in the live subscription below, deny via the deny
-	// mutation through the context) so the matching predicate can't drift.
-	const settleOAuthClientRegistration = useCallback(
-		(oauthClientId: string) => {
-			setEvents((prev) =>
-				prev.map((row) =>
-					row.type === 'oauth_client.registered' &&
-					row.tokens.oauth_client_id === oauthClientId &&
-					!row.acknowledged
-						? markResolved(row)
-						: row,
-				),
-			);
-		},
-		[markResolved],
-	);
 
 	// 1. Backlog seed. Retired-namespace history is tolerated but dropped.
 	useEffect(() => {
@@ -795,43 +721,6 @@ export function AgentStreamProvider({
 						}
 					}
 					upsert([ev], true);
-					// Settlement mirrors run on EVERY delivery, not just the
-					// first: they're idempotent (only unacknowledged matching
-					// rows flip), and in the late-commit race the actionable
-					// row can land AFTER its decision event was first seen —
-					// a re-delivered decision must still be able to settle it.
-					if (
-						ev.kind === 'agent' &&
-						(ev.type === 'agent.registration_approved' ||
-							ev.type === 'agent.registration_denied') &&
-						ev.tokens.agent_id
-					) {
-						// The backend acknowledges the registration alert in the
-						// decision transaction; mirror on local rows so the live
-						// session drops the stale actionable row immediately.
-						setEvents((prev) =>
-							prev.map((row) =>
-								row.type === 'agent.self_registered' &&
-								row.tokens.agent_id === ev.tokens.agent_id &&
-								!row.acknowledged
-									? markResolved(row)
-									: row,
-							),
-						);
-					}
-					if (
-						ev.kind === 'oauth' &&
-						ev.type === 'oauth_client.approved' &&
-						ev.tokens.oauth_client_id
-					) {
-						// The backend settles the actionable oauth_client.registered
-						// alert inside the approve/deny transaction (§4.8 / D7);
-						// mirror on local rows so the live session drops the stale
-						// "Review" prompt immediately. (A deny emits no event, so
-						// the deny mutation calls this same settle directly —
-						// see settleOAuthClientRegistration.)
-						settleOAuthClientRegistration(ev.tokens.oauth_client_id);
-					}
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: agent lifecycle events (CLI self-registration,
@@ -855,45 +744,7 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [
-		live,
-		canReadEvents,
-		upsert,
-		invalidateAgentSurfaces,
-		invalidateOAuthSurfaces,
-		markResolved,
-		settleOAuthClientRegistration,
-	]);
-
-	const acknowledge = useCallback(
-		async (eventId: string) => {
-			// Optimistic flip so the row resolves immediately; reconcile on response.
-			patchEvent(eventId, markResolved);
-			try {
-				const updated = await acknowledgeEvent(eventId);
-				patchEvent(eventId, () => adaptEvent(updated));
-				// The ack happened outside React Query, and the SSE stream is a
-				// created_at-watermark poll that will never re-deliver an old event
-				// just because its acknowledged flag flipped — so eagerly refresh
-				// the other surfaces that count/list unacknowledged events (the
-				// Monitor Events tab and the Notifications bell).
-				void queryClient.invalidateQueries({
-					queryKey: sharedQueryKeys.monitorEventsRoot,
-				});
-				void queryClient.invalidateQueries({ queryKey: ATTENTION_ROOT_KEY });
-			} catch {
-				patchEvent(eventId, markUnresolved);
-			}
-		},
-		[patchEvent, markResolved, markUnresolved, queryClient],
-	);
-
-	const resolveEvent = useCallback(
-		(eventId: string) => {
-			patchEvent(eventId, markResolved);
-		},
-		[patchEvent, markResolved],
-	);
+	}, [live, canReadEvents, upsert, invalidateAgentSurfaces, invalidateOAuthSurfaces]);
 
 	// The lens at call time vs. now: a Load older still in flight when the lens
 	// changes must not write its actor's cursor under the new one.
@@ -949,9 +800,6 @@ export function AgentStreamProvider({
 			frozen,
 			latest,
 			status: forbidden ? 'forbidden' : status,
-			acknowledge,
-			settleOAuthClientRegistration,
-			resolveEvent,
 			loadOlderEvents,
 			canLoadOlder:
 				!forbidden &&
@@ -971,9 +819,6 @@ export function AgentStreamProvider({
 			latest,
 			status,
 			forbidden,
-			acknowledge,
-			settleOAuthClientRegistration,
-			resolveEvent,
 			loadOlderEvents,
 			hasMore,
 			cursor,
@@ -993,9 +838,7 @@ export function useAgentStream(): AgentStreamValue {
 /**
  * Provider-optional variant for module-side hooks that should SYNC with the
  * stream when it's mounted (the app shell) but must not require it (tests,
- * embedded surfaces). Monitor's acknowledge mutation uses this to flip the
- * rail's in-memory copy of an event so the failure pill drops immediately —
- * the SSE watermark poll never re-delivers an old event on an ack flip.
+ * embedded surfaces).
  */
 export function useAgentStreamOptional(): AgentStreamValue | null {
 	return useContext(AgentStreamContext);
@@ -1045,17 +888,16 @@ export function isFailureSeverity(severity: StreamSeverity): boolean {
 }
 
 /**
- * Count of unacknowledged failure events (error/critical) in the LOADED feed
- * window (backlog seed + live inserts, capped) — the number shown on the
- * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
- * is a "recent activity" signal, not a global unacked-failures query (that's
- * the Monitor Events tab); labels around it say "recent" for that reason.
- * Drops as the operator acknowledges each failing event.
+ * Count of failure events (error/critical) in the LOADED feed window (backlog
+ * seed + live inserts, capped) — the number shown on the rail's persistent
+ * failure badge (#671). Deliberately window-scoped: the pill is a "recent
+ * activity" signal, not a global failures query (that's Monitor); labels
+ * around it say "recent" for that reason.
  */
-export function unacknowledgedFailureCount(events: StreamEvent[]): number {
+export function recentFailureCount(events: StreamEvent[]): number {
 	let n = 0;
 	for (const ev of events) {
-		if (!ev.acknowledged && isFailureSeverity(ev.severity)) n += 1;
+		if (isFailureSeverity(ev.severity)) n += 1;
 	}
 	return n;
 }
@@ -1070,27 +912,6 @@ export function unacknowledgedFailureCount(events: StreamEvent[]): number {
 export function formatFailurePillCount(count: number): string {
 	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
 	return n > 99 ? '99+' : String(n);
-}
-
-/**
- * Left-edge stripe class for a rail row, keyed by severity.
- *
- * CRITICAL and ERROR share the danger colour (both are failures — see
- * `RailEventRow`'s `isCritical` background tint) but CRITICAL renders a
- * doubled-width stripe. Before this, the two tiers were pixel-identical on
- * the rail (`border-l-danger` for both, `border-l-2` from the row's base
- * class) — an operator had no way to tell "one failure" from "this failure
- * pattern crossed the critical threshold" without opening the row (issue
- * #907). Relies on `cn`'s `tailwind-merge` to let `border-l-4` win over the
- * row's base `border-l-2` (later class in the merge wins on the same
- * property group) — do not reorder the row's `cn(...)` call without
- * preserving that.
- */
-export function severityStripeClass(s: StreamSeverity): string {
-	if (s === 'critical') return 'border-l-4 border-l-danger';
-	if (s === 'error') return 'border-l-danger';
-	if (s === 'warning') return 'border-l-warning';
-	return 'border-l-primary';
 }
 
 export function formatStreamTime(tsMs: number): string {
@@ -1183,17 +1004,15 @@ export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): st
 /*
   EVENT BEHAVIOUR — derived from the REAL contract.
 
-  One backend mutation reaches the rail:
-    • Acknowledge (`PATCH /events/{id}`) — dismisses ANY action-required event.
-
-  So the inline-action slot is:
-    • "Acknowledge" — for any action-required event not yet acked.
-    • "View" links — deep-link into the execution/job/trace the event references.
+  Events are append-only history; no backend mutation reaches the rail. The
+  inline-action slot is navigation only — "View" links into the record the
+  event references (execution, job, trace, agent, API, OAuth queue). The
+  destination carries the live state (is the agent still pending, is the update
+  still available), so the rail never claims an event is outstanding.
   Navigation targets are router-relative (basename `/app` is prepended) to match
   jentic-one's route tree.
 */
 export type InlineActionKind =
-	| 'acknowledge'
 	| 'view_agent'
 	| 'view_api'
 	| 'view_execution'
@@ -1205,10 +1024,10 @@ export type InlineActionKind =
 export type InlineActionSpec = {
 	kind: InlineActionKind;
 	label: string;
-	/** Real backend mutation (acknowledge). Omit for pure navigation. */
-	acknowledges?: boolean;
-	/** Navigation target (omit for pure RPC). */
+	/** Navigation target. */
 	href?: (ev: StreamEvent) => string | null;
+	/** Render as the row's emphasised action. */
+	primary?: boolean;
 };
 
 /**
@@ -1226,6 +1045,16 @@ export type InlineActionSpec = {
 const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
 	traceId != null && traceId !== '' && traceId !== 'unknown';
 
+/**
+ * Overlay-lifecycle events — the backend's `overlay.*` types (today
+ * `overlay.deprecated`) and `catalog.update_conflicts_overlay` (an upstream
+ * update colliding with a confirmed overlay). Their natural home is the hub's
+ * Versions tab (revisions + overlays), not the Overview.
+ */
+function isOverlayEvent(ev: StreamEvent): boolean {
+	return ev.type.startsWith('overlay.') || ev.type === 'catalog.update_conflicts_overlay';
+}
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
 		hasUsableTrace(ev.tokens.trace_id)
@@ -1242,19 +1071,28 @@ const NAV = {
 		ev.tokens.job_id
 			? `/monitor?show=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
 			: null,
+	// The credential inventory sheet on the Agents page — the shape of the
+	// retired `/credentials` redirect, inlined like `agent` below.
+	credentials: () => '/agents?credentials=1',
 	// Agent events open the agent as selected on the Agents page — the shape of
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
-	// Catalog/overlay events deep-link to the affected API's Workspace detail
-	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
-	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
-	// shared-layer code, so the path shape is inlined rather than imported from a
-	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	// Catalog/overlay events deep-link to the affected API's hub in the
+	// Library: `/library/workspace/:vendor/:name/:version`, each segment
+	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
+	// here since shared/lib can't import the route registry). Router-relative — the
+	// rail prepends the `/app` basename. (The retired `/workspace/...` form still
+	// redirects, so events rendered by older builds keep working.)
 	workspaceApi: (ev: StreamEvent) => {
 		const { vendor, name, version } = ev.tokens;
 		if (!vendor || !name || !version) return null;
-		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		const hub = `/library/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+		// Overlay-lifecycle events (`overlay.deprecated`, and an upstream update
+		// that conflicts with a confirmed overlay) land on the hub's Versions tab,
+		// where the overlays live. A plain `catalog.update_available` keeps the
+		// Overview (default tab), where Re-import lives.
+		return isOverlayEvent(ev) ? `${hub}?tab=versions` : hub;
 	},
 	// The Settings OAuth approval queue (D7) — where the
 	// approve/deny verbs for a pending DCR registration live. Static target:
@@ -1284,37 +1122,14 @@ const isApprovalEvent = (ev: StreamEvent): boolean => ev.type.startsWith('execut
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	const actions: InlineActionSpec[] = [];
-	if (ev.requiresAction && !ev.acknowledged) {
-		if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
-			// A self-registered agent awaits approval — route the operator to the
-			// agent on the Agents page (where approve/deny lives) instead of a bare
-			// Acknowledge.
-			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		} else if (ev.type === 'oauth_client.registered') {
-			// A DCR client registration awaiting approval — route
-			// the operator to the Settings approval queue, where the D7
-			// approve/deny verbs live, alongside Acknowledge.
-			actions.push({ kind: 'view_oauth_queue', label: 'Review', href: NAV.oauthQueue });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		} else if (isApprovalRequestEvent(ev) && ev.tokens.approval_id) {
-			// A held call awaiting a decision — route the reviewer to the approval's
-			// review page (where approve/deny lives) alongside Acknowledge.
-			actions.push({ kind: 'view_approval', label: 'Review', href: NAV.approval });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		} else if (
-			(ev.type === 'catalog.update_available' ||
-				ev.type === 'catalog.update_conflicts_overlay') &&
-			NAV.workspaceApi(ev)
-		) {
-			// An upstream spec change (or a change that conflicts with a confirmed
-			// overlay) — deep-link the operator to the API's Workspace detail page
-			// (where Re-import / overlay resolution lives) alongside Acknowledge.
-			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		} else {
-			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
-		}
+	if (ev.type === 'oauth_client.registered' && ev.requiresAction) {
+		// A DCR registration that landed pending links to the Settings approval
+		// queue, which lists the clients still awaiting a decision.
+		actions.push({ kind: 'view_oauth_queue', label: 'View queue', href: NAV.oauthQueue });
+	} else if (isApprovalRequestEvent(ev) && ev.requiresAction && ev.tokens.approval_id) {
+		// A held call awaiting a decision links to its review page, where
+		// approve/deny lives.
+		actions.push({ kind: 'view_approval', label: 'Review', href: NAV.approval });
 	}
 	// A deep-link into the underlying record, when the event references one.
 	if (isApprovalRequestEvent(ev)) {
@@ -1403,9 +1218,9 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'import':
 			return NAV.job(ev) ?? NAV.trace(ev);
 		case 'credential':
-			return ev.tokens.credential_id
-				? `/credentials/${ev.tokens.credential_id}`
-				: NAV.trace(ev);
+			// The agent the event is about when it names one (binding events);
+			// otherwise the credential inventory, which has no per-credential URL.
+			return NAV.agent(ev) ?? (ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev));
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':

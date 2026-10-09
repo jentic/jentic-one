@@ -4,7 +4,7 @@ Pins: the zero-agents agent-model consent page renders the create-agent form
 (never the terminal empty state) whenever the handle names a provisionable
 subject; POST /oauth/consent/agent verifies + burns the single-use
 ``agent-create`` blob, re-validates the handle and the D7 gate, creates the
-agent as the consenting user through ``AgentService.create`` (default scopes),
+agent as the consenting user through ``AgentService.create`` (default permissions),
 and 303s back into consent where a single agent renders pre-selected; the
 replay/expiry/splice/validation/race arms fail closed without creating
 anything.
@@ -23,8 +23,10 @@ from urllib.parse import unquote
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from jentic_one.admin.services.schemas.oauth_clients import OAuthClientView
+from jentic_one.auth.core.idp.adapter import IdpClaims
 from jentic_one.auth.services.authorize_service import AgentConsentOption, PendingAgentRef
 from jentic_one.auth.services.errors import AuthServiceError, InvalidGrantError
 from jentic_one.auth.web.errors import service_error_handler
@@ -37,6 +39,7 @@ from jentic_one.auth.web.flow import (
     sign_payload,
     state_signing_key,
     verify_payload,
+    write_idp_consent_handle,
 )
 from jentic_one.auth.web.routers import authorize, local_login
 from jentic_one.shared.config import AuthConfig, LocalLoginConfig
@@ -290,7 +293,7 @@ def test_nonzero_agents_keeps_the_picker_no_create_form(
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
     svc = _mock_authorize_svc(
         user_id="usr_new",
-        agents=[AgentConsentOption(id="agnt_1", name="mine", scopes=frozenset({"apis:read"}))],
+        agents=[AgentConsentOption(id="agnt_1", name="mine", permissions=frozenset({"apis:read"}))],
     )
     mock_authorize_cls.return_value = svc
 
@@ -339,9 +342,9 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     mock_authorize_cls: MagicMock,
     mock_agent_svc_cls: MagicMock,
 ) -> None:
-    """Happy path: agent created as the consenting user with default scopes
-    (scopes=None → DEFAULT_AGENT_SCOPES in the service), then a 303 back into
-    GET /oauth/consent where the single new agent renders pre-selected."""
+    """Happy path: agent created as the consenting user with default permissions
+    (permissions=None → DEFAULT_AGENT_PERMISSIONS in the service), then a 303 back
+    into GET /oauth/consent where the single new agent renders pre-selected."""
     client, backend, ctx = _make_app()
     _seed_consent_handle(backend)
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
@@ -363,7 +366,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     call = agent_svc.create.await_args
     payload = call.args[0]
     assert payload.name == "my-assistant"  # whitespace-stripped
-    assert payload.scopes is None  # platform default scopes, never invented
+    assert payload.permissions is None  # platform defaults, never invented
     assert call.kwargs["owner_id"] == "usr_new"
     assert call.kwargs["status"] is ActorStatus.ACTIVE  # agents:write holder → ACTIVE arm
     identity = call.kwargs["identity"]
@@ -376,7 +379,7 @@ def test_create_happy_path_creates_agent_and_reenters_consent(
     # Follow the redirect: the picker now renders the new agent pre-checked.
     svc.list_consentable_agents = AsyncMock(
         return_value=[
-            AgentConsentOption(id="agnt_created", name="my-assistant", scopes=frozenset())
+            AgentConsentOption(id="agnt_created", name="my-assistant", permissions=frozenset())
         ]
     )
     followup = client.get("/oauth/consent", params={"ch": _HANDLE})
@@ -701,7 +704,7 @@ def test_create_race_agent_appeared_skips_creation_and_reenters_consent(
     mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
     svc = _mock_authorize_svc(
         user_id="usr_new",
-        agents=[AgentConsentOption(id="agnt_race", name="appeared", scopes=frozenset())],
+        agents=[AgentConsentOption(id="agnt_race", name="appeared", permissions=frozenset())],
     )
     mock_authorize_cls.return_value = svc
     agent_svc = _mock_agent_svc()
@@ -1207,3 +1210,84 @@ def test_agent_status_key_is_purpose_derived() -> None:
             verify_payload(
                 forged, agent_status_signing_key(ctx), purpose="agent-status", max_age=300
             )
+
+
+# ---------- hosted_domain survives the consent-handle round trip ----------
+
+
+def _write_workspace_handle(client: TestClient) -> str:
+    """Write a handle through the real IdP-callback writer, carrying the Google
+    Workspace ``hd`` claim an admission-policy hard gate reads."""
+    request = Request({"type": "http", "app": client.app})
+    claims = IdpClaims(
+        external_subject="ext-create-1",
+        email="newbie@jentic.com",
+        email_verified=True,
+        first_name="New",
+        last_name="User",
+        hosted_domain="jentic.com",
+    )
+    return asyncio.run(
+        write_idp_consent_handle(
+            request,
+            claims=claims,
+            redirect_uri=_REDIRECT_URI,
+            original_state="xyz",
+            client_id=_CLIENT_ID,
+            code_challenge="challenge",
+            scope="openid apis:read",
+            nonce=None,
+            oauth_client=_client_view(),
+        )
+    )
+
+
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_consent_approve_provisions_with_hosted_domain(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+) -> None:
+    client, _backend, _ctx = _make_app()
+    handle = _write_workspace_handle(client)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id=None)
+    mock_authorize_cls.return_value = svc
+
+    resp = client.post(
+        "/oauth/consent",
+        data={"consent_token": handle, "action": "approve"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code in (302, 303)
+    assert svc.provision_from_claims.await_args.args[0].hosted_domain == "jentic.com"
+
+
+@patch("jentic_one.auth.web.deps.AgentService")
+@patch("jentic_one.auth.web.routers.authorize.AuthorizeService")
+@patch("jentic_one.auth.web.flow.OAuthClientService")
+def test_agent_create_provisions_with_hosted_domain(
+    mock_client_svc_cls: MagicMock,
+    mock_authorize_cls: MagicMock,
+    mock_agent_svc_cls: MagicMock,
+) -> None:
+    client, _backend, ctx = _make_app()
+    handle = _write_workspace_handle(client)
+    mock_client_svc_cls.return_value.get_by_client_id = AsyncMock(return_value=_client_view())
+    svc = _mock_authorize_svc(user_id=None, agents=[])
+    mock_authorize_cls.return_value = svc
+    mock_agent_svc_cls.return_value = _mock_agent_svc()
+
+    resp = client.post(
+        "/oauth/consent/agent",
+        data={
+            "consent_token": handle,
+            "create_state": _mint_blob(ctx, handle=handle),
+            "agent_name": "first",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert svc.provision_from_claims.await_args.args[0].hosted_domain == "jentic.com"

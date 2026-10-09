@@ -37,7 +37,6 @@ import {
 } from '@/shared/api';
 import {
 	agentToEntity,
-	type AgentBindableCredential,
 	type AgentEntity,
 	type ApiKeyHistoryEntry,
 	type BindingRuleSetEntity,
@@ -45,7 +44,6 @@ import {
 	type ApiKeyResult,
 	type CredentialBindingEntity,
 	type InstanceIdentityEntity,
-	type McpLastSeen,
 	type McpSessionEntity,
 	type OAuthGrantEntity,
 	type PermissionCatalogEntry,
@@ -66,6 +64,17 @@ export class AgentsApiError extends Error {
 		this.status = status;
 		this.cause = cause;
 	}
+}
+
+/** A refused read (403): the caller lacks the permission, and retrying cannot
+ * change the answer. A 401 is a different state — the session itself ended. */
+export function isAgentsAccessDenied(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 403;
+}
+
+/** The session is no longer valid (401). */
+export function isAgentsSessionEnded(error: unknown): boolean {
+	return error instanceof AgentsApiError && error.status === 401;
 }
 
 function toAgentsError(error: unknown, fallback: string): AgentsApiError {
@@ -282,30 +291,6 @@ export async function resumeAgentCredentialBinding(
 	}
 }
 
-/**
- * Candidate credentials for the agent-side "Bind credential" picker. Reads the
- * org-wide `GET /credentials` surface through the shared API (the agents
- * module must not import the credentials page module) and projects to the
- * minimal picker shape.
- */
-export async function listBindableCredentialsForAgent(): Promise<AgentBindableCredential[]> {
-	try {
-		const res = await CredentialsService.listCredentials({ limit: 100 });
-		return res.data.map((c) => ({
-			credential_id: c.credential_id,
-			name: c.name,
-			type: c.type,
-			vendor: c.api?.vendor ?? null,
-			apiName: c.api?.name ?? null,
-			catalogApiId: c.catalog_api_id ?? null,
-			provider: c.provider ?? null,
-			createdBy: c.created_by ?? null,
-		}));
-	} catch (error) {
-		throw toAgentsError(error, 'Failed to load credentials.');
-	}
-}
-
 /** The ordered PBAC rules on one direct binding
  * (`GET /credentials/{cid}/agents/{aid}/permissions`). */
 export async function listAgentBindingPermissions(
@@ -398,17 +383,17 @@ export async function testAgentBindingPermissions(
 export async function createAgent(params: {
 	name: string;
 	description?: string | null;
-	scopes?: string[] | null;
+	permissions?: string[] | null;
 }): Promise<AgentEntity> {
 	try {
 		const res = await AgentsService.createAgent({
 			requestBody: {
 				name: params.name,
 				description: params.description ?? null,
-				// Optional initial grants — POST /agents accepts scopes[] so a
+				// Optional initial grants — POST /agents accepts permissions[] so a
 				// manually created agent can start with the permissions it needs
-				// instead of a follow-up PUT from the Permissions sheet.
-				scopes: params.scopes?.length ? params.scopes : null,
+				// instead of a follow-up PUT from the detail page.
+				permissions: params.permissions?.length ? params.permissions : null,
 			},
 		});
 		return agentToEntity(res);
@@ -494,12 +479,12 @@ export async function getAgentApiKeyHistory(agentId: string): Promise<ApiKeyHist
 }
 
 // ---------------------------------------------------------------------------
-// Scopes (#615) — platform permission catalogue + per-actor scope grants.
+// Permissions (#615) — platform permission catalogue + per-actor grants.
 //
-// Two scope vocabularies exist in this codebase; these are the PLATFORM
-// permission scopes (`org:admin`, `agents:write`, …) drawn from
-// `GET /permissions` — NOT the OAuth2 provider scopes the credentials picker
-// uses. `PUT .../scopes` replaces the entire set (no partial grant/revoke), so
+// These are internal-authorization PERMISSIONS (`org:admin`, `agents:write`, …)
+// drawn from `GET /permissions` — NOT the OAuth2 provider scopes the credentials
+// picker uses, which are a separate vocabulary. `PUT .../permissions` replaces
+// the entire set (no partial grant/revoke), so
 // callers read the full list, edit it, and write it back.
 // ---------------------------------------------------------------------------
 
@@ -517,24 +502,27 @@ export async function listPermissions(): Promise<PermissionCatalogEntry[]> {
 	}
 }
 
-export async function getAgentScopes(agentId: string): Promise<string[]> {
+export async function getAgentPermissions(agentId: string): Promise<string[]> {
 	try {
-		const res = await AgentsService.getAgentScopes({ agentId });
-		return res.scopes;
+		const res = await AgentsService.getAgentPermissions({ agentId });
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to load the agent's scopes.");
+		throw toAgentsError(error, "Failed to load the agent's permissions.");
 	}
 }
 
-export async function replaceAgentScopes(agentId: string, scopes: string[]): Promise<string[]> {
+export async function replaceAgentPermissions(
+	agentId: string,
+	permissions: string[],
+): Promise<string[]> {
 	try {
-		const res = await AgentsService.replaceAgentScopes({
+		const res = await AgentsService.replaceAgentPermissions({
 			agentId,
-			requestBody: { scopes },
+			requestBody: { permissions },
 		});
-		return res.scopes;
+		return res.permissions;
 	} catch (error) {
-		throw toAgentsError(error, "Failed to update the agent's scopes.");
+		throw toAgentsError(error, "Failed to update the agent's permissions.");
 	}
 }
 
@@ -749,10 +737,10 @@ export async function listActorAudit(actorId: string, limit = 25): Promise<Audit
 // ---------------------------------------------------------------------------
 
 /** Wire value of the MCP session event type (`EventType.MCP_SESSION_STARTED`). */
-export const MCP_SESSION_STARTED_EVENT = 'mcp.session_started';
+const MCP_SESSION_STARTED_EVENT = 'mcp.session_started';
 
 /** The `origin` wire value stamped on MCP executions (`Origin.MCP`). */
-export const MCP_ORIGIN = 'mcp';
+const MCP_ORIGIN = 'mcp';
 
 function eventToMcpSession(e: EventResponse): McpSessionEntity {
 	// The emitter writes clientInfo + transport + session id into the internal
@@ -789,39 +777,6 @@ export async function fetchMcpSessions(actorId: string): Promise<McpSessionEntit
 			return null;
 		}
 		throw toAgentsError(error, 'Failed to load MCP sessions.');
-	}
-}
-
-/**
- * Latest MCP session per agent for the roster's "last seen via MCP" cell,
- * from ONE page of `mcp.session_started` events. The feed is newest-first, so
- * the first row per `actor_id` is that agent's latest session. Like the
- * usage top-50 leaderboard, this is bounded enrichment: an agent absent from
- * the newest 100 session events means "no recent MCP session known", not
- * "never" — callers render an em-dash. `null` when permission-gated.
- */
-export async function fetchMcpLastSeenByActor(): Promise<Map<string, McpLastSeen> | null> {
-	try {
-		const res = await EventsService.listEvents({
-			eventType: [MCP_SESSION_STARTED_EVENT],
-			limit: 100,
-		});
-		const out = new Map<string, McpLastSeen>();
-		for (const e of res.data) {
-			if (!e.actor_id || out.has(e.actor_id)) continue;
-			const s = eventToMcpSession(e);
-			out.set(e.actor_id, {
-				clientName: s.clientName,
-				clientVersion: s.clientVersion,
-				startedAt: s.startedAt,
-			});
-		}
-		return out;
-	} catch (error) {
-		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
-			return null;
-		}
-		throw toAgentsError(error, 'Failed to load MCP session events.');
 	}
 }
 

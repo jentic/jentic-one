@@ -36,10 +36,10 @@ from jentic_one.control.services.credentials.schemas.credentials import Credenti
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import OWNER_AGENTS_READ
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.scopes import OWNER_AGENTS_READ
 
 pytestmark = pytest.mark.integration
 

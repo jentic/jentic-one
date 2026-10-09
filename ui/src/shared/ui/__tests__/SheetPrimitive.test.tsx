@@ -5,7 +5,13 @@ import { vi } from 'vitest';
 // synthetic dispatch cannot produce.
 import { userEvent as browserUser } from 'vitest/browser';
 import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
-import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
+import {
+	SHEET_EXIT_MS,
+	SheetBody,
+	SheetFooter,
+	SheetHeader,
+	SheetPrimitive,
+} from '@/shared/ui/SheetPrimitive';
 
 function SheetHarness({ initialOpen = true }: { initialOpen?: boolean }) {
 	const [open, setOpen] = useState(initialOpen);
@@ -58,7 +64,7 @@ describe('SheetPrimitive', () => {
 			expect(screen.getByRole('button', { name: 'Inside action' })).toHaveFocus();
 		});
 		await user.keyboard('{Escape}');
-		// Exit animation runs for 300ms before the sheet unmounts.
+		// The exit animation runs for SHEET_EXIT_MS before the sheet unmounts.
 		await waitFor(
 			() => {
 				expect(screen.queryByText('Sheet content')).not.toBeInTheDocument();
@@ -125,6 +131,92 @@ describe('SheetPrimitive', () => {
 		expect(blurs).not.toHaveBeenCalled();
 	});
 
+	it('stays mounted through the exit animation, then unmounts and calls onAfterClose', async () => {
+		const onAfterClose = vi.fn();
+		const { rerender } = renderWithProviders(
+			<SheetPrimitive open onClose={() => {}} onAfterClose={onAfterClose} ariaLabel="Details">
+				<p>Sheet content</p>
+			</SheetPrimitive>,
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId('sheet-primitive').className).toContain('translate-x-0'),
+		);
+		rerender(
+			<SheetPrimitive
+				open={false}
+				onClose={() => {}}
+				onAfterClose={onAfterClose}
+				ariaLabel="Details"
+			>
+				<p>Sheet content</p>
+			</SheetPrimitive>,
+		);
+		// Mid-exit: still on screen, sliding out on the faster exit curve.
+		const panel = screen.getByTestId('sheet-primitive');
+		expect(panel.className).toContain('ease-in-exit');
+		expect(panel.className).toContain('translate-x-full');
+		expect(onAfterClose).not.toHaveBeenCalled();
+
+		await new Promise((r) => setTimeout(r, SHEET_EXIT_MS + 50));
+		expect(screen.queryByText('Sheet content')).not.toBeInTheDocument();
+		expect(onAfterClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes on a backdrop click', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<SheetHarness />);
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Inside action' })).toHaveFocus();
+		});
+		await user.click(screen.getByTestId('sheet-backdrop'));
+		await waitFor(() => expect(screen.queryByText('Sheet content')).not.toBeInTheDocument());
+	});
+
+	it('sizes side panels: sm (480px) by default, md (36rem) for previews, className wins', () => {
+		const { rerender } = renderWithProviders(
+			<SheetPrimitive open onClose={() => {}} ariaLabel="Details">
+				<p>x</p>
+			</SheetPrimitive>,
+		);
+		expect(screen.getByTestId('sheet-primitive').className).toContain('sm:w-[480px]');
+
+		rerender(
+			<SheetPrimitive open onClose={() => {}} size="md" ariaLabel="Details">
+				<p>x</p>
+			</SheetPrimitive>,
+		);
+		const md = screen.getByTestId('sheet-primitive').className;
+		expect(md).toContain('sm:w-[min(36rem,100vw)]');
+		expect(md).not.toContain('sm:w-[480px]');
+
+		rerender(
+			<SheetPrimitive open onClose={() => {}} className="sm:w-[640px]" ariaLabel="Details">
+				<p>x</p>
+			</SheetPrimitive>,
+		);
+		const custom = screen.getByTestId('sheet-primitive').className;
+		expect(custom).toContain('sm:w-[640px]');
+		expect(custom).not.toContain('sm:w-[480px]');
+	});
+
+	it('renders header / body / footer slots inside the panel', () => {
+		renderWithProviders(
+			<SheetPrimitive open onClose={() => {}} ariaLabel="Details" className="flex flex-col">
+				<SheetHeader data-testid="slot-head">Head</SheetHeader>
+				<SheetBody data-testid="slot-body">Body</SheetBody>
+				<SheetFooter data-testid="slot-foot">Foot</SheetFooter>
+			</SheetPrimitive>,
+		);
+		const panel = screen.getByTestId('sheet-primitive');
+		expect(screen.getByTestId('slot-head').tagName).toBe('DIV');
+		expect(screen.getByTestId('slot-foot').tagName).toBe('FOOTER');
+		expect(screen.getByTestId('slot-foot').className).toContain('bg-surface-sheet-foot');
+		expect(screen.getByTestId('slot-body').className).toContain('overflow-y-auto');
+		for (const id of ['slot-head', 'slot-body', 'slot-foot']) {
+			expect(panel).toContainElement(screen.getByTestId(id));
+		}
+	});
+
 	it('renders nothing when closed', () => {
 		renderWithProviders(<SheetHarness initialOpen={false} />);
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -134,5 +226,19 @@ describe('SheetPrimitive', () => {
 		renderWithProviders(<SheetHarness />);
 		// Sheet portals to document.body, so scan the whole document.
 		await checkA11y(document.body, { modal: true });
+	});
+
+	it('its header band is not a landmark — no second banner inside the sheet', () => {
+		renderWithProviders(
+			<SheetPrimitive open onClose={() => {}} ariaLabel="Details">
+				<SheetHeader>
+					<h2>Title</h2>
+				</SheetHeader>
+			</SheetPrimitive>,
+		);
+		const dialog = screen.getByRole('dialog', { name: 'Details' });
+		expect(dialog.querySelector('header')).toBeNull();
+		expect(screen.queryAllByRole('banner')).toHaveLength(0);
+		expect(dialog.querySelector('[data-sheet-header]')).toHaveTextContent('Title');
 	});
 });

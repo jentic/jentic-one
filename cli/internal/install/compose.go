@@ -690,7 +690,15 @@ const (
 	// head. It holds data that forward-only migrations will rewrite, so this is
 	// the operator's call to make with a backup in hand — never automatic.
 	SchemaPending
+	// SchemaStepsPending means every database is at head but a post-migration
+	// upgrade step has not run (e.g. after a partial migration). No schema
+	// revision is outstanding; a full migration run performs the step.
+	SchemaStepsPending
 )
+
+// upgradeStepSubjectPrefix marks a `STATUS` line that reports an upgrade step
+// rather than a database: `STATUS upgrade-step:<name> pending`.
+const upgradeStepSubjectPrefix = "upgrade-step:"
 
 // ComposeSchemaState reports whether the stack's databases are migrated, without
 // modifying them. It runs `migrations.run --check` in a one-shot app container.
@@ -740,9 +748,23 @@ func indentLines(s, prefix string) string {
 // parseSchemaVerdict extracts the OVERALL line that `migrations.run --check`
 // prints last. Reported as a verdict only when explicitly found, so garbled or
 // truncated output degrades to "unknown" rather than to a wrong answer.
+//
+// An `OVERALL pending` whose pending `STATUS` lines all name an upgrade step
+// (none a database) is SchemaStepsPending. `OVERALL unknown` (the runner could
+// not read the upgrade-step ledger, exit 5) is undeterminable, like any
+// unrecognised verdict.
 func parseSchemaVerdict(out string) (SchemaState, bool) {
+	pendingDBs, pendingSteps := 0, 0
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 3 && fields[0] == "STATUS" && fields[2] == "pending" {
+			if strings.HasPrefix(fields[1], upgradeStepSubjectPrefix) {
+				pendingSteps++
+			} else {
+				pendingDBs++
+			}
+			continue
+		}
 		if len(fields) != 2 || fields[0] != "OVERALL" {
 			continue
 		}
@@ -752,6 +774,9 @@ func parseSchemaVerdict(out string) (SchemaState, bool) {
 		case "uninitialized":
 			return SchemaUninitialized, true
 		case "pending":
+			if pendingSteps > 0 && pendingDBs == 0 {
+				return SchemaStepsPending, true
+			}
 			return SchemaPending, true
 		}
 	}

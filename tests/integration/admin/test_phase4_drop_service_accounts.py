@@ -54,6 +54,7 @@ pytestmark = pytest.mark.integration
 
 _ADMIN_PRE_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 _ADMIN_DROP = "e2f3a4b5c6d7"  # pragma: allowlist secret
+_ADMIN_PRE_TOOLKIT_DROP = "c0e1f2a3b4c5"  # pragma: allowlist secret
 _SA_TABLES = (
     "service_accounts",
     "service_account_credentials",
@@ -96,8 +97,14 @@ async def _scalar(db: DatabaseSession, sql: str, params: dict[str, object] | Non
 async def _cleanup(admin_db: DatabaseSession, control_db: DatabaseSession) -> None:
     names = await _table_names(admin_db)
     successors = f"(SELECT id FROM agents WHERE registered_by = '{_SUCCESSOR_REGISTRAR}')"
+    # The grant table is ``actor_scope_grants`` while the admin chain sits below
+    # the tail rename (``e3f4a5b6c7d8``) and ``actor_permission_grants`` at head;
+    # pick whichever exists so cleanup works in both states.
+    grants_table = (
+        "actor_permission_grants" if "actor_permission_grants" in names else "actor_scope_grants"
+    )
     for table, column in (
-        ("actor_scope_grants", "actor_id"),
+        (grants_table, "actor_id"),
         ("agent_credential_bindings", "agent_id"),
         ("access_tokens", "actor_id"),
         ("refresh_tokens", "actor_id"),
@@ -111,6 +118,7 @@ async def _cleanup(admin_db: DatabaseSession, control_db: DatabaseSession) -> No
         await _exec(admin_db, "DELETE FROM service_account_migration_acks")
     await _exec(admin_db, f"DELETE FROM agents WHERE registered_by = '{_SUCCESSOR_REGISTRAR}'")
     await _exec(admin_db, "DELETE FROM agents WHERE id LIKE '%p4test%'")
+    await _exec(admin_db, "DELETE FROM oauth_clients WHERE id LIKE '%p4test%'")
     await _exec(admin_db, "DELETE FROM audit_entries WHERE actor_id = 'migrate-service-accounts'")
     await _exec(admin_db, "DELETE FROM users WHERE id = :id", {"id": _OWNER})
     await _exec(
@@ -350,7 +358,7 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     assert identity.permissions == ["capabilities:execute"]
     grants = await _scalar(
         admin_db,
-        "SELECT scope FROM actor_scope_grants WHERE actor_id = :a",
+        "SELECT permission FROM actor_permission_grants WHERE actor_id = :a",
         {"a": successor},
     )
     assert grants == "capabilities:execute"  # retired scope not carried
@@ -373,7 +381,7 @@ async def test_full_upgrade_migrates_verifies_and_drops_and_refuses_the_sak_key(
     )
     assert bindings == 1
     for table, column in (
-        ("actor_scope_grants", "actor_id"),
+        ("actor_permission_grants", "actor_id"),
         ("agent_credential_bindings", "agent_id"),
     ):
         left = await _scalar(
@@ -482,7 +490,7 @@ async def test_orphan_sva_rows_are_cleaned_on_both_databases(
 
     assert not set(_SA_TABLES) & await _table_names(admin_db)
     assert await _rule_holders(control_db) == {}
-    for table in ("actor_scope_grants", "agent_credential_bindings", "access_tokens"):
+    for table in ("actor_permission_grants", "agent_credential_bindings", "access_tokens"):
         left = await _scalar(
             admin_db,
             f"SELECT count(*) FROM {table} WHERE "
@@ -563,10 +571,11 @@ async def test_post_stamp_rows_are_healed_onto_the_earlier_successor(
     assert not set(_SA_TABLES) & await _table_names(admin_db)
     async with admin_db.session() as session:
         scopes = {
-            str(r.scope)
+            str(r.permission)
             for r in (
                 await session.execute(
-                    text("SELECT scope FROM actor_scope_grants WHERE actor_id = :a"), {"a": _AGENT}
+                    text("SELECT permission FROM actor_permission_grants WHERE actor_id = :a"),
+                    {"a": _AGENT},
                 )
             ).all()
         }
@@ -652,10 +661,10 @@ async def test_drop_sweeps_retired_scope_strings(
 
     async with admin_db.session() as session:
         grants = {
-            row.scope
+            row.permission
             for row in (
                 await session.execute(
-                    text("SELECT scope FROM actor_scope_grants WHERE actor_id = :a"),
+                    text("SELECT permission FROM actor_permission_grants WHERE actor_id = :a"),
                     {"a": _AGENT},
                 )
             ).all()
@@ -666,6 +675,46 @@ async def test_drop_sweeps_retired_scope_strings(
     assert grants == {"agents:read"}
     scopes = json.loads(raw_scopes) if isinstance(raw_scopes, str) else raw_scopes
     assert scopes == ["agents:read"]
+
+
+async def test_both_sweeps_rewrite_a_client_allowlist(
+    integration_config: AppConfig,
+    admin_db: DatabaseSession,
+    control_db: DatabaseSession,
+    restore_admin_head: None,
+) -> None:
+    """``oauth_clients.allowed_scopes`` is ``VARCHAR[]`` on PostgreSQL, not
+    JSONB: the toolkit sweep (``d1e2f3a4b5c6``) and the service-account sweep
+    rewrite it in its own type, keeping the live scopes in order."""
+    await _downgrade(integration_config, admin_db, control_db)
+    await asyncio.to_thread(
+        command.downgrade, _admin_cfg(integration_config), _ADMIN_PRE_TOOLKIT_DROP
+    )
+    async with admin_db.session() as session:
+        pg = session.bind is not None and session.bind.dialect.name == "postgresql"
+
+    def array(values: list[str]) -> object:
+        return values if pg else json.dumps(values)
+
+    await _exec(
+        admin_db,
+        "INSERT INTO oauth_clients (id, client_id, name, redirect_uris, allowed_scopes)"
+        " VALUES ('oac_p4test_1', 'p4test-client', 'p4test client', :uris, :scopes)",
+        {
+            "uris": array(["https://p4test.example/callback"]),
+            "scopes": array(
+                ["apis:read", "toolkits:read", "agents:write", "service-accounts:write"]
+            ),
+        },
+    )
+
+    await _upgrade(integration_config)
+
+    raw = await _scalar(
+        admin_db, "SELECT allowed_scopes FROM oauth_clients WHERE id = 'oac_p4test_1'"
+    )
+    scopes = json.loads(raw) if isinstance(raw, str) else raw
+    assert scopes == ["apis:read", "agents:write"]
 
 
 async def test_downgrade_is_irreversible_and_changes_nothing(

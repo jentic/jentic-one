@@ -9,7 +9,7 @@ enforces at most one pending approval per request fingerprint, so an identical
 retry joins the existing hold instead of filing a duplicate.
 
 Revision ID: 3306fb9172f1
-Revises: 0679072d60eb
+Revises: d2e3f4a5b6c7
 Create Date: 2026-10-05
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "3306fb9172f1"  # pragma: allowlist secret
-down_revision: str | None = "0679072d60eb"  # pragma: allowlist secret
+down_revision: str | None = "d2e3f4a5b6c7"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

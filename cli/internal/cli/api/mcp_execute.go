@@ -514,7 +514,7 @@ func synthesizedDenialHint(status int, problemType string) string {
 	}
 	switch status {
 	case http.StatusForbidden:
-		return "The broker denied this call. Call whoami to see your bindings and scopes; if a " +
+		return "The broker denied this call. Call whoami to see your bindings and permissions; if a " +
 			"permission rule forbids this operation, ask your operator to adjust it — do not try to " +
 			"route around a rule by connecting a new credential."
 	case http.StatusConflict:

@@ -255,7 +255,7 @@ export function CascadeDeleteDialog({
 							headline={dependentsHeadline}
 						/>
 					) : (
-						<div className="border-danger/30 bg-danger/5 text-foreground/90 flex gap-2.5 rounded-lg border px-3.5 py-3 text-xs leading-relaxed">
+						<div className="bg-danger/10 text-foreground/90 flex gap-2.5 rounded-lg px-3.5 py-3 text-xs leading-relaxed">
 							<AlertTriangle className="text-danger mt-0.5 h-4 w-4 shrink-0" />
 							<p>{copy.warning}</p>
 						</div>
@@ -263,7 +263,7 @@ export function CascadeDeleteDialog({
 
 					{/* The arming gate — set apart as its own step so the eye lands
 					    on it before the footer's destructive verb. */}
-					<div className="border-border/60 space-y-1.5 border-t pt-4">
+					<div className="border-hairline space-y-1.5 border-t pt-4">
 						<Label htmlFor={confirmInputId}>
 							Type{' '}
 							<span className="text-foreground font-mono font-semibold">
@@ -307,7 +307,7 @@ function BlastRadius({
 	const total = dependents.reduce((sum, g) => sum + g.count, 0);
 
 	return (
-		<div className="border-danger/30 bg-danger/5 space-y-3 rounded-lg border px-3.5 py-3">
+		<div className="bg-danger/10 space-y-3 rounded-lg px-3.5 py-3">
 			<div className="flex items-center gap-2">
 				<AlertTriangle className="text-danger h-4 w-4 shrink-0" />
 				<span className="text-foreground text-xs font-medium">

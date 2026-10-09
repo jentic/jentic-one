@@ -29,9 +29,14 @@ from tests.integration.conftest import _alembic_config_for
 ADMIN_PRE_SA_DROP = "d1e2f3a4b5c6"  # pragma: allowlist secret
 _SA_DROP = "e2f3a4b5c6d7"  # pragma: allowlist secret
 #: The reversible admin revisions stacked on the drop (execution-record
-#: operation path/method, then the execution-approvals table); walked back with
-#: a real downgrade before the restore.
-_ADMIN_HEADS_ABOVE_SA_DROP = ("0679072d60eb", "3306fb9172f1")  # pragma: allowlist secret
+#: operation path/method, then the actor_scope_grants→actor_permission_grants
+#: rename); walked back with a real downgrade before the restore.
+_ADMIN_HEAD_ABOVE_SA_DROP = "0679072d60eb"  # pragma: allowlist secret
+_RENAME_HEAD = "e3f4a5b6c7d8"  # pragma: allowlist secret
+#: The event-acknowledgement drop, stacked on the rename head.
+_ACK_DROP_HEAD = "d2e3f4a5b6c7"  # pragma: allowlist secret
+#: The execution-approvals table, stacked on the acknowledgement drop.
+_APPROVALS_HEAD = "3306fb9172f1"  # pragma: allowlist secret
 
 
 def _create_tables(op: Operations, *, pg: bool) -> None:
@@ -192,9 +197,13 @@ def restore_pre_sa_drop_admin(integration_config: AppConfig) -> None:
     # Stamping skips downgrades, so every revision above the drop must be
     # reversible: walk those back with a real downgrade first, then snapshot-
     # restore the drop itself. Extend this list when a new head lands.
-    assert heads in ([_SA_DROP], *([h] for h in _ADMIN_HEADS_ABOVE_SA_DROP)), (
-        f"extend restore_pre_sa_drop_admin for new heads {heads}"
-    )
+    assert heads in (
+        [_SA_DROP],
+        [_ADMIN_HEAD_ABOVE_SA_DROP],
+        [_RENAME_HEAD],
+        [_ACK_DROP_HEAD],
+        [_APPROVALS_HEAD],
+    ), f"extend restore_pre_sa_drop_admin for new heads {heads}"
     if not asyncio.run(_has_service_account_tables(db_config)):
         command.downgrade(cfg, _SA_DROP)
     if asyncio.run(_restore_tables(db_config)):
