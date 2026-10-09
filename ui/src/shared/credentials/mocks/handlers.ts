@@ -6,8 +6,13 @@ import {
 	type CredentialUpdateRequest,
 } from '@/shared/credentials/api';
 import type {
-	ConfirmRequest,
+	ConfirmSessionBody,
 	ConnectRequest,
+	ExistingCredential,
+	PermissionRule,
+	ReviewAgent,
+	ReviewProvenance,
+	ReviewScheme,
 	SessionStatus,
 	StatusResponse,
 	VendorAuthCapabilities,
@@ -389,13 +394,41 @@ export interface MockConnectSession {
 	 */
 	ownerCanAct: boolean;
 	requested_scopes: string[];
-	requested_permission_rules: NonNullable<ConfirmRequest['permission_rules']>;
+	requested_permission_rules: PermissionRule[];
 	reason: string | null;
 	/** Status served by `/status` polls. Tests flip it to drive terminal states. */
 	status: StatusResponse;
 	/** Captured `:confirm` request bodies, newest last — for assertions. */
-	confirmBodies: ConfirmRequest[];
+	confirmBodies: ConfirmSessionBody[];
+	/**
+	 * The session's flow: a vendor challenge kind (default: the current mock
+	 * challenge), `manual_api_key` / `manual_bearer` / `manual_basic`, or
+	 * `awaiting_app` alongside `state: 'awaiting_app'`.
+	 */
+	resolved_flow?: string;
+	target_kind?: 'vendor' | 'api';
+	provenance?: ReviewProvenance | null;
+	/** Review's agent; defaults to the target agent, owned by the mock caller. */
+	agent?: ReviewAgent | null;
+	scheme?: ReviewScheme | null;
+	pinned_hosts?: string[] | null;
+	/** The review digest `:confirm` must echo; a mismatch is 409 `review_stale`. */
+	digest?: string;
+	can_confirm?: boolean;
+	existing_credentials?: ExistingCredential[];
+	/**
+	 * A problem `:confirm` answers with instead of succeeding, e.g.
+	 * `scheme_changed` (which also ends the session, as the backend does).
+	 */
+	confirmProblem?: { status: number; type: string; endsSession?: boolean };
+	/** How the session ended once its row went (`:reject`, `:cancel`, an existing credential). */
+	outcome?: MockSessionOutcome;
 }
+
+type MockSessionOutcome = 'rejected' | 'cancelled' | 'connected';
+
+/** Sessions whose row went (`:reject`, `:cancel`, an existing credential), newest last. */
+let endedConnectSessions: MockConnectSession[] = [];
 
 let connectSessionsStore: MockConnectSession[] = [];
 let connectSessionSeq = 0;
@@ -408,6 +441,7 @@ let confirmChallengeKind: 'device_authorization' | 'authorization_code' = 'devic
 /** Reset the connect-session mock state (sessions, vendors, capabilities). */
 export function resetConnectSessionsStore(): void {
 	connectSessionsStore = [];
+	endedConnectSessions = [];
 	connectSessionSeq = 0;
 	vendorsStore = [];
 	vendorCapabilitiesStore = {};
@@ -434,6 +468,18 @@ export function getMockConnectSessions(): readonly MockConnectSession[] {
 	return connectSessionsStore;
 }
 
+/** Sessions whose row went, with their `outcome` — for assertions. */
+export function getEndedMockConnectSessions(): readonly MockConnectSession[] {
+	return endedConnectSessions;
+}
+
+/** End a session the way `_mark_terminal` does: the row and its pending credential go. */
+function endMockConnectSession(session: MockConnectSession, outcome: MockSessionOutcome): void {
+	connectSessionsStore = connectSessionsStore.filter((s) => s.session_id !== session.session_id);
+	store = store.filter((c) => c.credential_id !== session.credential_id);
+	endedConnectSessions.push({ ...session, outcome });
+}
+
 /** Drive a session's `/status` poll result (e.g. flip it to a terminal state). */
 function setMockConnectSessionStatus(
 	sessionId: string,
@@ -444,11 +490,43 @@ function setMockConnectSessionStatus(
 	session.status = { ...session.status, ...status };
 }
 
-const problem = (status: number, title: string, detail: string) =>
+const problem = (
+	status: number,
+	title: string,
+	detail: string,
+	type = 'about:blank',
+	extensions: Record<string, unknown> = {},
+) =>
 	HttpResponse.json(
-		{ type: 'about:blank', title, detail, status, instance: null },
+		{ type, title, detail, status, instance: null, ...extensions },
 		{ status, headers: { 'Content-Type': 'application/problem+json' } },
 	);
+
+/** The secret-collecting `:confirm` kind of a `manual_*` flow. */
+const MANUAL_CONFIRM_KINDS: Record<string, string> = {
+	manual_api_key: 'api_key',
+	manual_bearer: 'bearer',
+	manual_basic: 'basic',
+};
+
+/** `:confirm` kinds a session accepts, mirroring the backend's `_allowed_confirm_kinds`. */
+function allowedConfirmKinds(session: MockConnectSession): string[] {
+	const primary =
+		session.state === 'awaiting_app'
+			? 'own_oauth_client'
+			: (MANUAL_CONFIRM_KINDS[session.resolved_flow ?? ''] ?? 'oauth');
+	return [primary, 'existing_credential', 'reauthorize'];
+}
+
+function reviewDigest(session: MockConnectSession): string {
+	return session.digest ?? `dig_${session.session_id}`;
+}
+
+function reviewAgent(session: MockConnectSession): ReviewAgent | null {
+	if (session.agent !== undefined) return session.agent;
+	if (!session.agent_id) return null;
+	return { agent_id: session.agent_id, name: null, owner_id: 'usr_mock_owner', status: 'active' };
+}
 
 /**
  * Gate shared by the session-scoped routes: the poll token when one is sent,
@@ -627,7 +705,16 @@ const connectSessionsHandlers = [
 			state: gated.state,
 			vendor_key: gated.vendor_key,
 			vendor_display_name: caps?.display_name ?? gated.vendor_key,
-			resolved_flow: confirmChallengeKind,
+			resolved_flow: gated.resolved_flow ?? confirmChallengeKind,
+			target_kind: gated.target_kind ?? 'vendor',
+			requested_scopes: gated.requested_scopes,
+			provenance: gated.provenance ?? null,
+			agent: reviewAgent(gated),
+			scheme: gated.scheme ?? null,
+			pinned_hosts: gated.pinned_hosts ?? null,
+			digest: reviewDigest(gated),
+			can_confirm: gated.can_confirm ?? true,
+			existing_credentials: gated.existing_credentials ?? [],
 			requested_by_actor_id: gated.requested_by_actor_id,
 			scopes: (caps?.scopes ?? []).map((s) => ({
 				name: s.name,
@@ -645,8 +732,95 @@ const connectSessionsHandlers = [
 	http.post('/connect-sessions/:sessionId\\:confirm', async ({ params, request }) => {
 		const gated = gateSession(params.sessionId, request.url);
 		if (!isMockSession(gated)) return gated;
-		const body = (await request.json()) as ConfirmRequest;
+		const body = (await request.json()) as ConfirmSessionBody;
 		gated.confirmBodies.push(body);
+		if (gated.confirmProblem) {
+			const { status, type, endsSession } = gated.confirmProblem;
+			if (endsSession) {
+				connectSessionsStore = connectSessionsStore.filter(
+					(s) => s.session_id !== gated.session_id,
+				);
+			}
+			return problem(status, type, `Mock ${type}.`, type);
+		}
+		const kind = body.kind ?? 'oauth';
+		const allowed = allowedConfirmKinds(gated);
+		if (!allowed.includes(kind)) {
+			return problem(400, 'Bad Request', 'Confirm kind mismatch.', 'confirm_kind_mismatch', {
+				allowed_kinds: allowed,
+			});
+		}
+		// Checked when given; required for every non-OAuth variant.
+		const needsReview = kind !== 'oauth' || gated.target_kind === 'api';
+		if (needsReview || body.digest != null) {
+			const expected = reviewAgent(gated)?.agent_id ?? null;
+			if (
+				body.digest !== reviewDigest(gated) ||
+				(body.expected_agent_id ?? null) !== expected
+			) {
+				return problem(409, 'Conflict', 'The review is stale.', 'review_stale');
+			}
+		}
+		if (needsReview && body.permission_rules.length === 0) {
+			return problem(422, 'Unprocessable Entity', 'Rules required.', 'rules_required');
+		}
+		if (kind === 'existing_credential' || kind === 'reauthorize') {
+			const credentialId = (body as { credential_id: string }).credential_id;
+			const candidate = (gated.existing_credentials ?? []).find(
+				(c) => c.credential_id === credentialId,
+			);
+			if (!candidate) {
+				return problem(
+					404,
+					'Not Found',
+					'No such credential.',
+					'existing_credential_not_found',
+				);
+			}
+			if (kind === 'reauthorize' && !candidate.can_reauthorize) {
+				return problem(409, 'Conflict', 'Cannot re-authorize.', 'reauthorize_unavailable');
+			}
+			if (kind === 'existing_credential' && !candidate.can_bind) {
+				return problem(
+					409,
+					'Conflict',
+					'Granted scopes too narrow.',
+					'insufficient_granted_scopes',
+					{
+						missing_scopes: candidate.missing_scopes ?? [],
+					},
+				);
+			}
+			// The session's own pending credential is not needed; it takes the
+			// session row with it.
+			endMockConnectSession(gated, 'connected');
+			if (kind === 'reauthorize') {
+				return HttpResponse.json({
+					kind: 'reauthorize',
+					credential_id: credentialId,
+					authorize_url: `https://vendor.example.test/oauth/authorize?reauthorize=${credentialId}`,
+				});
+			}
+			return HttpResponse.json({ kind: 'connected', credential_id: credentialId });
+		}
+		if (kind === 'api_key' || kind === 'bearer' || kind === 'basic') {
+			gated.state = 'connected';
+			gated.status = {
+				...gated.status,
+				status: 'connected',
+				credential_id: gated.credential_id,
+			};
+			return HttpResponse.json({ kind: 'connected', credential_id: gated.credential_id });
+		}
+		if (kind === 'own_oauth_client') {
+			gated.state = 'polling';
+			gated.resolved_flow = 'authorization_code';
+			gated.status = { ...gated.status, status: 'polling' };
+			return HttpResponse.json({
+				kind: 'authorization_code',
+				authorize_url: `https://vendor.example.test/oauth/authorize?session=${gated.session_id}`,
+			});
+		}
 		gated.state = 'polling';
 		gated.status = { ...gated.status, status: 'polling' };
 		if (confirmChallengeKind === 'authorization_code') {
@@ -675,10 +849,23 @@ const connectSessionsHandlers = [
 		if (!isMockSession(gated)) return gated;
 		// Cancel cascades the session AND its pending credential, like the
 		// backend's `_mark_terminal` unhappy path.
-		connectSessionsStore = connectSessionsStore.filter(
-			(s) => s.session_id !== gated.session_id,
-		);
-		store = store.filter((c) => c.credential_id !== gated.credential_id);
+		endMockConnectSession(gated, 'cancelled');
+		return new HttpResponse(null, { status: 204 });
+	}),
+
+	// Owner / org admin only: no poll-token path, so a token on the query is
+	// ignored and a caller who is neither gets the uniform 403.
+	http.post('/connect-sessions/:sessionId\\:reject', ({ params }) => {
+		const session = connectSessionsStore.find((s) => s.session_id === String(params.sessionId));
+		if (!session || !session.ownerCanAct) {
+			return problem(
+				403,
+				'Forbidden',
+				'Unknown session or invalid poll token.',
+				'invalid_poll_token',
+			);
+		}
+		endMockConnectSession(session, 'rejected');
 		return new HttpResponse(null, { status: 204 });
 	}),
 ];
