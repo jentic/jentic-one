@@ -162,7 +162,7 @@ function CommandBlock({ cmd, depth }: { cmd: CliCommand; depth: number }) {
 					<h5 className="text-foreground/45 mb-1.5 text-[11px] font-semibold tracking-wide uppercase">
 						Example
 					</h5>
-					<div className="border-border/60 relative overflow-hidden rounded-md border bg-black/30">
+					<div className="border-border/60 bg-code relative overflow-hidden rounded-md border">
 						<pre className="text-foreground/90 overflow-x-auto p-3 pr-12 font-mono text-[13px] leading-relaxed">
 							{example}
 						</pre>

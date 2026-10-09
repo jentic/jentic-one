@@ -1,3 +1,4 @@
+import '@/shared/lib/theme'; // sets data-theme on <html> before the app renders
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';

@@ -145,7 +145,7 @@ export function WorkspaceSummaryBar({
 			>
 				<Layers className="text-foreground-sub h-4 w-4 shrink-0" aria-hidden="true" />
 				<span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-					<span className="font-heading text-[14px] font-bold text-white">
+					<span className="font-heading text-foreground text-[14px] font-bold">
 						Your workspace
 					</span>
 					{digest.complete && apiCount > 0 && (
@@ -209,7 +209,7 @@ export function WorkspaceSummaryBar({
 						<div className="flex min-w-0 items-baseline gap-2">
 							<h2
 								id={titleId}
-								className="font-heading text-[15.5px] font-bold text-white"
+								className="font-heading text-foreground text-[15.5px] font-bold"
 							>
 								Your workspace
 							</h2>

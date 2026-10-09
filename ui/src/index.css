@@ -23,7 +23,7 @@
 	/* Text tiers (strong = foreground). `name` is entity names in rows/cards;
 	   `sub` = the muted tier; `faint` = labels/meta (still ≥ 4.5:1 on the
 	   tonal surfaces); `group` = big thin group headings; `disabled` = inert. */
-	--color-foreground-name: hsl(0 0% 100% / 0.88);
+	--color-foreground-name: hsl(var(--foreground-name));
 	--color-foreground-sub: hsl(var(--foreground-sub));
 	--color-foreground-faint: hsl(var(--foreground-faint));
 	--color-foreground-group: hsl(var(--foreground-group));
@@ -48,26 +48,29 @@
 	/* Context-aware field fill: one step lighter than whatever it sits on.
 	   Page → surface-1; a card, sheet or dialog sets --field-bg one step up. */
 	--color-field: hsl(var(--field-bg));
-	--color-hairline: hsl(185 20% 60% / 0.07);
-	--color-hairline-row: hsl(185 20% 60% / 0.055);
+	--color-hairline: hsl(var(--hairline));
+	--color-hairline-row: hsl(var(--hairline-row));
 	/* The hairline at a stated strength: the resting edge of form fields and
 	   the dialog panel. Faint, but it reads on the page, cards, sheets and
 	   dialogs so an empty field is easy to spot. */
-	--color-hairline-field: hsl(185 20% 60% / 0.16);
+	--color-hairline-field: hsl(var(--hairline-field));
 	/* Discover ledger: the vendor→API tree lines, the `·` meta separator and
 	   the sticky toolbar's glass fill (over the page, under its blur). */
-	--color-ledger-tree: hsl(185 20% 30%);
-	--color-meta-separator: hsl(185 12% 30%);
-	--color-toolbar-glass: hsl(192 35% 8% / 0.9);
+	--color-ledger-tree: hsl(var(--ledger-tree));
+	--color-meta-separator: hsl(var(--meta-separator));
+	--color-toolbar-glass: hsl(var(--background) / 0.9);
 	/* Text inside a search-match highlight (`<mark>`). */
-	--color-search-highlight: #fff;
+	--color-search-highlight: hsl(var(--foreground));
 	/* An idle (suspended / not-serving) tile's title — dimmed white. */
-	--color-foreground-idle: color-mix(in oklab, #fff 60%, transparent);
+	--color-foreground-idle: color-mix(in oklab, hsl(var(--foreground)) 60%, transparent);
 	/* The one resting edge for form controls (see :root). Not for buttons. */
 	--color-control-edge: hsl(var(--control-edge));
 	--color-control-edge-hover: hsl(var(--control-edge-hover));
-	--color-tint: hsl(var(--primary-300) / 0.045);
-	--color-tint-2: hsl(var(--primary-300) / 0.08);
+	--color-tint: hsl(var(--primary) / 0.045);
+	--color-tint-2: hsl(var(--primary) / 0.08);
+	/* Dialog / sheet / drawer scrim, and the fill behind code blocks. */
+	--color-scrim: hsl(var(--scrim));
+	--color-code: hsl(var(--code-bg));
 
 	/* HTTP method text tints (method chips are neutral; only the word is tinted). */
 	--color-method-post: hsl(var(--method-post));
@@ -156,6 +159,9 @@
     --primary-950 → #0E1A1D darkest
 */
 :root {
+	/* Native scrollbars, form controls and browser chrome follow the theme. */
+	color-scheme: dark;
+
 	/* ======================================================================
 	   PRIMARY COLOR SCALE
 	   Higher number = darker (standard Tailwind convention).
@@ -234,10 +240,10 @@
 	   low so the band reads as a zone, not a hero. */
 	--page-header-from: var(--surface-1);
 	--page-header-to: var(--background);
-	--page-header-glow: var(--primary-300);
+	--page-header-glow: var(--primary);
 	--page-header-glow-2: var(--accent-blue);
 	--page-header-rule: 185 20% 60% / 0.1;
-	--page-header-tick: var(--primary-300); /* the title accent on the foot */
+	--page-header-tick: var(--primary); /* the title accent on the foot */
 	/* Header actions: no edges — prominence comes from a fill two tonal steps
 	   above the band (the band is ≈ L11–15% where the actions sit), a faint
 	   inner top highlight and a very soft drop shadow. */
@@ -299,6 +305,23 @@
 	--ring: var(--primary-300);
 	--radius: 0.75rem;
 
+	/* Edges and chrome drawn at an alpha (see @theme). */
+	--foreground-name: 0 0% 100% / 0.88;
+	--hairline: 185 20% 60% / 0.07;
+	--hairline-row: 185 20% 60% / 0.055;
+	--hairline-field: 185 20% 60% / 0.16;
+	--hairline-head: 185 20% 60% / 0.08; /* table / ledger header foot */
+	--ledger-tree: 185 20% 30%;
+	--meta-separator: 185 12% 30%;
+	--scrim: 192 35% 4% / 0.55;
+	--code-bg: 0 0% 0% / 0.3;
+	--shimmer-hi: var(--primary-700) / 0.55;
+	/* Shadows: an inner top highlight, and the drop colour at full strength
+	   (`--shadow`) — a light page wants a far softer drop than a dark one. */
+	--highlight: 0 0% 100%;
+	--shadow: 192 35% 4%;
+	--shadow-k: 1;
+
 	/* ======================================================================
 	   ELEVATION
 	   Cards rest flat (a tonal step, no shadow) and lift a soft shadow on
@@ -317,6 +340,118 @@
 	--elevation-elevated:
 		inset 0 1px 0 hsl(0 0% 100% / 0.04), 0 12px 32px -8px hsl(0 0% 0% / 0.55),
 		0 2px 6px hsl(0 0% 0% / 0.35);
+}
+
+/*
+  LIGHT THEME ([data-theme='light'], set by `shared/lib/theme.ts`).
+  The same Jentic teal ramp, inverted: a cool off-white page (#F5F7F7), white
+  surfaces, #0E1A1D text and a deepened brand teal for actions — #A3CACC is
+  too pale to carry text on white. On light a surface is raised by going
+  white and casting a soft shadow, so the tonal steps run the other way:
+  wells, chips and hovers sit a step *darker* than the white they are on.
+  Overrides tokens only — no component knows the theme.
+*/
+[data-theme='light'] {
+	color-scheme: light;
+
+	--primary-100: 186 30% 92%;
+	--primary-300: 186 42% 30%; /* brand teal, deepened for white */
+	--primary-500: 186 16% 50%;
+	--primary-700: 188 16% 84%;
+	--primary-850: 190 18% 94%;
+	--primary-900: 0 0% 100%;
+	--primary-950: 180 11% 96%; /* #F5F7F7 */
+
+	--accent-orange: 28 78% 40%;
+	--accent-green: 164 62% 28%;
+	--accent-pink: 356 56% 44%;
+	--accent-blue: 205 66% 38%;
+	--accent-yellow: 44 80% 34%;
+
+	/* Surfaces */
+	--background: var(--primary-950);
+	--card: 0 0% 100%;
+	--card-foreground: 192 35% 10%;
+	--border: 188 16% 84%;
+
+	/* Text */
+	--foreground: 192 35% 10%; /* ≈ #111F22 */
+	--foreground-lighter: 192 25% 18%;
+	--foreground-name: 192 35% 10% / 0.92;
+	--muted: 190 18% 94%;
+	--foreground-sub: 188 14% 34%; /* ≈ 7:1 on white */
+	--foreground-faint: 188 12% 40%; /* ≈ 5.6:1 on white, ≥ 4.5:1 on wells */
+	--foreground-group: 186 18% 38%;
+	--foreground-disabled: 188 8% 66%;
+
+	/* Tonal surfaces — white for raised, cool greys for wells/hover/chips. */
+	--surface-1: 0 0% 100%;
+	--surface-1-hover: 190 22% 98%;
+	--surface-zebra: 190 20% 98.5%;
+	--surface-selected: 186 32% 94%;
+	--surface-field: 190 18% 97%;
+	--surface-inset: 190 18% 96.5%;
+	--surface-tonal: 190 16% 93.5%;
+	--surface-tonal-hover: 190 16% 90%;
+	--surface-chip: 190 16% 93%;
+	--surface-chip-active: 188 20% 87%;
+	--surface-quiet-cta: 190 16% 93%;
+	--surface-sheet: 0 0% 100%;
+	--surface-sheet-foot: 190 18% 97%;
+	--surface-drop: 186 30% 96%;
+	--surface-drop-over: 176 40% 92%;
+	--surface-ghost: 186 34% 92%;
+	--control-edge: 188 14% 74%;
+	--control-edge-hover: 186 42% 30% / 0.55;
+
+	--hairline: 192 30% 20% / 0.09;
+	--hairline-row: 192 30% 20% / 0.07;
+	--hairline-field: 192 30% 20% / 0.16;
+	--hairline-head: 192 30% 20% / 0.1;
+	--ledger-tree: 188 14% 80%;
+	--meta-separator: 188 10% 72%;
+	--scrim: 192 30% 12% / 0.28;
+	--code-bg: 190 20% 95%;
+	--shimmer-hi: 190 16% 86% / 0.8;
+	--shadow: 192 30% 20%;
+	--shadow-k: 0.3;
+
+	/* Page header band: white → page, a fainter teal wash. */
+	--page-header-from: 0 0% 100%;
+	--page-header-to: var(--background);
+	--page-header-glow-a: 0.07;
+	--page-header-rule: 192 30% 20% / 0.08;
+	--header-btn-bg: 190 16% 92%;
+	--header-btn-bg-hover: 190 16% 88%;
+	--header-btn-bg-active: 190 16% 85%;
+	--header-field-bg: 190 18% 94%;
+	--header-field-bg-hover: 190 18% 92%;
+
+	--method-post: 164 52% 28%;
+	--method-delete: 356 48% 42%;
+	--method-put: 34 52% 34%;
+
+	--input-placeholder: 188 10% 50%;
+
+	/* Brand */
+	--primary: var(--primary-300);
+	--primary-hover: 186 44% 24%;
+	--primary-foreground: 0 0% 100%;
+
+	/* State */
+	--success: 164 62% 28%;
+	--caution: 36 46% 38%;
+	--warning: 32 72% 36%;
+	--danger: 356 58% 44%;
+	--destructive: 13 80% 44%;
+
+	--elevation-card: 0 1px 2px 0 hsl(192 30% 20% / 0.06);
+	--elevation-card-hover:
+		0 6px 20px -6px hsl(192 30% 20% / 0.14), 0 2px 6px -2px hsl(192 30% 20% / 0.08);
+	--elevation-pop:
+		0 16px 40px -12px hsl(192 30% 20% / 0.2), 0 4px 12px -4px hsl(192 30% 20% / 0.1);
+	--elevation-elevated:
+		0 12px 32px -8px hsl(192 30% 20% / 0.16), 0 2px 6px hsl(192 30% 20% / 0.08);
 }
 
 @layer base {
@@ -392,7 +527,11 @@
 .page-header-band {
 	position: relative;
 	background:
-		radial-gradient(44rem 12rem at 4% 0%, hsl(var(--page-header-glow) / 0.12), transparent 70%),
+		radial-gradient(
+			44rem 12rem at 4% 0%,
+			hsl(var(--page-header-glow) / var(--page-header-glow-a, 0.12)),
+			transparent 70%
+		),
 		radial-gradient(
 			36rem 10rem at 96% 0%,
 			hsl(var(--page-header-glow-2) / 0.05),
@@ -450,7 +589,9 @@
    The focus-visible ring is kept (it is the focus indicator, not a border). */
 .page-header-actions {
 	--field-bg: var(--header-field-bg);
-	--header-btn-lift: inset 0 1px 0 hsl(0 0% 100% / 0.06), 0 1px 2px hsl(192 35% 4% / 0.45);
+	--header-btn-lift:
+		inset 0 1px 0 hsl(var(--highlight) / 0.06),
+		0 1px 2px hsl(var(--shadow) / calc(0.45 * var(--shadow-k)));
 }
 
 .page-header-actions [data-variant] {
@@ -459,17 +600,17 @@
 
 .page-header-actions [data-variant='primary'] {
 	box-shadow:
-		inset 0 1px 0 hsl(0 0% 100% / 0.22),
-		0 1px 2px hsl(192 35% 4% / 0.5),
-		0 4px 12px -6px hsl(var(--primary-300) / 0.35);
+		inset 0 1px 0 hsl(var(--highlight) / 0.22),
+		0 1px 2px hsl(var(--shadow) / calc(0.5 * var(--shadow-k))),
+		0 4px 12px -6px hsl(var(--primary) / 0.35);
 }
 
 .page-header-actions [data-variant='primary']:hover:not(:disabled) {
 	translate: 0 -1px;
 	box-shadow:
-		inset 0 1px 0 hsl(0 0% 100% / 0.22),
-		0 2px 4px hsl(192 35% 4% / 0.5),
-		0 8px 18px -8px hsl(var(--primary-300) / 0.45);
+		inset 0 1px 0 hsl(var(--highlight) / 0.22),
+		0 2px 4px hsl(var(--shadow) / calc(0.5 * var(--shadow-k))),
+		0 8px 18px -8px hsl(var(--primary) / 0.45);
 }
 
 .page-header-actions
@@ -509,7 +650,7 @@
 		[data-variant='ghost']:is([data-size='icon'], [data-size='icon-xs'])
 	):active:not(:disabled) {
 	background-color: hsl(var(--header-btn-bg-active));
-	box-shadow: inset 0 1px 2px hsl(192 35% 4% / 0.45);
+	box-shadow: inset 0 1px 2px hsl(var(--shadow) / calc(0.45 * var(--shadow-k)));
 }
 
 .page-header-actions [data-variant='danger'] {
@@ -524,7 +665,7 @@
 
 .page-header-actions [data-variant='danger']:active:not(:disabled) {
 	background-color: hsl(var(--danger) / 0.12);
-	box-shadow: inset 0 1px 2px hsl(192 35% 4% / 0.45);
+	box-shadow: inset 0 1px 2px hsl(var(--shadow) / calc(0.45 * var(--shadow-k)));
 }
 
 .page-header-actions [data-variant]:disabled {
@@ -621,7 +762,7 @@
 	background-image: linear-gradient(
 		90deg,
 		hsl(var(--muted)) 0%,
-		hsl(var(--primary-700) / 0.55) 50%,
+		hsl(var(--shimmer-hi)) 50%,
 		hsl(var(--muted)) 100%
 	);
 	background-size: 200% 100%;

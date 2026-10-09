@@ -174,7 +174,7 @@ export function ApiDetailSheet({
 						<div className="min-w-0 flex-1">
 							<h2
 								id={titleId}
-								className="font-heading truncate text-lg leading-[1.25] font-semibold text-white/92"
+								className="font-heading text-foreground/92 truncate text-lg leading-[1.25] font-semibold"
 							>
 								{displayTitle}
 							</h2>
@@ -215,7 +215,7 @@ export function ApiDetailSheet({
 										value={entity.apiId}
 										variant="ghost"
 										size="icon"
-										className="hover:bg-tint-2 h-[22px] w-[22px] rounded-[7px] p-0 hover:text-white [&_svg]:h-3 [&_svg]:w-3"
+										className="hover:bg-tint-2 hover:text-foreground h-[22px] w-[22px] rounded-[7px] p-0 [&_svg]:h-3 [&_svg]:w-3"
 									/>
 								</span>
 							</div>
@@ -227,7 +227,7 @@ export function ApiDetailSheet({
 							size="icon"
 							onClick={onClose}
 							aria-label="Close"
-							className="text-muted-foreground hover:bg-tint-2 -mt-1 -mr-1.5 ml-auto h-10 w-10 shrink-0 rounded-[7px] p-0 hover:text-white sm:h-8 sm:w-8"
+							className="text-muted-foreground hover:bg-tint-2 hover:text-foreground -mt-1 -mr-1.5 ml-auto h-10 w-10 shrink-0 rounded-[7px] p-0 sm:h-8 sm:w-8"
 							data-testid="api-detail-sheet-close"
 						>
 							<X className="h-4 w-4" aria-hidden="true" />
@@ -241,7 +241,7 @@ export function ApiDetailSheet({
 									ref={backButtonRef}
 									variant="ghost"
 									onClick={handleBack}
-									className="text-muted-foreground mb-4 h-auto gap-0.5 p-0 text-xs font-medium hover:bg-transparent hover:text-white active:scale-100"
+									className="text-muted-foreground hover:text-foreground mb-4 h-auto gap-0.5 p-0 text-xs font-medium hover:bg-transparent active:scale-100"
 									data-testid="operation-back"
 								>
 									<ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
@@ -256,7 +256,7 @@ export function ApiDetailSheet({
 							<>
 								<ApiSummary description={preview.info?.description} />
 								<ApiAuthRow schemes={preview.securitySchemes} />
-								<h3 className="mb-2.5 flex items-baseline gap-2 text-sm font-semibold text-white">
+								<h3 className="text-foreground mb-2.5 flex items-baseline gap-2 text-sm font-semibold">
 									Operations
 									{preview.total > 0 && (
 										<span className="text-foreground-faint text-[12.5px] font-normal">
@@ -286,7 +286,7 @@ export function ApiDetailSheet({
 						{entity.githubUrl && (
 							<AppLink
 								href={entity.githubUrl}
-								className="text-muted-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors hover:text-white"
+								className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-[13.5px] transition-colors"
 								aria-label={`View ${displayTitle} on GitHub`}
 							>
 								<GitHubMark size={14} />

@@ -120,7 +120,7 @@ function TagChip({
 			className={cn(
 				'h-auto rounded-full px-2.5 py-[3px] text-xs font-semibold active:scale-100',
 				active
-					? 'bg-surface-chip-active hover:bg-surface-chip-active text-white hover:text-white'
+					? 'bg-surface-chip-active hover:bg-surface-chip-active text-foreground hover:text-foreground'
 					: 'bg-surface-field text-muted-foreground hover:bg-surface-chip hover:text-foreground-lighter',
 			)}
 			{...rest}
@@ -160,7 +160,7 @@ export function OperationsListFooter({
 					size="sm"
 					loading={isFetchingNextPage}
 					onClick={onLoadMore}
-					className="text-muted-foreground hover:bg-tint-2 rounded-field text-[13px] font-semibold hover:text-white"
+					className="text-muted-foreground hover:bg-tint-2 rounded-field hover:text-foreground text-[13px] font-semibold"
 					data-testid="ops-load-more"
 				>
 					{isFetchingNextPage ? 'Loading…' : `Load ${nextBatch} more`}

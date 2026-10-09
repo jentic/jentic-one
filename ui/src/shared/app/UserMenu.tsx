@@ -1,9 +1,10 @@
 import { useState, useCallback } from 'react';
-import { KeyRound, LogOut, Settings } from 'lucide-react';
+import { KeyRound, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
 import { cn } from '@/shared/lib/utils';
+import { setTheme, useTheme } from '@/shared/lib/theme';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { usePermission, ORG_ADMIN } from '@/shared/auth/usePermission';
 import { useVersionInfo } from '@/shared/hooks';
@@ -32,6 +33,8 @@ export function UserMenu() {
 	const [open, setOpen] = useState(false);
 	const close = useCallback(() => setOpen(false), []);
 	const menuRef = useDismissable<HTMLDivElement>(open, close);
+	const theme = useTheme();
+	const ThemeIcon = theme === 'dark' ? Sun : Moon;
 
 	const initial = avatarInitial(user?.first_name, user?.email);
 
@@ -89,6 +92,16 @@ export function UserMenu() {
 							Settings
 						</AppLink>
 					)}
+
+					<Button
+						variant="ghost"
+						role="menuitem"
+						onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+						className={cn(menuItemClass(), 'justify-start')}
+					>
+						<ThemeIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+						{theme === 'dark' ? 'Light theme' : 'Dark theme'}
+					</Button>
 
 					<MenuSeparator />
 

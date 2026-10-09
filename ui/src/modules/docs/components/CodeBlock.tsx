@@ -31,9 +31,7 @@ export function CodeBlock({ code, caption, prompt = false, className }: CodeBloc
 		: body;
 
 	return (
-		<div
-			className={cn('border-border overflow-hidden rounded-lg border bg-black/30', className)}
-		>
+		<div className={cn('border-border bg-code overflow-hidden rounded-lg border', className)}>
 			{caption && (
 				<div className="border-border/60 text-foreground/45 flex items-center justify-between border-b px-3 py-1.5 text-[11px] font-medium tracking-wide uppercase">
 					<span>{caption}</span>

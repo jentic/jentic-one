@@ -110,7 +110,7 @@ export function DataTable<T>({
 		>
 			<table className="w-full border-collapse">
 				<thead>
-					<tr className="text-left shadow-[0_1px_0_hsl(185_20%_60%/0.08)]">
+					<tr className="text-left shadow-[0_1px_0_hsl(var(--hairline-head))]">
 						{columns.map((col) => (
 							<th
 								key={String(col.key)}
