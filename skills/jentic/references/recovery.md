@@ -166,6 +166,10 @@ the right ask, then retry once they confirm.
   `jentic execute <target>` — discover, inspect, and
   call operations through the broker (use the full upstream URL; the broker
   is a forward proxy, not a path router).
+- `jentic api GET /apis/{vendor}/{name}/{version}/security-schemes` —
+  every security scheme the API declares (with OAuth flow URLs), when you
+  need the auth type for an access report and `jentic inspect`'s per-operation
+  `auth` is not enough.
 - `jentic register` / `jentic setup` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous
   use).
