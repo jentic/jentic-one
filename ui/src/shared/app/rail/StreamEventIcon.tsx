@@ -44,6 +44,8 @@ const TYPE_ICON_MAP: Record<string, { Icon: LucideIcon; tone: string }> = {
 	'oauth_client.approved': { Icon: CheckCircle2, tone: 'text-success' },
 	'oauth_grant.created': { Icon: KeyRound, tone: 'text-success' },
 	'oauth_grant.revoked': { Icon: XCircle, tone: 'text-muted-foreground' },
+	// An agent asked its owner to approve a new credential.
+	'connect_session.created': { Icon: ShieldQuestion, tone: 'text-muted-foreground' },
 };
 
 const KIND_ICON_MAP: Record<StreamKind, { Icon: LucideIcon; tone: string }> = {
