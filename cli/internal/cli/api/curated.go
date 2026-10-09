@@ -99,6 +99,8 @@ func CuratedBindings() []CuratedBinding {
 				"preferred_flow":             "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
 				"requested_permission_rules": "a nested rule list has no sane flag shape; the approver sets rules on the approve page, and a pre-filled ask is reachable via `jentic api IntegrationsConnect`",
 				"name":                       "credential label is a UI affordance for distinguishing multiple credentials on the credentials page; the CLI creates one credential per connect and the server defaults the label to the vendor display name; the raw field is still reachable via `jentic api IntegrationsConnect`",
+				"api":                        "registry-API targets are behind the server's off-by-default manual-flows gate; the `--api` flag ships with the agent-lane work, and the raw field is reachable via `jentic api IntegrationsConnect`",
+				"auth_type":                  "only meaningful with an `api` target (see above); the raw field is reachable via `jentic api IntegrationsConnect`",
 			},
 		},
 		{
