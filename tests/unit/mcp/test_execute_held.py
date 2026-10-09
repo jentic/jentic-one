@@ -44,7 +44,15 @@ _ENVELOPE = {
 }
 
 
-def _env(caps: dict[str, Any] | None = None, *, sub: str = "agnt_1") -> CallEnv:
+_MODERN = "2026-07-28"
+
+
+def _env(
+    caps: dict[str, Any] | None = None,
+    *,
+    sub: str = "agnt_1",
+    protocol_version: str | None = _MODERN,
+) -> CallEnv:
     ctx = MagicMock()
     ctx.config.auth = AuthConfig(canonical_base_url="https://auth.example.com")
     server = ServerConfig()
@@ -64,6 +72,7 @@ def _env(caps: dict[str, Any] | None = None, *, sub: str = "agnt_1") -> CallEnv:
         base_url="https://auth.example.com",
         session_id=None,
         client_capabilities=caps or {},
+        protocol_version=protocol_version,
         client_name="test-client",
         client_version="1.0",
     )
@@ -224,16 +233,30 @@ async def test_forged_or_foreign_request_state_is_refused(
 
 
 def test_front_door_selection() -> None:
-    assert approvals.front_door({}) == approvals.FRONT_DOOR_HELD_RESULT
-    assert approvals.front_door({"elicitation": {}}) == approvals.FRONT_DOOR_HELD_RESULT
-    assert approvals.front_door({"elicitation": {"form": {}}}) == approvals.FRONT_DOOR_HELD_RESULT
+    url = {"elicitation": {"url": {}}}
+    assert approvals.front_door({}, _MODERN) == approvals.FRONT_DOOR_HELD_RESULT
+    assert approvals.front_door({"elicitation": {}}, _MODERN) == approvals.FRONT_DOOR_HELD_RESULT
     assert (
-        approvals.front_door({"elicitation": {"url": {}}}) == approvals.FRONT_DOOR_URL_ELICITATION
-    )
-    assert (
-        approvals.front_door({"extensions": {"io.modelcontextprotocol/tasks": {}}})
+        approvals.front_door({"elicitation": {"form": {}}}, _MODERN)
         == approvals.FRONT_DOOR_HELD_RESULT
     )
+    assert approvals.front_door(url, _MODERN) == approvals.FRONT_DOOR_URL_ELICITATION
+    assert (
+        approvals.front_door({"extensions": {"io.modelcontextprotocol/tasks": {}}}, _MODERN)
+        == approvals.FRONT_DOOR_HELD_RESULT
+    )
+    # An InputRequiredResult cannot ride an older (or unknown) protocol version.
+    assert approvals.front_door(url, "2025-06-18") == approvals.FRONT_DOOR_HELD_RESULT
+    assert approvals.front_door(url, None) == approvals.FRONT_DOOR_HELD_RESULT
+
+
+async def test_a_legacy_wire_client_declaring_url_elicitation_gets_the_held_result(
+    held_broker: list[httpx.Request], job_polls: Callable[[list[str]], list[str]]
+) -> None:
+    job_polls(["held"])
+    result = await _execute(_env({"elicitation": {"url": {}}}, protocol_version="2025-06-18"))
+    assert isinstance(result, mcp_types.CallToolResult)
+    assert _json(result)["body"]["status"] == "held"
 
 
 async def _get_result(env: CallEnv, **extra: Any) -> Any:

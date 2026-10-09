@@ -132,6 +132,8 @@ class CallEnv:
     client_version: str | None = None
     #: the ``requestState`` a multi-round-trip retry echoes back, if any.
     request_state: str | None = None
+    #: the protocol version this request was served under (``None`` when unknown).
+    protocol_version: str | None = None
     #: the process-level catalog auto-importer the HTTP connect route threads
     #: into ``ConnectSessionService`` (``app.state.catalog_auto_importer``);
     #: ``None`` when this process does not serve the registry.
@@ -1115,7 +1117,7 @@ async def _answer_held(
     env: CallEnv, envelope: dict[str, Any], payload: dict[str, Any], method: str, path: str
 ) -> ToolCallResult:
     """Shape a held (202) call for this client: URL elicitation, else the held result at once."""
-    door = approvals.front_door(env.client_capabilities)
+    door = approvals.front_door(env.client_capabilities, env.protocol_version)
     _log_front_door(env, door, envelope)
     if door == approvals.FRONT_DOOR_URL_ELICITATION:
         state = approvals.seal_request_state(

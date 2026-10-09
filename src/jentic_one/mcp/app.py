@@ -353,6 +353,7 @@ def _call_env(
         client_name=name if isinstance(name, str) else None,
         client_version=version if isinstance(version, str) else None,
         request_state=params.request_state if params is not None else None,
+        protocol_version=sctx.protocol_version,
         catalog_auto_importer=state.get("mcp_catalog_auto_importer"),
     )
 

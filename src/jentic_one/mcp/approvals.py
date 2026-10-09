@@ -5,13 +5,14 @@ held envelope. This module shapes it for the MCP client by what the client
 declares on THIS request (``_meta["io.modelcontextprotocol/clientCapabilities"]``
 — there is no session to remember it):
 
-- ``elicitation.url`` declared → **URL elicitation** via a multi-round-trip
-  ``InputRequiredResult``: the client asks the user's consent and opens the
+- ``elicitation.url`` declared on a 2026-07-28 request → **URL elicitation**
+  via a multi-round-trip ``InputRequiredResult``: the client asks the user's consent and opens the
   review page; its retry carries our sealed ``requestState``, and the job is
   read again (terminal → the result; still held → the short wait, then the
   held result). The elicitation ``accept`` is consent to open the link, never
   a decision — only a signed-in reviewer's ``:decide`` releases the job.
-- otherwise → the **held result** at once: the envelope as a normal tool
+- otherwise → the **held result** at once (an older protocol version cannot
+  carry an ``InputRequiredResult``, so it always gets this): the envelope as a normal tool
   result, so the model relays the review link straight away and polls with
   ``get_execution_result``. Nobody can approve a call before seeing its
   review link, so waiting on the first call would only delay the link.
@@ -34,6 +35,7 @@ from typing import Any
 
 import mcp.types as mcp_types
 import structlog
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from jentic_one.mcp.envelopes import SCHEMA_VERSION
 
@@ -70,9 +72,16 @@ def declares_url_elicitation(caps: dict[str, Any]) -> bool:
     return isinstance(elicitation, dict) and isinstance(elicitation.get("url"), dict)
 
 
-def front_door(caps: dict[str, Any]) -> str:
-    """The held-call front door this request's capabilities allow."""
-    return FRONT_DOOR_URL_ELICITATION if declares_url_elicitation(caps) else FRONT_DOOR_HELD_RESULT
+def front_door(caps: dict[str, Any], protocol_version: str | None = None) -> str:
+    """The held-call front door this request's capabilities and protocol version allow.
+
+    URL elicitation rides an ``InputRequiredResult``, which only a
+    multi-round-trip (2026-07-28) wire carries; on an older or unknown version
+    the SDK would reject it as an invalid result, so the held result is used.
+    """
+    if protocol_version in MODERN_PROTOCOL_VERSIONS and declares_url_elicitation(caps):
+        return FRONT_DOOR_URL_ELICITATION
+    return FRONT_DOOR_HELD_RESULT
 
 
 def seal_request_state(encryption: Any, *, envelope: dict[str, Any], agent_id: str) -> str:
