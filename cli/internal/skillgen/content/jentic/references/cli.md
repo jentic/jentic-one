@@ -54,31 +54,36 @@ jentic whoami
 (`jentic api GET /me` returns the same view; `whoami` is the nicer form.)
 
 Decide access from that view first (see `SKILL.md` step 2 for the
-doctrine). When the missing credential is for a vendor in the deployment's
-connect registry, **start the connection yourself**:
+doctrine). When a credential is missing, **start the connection yourself**
+— by vendor key for a registry vendor, by API identity for anything else:
 
 ```
 jentic connect github --reason "read open PRs to summarise them"
+jentic connect --api stripe-com/stripe-com-api/2024-06-20 --reason "list this month's charges" \
+  --rules '[{"effect":"allow","methods":["GET"],"path":"/v1/charges","match_mode":"exact"}]'
 ```
 
 It prints the `approval_url` (and the resolved flow) — relay the URL to
-your human operator, who opens it in their browser and approves the
-connection and its scopes; you never open or approve it. `--scopes` names
-vendor scopes to request (write scopes are flagged for the approver);
-`--wait` polls until the session connects or ends (rejected, expired, or cancelled;
-exit 3 if the timeout lapses while still pending). Once they confirm,
-re-check `jentic whoami` — an agent-initiated connect binds you at
-approval — and retry the `execute` that was blocked.
+your human operator, who approves in their browser (and enters the key, for
+an `--api` connect); you never open or approve it. `--auth-type` picks a
+scheme when the spec declares several (the error lists them); `--rules`
+proposes the binding's rules (a denial's `suggested_rules` fit as-is);
+`--scopes` names vendor scopes. For a `manual_*` or `awaiting_app` flow,
+relay the URL, **end your turn**, and retry later — `--wait` returns at
+once for those unless you pass `--timeout`. Otherwise `--wait` polls until
+the session connects or ends (exit 3 if the timeout lapses). Once they
+confirm, re-check `jentic whoami` and retry the `execute` that was blocked.
+A rejected request means stop: tell your user, don't ask again.
 
 If several shared OAuth apps serve the vendor, `jentic connect` fails and
 lists them in `details.candidates` (name and `registration_id`). Choosing
 the app is your user's decision, not yours: show them the list, ask which
 one to use, then re-run `jentic connect <vendor> --registration <registration_id>`.
 
-For APIs outside the registry, **report the gap to your operator in
-one complete summary** — the API (vendor/name), the auth type the spec
-declares, the operations you intend to call, your proposed permission
-rules, and why. Approval is always a human action, and so are binding an
+Where `--api` isn't available (the error says so), **report the gap to
+your operator in one complete summary** — the API (vendor/name), the auth
+type the spec declares, the operations you intend to call, your proposed
+permission rules, and why. Approval is always a human action, and so are binding an
 existing credential and permission grants: the operator acts in the Jentic One
 dashboard. Bindings take effect live — once your operator confirms, just
 retry the `execute` that was blocked. Newly granted **permissions** bake into
@@ -102,9 +107,10 @@ code:
   waiting: relay that link to your operator instead of connecting again,
   then retry once they approve. Otherwise, with `api_served: false` no
   credential is provisioned for the API at all: if the directive carries a
-  `suggested_command` (`jentic connect <vendor>`, with `--registration
-  <id>` when one shared app covers the API), run it and relay the
-  printed `approval_url` to your operator; otherwise ask them to connect or
+  `suggested_command` (`jentic connect <vendor>` — with `--registration
+  <id>` when one shared app covers the API — or `jentic connect --api
+  …`), run it with a `--reason` and relay the printed `approval_url` to
+  your operator; otherwise ask them to connect or
   provision a credential in the dashboard and bind you to it, proposing the
   auth type and permission rules you read from the API spec (see `SKILL.md`
   step 2).
@@ -115,9 +121,9 @@ code:
   `provisioning_url`, your earlier connect request is still waiting: relay
   that link to your operator instead of connecting again. Otherwise, if it
   carries a `suggested_command` (`jentic connect <key>`, pinned with
-  `--registration <id>` when one shared app covers the API), the vendor is
-  in the connect registry: run it and relay the printed `approval_url` to
-  your operator; otherwise report the gap so they can connect the account. Then
+  `--registration <id>` when one shared app covers the API, or `jentic
+  connect --api …`), run it and relay the printed `approval_url` to your
+  operator; otherwise report the gap so they can connect the account. Then
   retry.
 - **`credential_undecryptable` (424)** — ask your operator to remove and
   re-add the credential, then retry; this is not agent-recoverable.
