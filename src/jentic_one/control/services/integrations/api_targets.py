@@ -31,7 +31,10 @@ _API_KEY_LOCATIONS = frozenset({"header", "query", "cookie"})
 
 # Headers the platform sets or that steer the request itself; an API key may
 # not be injected into them. ``Authorization`` is reserved for API keys only —
-# bearer and basic schemes own it.
+# bearer and basic schemes own it. Covers the hop-by-hop headers (RFC 9110
+# §7.6.1), the forwarding headers the broker strips as spoofable, and the
+# trace-context headers the broker writes on every outbound call, so a declared
+# key can never collide with, or be dropped as, one of those.
 _RESERVED_HEADERS = frozenset(
     {
         "host",
@@ -40,10 +43,20 @@ _RESERVED_HEADERS = frozenset(
         "proxy-authorization",
         "content-length",
         "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "te",
+        "trailer",
+        "upgrade",
+        "forwarded",
+        "x-real-ip",
+        "via",
         "traceparent",
+        "tracestate",
+        "baggage",
     }
 )
-_RESERVED_HEADER_PREFIXES = ("x-forwarded-", "jentic-")
+_RESERVED_HEADER_PREFIXES = ("x-forwarded-", "jentic-", "x-jentic-")
 
 
 @dataclass(frozen=True, slots=True)
