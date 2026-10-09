@@ -426,7 +426,13 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 		// UX7's synthesized recovery, tool-flavored: no denial is a dead end.
 		coded.Actionable = synthesizedDenialHint(denial.Status, denial.ProblemType)
 	}
-	return s.softErrorExtra(ctx, coded, denialNextTool(denial.ProblemType, denial.Directive), extra)
+	nextTool := denialNextTool(denial.ProblemType, denial.Directive)
+	if nextTool == "request_connection" {
+		if args := requestConnectionArguments(denial.Directive); len(args) > 0 {
+			extra["next_tool_arguments"] = args
+		}
+	}
+	return s.softErrorExtra(ctx, coded, nextTool, extra)
 }
 
 // provisioningProblemTypes are the problem+json types whose recovery
@@ -455,18 +461,46 @@ var provisioningProblemTypes = map[string]bool{
 // the safe default for anything unrecognized.
 //
 // Even a provisioning-shaped denial points at request_connection only when the
-// broker's directive carries parameters.suggested_command — the broker sets it
-// exactly when the API maps onto a vendor-registry key. Off the registry (or
+// broker's directive names a connect target (parameters.connect or
+// parameters.suggested_command) — the broker sets them exactly when a
+// vendor-registry entry or a shared OAuth app covers the API. Otherwise (or
 // with no directive to name the vendor) request_connection is guaranteed to
 // fail as an unknown vendor, so the pointer stays on whoami and the directive's
 // operator hand-off.
 func denialNextTool(problemType string, directive *ux.Directive) string {
 	if provisioningProblemTypes[problemType] && directive != nil {
+		if connectVendorKey(directive) != "" {
+			return "request_connection"
+		}
 		if cmd, _ := directive.Parameters["suggested_command"].(string); cmd != "" {
 			return "request_connection"
 		}
 	}
 	return "whoami"
+}
+
+// connectVendorKey is the connect key a denial directive names in its
+// structured parameters.connect.vendor_key, or "" (Python twin:
+// _connect_vendor_key). A directive from a server that predates the field
+// carries only parameters.suggested_command.
+func connectVendorKey(directive *ux.Directive) string {
+	if directive == nil {
+		return ""
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	key, _ := connect["vendor_key"].(string)
+	return key
+}
+
+// requestConnectionArguments are the request_connection arguments a denial
+// directive fills: only the vendor the tool accepts today. The directive's
+// registration_id and suggested_rules stay in agent_directive (Python twin:
+// _request_connection_arguments).
+func requestConnectionArguments(directive *ux.Directive) map[string]any {
+	if key := connectVendorKey(directive); key != "" {
+		return map[string]any{"vendor": key}
+	}
+	return nil
 }
 
 // synthesizedDenialHint is the MCP counterpart of the CLI's status-keyed

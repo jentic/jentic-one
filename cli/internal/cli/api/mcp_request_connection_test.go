@@ -230,8 +230,11 @@ func TestMCPRequestConnection_AmbiguousVendorRoutesToOperator(t *testing.T) {
 	if payload["error_code"] != ux.CodeResolveFailed {
 		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
 	}
-	if payload["next_tool"] == "search_catalog" {
-		t.Errorf("next_tool = search_catalog, but discovery can't resolve an ambiguous app")
+	// One rule on both mounts: the code-keyed default pointer, never
+	// search_catalog (discovery can't resolve an ambiguous app). Python twin:
+	// test_ambiguous_vendor_routes_to_operator.
+	if payload["next_tool"] != "get_started" {
+		t.Errorf("next_tool = %v, want the RESOLVE_FAILED default get_started", payload["next_tool"])
 	}
 	if payload["actionable_step"] != ambiguousVendorActionable {
 		t.Errorf("actionable_step = %v, want the ask-your-operator advice", payload["actionable_step"])

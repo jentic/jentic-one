@@ -288,6 +288,11 @@ async def test_ambiguous_vendor_routes_to_operator() -> None:
     payload = _payload(result)
     assert payload["error_code"] == "RESOLVE_FAILED"
     assert "operator" in payload["actionable_step"]
+    # One rule on both mounts: the code-keyed default pointer (get_started),
+    # never search_catalog (Go:
+    # TestMCPRequestConnection_AmbiguousVendorRoutesToOperator). This mount
+    # does not serve get_started, so its lane filter leaves no pointer.
+    assert "next_tool" not in payload
 
 
 async def test_vendor_not_configured_is_broker_denied_operator_action() -> None:

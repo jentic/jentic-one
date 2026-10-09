@@ -232,6 +232,42 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
             },
             "whoami",
         ),
+        (
+            # A 0.40.x broker's twin of no_credential_binding: provisioning-
+            # shaped on both mounts (Go: provisioningProblemTypes).
+            403,
+            {
+                "type": "no_toolkit_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect acme`.",
+                    "parameters": {"suggested_command": "jentic connect acme"},
+                },
+            },
+            "request_connection",
+        ),
+        (
+            # The structured connect target alone is enough.
+            424,
+            {
+                "type": "credential_not_provisioned",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect google` (or request_connection).",
+                    "parameters": {"connect": {"vendor_key": "google"}},
+                },
+            },
+            "request_connection",
+        ),
+        (
+            403,
+            {
+                "type": "action_denied",
+                "agent_directive": {
+                    "instruction": "Ask your operator.",
+                    "parameters": {"connect": {"vendor_key": "google"}},
+                },
+            },
+            "whoami",
+        ),
         (403, {"type": "action_denied", "detail": "a permission rule forbids this"}, "whoami"),
         (403, {"type": "credential_identity_mismatch", "detail": "denied"}, "whoami"),
         (424, {"type": "credential_undecryptable", "detail": "denied"}, "whoami"),
@@ -272,6 +308,55 @@ async def test_denial_next_tool_keys_on_problem_type(
         "credential_not_provisioned",
     }:
         assert "request_connection" not in step
+
+
+@pytest.mark.parametrize(
+    ("parameters", "want_args"),
+    [
+        (
+            {
+                "suggested_command": "jentic connect google",
+                "connect": {"vendor_key": "google", "registration_id": "oar_1"},
+                "suggested_rules": [
+                    {
+                        "effect": "allow",
+                        "methods": ["GET"],
+                        "path": "/v1/pets",
+                        "match_mode": "exact",
+                    }
+                ],
+            },
+            {"vendor": "google"},
+        ),
+        ({"suggested_command": "jentic connect acme"}, None),
+    ],
+)
+async def test_denial_fills_request_connection_arguments(
+    broker, parameters: dict[str, Any], want_args: dict[str, Any] | None
+) -> None:
+    """A provisioning denial fills ``next_tool_arguments`` from the directive's
+    ``parameters.connect.vendor_key``; a directive naming only the CLI
+    ``suggested_command`` (an older broker) fills none. Go twin:
+    ``TestMCPExecute_DenialFillsRequestConnectionArguments``."""
+    directive = {"instruction": "Run `jentic connect google`.", "parameters": parameters}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"Content-Type": "application/problem+json"},
+            content=json.dumps(
+                {"type": "no_credential_binding", "agent_directive": directive}
+            ).encode(),
+        )
+
+    broker(handler)
+    env = make_env("http://127.0.0.1:8100")
+    result = await dispatch_tool_call(env, "execute", {"operation_id": "GET:/v1/pets"})
+
+    payload = decode_tool_json(result)
+    assert payload["next_tool"] == "request_connection"
+    assert payload["agent_directive"] == directive
+    assert payload.get("next_tool_arguments") == want_args
 
 
 async def test_insecure_broker_refusal_is_the_coded_transport_error(broker) -> None:

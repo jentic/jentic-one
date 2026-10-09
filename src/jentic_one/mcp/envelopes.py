@@ -150,5 +150,8 @@ def soft_error_result(ctx: Context, err: ToolError) -> mcp_types.CallToolResult:
         if key == "next_tool" and value not in SERVED_TOOLS:
             continue
         payload.setdefault(key, value)
+    # Arguments for a pointer the filter dropped would dangle.
+    if "next_tool" not in payload:
+        payload.pop("next_tool_arguments", None)
     payload["instance"] = instance_stamp(ctx)
     return _text_result(payload, is_error=True)

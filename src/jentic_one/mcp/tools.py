@@ -1306,15 +1306,15 @@ async def handle_request_connection(
         ) from None
     except AmbiguousVendorError as exc:
         # Several admin-registered OAuth apps serve this vendor and the tool
-        # carries no registration pin — only the human can pick one.
+        # carries no registration pin — only the human can pick one. Discovery
+        # cannot resolve that, so both mounts keep the code-keyed default
+        # pointer (Go: the ambiguousVendorActionable arm sets no override).
         raise ToolError(
             CODE_RESOLVE_FAILED,
             f"cannot start a connect session for vendor {vendor!r}: {exc}",
             actionable="Several shared OAuth apps are registered for this vendor, so "
-            "this tool cannot pick one: ask your human operator to connect a credential "
+            "an agent cannot pick one: ask your human operator to connect a credential "
             "for it in the dashboard instead.",
-            # Same recovery shape as the Go mount's 400 arm.
-            next_tool="search_catalog",
         ) from None
     except (UnsupportedFlowError, NoOpForFlowError) as exc:
         # Aligned with the Go mount's 400/404 arm (review L1): the route

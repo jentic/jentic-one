@@ -367,25 +367,63 @@ def classify_denial(status: int, headers: httpx.Headers, body: bytes) -> ToolErr
     extra: dict[str, Any] = {"retryable": False}
     if directive is not None:
         extra["agent_directive"] = directive
+    next_tool = _denial_next_tool(problem_type, directive)
+    if next_tool == "request_connection":
+        arguments = _request_connection_arguments(directive)
+        if arguments:
+            extra["next_tool_arguments"] = arguments
     return ToolError(
         CODE_BROKER_DENIED,
         "the broker denied this call before it reached the upstream API",
         actionable=instruction or _synthesized_denial_hint(status, problem_type),
         details={"http_status": status},
-        next_tool=_denial_next_tool(problem_type, directive),
+        next_tool=next_tool,
         extra=extra,
     )
 
 
 #: The problem+json ``type`` values whose recovery request_connection can
-#: start (theme-7 Phase 1b): a missing credential binding where nothing is
-#: provisioned yet (``no_credential_binding``) and a resolved-but-unprovisioned credential
-#: (``credential_not_provisioned``, 424). Everything else — ``action_denied``
-#: (a permission rule forbids the op; connecting a fresh credential must NOT
-#: be taught as a way around it), ``credential_identity_mismatch`` (an
-#: operator fixes the credential), ``credential_undecryptable`` (operator
-#: re-adds it), and any unknown type — keeps ``whoami``.
-_PROVISIONING_PROBLEM_TYPES = frozenset({"no_credential_binding", "credential_not_provisioned"})
+#: start: a missing credential binding where nothing is provisioned yet
+#: (``no_credential_binding``; ``no_toolkit_binding`` is its 0.40.x wire name,
+#: kept so both mounts classify the same set as the Go mount) and a
+#: resolved-but-unprovisioned credential (``credential_not_provisioned``, 424).
+#: Everything else — ``action_denied`` (a permission rule forbids the op;
+#: connecting a fresh credential must NOT be taught as a way around it),
+#: ``credential_identity_mismatch`` (an operator fixes the credential),
+#: ``credential_undecryptable`` (operator re-adds it), and any unknown type —
+#: keeps ``whoami``.
+_PROVISIONING_PROBLEM_TYPES = frozenset(
+    {"no_credential_binding", "credential_not_provisioned", "no_toolkit_binding"}
+)
+
+
+def _connect_vendor_key(directive: dict[str, Any] | None) -> str:
+    """The connect key a denial directive names, or ``""`` (Go: ``connectVendorKey``).
+
+    ``parameters.connect.vendor_key`` is the structured form; a directive from
+    a server that predates it carries only ``parameters.suggested_command``.
+    """
+    if directive is None:
+        return ""
+    parameters = directive.get("parameters")
+    if not isinstance(parameters, dict):
+        return ""
+    connect = parameters.get("connect")
+    if isinstance(connect, dict):
+        key = connect.get("vendor_key")
+        if isinstance(key, str) and key:
+            return key
+    return ""
+
+
+def _request_connection_arguments(directive: dict[str, Any] | None) -> dict[str, Any]:
+    """The ``request_connection`` arguments a denial directive fills (Go twin).
+
+    Only the ``vendor`` the tool accepts today; the directive's
+    ``registration_id`` and ``suggested_rules`` stay in ``agent_directive``.
+    """
+    key = _connect_vendor_key(directive)
+    return {"vendor": key} if key else {}
 
 
 def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:
@@ -398,12 +436,15 @@ def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> st
     ``whoami`` is the safe default for anything unrecognized.
 
     Even a provisioning-shaped denial points at ``request_connection`` only
-    when the directive carries ``parameters.suggested_command`` — the broker
-    sets it exactly when the API maps onto a vendor-registry key. Off the
-    registry (or with no directive naming the vendor) the tool is guaranteed
-    to fail as an unknown vendor, so the pointer stays on ``whoami``.
+    when the directive names a connect target (``parameters.connect`` or
+    ``parameters.suggested_command``) — the broker sets them exactly when a
+    vendor-registry entry or a shared OAuth app covers the API. Otherwise
+    (or with no directive naming the vendor) the tool is guaranteed to fail
+    as an unknown vendor, so the pointer stays on ``whoami``.
     """
     if problem_type in _PROVISIONING_PROBLEM_TYPES and directive is not None:
+        if _connect_vendor_key(directive):
+            return "request_connection"
         parameters = directive.get("parameters")
         if isinstance(parameters, dict) and parameters.get("suggested_command"):
             return "request_connection"
