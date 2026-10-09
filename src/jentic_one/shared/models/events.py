@@ -156,6 +156,10 @@ class EventType:
     # abandons it. Settles the matching approval_requested prompt.
     EXECUTION_APPROVAL_WITHDRAWN = "execution.approval_withdrawn"
 
+    # Emitted by the worker's expiry sweep when a hold's approval window lapses
+    # undecided and its job fails. Settles the matching approval_requested prompt.
+    EXECUTION_APPROVAL_EXPIRED = "execution.approval_expired"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -201,6 +205,7 @@ class EventType:
             EXECUTION_APPROVAL_REQUESTED,
             EXECUTION_APPROVAL_DECIDED,
             EXECUTION_APPROVAL_WITHDRAWN,
+            EXECUTION_APPROVAL_EXPIRED,
         }
     )
 
@@ -437,6 +442,7 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_DECIDED: frozenset({EventSeverity.INFO}),
     EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_EXPIRED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
     EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),

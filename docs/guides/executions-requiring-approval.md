@@ -108,14 +108,15 @@ The same actions are available over the admin API:
 
 | Route | Who | Effect |
 | --- | --- | --- |
-| `GET /executions/approvals` | Owner / admin | List, filterable by `state` |
-| `GET /executions/approvals/{id}` | Owner / admin | The approval and its held request |
-| `POST /executions/approvals/{id}:decide` | Owner / admin (never an agent) | `{"decision": "approve" \| "deny", "reason": "…"}` |
-| `POST /executions/approvals/{id}:withdraw` | The agent that filed it | Withdraw a pending approval; the job is `cancelled` |
+| `GET /executions/approvals` | Owner / admin (`jobs:read`) | List, filterable by `state` |
+| `GET /executions/approvals/{id}` | Owner / admin (`jobs:read`) | The approval and its held request |
+| `POST /executions/approvals/{id}:decide` | Owner / admin with `jobs:write` (never an agent) | `{"decision": "approve" \| "deny", "reason": "…"}` |
+| `POST /executions/approvals/{id}:withdraw` | The agent that filed it (`jobs:read`) | Withdraw a pending approval; the job is `cancelled` |
 
-Deciding or withdrawing a settled approval answers **409**. Each decision and
-withdrawal is audit-logged and emits an event (`execution.approval_requested`
-when filed, `execution.approval_decided`, `execution.approval_withdrawn`).
+Deciding or withdrawing a settled approval answers **409**. Each decision,
+withdrawal and expiry is audit-logged and emits an event
+(`execution.approval_requested` when filed, `execution.approval_decided`,
+`execution.approval_withdrawn`, `execution.approval_expired`).
 
 ## Lifecycle
 

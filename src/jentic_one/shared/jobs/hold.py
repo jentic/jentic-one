@@ -23,6 +23,11 @@ from sqlalchemy.exc import IntegrityError
 from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.repos.audit_repo import AuditRepository
+from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.models.actors import ActorType, Origin, actor_type_label_from_id
+from jentic_one.shared.models.audit import AuditAction, AuditTargetType
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 
@@ -361,11 +366,21 @@ async def fail_held_job(
     return True
 
 
+def _filer_actor_type(agent_id: str) -> str:
+    """Actor type of a hold's filer: holds come from agent rule bindings."""
+    try:
+        return actor_type_label_from_id(agent_id)
+    except ValueError:
+        return ActorType.AGENT.value
+
+
 async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime) -> int:
     """Expire every pending approval past ``expires_at`` and fail its held job.
 
-    Runs in the caller's transaction, so each approval and its job settle
-    together. Returns the number of approvals expired.
+    Runs in the caller's transaction, so each approval, its job, its audit
+    entry and its ``execution.approval_expired`` event settle together. The
+    audit entry is attributed to the agent that filed the hold (there is no
+    system actor) with a ``system`` origin. Returns the number expired.
     """
     result = await session.execute(
         update(ExecutionApproval)
@@ -374,16 +389,55 @@ async def expire_lapsed_approvals(session: AsyncSession, *, now: datetime) -> in
             ExecutionApproval.expires_at <= now,
         )
         .values(state=APPROVAL_EXPIRED, decided_at=now)
-        .returning(ExecutionApproval.id, ExecutionApproval.job_id)
+        .returning(
+            ExecutionApproval.id,
+            ExecutionApproval.job_id,
+            ExecutionApproval.agent_id,
+            ExecutionApproval.method,
+            ExecutionApproval.path,
+            ExecutionApproval.trace_id,
+        )
         .execution_options(synchronize_session=False)
     )
     expired = list(result.all())
-    for approval_id, job_id in expired:
+    for approval_id, job_id, agent_id, method, path, trace_id in expired:
         await fail_held_job(
             session,
             job_id=job_id,
             problem=approval_expired_problem(approval_id),
             error="approval expired",
+        )
+        actor_type = _filer_actor_type(agent_id)
+        await AuditRepository.record(
+            session,
+            action=AuditAction.EXPIRE,
+            target_type=AuditTargetType.EXECUTION_APPROVAL,
+            target_id=approval_id,
+            actor_type=actor_type,
+            actor_id=agent_id,
+            before={"state": APPROVAL_PENDING.value},
+            after={"state": APPROVAL_EXPIRED.value},
+            job_id=job_id,
+            trace_id=trace_id,
+            reason="approval window lapsed with no decision",
+            origin=Origin.SYSTEM.value,
+        )
+        await emit_event_best_effort(
+            session,
+            type=EventType.EXECUTION_APPROVAL_EXPIRED,
+            severity=EventSeverity.INFO,
+            summary=f"Execution approval {approval_id} expired",
+            trace_id=trace_id,
+            job_id=job_id,
+            created_by=agent_id,
+            actor_id=agent_id,
+            actor_type=actor_type,
+            data={
+                "approval_id": approval_id,
+                "agent_id": agent_id,
+                "method": method,
+                "path": path,
+            },
         )
     return len(expired)
 

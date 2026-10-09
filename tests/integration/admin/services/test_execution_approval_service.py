@@ -112,7 +112,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
         # An ownerless agent: its approvals are reviewable by org:admin only.
         await session.execute(update(Agent).where(Agent.id == orphan_id).values(owner_id=None))
     yield _Actors(
-        owner=Identity(sub=owner_id, email="exap-owner@test.local", permissions=[]),
+        owner=Identity(sub=owner_id, email="exap-owner@test.local", permissions=["jobs:write"]),
         outsider=Identity(sub="usr_exap_outsider", permissions=["jobs:read", "jobs:write"]),
         admin=Identity(sub="usr_exap_admin", permissions=["org:admin"]),
         agent=Identity(
@@ -121,7 +121,9 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
             actor_type=ActorType.AGENT,
             parent_actor_id=owner_id,
         ),
-        ownerless_agent=Identity(sub=orphan_id, permissions=[], actor_type=ActorType.AGENT),
+        ownerless_agent=Identity(
+            sub=orphan_id, permissions=["jobs:read"], actor_type=ActorType.AGENT
+        ),
     )
     await _clean()
     async with ctx.admin_db.transaction() as session:
@@ -577,6 +579,37 @@ async def test_expiry_sweep_expires_and_fails_with_a_permission_denied_result(
     assert body["status"] == 403
     assert (await _approval(ctx, live.approval_id)).state == "pending"
     assert (await _job(ctx, live.job_id)).status == JobStatus.HELD
+
+    # The expiry is audited (attributed to the filing agent, system origin)
+    # and announced, so the requested prompt can settle.
+    async with ctx.admin_db.session() as session:
+        audits = (
+            (
+                await session.execute(
+                    select(AuditEntry).where(AuditEntry.target_id == lapsed.approval_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        events = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_EXPIRED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    (audit,) = audits
+    assert audit.action == "expire"
+    assert audit.actor_id == actors.agent.sub
+    assert audit.origin == "system"
+    assert audit.job_id == lapsed.job_id
+    (event,) = events
+    assert event.job_id == lapsed.job_id
+    assert event.data["approval_id"] == lapsed.approval_id
+    assert event.data["path"] == "/v1/lapsed"
 
 
 async def test_jobs_cancel_route_answers_409_for_a_held_job(
