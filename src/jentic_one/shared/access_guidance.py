@@ -71,22 +71,45 @@ def connect_vendor_key(
     # registry's insertion (config) order, so overlapping entries resolve
     # to the earliest-declared key.
     for key, entry in vendors.entries.items():
-        if credential_covers(
-            _connect_scope(entry.vendor), vendor=vendor, name=name, version=version
-        ):
+        if catalog_api_id_covers(entry.vendor, vendor=vendor, name=name, version=version):
             return key
     return None
 
 
-def _connect_scope(catalog_api_id: str) -> CredentialScope:
-    """The API scope a connect session stamps on a credential for ``catalog_api_id``.
+def catalog_import_name(catalog_api_id: str) -> str:
+    """The ``api_name`` a first catalog import of ``catalog_api_id`` seeds.
 
-    Same decomposition as the connect-session service at credential-create
-    time: the vendor axis is the registrable domain of the api_id's host, the
-    name axis the whole api_id, the version unscoped.
+    A ``domain/sub`` id seeds its sub segment (``github.com/api.github.com`` →
+    ``api.github.com``); a bare-domain id seeds the whole id. This is the
+    registry's derivation for an entry whose sub segment clashes with no other
+    manifest entry; a clashing entry (and an API imported before the sub-segment
+    naming) carries the whole id instead.
+    """
+    _, sep, sub = catalog_api_id.partition("/")
+    return sub if sep and sub else catalog_api_id
+
+
+def catalog_api_scopes(catalog_api_id: str) -> tuple[CredentialScope, ...]:
+    """Every API scope an import of ``catalog_api_id`` can be registered under.
+
+    The vendor axis is the registrable domain of the api_id's host; the name
+    axis is either the sub segment (a regular catalog import) or the whole id
+    (a clashing entry, or an API imported before the sub-segment naming). The
+    version is unscoped.
     """
     raw_vendor = vendor_from_api_id(catalog_api_id) or catalog_api_id
-    return canonical_credential_scope(vendor=raw_vendor, name=catalog_api_id, version=None)
+    names = dict.fromkeys((catalog_import_name(catalog_api_id), catalog_api_id))
+    return tuple(
+        canonical_credential_scope(vendor=raw_vendor, name=n, version=None) for n in names
+    )
+
+
+def catalog_api_id_covers(catalog_api_id: str, *, vendor: str, name: str, version: str) -> bool:
+    """Whether the API identity is the one a catalog import of ``catalog_api_id`` registers."""
+    return any(
+        credential_covers(scope, vendor=vendor, name=name, version=version)
+        for scope in catalog_api_scopes(catalog_api_id)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,9 +160,7 @@ def connect_target(
         (
             r
             for r in registrations
-            if credential_covers(
-                _connect_scope(r.catalog_api_id), vendor=vendor, name=name, version=version
-            )
+            if catalog_api_id_covers(r.catalog_api_id, vendor=vendor, name=name, version=version)
         ),
         key=lambda r: (r.api_vendor, r.id),
     )
