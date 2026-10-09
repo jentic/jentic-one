@@ -533,7 +533,9 @@ async def test_own_draft_with_new_hosts_is_not_pinnable_on_a_bound_api(
     held = await _pin(moved["revision_id"], _WRITER)
     assert held.outcome is RevisionPinOutcome.HOST_CHANGE_HELD
     assert held.revision_id == uuid.UUID(moved["revision_id"])
-    assert (await _pin(moved["revision_id"], writer_operator)).outcome is RevisionPinOutcome.RESOLVED
+    assert (
+        await _pin(moved["revision_id"], writer_operator)
+    ).outcome is RevisionPinOutcome.RESOLVED
     assert (await _pin(same["revision_id"], _WRITER)).outcome is RevisionPinOutcome.RESOLVED
 
     # The broker refuses the held draft when it is the one serving the URL.
