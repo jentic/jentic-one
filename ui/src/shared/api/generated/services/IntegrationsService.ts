@@ -29,7 +29,7 @@ export class IntegrationsService {
         /**
          * Filter by session state
          */
-        state?: ('created' | 'polling' | 'connected' | null),
+        state?: ('created' | 'awaiting_app' | 'polling' | 'connected' | null),
         /**
          * Filter by vendor registry key
          */

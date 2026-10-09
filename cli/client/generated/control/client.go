@@ -260,14 +260,17 @@ func (e BearerTokenUpdateRequestType) Valid() bool {
 
 // Defines values for ConnectSessionSummaryResponseState.
 const (
-	ConnectSessionSummaryResponseStateConnected ConnectSessionSummaryResponseState = "connected"
-	ConnectSessionSummaryResponseStateCreated   ConnectSessionSummaryResponseState = "created"
-	ConnectSessionSummaryResponseStatePolling   ConnectSessionSummaryResponseState = "polling"
+	ConnectSessionSummaryResponseStateAwaitingApp ConnectSessionSummaryResponseState = "awaiting_app"
+	ConnectSessionSummaryResponseStateConnected   ConnectSessionSummaryResponseState = "connected"
+	ConnectSessionSummaryResponseStateCreated     ConnectSessionSummaryResponseState = "created"
+	ConnectSessionSummaryResponseStatePolling     ConnectSessionSummaryResponseState = "polling"
 )
 
 // Valid indicates whether the value is a known member of the ConnectSessionSummaryResponseState enum.
 func (e ConnectSessionSummaryResponseState) Valid() bool {
 	switch e {
+	case ConnectSessionSummaryResponseStateAwaitingApp:
+		return true
 	case ConnectSessionSummaryResponseStateConnected:
 		return true
 	case ConnectSessionSummaryResponseStateCreated:
@@ -896,14 +899,17 @@ func (e ListAgentOauthGrantsParamsStatus) Valid() bool {
 
 // Defines values for ListConnectSessionsParamsState.
 const (
-	ListConnectSessionsParamsStateConnected ListConnectSessionsParamsState = "connected"
-	ListConnectSessionsParamsStateCreated   ListConnectSessionsParamsState = "created"
-	ListConnectSessionsParamsStatePolling   ListConnectSessionsParamsState = "polling"
+	ListConnectSessionsParamsStateAwaitingApp ListConnectSessionsParamsState = "awaiting_app"
+	ListConnectSessionsParamsStateConnected   ListConnectSessionsParamsState = "connected"
+	ListConnectSessionsParamsStateCreated     ListConnectSessionsParamsState = "created"
+	ListConnectSessionsParamsStatePolling     ListConnectSessionsParamsState = "polling"
 )
 
 // Valid indicates whether the value is a known member of the ListConnectSessionsParamsState enum.
 func (e ListConnectSessionsParamsState) Valid() bool {
 	switch e {
+	case ListConnectSessionsParamsStateAwaitingApp:
+		return true
 	case ListConnectSessionsParamsStateConnected:
 		return true
 	case ListConnectSessionsParamsStateCreated:

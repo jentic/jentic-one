@@ -21,6 +21,7 @@ export type ConnectSessionSummaryResponse = {
 export namespace ConnectSessionSummaryResponse {
     export enum state {
         CREATED = 'created',
+        AWAITING_APP = 'awaiting_app',
         POLLING = 'polling',
         CONNECTED = 'connected',
     }

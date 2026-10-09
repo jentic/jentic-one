@@ -120,8 +120,9 @@ class IntegrationsConnectResponse(BaseModel):
 #: The states a listed row can hold. A session never persists in a terminal
 #: failure state: ``_mark_terminal`` deletes its pending credential, and the
 #: FK cascade takes the session row with it — so the list only ever sees live
-#: (``created``/``polling``) or ``connected`` sessions.
-ConnectSessionState = Literal["created", "polling", "connected"]
+#: (``created``/``awaiting_app``/``polling``) or ``connected`` sessions.
+#: ``awaiting_app`` is an OAuth API target waiting for an app to connect with.
+ConnectSessionState = Literal["created", "awaiting_app", "polling", "connected"]
 
 
 class ConnectSessionSummaryResponse(BaseModel):

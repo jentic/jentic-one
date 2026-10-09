@@ -1599,6 +1599,7 @@ components:
         state:
           enum:
           - created
+          - awaiting_app
           - polling
           - connected
           title: State
@@ -12665,6 +12666,7 @@ paths:
           anyOf:
           - enum:
             - created
+            - awaiting_app
             - polling
             - connected
             type: string
