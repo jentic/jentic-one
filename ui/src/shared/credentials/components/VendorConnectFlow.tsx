@@ -1766,7 +1766,8 @@ function AgentRequestCard({
 				</div>
 				{ownerId && (
 					<p className="text-muted-foreground shrink-0 text-xs">
-						Owner <ActorLabel actorId={ownerId} actorType="user" />
+						{/* No type prefix: "Owner" already says who this is. */}
+						Owner <ActorLabel actorId={ownerId} />
 					</p>
 				)}
 			</div>
