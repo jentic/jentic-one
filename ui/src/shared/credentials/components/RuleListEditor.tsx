@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Badge, Button, Input, Label, Select, Tooltip } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
+import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import {
 	examplePath,
 	examplePathPrefix,
@@ -297,7 +298,6 @@ function RulePreviewRow({
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
 }) {
-	const effectVariant = EFFECT_VARIANT[rule.effect];
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
 	const validityIssue = ruleValidityIssue(rule);
@@ -335,9 +335,12 @@ function RulePreviewRow({
 					>
 						#{index + 1}
 					</span>
-					<Badge variant={effectVariant} className="shrink-0 rounded-[5px] font-semibold">
+					<EffectBadge
+						effect={rule.effect}
+						className="shrink-0 rounded-[5px] font-semibold"
+					>
 						{EFFECT_LABEL[rule.effect]}
-					</Badge>
+					</EffectBadge>
 					<span className="text-foreground shrink-0 font-mono text-[11px]">
 						{methodsLabel}
 					</span>
@@ -505,12 +508,6 @@ const EFFECT_LABEL: Record<PermissionRule['effect'], string> = {
 	allow: 'allow',
 	'require-approval': 'ask',
 	deny: 'deny',
-};
-
-const EFFECT_VARIANT: Record<PermissionRule['effect'], 'success' | 'warning' | 'danger'> = {
-	allow: 'success',
-	'require-approval': 'warning',
-	deny: 'danger',
 };
 
 const EFFECT_SELECTED_CLASS: Record<PermissionRule['effect'], string> = {

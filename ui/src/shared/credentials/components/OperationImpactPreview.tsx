@@ -20,7 +20,8 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
-import { Badge, Label, MethodBadge, type BadgeVariant } from '@/shared/ui';
+import { Badge, Label, MethodBadge } from '@/shared/ui';
+import { EffectBadge, effectBadgeProps } from '@/shared/credentials/components/EffectBadge';
 import { useVendorOperations } from '@/shared/credentials/api/vendors-hooks';
 import type { VendorOperation } from '@/shared/credentials/api/vendors-client';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
@@ -77,13 +78,6 @@ const VERDICT_RANK: Record<OpCoverage['verdict'], number> = {
 	partial: 2,
 	'require-approval': 1,
 	deny: 0,
-};
-
-const VERDICT_VARIANT: Record<OpCoverage['verdict'], BadgeVariant> = {
-	allow: 'success',
-	partial: 'warning',
-	'require-approval': 'warning',
-	deny: 'danger',
 };
 
 const VERDICT_LABEL: Record<OpCoverage['verdict'], string> = {
@@ -227,7 +221,9 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
 						<Badge variant="success">{group.allowedCount} allowed</Badge>
 					)}
 					{group.approvalCount > 0 && (
-						<Badge variant="warning">{group.approvalCount} ask</Badge>
+						<EffectBadge effect="require-approval">
+							{group.approvalCount} ask
+						</EffectBadge>
 					)}
 					{group.deniedCount > 0 && (
 						<Badge variant="danger">{group.deniedCount} denied</Badge>
@@ -260,7 +256,12 @@ function OperationImpactGroup({ group }: { group: OpGroup }) {
  */
 function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverage: OpCoverage }) {
 	const [expanded, setExpanded] = useState(false);
-	const verdictVariant = VERDICT_VARIANT[coverage.verdict];
+	const verdictClass = 'h-5 w-[58px] shrink-0 justify-center rounded-[5px]';
+	// Partial is no single effect: it keeps Badge's plain warning chip.
+	const verdictBadge =
+		coverage.verdict === 'partial'
+			? { variant: 'warning' as const, className: verdictClass }
+			: effectBadgeProps(coverage.verdict, verdictClass);
 	const verdictLabel = VERDICT_LABEL[coverage.verdict];
 	const allowExample = coverage.allowedSamples[0];
 	const approvalExample = coverage.approvalSamples[0];
@@ -281,11 +282,7 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 					) : (
 						<ChevronRight className="text-muted-foreground h-3 w-3 shrink-0" />
 					))}
-				<Badge
-					variant={verdictVariant}
-					className="h-5 w-[58px] shrink-0 justify-center rounded-[5px]"
-					aria-label={verdictLabel}
-				>
+				<Badge {...verdictBadge} aria-label={verdictLabel}>
 					{verdictLabel}
 				</Badge>
 				<MethodBadge method={op.method} />
@@ -311,9 +308,12 @@ function OperationImpactLeafRow({ op, coverage }: { op: VendorOperation; coverag
 					)}
 					{approvalExample && (
 						<div className="flex items-center gap-1.5">
-							<Badge variant="warning" className="px-1.5 py-0 font-sans">
+							<EffectBadge
+								effect="require-approval"
+								className="px-1.5 py-0 font-sans"
+							>
 								ask
-							</Badge>
+							</EffectBadge>
 							<span className="text-muted-foreground">e.g.</span>
 							<span className="text-foreground/80 truncate">{approvalExample}</span>
 						</div>
