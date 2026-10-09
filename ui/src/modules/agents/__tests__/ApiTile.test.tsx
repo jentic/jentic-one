@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { renderWithProviders, screen, within, checkA11y } from '@/__tests__/test-utils';
+import type { BindingRuleSummary } from '@/modules/agents/api';
 import { ApiTile } from '@/modules/agents/components/flat/ApiTile';
 import { accountLabels, type ApiTileModel } from '@/modules/agents/lib/apiTiles';
 
@@ -34,14 +35,19 @@ function makeTile(over: Partial<ApiTileModel> = {}): ApiTileModel {
 
 function renderTile(
 	tile: ApiTileModel,
-	extra: { accountLabel?: string; accountCount?: number; width?: number } = {},
+	extra: {
+		accountLabel?: string;
+		accountCount?: number;
+		width?: number;
+		rules?: BindingRuleSummary;
+	} = {},
 ) {
-	const { width, ...props } = extra;
+	const { width, rules = { total: 2, allow: 2, ask: 0, deny: 0 }, ...props } = extra;
 	return renderWithProviders(
 		<div style={{ width: width ?? 360 }}>
 			<ApiTile
 				tile={tile}
-				rules={{ total: 2, allow: 2, deny: 0 }}
+				rules={rules}
 				onOpen={() => {}}
 				onSuspend={() => {}}
 				onResume={() => {}}
@@ -79,6 +85,13 @@ describe('ApiTile credential footer', () => {
 		);
 		expect(screen.queryByTestId('tile-accounts-badge')).toBeNull();
 		await checkA11y(container);
+	});
+
+	it('counts Ask and deny rules apart in the summary', () => {
+		renderTile(makeTile(), { rules: { total: 3, allow: 1, ask: 1, deny: 1 } });
+		expect(screen.getByTestId('tile-rules-summary')).toHaveTextContent(
+			/^3 access rules · 1 ask · 1 deny$/,
+		);
 	});
 
 	it('lists the credential details on focus, as the trigger’s description', async () => {

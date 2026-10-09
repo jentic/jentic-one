@@ -57,15 +57,19 @@ interface ApiTileProps {
 	accountCount?: number;
 }
 
-/** The grant summary after the credential name. A deny split rides
- * along when one exists — an all-allow grant stays the plain count. A binding
+/** The grant summary after the credential name. Ask and deny splits ride
+ * along when they exist — an all-allow grant stays the plain count. A binding
  * governed by a shared rule set is summarised from the set, named first. */
 function grantSummary(rules: BindingRuleSummary | undefined): string | null {
 	if (rules === undefined) return null;
 	const prefix = rules.ruleSet ? `Rule set ${rules.ruleSet.name} · ` : '';
 	if (rules.total === 0) return `${prefix}No rules — all calls blocked`;
 	const count = rules.total === 1 ? '1 access rule' : `${rules.total} access rules`;
-	return `${prefix}${rules.deny > 0 ? `${count} · ${rules.deny} deny` : count}`;
+	const splits = [
+		rules.ask > 0 ? `${rules.ask} ask` : null,
+		rules.deny > 0 ? `${rules.deny} deny` : null,
+	].filter(Boolean);
+	return `${prefix}${[count, ...splits].join(' · ')}`;
 }
 
 /** Are these two strings the same identity once separators and case are set
