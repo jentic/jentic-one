@@ -21,6 +21,9 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient, Response
+from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from pydantic import SecretStr
 from sqlalchemy import delete, text, update
 
@@ -33,6 +36,8 @@ from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientC
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
+from jentic_one.control.services.credentials.errors import CredentialNotFoundError
+from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.control.services.credentials.state import StateReplayedError
 from jentic_one.control.services.integrations import device_authorization as df
 from jentic_one.control.services.integrations import identity_echo
@@ -42,6 +47,7 @@ from jentic_one.control.services.integrations.connect_session_service import (
     DeviceAuthorizationConfirmResult,
 )
 from jentic_one.control.services.integrations.errors import (
+    AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
     InvalidPollTokenError,
@@ -51,6 +57,8 @@ from jentic_one.control.services.integrations.flow_handlers.base import StatusRe
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
+from jentic_one.control.web.app import get_exception_handlers
+from jentic_one.control.web.routers import integrations as integrations_router
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
 from jentic_one.shared.config import (
@@ -65,6 +73,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.web.deps import resolve_identity
 
 pytestmark = pytest.mark.integration
 
@@ -73,8 +82,12 @@ _USER_ID = "usr_alice"
 _AGENT_ID = "agnt_scout"
 _OTHER_USER_ID = "usr_mallory"
 
-_USER_IDENTITY = Identity(sub=_USER_ID, permissions=["credentials:write"])
-_OTHER_USER_IDENTITY = Identity(sub=_OTHER_USER_ID, permissions=["credentials:write"])
+# Confirming for an owned agent needs both write permissions (the bind
+# route's own gate is ``agents:write``).
+_USER_IDENTITY = Identity(sub=_USER_ID, permissions=["credentials:write", "agents:write"])
+_OTHER_USER_IDENTITY = Identity(
+    sub=_OTHER_USER_ID, permissions=["credentials:write", "agents:write"]
+)
 _AGENT_IDENTITY = Identity(
     sub=_AGENT_ID, permissions=["credentials:write"], actor_type=ActorType.AGENT
 )
@@ -285,7 +298,9 @@ async def test_create_session_persists_requested_permission_rules(
     assert row.requested_permission_rules == requested
 
     # Round-trip via the review-data path (what the approve page reads).
-    review = await svc.get_review_data(created.session_id, poll_token=created.poll_token)
+    review = await svc.get_review_data(
+        created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+    )
     assert review.requested_permission_rules == requested
 
     async with ctx.control_db.session() as session:
@@ -428,7 +443,9 @@ async def test_get_status_returns_pending_before_confirm(
     created = await svc.create_session(
         vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
     )
-    status = await svc.get_status(created.session_id, poll_token=created.poll_token)
+    status = await svc.get_status(
+        created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+    )
     assert status.status == "pending"
 
 
@@ -447,7 +464,9 @@ async def test_get_status_rejects_wrong_poll_token(
         vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
     )
     with pytest.raises(InvalidPollTokenError):
-        await svc.get_status(created.session_id, poll_token="not-the-token")
+        await svc.get_status(
+            created.session_id, poll_token="not-the-token", identity=_OTHER_USER_IDENTITY
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +833,9 @@ async def test_get_status_refuses_missing_session_as_403(
     ctx = integration_context
     svc = ConnectSessionService(ctx)
     with pytest.raises(InvalidPollTokenError):
-        await svc.get_status("sess_does_not_exist", poll_token="whatever")
+        await svc.get_status(
+            "sess_does_not_exist", poll_token="whatever", identity=_OTHER_USER_IDENTITY
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1231,3 +1252,364 @@ async def test_list_all_filters_by_state_and_paginates(
     assert first.data[0].session_id not in {s.session_id for s in rest.data}
     assert len(rest.data) == 2
     assert rest.has_more is False
+
+
+# ---------------------------------------------------------------------------
+# Owner / org:admin access without the poll token (routes, real DB)
+# ---------------------------------------------------------------------------
+
+_ADMIN_IDENTITY = Identity(sub="usr_root", permissions=["org:admin"])
+_OWNER_WITHOUT_AGENTS_WRITE = Identity(sub=_USER_ID, permissions=["credentials:write"])
+_AGENT_CALLER = Identity(
+    sub=_AGENT_ID,
+    permissions=["credentials:connect", "credentials:write"],
+    actor_type=ActorType.AGENT,
+)
+_CALLERS: dict[str, Identity] = {
+    "owner": _USER_IDENTITY,
+    "admin": _ADMIN_IDENTITY,
+    "owner_without_agents_write": _OWNER_WITHOUT_AGENTS_WRITE,
+    "stranger": _OTHER_USER_IDENTITY,
+    "agent": _AGENT_CALLER,
+}
+_ROUTES = ("review", "status", "confirm", "cancel")
+_OK = {"review": 200, "status": 200, "confirm": 200, "cancel": 204}
+
+
+def _session_app(ctx: Context, identity: Identity) -> FastAPI:
+    """The real integrations router over the real service; only identity is stubbed."""
+    app = FastAPI()
+    app.include_router(integrations_router.router)
+    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    for exc_class, handler in get_exception_handlers():
+        app.add_exception_handler(exc_class, handler)
+    app.state.ctx = ctx
+    app.dependency_overrides[resolve_identity] = lambda: identity
+    return app
+
+
+async def _call_route(
+    ctx: Context, identity: Identity, route: str, session_id: str, poll_token: str | None
+) -> Response:
+    params = {"poll_token": poll_token} if poll_token is not None else {}
+    transport = ASGITransport(app=_session_app(ctx, identity))
+    async with AsyncClient(transport=transport, base_url="https://testserver") as client:
+        if route == "review":
+            return await client.get(f"/connect-sessions/{session_id}", params=params)
+        if route == "status":
+            return await client.get(f"/connect-sessions/{session_id}/status", params=params)
+        if route == "cancel":
+            return await client.post(f"/connect-sessions/{session_id}:cancel", params=params)
+        return await client.post(
+            f"/connect-sessions/{session_id}:confirm",
+            params=params,
+            json={"confirmed_scopes": ["scope-a"], "permission_rules": []},
+        )
+
+
+def _expected_status(caller: str, route: str, *, with_token: bool) -> int:
+    """Token holders pass the session gate; without it only owner (both writes) / admin do.
+
+    Confirm then applies its own rules to everyone who got through: an agent
+    cannot confirm an agent-started session, and approving for the agent
+    needs ownership plus ``credentials:write`` and ``agents:write`` (or
+    ``org:admin``).
+    """
+    approver = caller in ("owner", "admin")
+    if not with_token and not approver:
+        return 403
+    if route == "confirm" and not approver:
+        return 403
+    return _OK[route]
+
+
+@pytest.mark.parametrize("route", _ROUTES)
+@pytest.mark.parametrize("caller", sorted(_CALLERS))
+@pytest.mark.parametrize("with_token", [True, False], ids=["token", "no_token"])
+async def test_session_routes_accept_token_or_owner_or_admin(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    route: str,
+    caller: str,
+    with_token: bool,
+) -> None:
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testauth",
+        agent_id=_AGENT_ID,
+        initiator_actor_id=_AGENT_ID,
+        requested_scopes=["scope-a"],
+    )
+    resp = await _call_route(
+        ctx,
+        _CALLERS[caller],
+        route,
+        created.session_id,
+        created.poll_token if with_token else None,
+    )
+    assert resp.status_code == _expected_status(caller, route, with_token=with_token), resp.text
+
+
+@pytest.mark.parametrize("route", _ROUTES)
+async def test_session_routes_refuse_uniformly_without_token(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    route: str,
+) -> None:
+    # A stranger probing a real session and an owner probing a missing id
+    # get byte-identical 403 bodies: no session-id enumeration oracle.
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    stranger = await _call_route(ctx, _OTHER_USER_IDENTITY, route, created.session_id, None)
+    missing = await _call_route(ctx, _USER_IDENTITY, route, "cs_does_not_exist", None)
+    wrong = await _call_route(ctx, _OTHER_USER_IDENTITY, route, created.session_id, "nope")
+    assert stranger.status_code == missing.status_code == wrong.status_code == 403
+    assert stranger.json() == {**missing.json(), "instance": stranger.json()["instance"]}
+    assert stranger.json()["detail"] == wrong.json()["detail"]
+    assert stranger.json()["type"] == "invalid_poll_token"
+
+
+async def test_owner_without_token_cannot_act_on_ownerless_agent_session(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    # An unclaimed agent has no owner; only org:admin may act on its sessions.
+    ctx = integration_context
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            text("UPDATE agents SET owner_id = NULL WHERE id = :id"), {"id": _AGENT_ID}
+        )
+        await session.commit()
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    owner = await _call_route(ctx, _USER_IDENTITY, "review", created.session_id, None)
+    admin = await _call_route(ctx, _ADMIN_IDENTITY, "review", created.session_id, None)
+    assert owner.status_code == 403
+    assert admin.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Confirm: attribution to the approver, unusable agents refused
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+async def agent_grants(integration_context: Context) -> AsyncGenerator[list[str], None]:
+    """Permissions to grant the seeded agent directly (``actor_permission_grants``)."""
+    granted: list[str] = []
+    yield granted
+    async with integration_context.admin_db.session() as session:
+        await session.execute(
+            text("DELETE FROM actor_permission_grants WHERE actor_id = :id"), {"id": _AGENT_ID}
+        )
+        await session.commit()
+
+
+async def _grant_agent(ctx: Context, permission: str) -> None:
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO actor_permission_grants "
+                "(actor_id, actor_type, permission, created_by) "
+                "VALUES (:id, 'agent', :permission, :created_by)"
+            ),
+            {"id": _AGENT_ID, "permission": permission, "created_by": _USER_ID},
+        )
+        await session.commit()
+
+
+async def _credential_created_by(ctx: Context, session_id: str) -> str | None:
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, session_id)
+        assert row is not None
+        credential = await CredentialRepository.get_by_id(session, row.credential_id)
+    assert credential is not None
+    return credential.created_by
+
+
+@pytest.mark.parametrize(
+    ("agent_permissions", "expected_creator"),
+    [
+        ([], _USER_ID),
+        (["credentials:connect"], _USER_ID),
+        (["credentials:write"], _AGENT_ID),
+        (["org:admin"], _AGENT_ID),
+    ],
+    ids=["no-grants", "connect-only", "credentials-write", "org-admin"],
+)
+async def test_confirm_attributes_agent_started_credential_to_the_approver(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    agent_grants: list[str],
+    clean_session_tables: None,
+    agent_permissions: list[str],
+    expected_creator: str,
+) -> None:
+    # The approving human becomes the credential's creator, unless the
+    # initiating agent itself holds credentials:write (org:admin implies it).
+    ctx = integration_context
+    for permission in agent_permissions:
+        await _grant_agent(ctx, permission)
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    assert await _credential_created_by(ctx, created.session_id) == _AGENT_ID
+
+    await svc.confirm(
+        created.session_id,
+        poll_token=None,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        identity=_USER_IDENTITY,
+    )
+    assert await _credential_created_by(ctx, created.session_id) == expected_creator
+
+
+async def test_confirm_keeps_user_started_credential_with_its_initiator(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID
+    )
+    await svc.confirm(
+        created.session_id,
+        poll_token=None,
+        confirmed_scopes=["scope-a"],
+        permission_rules=[],
+        identity=_ADMIN_IDENTITY,
+    )
+    assert await _credential_created_by(ctx, created.session_id) == _USER_ID
+
+
+@pytest.mark.parametrize("status", ["archived", "disabled", "rejected"])
+async def test_confirm_refuses_an_unusable_agent(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    status: str,
+) -> None:
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    async with ctx.admin_db.session() as session:
+        await session.execute(
+            text("UPDATE agents SET status = :status WHERE id = :id"),
+            {"status": status, "id": _AGENT_ID},
+        )
+        await session.commit()
+
+    for identity in (_USER_IDENTITY, _ADMIN_IDENTITY):
+        with pytest.raises(AgentInactiveError):
+            await svc.confirm(
+                created.session_id,
+                poll_token=created.poll_token,
+                confirmed_scopes=["scope-a"],
+                permission_rules=[],
+                identity=identity,
+            )
+    # Nothing moved: no CAS, no binding, credential still the agent's.
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    assert row.state == "created"
+    assert await _credential_created_by(ctx, created.session_id) == _AGENT_ID
+
+
+async def test_confirm_with_token_requires_agents_write_for_the_owner(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    # Holding the token is not enough to bind for the agent: the owner
+    # approver needs agents:write too (the bind route's own gate).
+    ctx = integration_context
+    svc = ConnectSessionService(ctx)
+    created = await svc.create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    with pytest.raises(ConfirmationForbiddenError):
+        await svc.confirm(
+            created.session_id,
+            poll_token=created.poll_token,
+            confirmed_scopes=["scope-a"],
+            permission_rules=[],
+            identity=_OWNER_WITHOUT_AGENTS_WRITE,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Owner visibility (read-only owned-agent scoping axis)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_all_owner_sees_sessions_of_owned_agents(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    svc = ConnectSessionService(integration_context)
+    ids = await _seed_sessions(svc)
+
+    owner_page = await svc.list_all(identity=_list_identity(_USER_ID, ["credentials:read"]))
+    assert {s.session_id for s in owner_page.data} == {ids[_USER_ID], ids[_AGENT_ID]}
+
+    stranger_page = await svc.list_all(
+        identity=_list_identity(_OTHER_USER_ID, ["credentials:read"])
+    )
+    assert {s.session_id for s in stranger_page.data} == {ids[_OTHER_USER_ID]}
+
+
+async def test_owner_reads_but_cannot_write_pending_credential_of_owned_agent(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+) -> None:
+    ctx = integration_context
+    created = await ConnectSessionService(ctx).create_session(
+        vendor_key="testauth", agent_id=_AGENT_ID, initiator_actor_id=_AGENT_ID
+    )
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+    assert row is not None
+    credentials = CredentialService(ctx)
+    owner = _list_identity(_USER_ID, ["credentials:read", "credentials:write"])
+    stranger = _list_identity(_OTHER_USER_ID, ["credentials:read", "credentials:write"])
+
+    view = await credentials.get(row.credential_id, identity=owner)
+    assert view.credential_id == row.credential_id
+    assert row.credential_id in {
+        c.credential_id for c in (await credentials.list_all(identity=owner)).data
+    }
+    with pytest.raises(CredentialNotFoundError):
+        await credentials.get(row.credential_id, identity=stranger)
+    # Read-only: the owned-agent axis never reaches a write path.
+    with pytest.raises(CredentialNotFoundError):
+        await credentials.delete(row.credential_id, identity=owner)
+
+    # Once the session ends the axis no longer applies.
+    async with ctx.control_db.transaction() as session:
+        await ConnectSessionRepository.update_fields(session, row.id, state="failed")
+    with pytest.raises(CredentialNotFoundError):
+        await credentials.get(row.credential_id, identity=owner)
