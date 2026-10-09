@@ -174,6 +174,21 @@ class CredentialRepository:
         return {row.id: row.display_name for row in result}
 
     @staticmethod
+    async def set_created_by(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        created_by: str,
+    ) -> Credential | None:
+        """Re-attribute a credential to a different creator (connect-session confirm)."""
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.created_by = created_by
+        await session.flush()
+        return credential
+
+    @staticmethod
     async def set_oauth_app_registration(
         session: AsyncSession,
         credential_id: str,

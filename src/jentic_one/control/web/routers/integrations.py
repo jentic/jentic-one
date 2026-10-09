@@ -41,6 +41,14 @@ from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
+# The poll token is optional on the session routes: a human who owns the
+# session's target agent (holding ``credentials:write`` and ``agents:write``)
+# or holds ``org:admin`` may act without it. Every other caller needs it.
+_POLL_TOKEN_DESCRIPTION = (
+    "Opaque poll capability returned by :connect. Optional for the target "
+    "agent's owner (with credentials:write and agents:write) and org:admin"
+)
+
 _logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["Integrations"])
@@ -232,7 +240,7 @@ async def list_connect_sessions(
 )
 async def get_connect_session(
     session_id: str,
-    poll_token: str = Query(..., description="Opaque poll capability"),
+    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ReviewSessionResponse:
@@ -240,12 +248,13 @@ async def get_connect_session(
     scope catalog flagged with default/requested, current state, reason.
 
     Gated by the session's ``poll_token`` capability (rides the approval
-    URL / the ``:connect`` response) — ``credentials:write`` alone must
-    not read arbitrary sessions' review data. Missing session and token
-    mismatch both surface as 403, matching ``/status`` (no session-id
+    URL / the ``:connect`` response), or by being the target agent's owner
+    or ``org:admin`` — ``credentials:write`` alone must not read arbitrary
+    sessions' review data. Missing session, token mismatch and a caller who
+    is neither all surface as 403, matching ``/status`` (no session-id
     enumeration oracle).
     """
-    data = await svc.get_review_data(session_id, poll_token=poll_token)
+    data = await svc.get_review_data(session_id, poll_token=poll_token, identity=identity)
     return ReviewSessionResponse(
         session_id=data.session_id,
         state=data.state,
@@ -296,7 +305,7 @@ async def confirm_connect_session(
     session_id: str,
     body: ConfirmSessionRequest,
     request: Request,
-    poll_token: str = Query(..., description="Opaque poll capability"),
+    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ConfirmSessionResponse:
@@ -305,8 +314,8 @@ async def confirm_connect_session(
     Shares the ``:connect`` per-actor rate bucket — this is the endpoint
     that actually fires the vendor's device-authorization call, and a
     failed ``begin`` leaves the session retryable, so it must not be
-    free to hammer during a vendor incident. Gated by ``poll_token``
-    like the review read (403 on mismatch or missing session).
+    free to hammer during a vendor incident. Gated like the review read
+    (``poll_token`` or owner / ``org:admin``; 403 otherwise).
     """
     await _enforce_connect_rate_limit(request, identity)
 
@@ -341,21 +350,21 @@ async def confirm_connect_session(
 )
 async def poll_connect_session_status(
     session_id: str,
-    poll_token: str = Query(..., description="Opaque poll capability"),
+    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
     # Auth is intentionally lightweight: caller must be authenticated with a
-    # credential-touching permission, but the poll_token is the real capability
-    # that scopes the response — an agent given the token by :connect can poll
-    # without full session-read auth.
+    # credential-touching permission, but the poll_token (or being the agent's
+    # owner / org:admin) is the real capability that scopes the response — an
+    # agent given the token by :connect can poll without full session-read auth.
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> StatusResponse:
     # ``get_status`` uniformly raises ``InvalidPollTokenError`` (→ 403 via
-    # the registered handler) for both "session missing" and "poll_token
-    # mismatch" — the uniform 403 is what closes the session-id
-    # enumeration oracle; a 404 branch would silently reintroduce the split.
-    result = await svc.get_status(session_id, poll_token=poll_token)
+    # the registered handler) for "session missing", "poll_token mismatch"
+    # and "not the owner / admin" — the uniform 403 is what closes the
+    # session-id enumeration oracle; a 404 branch would reintroduce the split.
+    result = await svc.get_status(session_id, poll_token=poll_token, identity=identity)
     return StatusResponse(
         status=result.status,  # type: ignore[arg-type]
         connected_as=result.connected_as,
@@ -378,7 +387,7 @@ async def poll_connect_session_status(
 )
 async def cancel_connect_session(
     session_id: str,
-    poll_token: str = Query(..., description="Opaque poll capability"),
+    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -386,9 +395,8 @@ async def cancel_connect_session(
 ) -> Response:
     """Terminate a still-active session at the user's request.
 
-    Gated by the same ``poll_token`` capability as ``/status`` — the
-    SPA already holds it, so we don't force the caller to bring a
-    heavier scope than the poller endpoint they're already using.
+    Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
+    the target agent's owner / ``org:admin`` without it.
 
     A still-existing but already-terminal session is a 204 no-op — a
     "Cancel" click racing the poll scanner doesn't error. A session
@@ -399,5 +407,5 @@ async def cancel_connect_session(
     is fire-and-forget and ``.catch``es the 403, so this doesn't leak
     into the UX.
     """
-    await svc.cancel_session(session_id, poll_token=poll_token)
+    await svc.cancel_session(session_id, poll_token=poll_token, identity=identity)
     return Response(status_code=204)
