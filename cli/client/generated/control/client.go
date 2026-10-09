@@ -3529,26 +3529,26 @@ type ListConnectSessionsParamsState string
 
 // GetConnectSessionParams defines parameters for GetConnectSession.
 type GetConnectSessionParams struct {
-	// PollToken Opaque poll capability
-	PollToken string `form:"poll_token" json:"poll_token"`
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
 type PollConnectSessionStatusParams struct {
-	// PollToken Opaque poll capability
-	PollToken string `form:"poll_token" json:"poll_token"`
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // CancelConnectSessionParams defines parameters for CancelConnectSession.
 type CancelConnectSessionParams struct {
-	// PollToken Opaque poll capability
-	PollToken string `form:"poll_token" json:"poll_token"`
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // ConfirmConnectSessionParams defines parameters for ConfirmConnectSession.
 type ConfirmConnectSessionParams struct {
-	// PollToken Opaque poll capability
-	PollToken string `form:"poll_token" json:"poll_token"`
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // ListCredentialsParams defines parameters for ListCredentials.
@@ -5832,9 +5832,10 @@ type ClientInterface interface {
 	// scope catalog flagged with default/requested, current state, reason.
 	//
 	// Gated by the session's ``poll_token`` capability (rides the approval
-	// URL / the ``:connect`` response) — ``credentials:write`` alone must
-	// not read arbitrary sessions' review data. Missing session and token
-	// mismatch both surface as 403, matching ``/status`` (no session-id
+	// URL / the ``:connect`` response), or by being the target agent's owner
+	// or ``org:admin`` — ``credentials:write`` alone must not read arbitrary
+	// sessions' review data. Missing session, token mismatch and a caller who
+	// is neither all surface as 403, matching ``/status`` (no session-id
 	// enumeration oracle).
 	//
 	// Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
@@ -5849,9 +5850,8 @@ type ClientInterface interface {
 	//
 	// Terminate a still-active session at the user's request.
 	//
-	// Gated by the same ``poll_token`` capability as ``/status`` — the
-	// SPA already holds it, so we don't force the caller to bring a
-	// heavier scope than the poller endpoint they're already using.
+	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
+	// the target agent's owner / ``org:admin`` without it.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -5872,8 +5872,8 @@ type ClientInterface interface {
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
-	// free to hammer during a vendor incident. Gated by ``poll_token``
-	// like the review read (403 on mismatch or missing session).
+	// free to hammer during a vendor incident. Gated like the review read
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5887,8 +5887,8 @@ type ClientInterface interface {
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
-	// free to hammer during a vendor incident. Gated by ``poll_token``
-	// like the review read (403 on mismatch or missing session).
+	// free to hammer during a vendor incident. Gated like the review read
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9489,9 +9489,10 @@ func (c *Client) ListConnectSessions(ctx context.Context, params *ListConnectSes
 // scope catalog flagged with default/requested, current state, reason.
 //
 // Gated by the session's “poll_token“ capability (rides the approval
-// URL / the “:connect“ response) — “credentials:write“ alone must
-// not read arbitrary sessions' review data. Missing session and token
-// mismatch both surface as 403, matching “/status“ (no session-id
+// URL / the “:connect“ response), or by being the target agent's owner
+// or “org:admin“ — “credentials:write“ alone must not read arbitrary
+// sessions' review data. Missing session, token mismatch and a caller who
+// is neither all surface as 403, matching “/status“ (no session-id
 // enumeration oracle).
 //
 // Corresponds with GET /connect-sessions/{session_id} (the `GetConnectSession` operationId).
@@ -9526,9 +9527,8 @@ func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string,
 //
 // Terminate a still-active session at the user's request.
 //
-// Gated by the same “poll_token“ capability as “/status“ — the
-// SPA already holds it, so we don't force the caller to bring a
-// heavier scope than the poller endpoint they're already using.
+// Gated like “/status“ — the “poll_token“ the SPA already holds, or
+// the target agent's owner / “org:admin“ without it.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -9559,8 +9559,8 @@ func (c *Client) CancelConnectSession(ctx context.Context, sessionId string, par
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
-// free to hammer during a vendor incident. Gated by “poll_token“
-// like the review read (403 on mismatch or missing session).
+// free to hammer during a vendor incident. Gated like the review read
+// (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
 // Takes any type of body and a specified content type.
 //
@@ -9584,8 +9584,8 @@ func (c *Client) ConfirmConnectSessionWithBody(ctx context.Context, sessionId st
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
-// free to hammer during a vendor incident. Gated by “poll_token“
-// like the review read (403 on mismatch or missing session).
+// free to hammer during a vendor incident. Gated like the review read
+// (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -16694,12 +16694,16 @@ func NewGetConnectSessionRequest(server string, sessionId string, params *GetCon
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -16751,12 +16755,16 @@ func NewPollConnectSessionStatusRequest(server string, sessionId string, params 
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -16808,12 +16816,16 @@ func NewCancelConnectSessionRequest(server string, sessionId string, params *Can
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -16876,12 +16888,16 @@ func NewConfirmConnectSessionRequestWithBody(server string, sessionId string, pa
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.PollToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "poll_token", *params.PollToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -22620,9 +22636,10 @@ type ClientWithResponsesInterface interface {
 	// scope catalog flagged with default/requested, current state, reason.
 	//
 	// Gated by the session's ``poll_token`` capability (rides the approval
-	// URL / the ``:connect`` response) — ``credentials:write`` alone must
-	// not read arbitrary sessions' review data. Missing session and token
-	// mismatch both surface as 403, matching ``/status`` (no session-id
+	// URL / the ``:connect`` response), or by being the target agent's owner
+	// or ``org:admin`` — ``credentials:write`` alone must not read arbitrary
+	// sessions' review data. Missing session, token mismatch and a caller who
+	// is neither all surface as 403, matching ``/status`` (no session-id
 	// enumeration oracle).
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -22641,9 +22658,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Terminate a still-active session at the user's request.
 	//
-	// Gated by the same ``poll_token`` capability as ``/status`` — the
-	// SPA already holds it, so we don't force the caller to bring a
-	// heavier scope than the poller endpoint they're already using.
+	// Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
+	// the target agent's owner / ``org:admin`` without it.
 	//
 	// A still-existing but already-terminal session is a 204 no-op — a
 	// "Cancel" click racing the poll scanner doesn't error. A session
@@ -22666,8 +22682,8 @@ type ClientWithResponsesInterface interface {
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
-	// free to hammer during a vendor incident. Gated by ``poll_token``
-	// like the review read (403 on mismatch or missing session).
+	// free to hammer during a vendor incident. Gated like the review read
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -22681,8 +22697,8 @@ type ClientWithResponsesInterface interface {
 	// Shares the ``:connect`` per-actor rate bucket — this is the endpoint
 	// that actually fires the vendor's device-authorization call, and a
 	// failed ``begin`` leaves the session retryable, so it must not be
-	// free to hammer during a vendor incident. Gated by ``poll_token``
-	// like the review read (403 on mismatch or missing session).
+	// free to hammer during a vendor incident. Gated like the review read
+	// (``poll_token`` or owner / ``org:admin``; 403 otherwise).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -40086,9 +40102,10 @@ func (c *ClientWithResponses) ListConnectSessionsWithResponse(ctx context.Contex
 // scope catalog flagged with default/requested, current state, reason.
 //
 // Gated by the session's “poll_token“ capability (rides the approval
-// URL / the “:connect“ response) — “credentials:write“ alone must
-// not read arbitrary sessions' review data. Missing session and token
-// mismatch both surface as 403, matching “/status“ (no session-id
+// URL / the “:connect“ response), or by being the target agent's owner
+// or “org:admin“ — “credentials:write“ alone must not read arbitrary
+// sessions' review data. Missing session, token mismatch and a caller who
+// is neither all surface as 403, matching “/status“ (no session-id
 // enumeration oracle).
 //
 // Returns a wrapper object for the known response body format(s).
@@ -40119,9 +40136,8 @@ func (c *ClientWithResponses) PollConnectSessionStatusWithResponse(ctx context.C
 //
 // Terminate a still-active session at the user's request.
 //
-// Gated by the same “poll_token“ capability as “/status“ — the
-// SPA already holds it, so we don't force the caller to bring a
-// heavier scope than the poller endpoint they're already using.
+// Gated like “/status“ — the “poll_token“ the SPA already holds, or
+// the target agent's owner / “org:admin“ without it.
 //
 // A still-existing but already-terminal session is a 204 no-op — a
 // "Cancel" click racing the poll scanner doesn't error. A session
@@ -40150,8 +40166,8 @@ func (c *ClientWithResponses) CancelConnectSessionWithResponse(ctx context.Conte
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
-// free to hammer during a vendor incident. Gated by “poll_token“
-// like the review read (403 on mismatch or missing session).
+// free to hammer during a vendor incident. Gated like the review read
+// (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -40171,8 +40187,8 @@ func (c *ClientWithResponses) ConfirmConnectSessionWithBodyWithResponse(ctx cont
 // Shares the “:connect“ per-actor rate bucket — this is the endpoint
 // that actually fires the vendor's device-authorization call, and a
 // failed “begin“ leaves the session retryable, so it must not be
-// free to hammer during a vendor incident. Gated by “poll_token“
-// like the review read (403 on mismatch or missing session).
+// free to hammer during a vendor incident. Gated like the review read
+// (“poll_token“ or owner / “org:admin“; 403 otherwise).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

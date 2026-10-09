@@ -62,9 +62,10 @@ export class IntegrationsService {
      * scope catalog flagged with default/requested, current state, reason.
      *
      * Gated by the session's ``poll_token`` capability (rides the approval
-     * URL / the ``:connect`` response) — ``credentials:write`` alone must
-     * not read arbitrary sessions' review data. Missing session and token
-     * mismatch both surface as 403, matching ``/status`` (no session-id
+     * URL / the ``:connect`` response), or by being the target agent's owner
+     * or ``org:admin`` — ``credentials:write`` alone must not read arbitrary
+     * sessions' review data. Missing session, token mismatch and a caller who
+     * is neither all surface as 403, matching ``/status`` (no session-id
      * enumeration oracle).
      * @returns any Successful Response
      * @throws ApiError
@@ -75,9 +76,9 @@ export class IntegrationsService {
     }: {
         sessionId: string,
         /**
-         * Opaque poll capability
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
          */
-        pollToken: string,
+        pollToken?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -110,9 +111,9 @@ export class IntegrationsService {
     }: {
         sessionId: string,
         /**
-         * Opaque poll capability
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
          */
-        pollToken: string,
+        pollToken?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -137,9 +138,8 @@ export class IntegrationsService {
      * Cancel an in-flight connect session
      * Terminate a still-active session at the user's request.
      *
-     * Gated by the same ``poll_token`` capability as ``/status`` — the
-     * SPA already holds it, so we don't force the caller to bring a
-     * heavier scope than the poller endpoint they're already using.
+     * Gated like ``/status`` — the ``poll_token`` the SPA already holds, or
+     * the target agent's owner / ``org:admin`` without it.
      *
      * A still-existing but already-terminal session is a 204 no-op — a
      * "Cancel" click racing the poll scanner doesn't error. A session
@@ -158,9 +158,9 @@ export class IntegrationsService {
     }: {
         sessionId: string,
         /**
-         * Opaque poll capability
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
          */
-        pollToken: string,
+        pollToken?: (string | null),
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
             method: 'POST',
@@ -188,22 +188,22 @@ export class IntegrationsService {
      * Shares the ``:connect`` per-actor rate bucket — this is the endpoint
      * that actually fires the vendor's device-authorization call, and a
      * failed ``begin`` leaves the session retryable, so it must not be
-     * free to hammer during a vendor incident. Gated by ``poll_token``
-     * like the review read (403 on mismatch or missing session).
+     * free to hammer during a vendor incident. Gated like the review read
+     * (``poll_token`` or owner / ``org:admin``; 403 otherwise).
      * @returns any Successful Response
      * @throws ApiError
      */
     public static confirmConnectSession({
         sessionId,
-        pollToken,
         requestBody,
+        pollToken,
     }: {
         sessionId: string,
-        /**
-         * Opaque poll capability
-         */
-        pollToken: string,
         requestBody: ConfirmSessionRequest,
+        /**
+         * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+         */
+        pollToken?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
