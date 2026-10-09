@@ -14,6 +14,7 @@ package api
 // owner (or an org admin) opens the approve page without the token.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -84,6 +85,33 @@ const connectScopesMax = 100
 // rendered as a retryable transport failure (review L2; the Python mount
 // bounds it the same way).
 const connectReasonMax = 1024
+
+// connectRulesMax mirrors the route's requested_permission_rules bound
+// (IntegrationsConnectRequest.requested_permission_rules — max_length=100).
+const connectRulesMax = 100
+
+// decodeConnectRules decodes the requested_permission_rules argument into the
+// generated rule type, refusing unknown keys and a missing/unknown effect so
+// a malformed ask is an invalid-params error here rather than a route 422.
+// Path-pattern validity and the condition-less-allow guard stay server-side.
+func decodeConnectRules(raw json.RawMessage) ([]control.PermissionRuleSchema, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var rules []control.PermissionRuleSchema
+	if err := dec.Decode(&rules); err != nil {
+		return nil, fmt.Errorf("requested_permission_rules must be a list of rule objects "+
+			"({effect, methods, path, match_mode, operations}): %w", err)
+	}
+	if len(rules) > connectRulesMax {
+		return nil, fmt.Errorf("requested_permission_rules must list at most %d rules, got %d", connectRulesMax, len(rules))
+	}
+	for i, r := range rules {
+		if r.Effect != "allow" && r.Effect != "deny" {
+			return nil, fmt.Errorf("requested_permission_rules[%d].effect must be \"allow\" or \"deny\", got %q", i, r.Effect)
+		}
+	}
+	return rules, nil
+}
 
 func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.noteClient(req.ClientInfo())
