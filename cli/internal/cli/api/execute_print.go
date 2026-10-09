@@ -61,6 +61,16 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, res *agent
 	// agent_directive (see agentops.Classify). When a directive *is* present it
 	// enriches the message with recovery steps.
 	if denial != nil {
+		if denial.Directive == nil {
+			// A held call that never ran (denied, expired, unresumable) has its
+			// own recovery: the status-keyed binding hint would mislead.
+			if detail := problemDetail(res.Body); ux.RenderApprovalOutcome(cmd.Context(), a.Err, denial.ProblemType, detail) {
+				coded := denial.Err()
+				coded.Msg = fmt.Sprintf("this held call never ran (%s)", denial.ProblemType)
+				coded.Details["problem_type"] = denial.ProblemType
+				return coded
+			}
+		}
 		if denial.Directive != nil {
 			a.printAgentDirective(cmd.Context(), *denial.Directive)
 		} else {
@@ -112,4 +122,16 @@ func (a *app) executePrettyOutput(ctx context.Context, res *agentops.ExecuteResu
 		}
 		fmt.Fprintln(a.Out)
 	}
+}
+
+// problemDetail returns a problem body's detail line, or "" when the body has
+// none.
+func problemDetail(body []byte) string {
+	var p struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(body, &p) != nil {
+		return ""
+	}
+	return p.Detail
 }

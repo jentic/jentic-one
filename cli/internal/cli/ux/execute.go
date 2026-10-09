@@ -137,3 +137,80 @@ func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status in
 	// above doesn't unblock (UX9).
 	fmt.Fprintln(w, "  stuck? "+st.Accent.Render("jentic doctor"))
 }
+
+// HeldNotice describes a call the broker held for human approval, for
+// RenderHeld.
+type HeldNotice struct {
+	JobID     string
+	ReviewURL string
+	ExpiresAt string
+	// Waiting is true when the command goes on to wait for the decision
+	// (`execute --wait`), false when it stops at the hold.
+	Waiting bool
+}
+
+// RenderHeld writes the held-call notice to w (the caller's stderr): the
+// review link a person must open to approve or deny the call, when the
+// approval lapses, and how to collect the result.
+func RenderHeld(ctx context.Context, w io.Writer, n HeldNotice) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(w, st.Warn.Render("Held — this call needs human approval before it runs:"))
+	fmt.Fprintln(w, "  Show the user this link; they approve or deny the call there.")
+	fmt.Fprintln(w, "  open: "+st.Accent.Render(n.ReviewURL))
+	if n.ExpiresAt != "" {
+		fmt.Fprintln(w, "  expires: "+n.ExpiresAt)
+	}
+	if n.Waiting {
+		fmt.Fprintln(w, "  waiting for the decision …")
+		return
+	}
+	fmt.Fprintln(w, "  then: "+st.Accent.Render("jentic jobs wait "+n.JobID)+" (do not re-send the call)")
+}
+
+// Problem types of a held call that never ran: the reviewer denied it, its
+// approval lapsed undecided, or the worker running it stopped mid-run.
+const (
+	ApprovalDeniedType       = "approval_denied"
+	ApprovalExpiredType      = "approval_expired"
+	ApprovalResumeFailedType = "approval_resume_failed"
+	ApprovalRequiredType     = "approval_required"
+)
+
+// RenderApprovalOutcome writes the recovery for a held call's terminal
+// approval problem (problemType, one of the Approval*Type values) to w (the
+// caller's stderr). detail is the problem's own detail line (a deny reason
+// rides there). It reports false for any other problem type, leaving the
+// caller's generic denial rendering in place.
+func RenderApprovalOutcome(ctx context.Context, w io.Writer, problemType, detail string) bool {
+	st := theme.StylesFromContext(ctx)
+	var lines []string
+	switch problemType {
+	case ApprovalDeniedType:
+		lines = []string{
+			"Denied by a reviewer — the call never ran.",
+			"Tell the user it was denied; do not re-send it unless they ask you to.",
+		}
+	case ApprovalExpiredType:
+		lines = []string{
+			"Expired — nobody decided the approval in time, so the call never ran.",
+			"Re-send it only if the user still wants it; that files a new approval.",
+		}
+	case ApprovalResumeFailedType:
+		lines = []string{
+			"Approved, but the worker running it stopped mid-run; it is not re-run.",
+			"The upstream may have received it: check `jentic history` before sending it again.",
+		}
+	case ApprovalRequiredType:
+		lines = []string{"A permission rule requires approval for this call and the job carries none; it never ran."}
+	default:
+		return false
+	}
+	fmt.Fprintln(w, st.Warn.Render(lines[0]))
+	if detail != "" {
+		fmt.Fprintln(w, "  "+detail)
+	}
+	for _, l := range lines[1:] {
+		fmt.Fprintln(w, "  "+l)
+	}
+	return true
+}

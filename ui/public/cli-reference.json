@@ -1780,8 +1780,8 @@
           "path": "jentic execute",
           "use": "execute \u003cMETHOD:url | METHOD:/path\u003e",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target is the operation's method + URL:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` print (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n(An opaque registry operation_id also still resolves, for compatibility\nwith older scripts — prefer the METHOD:url form. A search hit whose\ntarget is an operation_id has a host-relative url — its spec declares no\nabsolute server — so it is inspect-only: execute refuses it with\nRESOLVE_FAILED, since there is no upstream host to proxy to.)\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you have no credential binding\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. an unknown operation)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
-          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute GET:https://api.example.com/v1/pets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  jentic execute POST:https://api.example.com/v1/pics --form demo=true --form-file images=@face.jpg --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target is the operation's method + URL:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` print (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n(An opaque registry operation_id also still resolves, for compatibility\nwith older scripts — prefer the METHOD:url form. A search hit whose\ntarget is an operation_id has a host-relative url — its spec declares no\nabsolute server — so it is inspect-only: execute refuses it with\nRESOLVE_FAILED, since there is no upstream host to proxy to.)\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you have no credential binding\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nWhen a permission rule requires approval, the broker holds the call\nfor a human instead of running it and answers 202 with the held job\nand a review_url. execute prints that envelope, shows the review link\non stderr, and exits 3 (TIMEOUT_PENDING). Show the user the link, then\ncollect the outcome with `jentic jobs wait \u003cjob_id\u003e` — never re-send the\ncall. With --wait, execute waits for the decision itself (up to\n--timeout) and then prints the result exactly as if the call had run at\nonce, or the denial/expiry (exit 2).\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. an unknown operation); also a held call a\n      reviewer denied or that expired undecided\n  3 — held for human approval and not yet decided (TIMEOUT_PENDING)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http. For a REMOTE\ncontrol plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\nrefuses with RESOLVE_FAILED rather than dialing the local default.",
+          "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute GET:https://api.example.com/v1/pets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  # A call a rule holds for approval: wait up to 15 minutes for the decision:\n  jentic execute POST:https://api.example.com/v1/orders -d '{\"n\":1}' --wait --timeout 15m --json\n  jentic execute POST:https://api.example.com/v1/pics --form demo=true --form-file images=@face.jpg --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute GET:https://api.example.com/v1/pets --broker-scheme http --broker-host 127.0.0.1:8100",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1885,6 +1885,88 @@
               "name": "theme",
               "type": "string",
               "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            },
+            {
+              "name": "timeout",
+              "type": "duration",
+              "default": "10m0s",
+              "usage": "how long --wait waits for a held call's decision before exiting 3 (TIMEOUT_PENDING)"
+            },
+            {
+              "name": "wait",
+              "type": "bool",
+              "default": "false",
+              "usage": "when the call is held for human approval, wait for the decision and print the result"
+            }
+          ]
+        },
+        {
+          "name": "jobs",
+          "path": "jentic jobs",
+          "use": "jobs",
+          "short": "Wait on your background jobs (held executions)",
+          "long": "jobs works with the background jobs your calls create — above all an\nexecution a permission rule held for human approval. `jentic execute`\nprints a held call's job_id; `jentic jobs wait \u003cjob_id\u003e` waits for it.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "wait",
+              "path": "jentic jobs wait",
+              "use": "wait \u003cjob_id\u003e",
+              "short": "Wait for an execution job (e.g. a held call) and print its result",
+              "long": "wait polls an execution job — typically a call the broker held for\nhuman approval — until it settles, then prints the outcome exactly as\n`jentic execute` prints a call that ran at once: the upstream response\n(exit 0, even an upstream 4xx/5xx), or the denial when a reviewer denied\nthe call or its approval expired (exit 2). It never re-sends the call.\n\nExit codes:\n  0 — the call ran; the upstream response is the data\n  1 — local/transport failure, or the run got no upstream answer\n  2 — the call never ran: denied, expired, withdrawn, or an unknown job id\n  3 — still held (or queued) when --timeout lapsed (TIMEOUT_PENDING)",
+              "example": "  jentic jobs wait job_2mXk... --json\n  jentic jobs wait job_2mXk... --timeout 30m",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "force JSON envelope output"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent ($JENTIC_MODE)"
+                },
+                {
+                  "name": "raw",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "stream the response body directly to stdout"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "timeout",
+                  "type": "duration",
+                  "default": "10m0s",
+                  "usage": "how long to wait before exiting 3 (TIMEOUT_PENDING)"
+                }
+              ]
             }
           ]
         },

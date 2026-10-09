@@ -1,0 +1,32 @@
+exit: 2
+--- stdout ---
+{
+  "body": {
+    "approval": {
+      "id": "apr_1",
+      "state": "denied"
+    },
+    "detail": "A reviewer denied this held execution: not today",
+    "error_origin": "broker",
+    "status": 403,
+    "title": "Execution approval denied",
+    "type": "approval_denied"
+  },
+  "execution_id": "exec_held1",
+  "headers": {
+    "Content-Type": "application/problem+json",
+    "Jentic-Error-Origin": "broker"
+  },
+  "schema_version": "1",
+  "status": 403
+}
+--- stderr ---
+Held — this call needs human approval before it runs:
+  Show the user this link; they approve or deny the call there.
+  open: https://console.example/app/agents/approvals/apr_1
+  expires: 2026-10-10T12:00:00Z
+  waiting for the decision …
+Denied by a reviewer — the call never ran.
+  A reviewer denied this held execution: not today
+  Tell the user it was denied; do not re-send it unless they ask you to.
+{"details":{"http_status":403,"problem_type":"approval_denied"},"error":"this held call never ran (approval_denied)","error_code":"BROKER_DENIED","schema_version":"1"}
