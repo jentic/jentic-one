@@ -78,3 +78,10 @@ export {
 	formatApiVersion,
 	formatOperation,
 } from '@/shared/lib/api-display';
+
+// Whether a stored trace id can open a trace (the backend's `"unknown"`
+// placeholder and empty ids can't) — Monitor and the Agents page agree on it.
+export { hasTrace } from '@/shared/lib/trace';
+
+// The compact relative age ("3m", "4d") a module's own helpers build on.
+export { timeAgo } from '@/shared/lib/utils';

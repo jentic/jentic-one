@@ -14,10 +14,10 @@
  * the tier words move under the numbers so nothing crowds a half-width cell. Values count up
  * on arrival and whenever the window changes, so a new slice visibly lands.
  */
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { animate, motion, useReducedMotion } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
-import { AppLink, Skeleton, VendorIcon } from '@/shared/ui';
+import { AppLink, AreaSparkline, Skeleton, VendorIcon } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
 import {
 	HEALTH_LABEL,
@@ -122,7 +122,7 @@ export function StatStrip({
 						value={overview.totalExecutions}
 						className="text-foreground text-2xl font-semibold"
 					/>
-					<AreaSpark
+					<AreaSparkline
 						data={volume}
 						className="text-primary mb-1 h-8 w-32 max-w-[45%] sm:h-7 sm:w-24"
 					/>
@@ -403,52 +403,5 @@ function ApiTiles({ apis, extra }: { apis: EntityUsageRow[]; extra: number }) {
 				</span>
 			)}
 		</span>
-	);
-}
-
-/** A soft area sparkline that draws itself in. Decorative — the number beside it is the data. */
-function AreaSpark({ data, className }: { data: number[]; className?: string }) {
-	const gradientId = useId();
-	const reduce = useReducedMotion();
-	if (data.length < 2) return null;
-	const w = 96;
-	const h = 28;
-	const max = Math.max(...data, 1);
-	const points = data.map((v, i) => [(i / (data.length - 1)) * w, h - 2 - (v / max) * (h - 4)]);
-	const line = `M ${points.map(([x, y]) => `${x.toFixed(1)},${y!.toFixed(1)}`).join(' L ')}`;
-	const area = `${line} L ${w},${h} L 0,${h} Z`;
-	return (
-		<svg
-			viewBox={`0 0 ${w} ${h}`}
-			className={className}
-			preserveAspectRatio="none"
-			aria-hidden="true"
-		>
-			<defs>
-				<linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-					<stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
-					<stop offset="100%" stopColor="currentColor" stopOpacity="0" />
-				</linearGradient>
-			</defs>
-			<motion.path
-				d={area}
-				fill={`url(#${gradientId})`}
-				initial={reduce ? false : { opacity: 0 }}
-				animate={{ opacity: 1 }}
-				transition={{ delay: 0.35, duration: 0.4 }}
-			/>
-			<motion.path
-				d={line}
-				fill="none"
-				stroke="currentColor"
-				strokeWidth={1.5}
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				vectorEffect="non-scaling-stroke"
-				initial={reduce ? false : { pathLength: 0 }}
-				animate={{ pathLength: 1 }}
-				transition={{ duration: 0.8, ease: [0.2, 0.8, 0.2, 1] }}
-			/>
-		</svg>
 	);
 }

@@ -27,7 +27,7 @@ const sizeClasses: Record<DialogSize, string> = {
 interface DialogProps {
 	open: boolean;
 	onClose: () => void;
-	title: string;
+	title: React.ReactNode;
 	/**
 	 * Optional secondary line under the title — use for step indicators
 	 * ("Step 1 of 2 · Choose an API"), short context strings, or breadcrumbs.

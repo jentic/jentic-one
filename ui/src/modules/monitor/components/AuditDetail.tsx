@@ -20,7 +20,8 @@ import {
 } from '@/modules/monitor/components/LogDetailPane';
 import { formatTimestamp } from '@/modules/monitor/lib/format';
 import { originLabel } from '@/modules/monitor/lib/logVocabulary';
-import { hasTrace, monitorHref } from '@/modules/monitor/lib/links';
+import { monitorHref } from '@/modules/monitor/lib/links';
+import { hasTrace } from '@/shared/lib';
 import { auditChanges, auditSentence, auditTargetLabel } from '@/modules/monitor/lib/describeAudit';
 
 export function AuditDetail({

@@ -105,10 +105,16 @@ export const ROUTE_PATHS = {
 	 * can't import from each other. Monitor's own richer builder is
 	 * `modules/monitor/lib/links`.
 	 */
-	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
+	monitorExecutions: (filter?: {
+		actorId?: string;
+		actorType?: 'agent' | 'user';
+		/** Open this call's trace sheet on arrival. */
+		traceId?: string;
+	}) => {
 		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);
+		if (filter?.traceId) q.set('trace_id', filter.traceId);
 		return `${ROUTES.monitor}?${q.toString()}`;
 	},
 } as const;

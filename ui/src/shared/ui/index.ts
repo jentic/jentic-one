@@ -1,5 +1,7 @@
 export { Button } from '@/shared/ui/Button';
 export type { ButtonProps } from '@/shared/ui/Button';
+export { InlineAction } from '@/shared/ui/InlineAction';
+export type { InlineActionProps } from '@/shared/ui/InlineAction';
 
 export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
 export { CardHeaderIcon } from '@/shared/ui/CardHeaderIcon';
@@ -31,8 +33,8 @@ export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard
 export { Badge, MethodBadge, StatusBadge, StatusChip, StatusText, Tag } from '@/shared/ui/Badge';
 export type { Variant as BadgeVariant, StatusTone } from '@/shared/ui/Badge';
 
-export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
-export type { AgentBadgeSize } from '@/shared/ui/AgentBadge';
+export { AgentBadge, AgentInitialsProvider, agentInitials } from '@/shared/ui/AgentBadge';
+export type { AgentBadgeShape, AgentBadgeSize } from '@/shared/ui/AgentBadge';
 
 export { Label } from '@/shared/ui/Label';
 
@@ -159,8 +161,10 @@ export type { LazyMountProps } from '@/shared/ui/LazyMount';
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
 export { ExpandableText } from '@/shared/ui/ExpandableText';
+export { ExpandReveal, REVEAL_MOTION } from '@/shared/ui/ExpandReveal';
+export type { ExpandRevealProps } from '@/shared/ui/ExpandReveal';
 
-export { Tooltip } from '@/shared/ui/Tooltip';
+export { Tooltip, TOOLTIP_DELAY_MS } from '@/shared/ui/Tooltip';
 
 export { OperationDetail } from '@/shared/ui/OperationDetail';
 export type {
@@ -226,6 +230,7 @@ export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
 
 export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { AreaSparkline } from '@/shared/ui/charts/AreaSparkline';
 export { ApiUsageSummary } from '@/shared/ui/ApiUsageSummary';
 export { StreamEventRow } from '@/shared/ui/StreamEventRow';
 export type { ApiUsageSummaryProps } from '@/shared/ui/ApiUsageSummary';

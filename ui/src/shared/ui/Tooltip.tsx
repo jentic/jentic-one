@@ -54,11 +54,15 @@ interface TooltipProps {
  * the rail's scroll container), and carries `role="tooltip"` +
  * `aria-describedby` for assistive tech.
  */
+/** How long a hover rests before a tooltip opens, unless the caller sets
+ * `delayMs` (focus opens it at once). */
+export const TOOLTIP_DELAY_MS = 400;
+
 export function Tooltip({
 	content,
 	children,
 	placement = 'top',
-	delayMs = 400,
+	delayMs = TOOLTIP_DELAY_MS,
 	className,
 	bubbleClassName,
 	interactiveChild = false,
