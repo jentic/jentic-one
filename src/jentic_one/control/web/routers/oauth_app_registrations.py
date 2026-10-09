@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response
 
+from jentic_one.control.services.integrations.connect_session_service import (
+    ConnectSessionService,
+)
 from jentic_one.control.services.oauth_app_registrations.schemas import (
     OAuthAppRegistrationFlowKind,
     OAuthAppRegistrationView,
@@ -11,7 +14,10 @@ from jentic_one.control.services.oauth_app_registrations.schemas import (
 from jentic_one.control.services.oauth_app_registrations.service import (
     OAuthAppRegistrationService,
 )
-from jentic_one.control.web.deps import get_oauth_app_registration_service
+from jentic_one.control.web.deps import (
+    get_connect_session_service,
+    get_oauth_app_registration_service,
+)
 from jentic_one.control.web.schemas.oauth_app_registrations import (
     AuthorizationCodeRegistrationCreateRequest,
     DeviceAuthorizationRegistrationCreateRequest,
@@ -62,11 +68,14 @@ async def create_oauth_app_registration(
     body: OAuthAppRegistrationCreateRequest,
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
+    connect_svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> OAuthAppRegistrationResponse:
     """Register a shared OAuth application that users on this instance can SSO through.
 
     The client secret is stored encrypted and never returned by any read
     endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+    Connect sessions waiting for an OAuth app for the registration's API
+    move on to it right away.
     """
     if isinstance(body, AuthorizationCodeRegistrationCreateRequest):
         view = await svc.create_authorization_code(
@@ -94,6 +103,7 @@ async def create_oauth_app_registration(
             default_scopes=body.default_scopes,
             identity=identity,
         )
+    await connect_svc.resolve_awaiting_app_sessions()
     return _to_response(view)
 
 

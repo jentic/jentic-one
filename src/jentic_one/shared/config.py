@@ -1145,9 +1145,9 @@ class ControlConnectConfig(BaseModel):
             "Allow connect sessions that target a registry API (rather than a "
             "vendor-registry key), where a human enters the credential at "
             "approval. While off, `:connect` refuses API targets with "
-            "`manual_flows_disabled`. Not usable in this release: leave it off. "
-            "Once usable, turn it on only after every control replica runs a "
-            "release that understands these sessions."
+            "`manual_flows_disabled`. The dashboard cannot approve these "
+            "sessions yet, so leave it off outside testing; turn it on only after "
+            "every control replica runs a release that understands them."
         ),
     )
     manual_flows_ttl_hours: int = Field(
@@ -1157,6 +1157,33 @@ class ControlConnectConfig(BaseModel):
             "Hours an API-target connect session (a human-entered credential, or "
             "an OAuth API waiting for an app) stays open before it expires. "
             "Vendor OAuth sessions keep their fixed 30-minute lifetime."
+        ),
+    )
+    max_open_sessions_per_agent: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Most open connect sessions one agent may hold at once while "
+            "`manual_flows_enabled` is on; one more `:connect` gets 429 "
+            "`too_many_open_sessions`."
+        ),
+    )
+    max_open_sessions_per_owner: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Most open connect sessions across one user and the agents they own "
+            "while `manual_flows_enabled` is on; one more `:connect` gets 429 "
+            "`too_many_open_sessions`."
+        ),
+    )
+    rejection_cooldown_hours: int = Field(
+        default=24,
+        ge=0,
+        description=(
+            "Hours after a human rejects an agent's connect request during which "
+            "the agent's repeat `:connect` for the same target gets 429 "
+            "`recently_rejected`. 0 turns the cooldown off."
         ),
     )
 

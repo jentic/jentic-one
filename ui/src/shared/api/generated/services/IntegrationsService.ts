@@ -2,9 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ConfirmSessionRequest } from '../models/ConfirmSessionRequest';
+import type { ApiKeyConfirmSessionRequest } from '../models/ApiKeyConfirmSessionRequest';
+import type { BasicConfirmSessionRequest } from '../models/BasicConfirmSessionRequest';
+import type { BearerConfirmSessionRequest } from '../models/BearerConfirmSessionRequest';
 import type { ConnectSessionListResponse } from '../models/ConnectSessionListResponse';
+import type { ExistingCredentialConfirmSessionRequest } from '../models/ExistingCredentialConfirmSessionRequest';
 import type { IntegrationsConnectRequest } from '../models/IntegrationsConnectRequest';
+import type { OAuthConfirmSessionRequest } from '../models/OAuthConfirmSessionRequest';
+import type { OwnOAuthClientConfirmSessionRequest } from '../models/OwnOAuthClientConfirmSessionRequest';
+import type { ReauthorizeConfirmSessionRequest } from '../models/ReauthorizeConfirmSessionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -182,8 +188,15 @@ export class IntegrationsService {
         });
     }
     /**
-     * Confirm scopes + permissions and kick off the vendor flow
+     * Confirm a connect session
      * Called by the review page after the human confirms selections.
+     *
+     * The body's ``kind`` picks the variant (no ``kind`` is the OAuth
+     * variant): OAuth scopes, a secret for a ``manual_*`` session
+     * (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
+     * for an ``awaiting_app`` session, or a credential the approver already
+     * holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+     * they never appear in a response, audit entry or log.
      *
      * Shares the ``:connect`` per-actor rate bucket — this is the endpoint
      * that actually fires the vendor's device-authorization call, and a
@@ -199,7 +212,7 @@ export class IntegrationsService {
         pollToken,
     }: {
         sessionId: string,
-        requestBody: ConfirmSessionRequest,
+        requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest),
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
          */
@@ -221,7 +234,42 @@ export class IntegrationsService {
                 401: `Unauthorized`,
                 403: `Forbidden`,
                 404: `Not Found`,
-                409: `Session not awaiting confirmation, or its OAuth app changed`,
+                409: `Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Reject an agent's connect request
+     * End the session as rejected — the approve dialog's explicit Reject.
+     *
+     * Only the target agent's owner (holding ``credentials:write`` and
+     * ``agents:write``) or ``org:admin``; there is no poll-token path and an
+     * agent can never reject. Everyone else gets the uniform 403. The agent's
+     * ``/status`` then reports ``failed`` with ``error_code: rejected``, and
+     * its repeat ``:connect`` for the same target answers 429
+     * ``recently_rejected`` for the rejection cooldown. Closing the dialog
+     * without rejecting makes no call; an unmount cancel stays ``cancelled``.
+     * @returns void
+     * @throws ApiError
+     */
+    public static rejectConnectSession({
+        sessionId,
+    }: {
+        sessionId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/connect-sessions/{session_id}:reject',
+            path: {
+                'session_id': sessionId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -256,7 +304,10 @@ export class IntegrationsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Unknown vendor or API, or API targets are not enabled`,
+                409: `The API declares no supported scheme, or its hosts cannot be pinned`,
                 422: `Unprocessable Entity`,
+                429: `Rate limit, open-session cap, or a recent rejection`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },

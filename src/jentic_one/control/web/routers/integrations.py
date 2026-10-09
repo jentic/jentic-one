@@ -9,26 +9,55 @@ ad-hoc error ``JSONResponse`` bodies.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Query, Request, Response
 from jentic.problem_details import Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
+    ApiTarget,
+    AuthCodeConfirmResult,
+    ConfirmChecks,
+    ConfirmVariant,
+    ConnectedConfirmResult,
     ConnectSessionService,
     DeviceAuthorizationConfirmResult,
+    ExistingCredentialConfirm,
+    OwnClientConfirm,
+    ReviewData,
+    SecretConfirm,
+)
+from jentic_one.control.services.integrations.flow_handlers.manual import (
+    ApiKeySecret,
+    BasicSecret,
+    BearerSecret,
 )
 from jentic_one.control.web.deps import get_connect_session_service
 from jentic_one.control.web.schemas.integrations import (
+    ApiKeyConfirmSessionRequest,
     ApiReferenceResponse,
     AuthCodeConfirmSessionResponse,
+    BasicConfirmSessionRequest,
+    BearerConfirmSessionRequest,
     ConfirmSessionRequest,
     ConfirmSessionResponse,
+    ConnectedConfirmSessionResponse,
     ConnectSessionListResponse,
     ConnectSessionState,
     ConnectSessionSummaryResponse,
     DeviceAuthorizationConfirmSessionResponse,
+    ExistingCredentialConfirmSessionRequest,
+    ExistingCredentialResponse,
     IntegrationsConnectRequest,
     IntegrationsConnectResponse,
+    OAuthConfirmSessionRequest,
+    OwnOAuthClientConfirmSessionRequest,
+    ReauthorizeConfirmSessionRequest,
+    ReauthorizeConfirmSessionResponse,
+    ReviewAgentResponse,
+    ReviewProvenanceResponse,
+    ReviewSchemeResponse,
     ReviewScopeResponse,
     ReviewSessionResponse,
     StatusResponse,
@@ -39,7 +68,12 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
-from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
+from jentic_one.shared.web.openapi_responses import (
+    conflict,
+    not_found,
+    too_many_requests,
+    with_responses,
+)
 
 # The poll token is optional on the session routes: a human who owns the
 # session's target agent (holding ``credentials:write`` and ``agents:write``)
@@ -122,6 +156,11 @@ async def _enforce_connect_rate_limit(request: Request, identity: Identity) -> N
     status_code=201,
     summary="Start an integration connect session",
     response_model=None,
+    responses=with_responses(
+        not_found("Unknown vendor or API, or API targets are not enabled"),
+        conflict("The API declares no supported scheme, or its hosts cannot be pinned"),
+        too_many_requests("Rate limit, open-session cap, or a recent rejection"),
+    ),
 )
 async def integrations_connect(
     body: IntegrationsConnectRequest,
@@ -154,7 +193,13 @@ async def integrations_connect(
         agent_id = body.agent_id or None
 
     created = await svc.create_session(
-        vendor_key=body.vendor,
+        vendor_key=body.vendor or "",
+        api_target=(
+            ApiTarget(vendor=body.api.vendor, name=body.api.name, version=body.api.version)
+            if body.api is not None
+            else None
+        ),
+        auth_type=body.auth_type,
         agent_id=agent_id,
         initiator_actor_id=identity.sub,
         requested_scopes=body.requested_scopes,
@@ -256,6 +301,10 @@ async def get_connect_session(
     enumeration oracle).
     """
     data = await svc.get_review_data(session_id, poll_token=poll_token, identity=identity)
+    return _review_response(data)
+
+
+def _review_response(data: ReviewData) -> ReviewSessionResponse:
     return ReviewSessionResponse(
         session_id=data.session_id,
         state=data.state,
@@ -285,6 +334,54 @@ async def get_connect_session(
             name=data.api_name,
             version=data.api_version,
         ),
+        target_kind=data.target_kind,  # type: ignore[arg-type]
+        requested_scopes=data.requested_scopes,
+        provenance=(
+            ReviewProvenanceResponse(
+                origin=data.provenance.origin,
+                catalog_api_id=data.provenance.catalog_api_id,
+                submitted_by=data.provenance.submitted_by,
+                source_url=data.provenance.source_url,
+                revision_id=data.provenance.revision_id,
+            )
+            if data.provenance is not None
+            else None
+        ),
+        agent=(
+            ReviewAgentResponse(
+                agent_id=data.agent.agent_id,
+                name=data.agent.name,
+                owner_id=data.agent.owner_id,
+                status=data.agent.status,
+            )
+            if data.agent is not None
+            else None
+        ),
+        scheme=(
+            ReviewSchemeResponse(
+                type=data.scheme.type,  # type: ignore[arg-type]
+                location=data.scheme.location,
+                field_name=data.scheme.field_name,
+            )
+            if data.scheme is not None
+            else None
+        ),
+        pinned_hosts=data.pinned_hosts,
+        digest=data.digest,
+        can_confirm=data.can_confirm,
+        existing_credentials=[
+            ExistingCredentialResponse(
+                credential_id=c.credential_id,
+                name=c.name,
+                type=c.type,
+                granted_scopes=c.granted_scopes,
+                missing_scopes=c.missing_scopes,
+                other_bound_agent_ids=c.other_bound_agent_ids,
+                can_bind=c.can_bind,
+                can_reauthorize=c.can_reauthorize,
+            )
+            for c in data.existing_credentials
+        ],
     )
 
 
@@ -295,22 +392,32 @@ async def get_connect_session(
 
 @router.post(
     "/connect-sessions/{session_id}:confirm",
-    summary="Confirm scopes + permissions and kick off the vendor flow",
+    summary="Confirm a connect session",
     response_model=None,
     responses=with_responses(
         not_found(),
-        conflict("Session not awaiting confirmation, or its OAuth app changed"),
+        conflict(
+            "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, "
+            "or the review is stale"
+        ),
     ),
 )
 async def confirm_connect_session(
     session_id: str,
-    body: ConfirmSessionRequest,
     request: Request,
+    body: Annotated[ConfirmSessionRequest, Body()],
     poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ConfirmSessionResponse:
     """Called by the review page after the human confirms selections.
+
+    The body's ``kind`` picks the variant (no ``kind`` is the OAuth
+    variant): OAuth scopes, a secret for a ``manual_*`` session
+    (``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client
+    for an ``awaiting_app`` session, or a credential the approver already
+    holds (``existing_credential``, ``reauthorize``). Secrets are write-only:
+    they never appear in a response, audit entry or log.
 
     Shares the ``:connect`` per-actor rate bucket — this is the endpoint
     that actually fires the vendor's device-authorization call, and a
@@ -320,14 +427,21 @@ async def confirm_connect_session(
     """
     await _enforce_connect_rate_limit(request, identity)
 
-    result = await svc.confirm(
-        session_id,
-        poll_token=poll_token,
-        confirmed_scopes=body.confirmed_scopes,
-        permission_rules=[r.model_dump() for r in body.permission_rules],
-        agent_id=body.agent_id,
-        identity=identity,
-    )
+    if isinstance(body, OAuthConfirmSessionRequest):
+        result = await svc.confirm(
+            session_id,
+            poll_token=poll_token,
+            confirmed_scopes=body.confirmed_scopes,
+            permission_rules=[r.model_dump() for r in body.permission_rules],
+            agent_id=body.agent_id,
+            identity=identity,
+            expected_agent_id=body.expected_agent_id,
+            digest=body.digest,
+        )
+    else:
+        result = await svc.confirm_variant(
+            session_id, poll_token=poll_token, variant=_to_variant(body), identity=identity
+        )
 
     if isinstance(result, DeviceAuthorizationConfirmResult):
         return DeviceAuthorizationConfirmSessionResponse(
@@ -336,7 +450,53 @@ async def confirm_connect_session(
             verification_uri_complete=result.verification_uri_complete,
             poll_interval_seconds=result.poll_interval_seconds,
         )
-    return AuthCodeConfirmSessionResponse(authorize_url=result.authorize_url)
+    if isinstance(result, AuthCodeConfirmResult):
+        return AuthCodeConfirmSessionResponse(authorize_url=result.authorize_url)
+    if isinstance(result, ConnectedConfirmResult):
+        return ConnectedConfirmSessionResponse(credential_id=result.credential_id)
+    return ReauthorizeConfirmSessionResponse(
+        credential_id=result.credential_id, authorize_url=result.authorize_url
+    )
+
+
+def _to_variant(
+    body: ApiKeyConfirmSessionRequest
+    | BearerConfirmSessionRequest
+    | BasicConfirmSessionRequest
+    | OwnOAuthClientConfirmSessionRequest
+    | ExistingCredentialConfirmSessionRequest
+    | ReauthorizeConfirmSessionRequest,
+) -> ConfirmVariant:
+    checks = ConfirmChecks(
+        permission_rules=[r.model_dump() for r in body.permission_rules],
+        expected_agent_id=body.expected_agent_id,
+        digest=body.digest,
+        agent_id=body.agent_id,
+    )
+    if isinstance(body, ApiKeyConfirmSessionRequest):
+        return SecretConfirm(kind=body.kind, secret=ApiKeySecret(key=body.key), checks=checks)
+    if isinstance(body, BearerConfirmSessionRequest):
+        return SecretConfirm(kind=body.kind, secret=BearerSecret(token=body.token), checks=checks)
+    if isinstance(body, BasicConfirmSessionRequest):
+        return SecretConfirm(
+            kind=body.kind,
+            secret=BasicSecret(username=body.username, password=body.password),
+            checks=checks,
+        )
+    if isinstance(body, OwnOAuthClientConfirmSessionRequest):
+        return OwnClientConfirm(
+            client_id=body.client_id,
+            client_secret=body.client_secret,
+            authorize_url=body.authorize_url,
+            token_url=body.token_url,
+            confirmed_scopes=body.confirmed_scopes,
+            checks=checks,
+        )
+    return ExistingCredentialConfirm(
+        credential_id=body.credential_id,
+        reauthorize=isinstance(body, ReauthorizeConfirmSessionRequest),
+        checks=checks,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -409,4 +569,34 @@ async def cancel_connect_session(
     into the UX.
     """
     await svc.cancel_session(session_id, poll_token=poll_token, identity=identity)
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# POST /connect-sessions/{id}:reject — the approver turns the request down
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/connect-sessions/{session_id}:reject",
+    status_code=204,
+    summary="Reject an agent's connect request",
+    response_model=None,
+)
+async def reject_connect_session(
+    session_id: str,
+    identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
+    svc: ConnectSessionService = Depends(get_connect_session_service),
+) -> Response:
+    """End the session as rejected — the approve dialog's explicit Reject.
+
+    Only the target agent's owner (holding ``credentials:write`` and
+    ``agents:write``) or ``org:admin``; there is no poll-token path and an
+    agent can never reject. Everyone else gets the uniform 403. The agent's
+    ``/status`` then reports ``failed`` with ``error_code: rejected``, and
+    its repeat ``:connect`` for the same target answers 429
+    ``recently_rejected`` for the rejection cooldown. Closing the dialog
+    without rejecting makes no call; an unmount cancel stays ``cancelled``.
+    """
+    await svc.reject_session(session_id, identity=identity)
     return Response(status_code=204)

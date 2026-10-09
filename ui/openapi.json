@@ -585,6 +585,70 @@
         "title": "ApiInfoResponse",
         "type": "object"
       },
+      "ApiKeyConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Confirm a ``manual_api_key`` session with the API key to store.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "key": {
+            "format": "password",
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string",
+            "writeOnly": true,
+            "x-sensitive": true
+          },
+          "kind": {
+            "const": "api_key",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "key"
+        ],
+        "title": "ApiKeyConfirmSessionRequest",
+        "type": "object"
+      },
       "ApiKeyCreateRequest": {
         "description": "Create request for api_key credentials.",
         "examples": [
@@ -1268,6 +1332,40 @@
         "title": "ApiSourceUrl",
         "type": "object"
       },
+      "ApiTargetRequest": {
+        "additionalProperties": false,
+        "description": "A registry API identity to connect a credential for.",
+        "properties": {
+          "name": {
+            "description": "API name",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "vendor": {
+            "description": "API vendor (e.g. 'stripe-com')",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "description": "API version",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor",
+          "name",
+          "version"
+        ],
+        "title": "ApiTargetRequest",
+        "type": "object"
+      },
       "ApiUpdateRequest": {
         "additionalProperties": false,
         "description": "Partial update payload for an API's presentation fields.",
@@ -1821,6 +1919,141 @@
         "title": "BasicAuthUpdateRequest",
         "type": "object"
       },
+      "BasicConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Confirm a ``manual_basic`` session with the username and password to store.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "basic",
+            "title": "Kind",
+            "type": "string"
+          },
+          "password": {
+            "format": "password",
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true,
+            "x-sensitive": true
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          },
+          "username": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "username",
+          "password"
+        ],
+        "title": "BasicConfirmSessionRequest",
+        "type": "object"
+      },
+      "BearerConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Confirm a ``manual_bearer`` session with the bearer token to store.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "bearer",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          },
+          "token": {
+            "format": "password",
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string",
+            "writeOnly": true,
+            "x-sensitive": true
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "token"
+        ],
+        "title": "BearerConfirmSessionRequest",
+        "type": "object"
+      },
       "BearerTokenCreateRequest": {
         "description": "Create request for bearer_token credentials.",
         "properties": {
@@ -2332,42 +2565,6 @@
           "token"
         ],
         "title": "ClaimRequest",
-        "type": "object"
-      },
-      "ConfirmSessionRequest": {
-        "properties": {
-          "agent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Id"
-          },
-          "confirmed_scopes": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Confirmed Scopes",
-            "type": "array"
-          },
-          "permission_rules": {
-            "items": {
-              "$ref": "#/components/schemas/PermissionRuleSchema"
-            },
-            "maxItems": 100,
-            "title": "Permission Rules",
-            "type": "array"
-          }
-        },
-        "required": [
-          "confirmed_scopes"
-        ],
-        "title": "ConfirmSessionRequest",
         "type": "object"
       },
       "ConnectRequestBody": {
@@ -3912,6 +4109,67 @@
         "title": "ExecutionStatsResponse",
         "type": "object"
       },
+      "ExistingCredentialConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Bind a credential the approver already holds (OAuth only if its grant covers the ask).",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "credential_id": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "existing_credential",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "credential_id"
+        ],
+        "title": "ExistingCredentialConfirmSessionRequest",
+        "type": "object"
+      },
       "GovernedHostsResponse": {
         "description": "The caller's governed host set (canonical order) with its change digest.\n\n**Hosts only, deliberately**: the set exists for interception scoping\n(divert lists, host filters), so it carries the minimum knowledge — API\ndetail stays behind the existing authenticated reads (``GET /apis``).\n\nDeliberately **unpaginated**: the set is bounded by the caller's own\ncredential bindings (tens of hosts, not thousands) and the digest must\ncover the whole set atomically — a paginated digest would be meaningless.\nThis is a documented deviation from the list-endpoint pagination\nconvention.",
         "properties": {
@@ -4057,6 +4315,30 @@
             ],
             "title": "Agent Id"
           },
+          "api": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTargetRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Registry API to connect a credential for. Exactly one of vendor or api."
+          },
+          "auth_type": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Declared scheme name or kind to use for an api target",
+            "title": "Auth Type"
+          },
           "name": {
             "anyOf": [
               {
@@ -4121,14 +4403,18 @@
             "type": "array"
           },
           "vendor": {
-            "description": "Vendor registry key (e.g. 'github')",
-            "title": "Vendor",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vendor registry key (e.g. 'github'). Exactly one of vendor or api.",
+            "title": "Vendor"
           }
         },
-        "required": [
-          "vendor"
-        ],
         "title": "IntegrationsConnectRequest",
         "type": "object"
       },
@@ -6267,6 +6553,72 @@
         "title": "OAuthClientUpdateRequest",
         "type": "object"
       },
+      "OAuthConfirmSessionRequest": {
+        "description": "Confirm an OAuth session: the scopes to request and the agent's rules.\n\nThe default variant — a body without ``kind`` is this one.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "confirmed_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Confirmed Scopes",
+            "type": "array"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "oauth",
+            "default": "oauth",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "confirmed_scopes"
+        ],
+        "title": "OAuthConfirmSessionRequest",
+        "type": "object"
+      },
       "OAuthGrantAdminListResponse": {
         "description": "A paginated list of OAuth grants (admin cross-view).",
         "properties": {
@@ -7197,6 +7549,99 @@
         "title": "OverlayUpdateRequest",
         "type": "object"
       },
+      "OwnOAuthClientConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Resolve an ``awaiting_app`` session with the approver's own OAuth client.\n\nThe client is stored on the session's credential (the same shape as a\n``direct_oauth2`` credential) and the session continues as an\nauthorization-code connect. Both endpoints are required: the API's\ndeclared OAuth endpoints are never used for the approver's client, since\nthe spec may be agent-submitted and the token endpoint receives the\nclient secret.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "authorize_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Authorize Url",
+            "type": "string"
+          },
+          "client_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_secret": {
+            "format": "password",
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Client Secret",
+            "type": "string",
+            "writeOnly": true,
+            "x-sensitive": true
+          },
+          "confirmed_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Confirmed Scopes",
+            "type": "array"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "own_oauth_client",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          },
+          "token_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Token Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "client_id",
+          "client_secret",
+          "authorize_url",
+          "token_url"
+        ],
+        "title": "OwnOAuthClientConfirmSessionRequest",
+        "type": "object"
+      },
       "PermissionListResponse": {
         "description": "List of available permissions.",
         "properties": {
@@ -8057,6 +8502,67 @@
           "providers"
         ],
         "title": "ProviderDiscoveryResponse",
+        "type": "object"
+      },
+      "ReauthorizeConfirmSessionRequest": {
+        "additionalProperties": false,
+        "description": "Bind the approver's OAuth credential and re-consent it with the requested scopes.\n\nRefused when another agent is bound to the credential.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "credential_id": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Digest",
+            "type": "string"
+          },
+          "expected_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Agent Id"
+          },
+          "kind": {
+            "const": "reauthorize",
+            "title": "Kind",
+            "type": "string"
+          },
+          "permission_rules": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionRuleSchema"
+            },
+            "maxItems": 100,
+            "title": "Permission Rules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "permission_rules",
+          "digest",
+          "kind",
+          "credential_id"
+        ],
+        "title": "ReauthorizeConfirmSessionRequest",
         "type": "object"
       },
       "RedeemInviteRequest": {
@@ -23002,7 +23508,7 @@
     },
     "/connect-sessions/{session_id}:confirm": {
       "post": {
-        "description": "Called by the review page after the human confirms selections.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
+        "description": "Called by the review page after the human confirms selections.\n\nThe body's ``kind`` picks the variant (no ``kind`` is the OAuth\nvariant): OAuth scopes, a secret for a ``manual_*`` session\n(``api_key`` / ``bearer`` / ``basic``), the approver's own OAuth client\nfor an ``awaiting_app`` session, or a credential the approver already\nholds (``existing_credential``, ``reauthorize``). Secrets are write-only:\nthey never appear in a response, audit entry or log.\n\nShares the ``:connect`` per-actor rate bucket — this is the endpoint\nthat actually fires the vendor's device-authorization call, and a\nfailed ``begin`` leaves the session retryable, so it must not be\nfree to hammer during a vendor incident. Gated like the review read\n(``poll_token`` or owner / ``org:admin``; 403 otherwise).",
         "operationId": "confirmConnectSession",
         "parameters": [
           {
@@ -23037,7 +23543,30 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ConfirmSessionRequest"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OAuthConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ApiKeyConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BearerConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BasicConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OwnOAuthClientConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExistingCredentialConfirmSessionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReauthorizeConfirmSessionRequest"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -23135,7 +23664,7 @@
                 }
               }
             },
-            "description": "Session not awaiting confirmation, or its OAuth app changed"
+            "description": "Session not awaiting confirmation, its OAuth app, scheme or hosts changed, or the review is stale"
           },
           "422": {
             "content": {
@@ -23200,7 +23729,146 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Confirm scopes + permissions and kick off the vendor flow",
+        "summary": "Confirm a connect session",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
+    "/connect-sessions/{session_id}:reject": {
+      "post": {
+        "description": "End the session as rejected — the approve dialog's explicit Reject.\n\nOnly the target agent's owner (holding ``credentials:write`` and\n``agents:write``) or ``org:admin``; there is no poll-token path and an\nagent can never reject. Everyone else gets the uniform 403. The agent's\n``/status`` then reports ``failed`` with ``error_code: rejected``, and\nits repeat ``:connect`` for the same target answers 429\n``recently_rejected`` for the rejection cooldown. Closing the dialog\nwithout rejecting makes no call; an unmount cancel stays ``cancelled``.",
+        "operationId": "rejectConnectSession",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Reject an agent's connect request",
         "tags": [
           "Integrations"
         ]
@@ -27662,6 +28330,40 @@
             },
             "description": "Forbidden"
           },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unknown vendor or API, or API targets are not enabled"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The API declares no supported scheme, or its hosts cannot be pinned"
+          },
           "422": {
             "content": {
               "application/problem+json": {
@@ -27684,6 +28386,23 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Too many requests; retry after the indicated delay.",
+                  "instance": "/example/path",
+                  "status": 429,
+                  "title": "Too Many Requests",
+                  "type": "rate_limit_exceeded"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Rate limit, open-session cap, or a recent rejection"
           },
           "500": {
             "content": {
@@ -30411,7 +31130,7 @@
         ]
       },
       "post": {
-        "description": "Register a shared OAuth application that users on this instance can SSO through.\n\nThe client secret is stored encrypted and never returned by any read\nendpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.",
+        "description": "Register a shared OAuth application that users on this instance can SSO through.\n\nThe client secret is stored encrypted and never returned by any read\nendpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.\nConnect sessions waiting for an OAuth app for the registration's API\nmove on to it right away.",
         "operationId": "createOauthAppRegistration",
         "requestBody": {
           "content": {
