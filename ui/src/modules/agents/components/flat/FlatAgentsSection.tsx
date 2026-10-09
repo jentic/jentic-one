@@ -28,7 +28,7 @@ import {
 	STATUS_ICON,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { useEagerCursorDrain, useHotkey } from '@/shared/hooks';
+import { useEagerCursorDrain, useHotkey, useIsRenderedPathCurrent } from '@/shared/hooks';
 import {
 	useAllApis,
 	useAllCredentials,
@@ -246,9 +246,14 @@ export function FlatAgentsSection({
 		agentParam == null && fleetShown && landing.handoffAgentId == null
 			? (selected?.id ?? null)
 			: null;
+	// Not once a navigation away is under way: this page stays mounted until the
+	// destination renders, and a write-back then would replace that navigation
+	// with this page's own URL.
+	const isRenderedPathCurrent = useIsRenderedPathCurrent();
 	useEffect(() => {
-		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
-	}, [fallbackId, selectAgent]);
+		if (fallbackId != null && isRenderedPathCurrent())
+			selectAgent(fallbackId, { replace: true });
+	}, [fallbackId, selectAgent, isRenderedPathCurrent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
 	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */

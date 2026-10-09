@@ -4,6 +4,7 @@ export { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 export { useHotkey } from '@/shared/hooks/useHotkey';
 export { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 export { useConsumedFlagParam } from '@/shared/hooks/useConsumedFlagParam';
+export { useIsRenderedPathCurrent } from '@/shared/hooks/useIsRenderedPathCurrent';
 export { usePendingAgentsCount, pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
 export {
 	useActorDirectory,
