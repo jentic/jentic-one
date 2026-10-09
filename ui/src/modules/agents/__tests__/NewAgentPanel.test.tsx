@@ -291,7 +291,8 @@ describe('Agents page — the New agent panel over a fleet', () => {
 		await register(queryClient, 'my-agent');
 		const card = await arrival();
 		expect(within(card).getByRole('heading', { name: 'my-agent' })).toBeInTheDocument();
-		expect(card).toHaveTextContent(/Registered just now/);
+		// Fresh: "just now", or a second or two on a slow runner.
+		expect(card).toHaveTextContent(/Registered (just now|\ds ago)/);
 		// Nor are the older ones counted as waiting beside it.
 		expect(within(card).queryByTestId('more-pending')).toBeNull();
 		expect(within(card).queryByTestId('arrival-warnings')).toBeNull();

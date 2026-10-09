@@ -300,8 +300,14 @@ describe('ApiRow reveal', () => {
 		expect(await screen.findByTestId('api-row-reveal')).toBeInTheDocument();
 		expect(row()).toHaveAttribute('data-revealed', 'true');
 
+		// Past the layout settle, so the leave is taken at its word rather than
+		// checked against the real pointer's `:hover` (wherever the runner's
+		// mouse happens to rest).
+		await new Promise((r) => setTimeout(r, HOVER_INTENT.layoutSettleMs + 50));
 		fireEvent.pointerLeave(row(), { pointerType: 'mouse' });
-		await waitFor(() => expect(screen.queryByTestId('api-row-reveal')).toBeNull());
+		await waitFor(() => expect(screen.queryByTestId('api-row-reveal')).toBeNull(), {
+			timeout: 3000,
+		});
 	});
 
 	it('a pointer passing over does not grow the row', async () => {

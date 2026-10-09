@@ -1934,7 +1934,9 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() =>
 			expect(stripTab('identity-only')).toHaveAttribute('aria-selected', 'true'),
 		);
-		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeEnabled();
+		// The card swaps to the new agent a beat after its tab lands
+		// (`CARD_HANDOFF_MS`); until then the previous agent's button is shown.
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add APIs' })).toBeEnabled());
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument();
 	});
 });
