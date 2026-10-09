@@ -14,6 +14,7 @@ package api
 // string, which is how the human's browser drives the approve page.)
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,12 +29,15 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// requestConnectionParams: vendor is the registry key; scopes/reason are the
-// optional request shaping the approver reviews.
+// requestConnectionParams: vendor is the registry key; scopes/reason/rules
+// are the optional request shaping the approver reviews;
+// oauth_app_registration_id pins the shared OAuth app the user picked.
 var requestConnectionParams = []paramSpec{
 	{name: "vendor", kind: paramString},
 	{name: "requested_scopes", aliases: []string{"scopes"}, kind: paramStringList},
 	{name: "reason", kind: paramString},
+	{name: "oauth_app_registration_id", aliases: []string{"registration_id"}, kind: paramString},
+	{name: "requested_permission_rules", aliases: []string{"permission_rules"}, kind: paramJSON},
 }
 
 var requestConnectionSchema = map[string]any{
@@ -51,6 +55,25 @@ var requestConnectionSchema = map[string]any{
 		"reason": map[string]any{
 			"type":        "string",
 			"description": "Why you need this connection (optional, max 1024 chars). Shown to the approver — a clear one-liner gets you approved faster.",
+		},
+		"oauth_app_registration_id": map[string]any{
+			"type":        "string",
+			"description": "registration_id of the shared OAuth app to connect through (optional; \"registration_id\" is an accepted alias). Only needed when several shared apps serve the vendor: the error then lists them, and your human user picks one — never choose it yourself.",
+		},
+		"requested_permission_rules": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"effect":     map[string]any{"type": "string", "enum": []string{"allow", "deny"}},
+					"methods":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"path":       map[string]any{"type": "string"},
+					"match_mode": map[string]any{"type": "string", "enum": []string{"regex", "prefix", "exact"}},
+					"operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+				"required": []string{"effect"},
+			},
+			"description": "Permission rules you are asking for on the new binding (optional, max 100; \"permission_rules\" is an accepted alias), e.g. [{\"effect\": \"allow\", \"methods\": [\"GET\"], \"path\": \"/repos/.*\"}]. The approver reviews and edits them before anything is granted; an allow rule must constrain methods, path, or operations.",
 		},
 	},
 	"required": []string{"vendor"},
@@ -85,6 +108,37 @@ const connectScopesMax = 100
 // bounds it the same way).
 const connectReasonMax = 1024
 
+// connectRegistrationMax mirrors the route's oauth_app_registration_id bound
+// (IntegrationsConnectRequest.oauth_app_registration_id — max_length=30).
+const connectRegistrationMax = 30
+
+// connectRulesMax mirrors the route's requested_permission_rules bound
+// (IntegrationsConnectRequest.requested_permission_rules — max_length=100).
+const connectRulesMax = 100
+
+// decodeConnectRules decodes the requested_permission_rules argument into the
+// generated rule type, refusing unknown keys and a missing/unknown effect so
+// a malformed ask is an invalid-params error here rather than a route 422.
+// Path-pattern validity and the condition-less-allow guard stay server-side.
+func decodeConnectRules(raw json.RawMessage) ([]control.PermissionRuleSchema, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var rules []control.PermissionRuleSchema
+	if err := dec.Decode(&rules); err != nil {
+		return nil, fmt.Errorf("requested_permission_rules must be a list of rule objects "+
+			"({effect, methods, path, match_mode, operations}): %w", err)
+	}
+	if len(rules) > connectRulesMax {
+		return nil, fmt.Errorf("requested_permission_rules must list at most %d rules, got %d", connectRulesMax, len(rules))
+	}
+	for i, r := range rules {
+		if r.Effect != "allow" && r.Effect != "deny" {
+			return nil, fmt.Errorf("requested_permission_rules[%d].effect must be \"allow\" or \"deny\", got %q", i, r.Effect)
+		}
+	}
+	return rules, nil
+}
+
 func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	s.noteClient(req.ClientInfo())
 	cctx, cancel := s.callContext(ctx)
@@ -106,6 +160,16 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	if len(scopes) > connectScopesMax {
 		return nil, invalidParams(fmt.Errorf("requested_scopes must list at most %d scopes, got %d", connectScopesMax, len(scopes)))
 	}
+	registration, _ := args["oauth_app_registration_id"].(string)
+	if len(registration) > connectRegistrationMax {
+		return nil, invalidParams(fmt.Errorf("oauth_app_registration_id must be at most %d characters, got %d", connectRegistrationMax, len(registration)))
+	}
+	var rules []control.PermissionRuleSchema
+	if raw, ok := args["requested_permission_rules"].(json.RawMessage); ok {
+		if rules, err = decodeConnectRules(raw); err != nil {
+			return nil, invalidParams(err)
+		}
+	}
 	client, err := s.app.controlClient(cctx)
 	if err != nil {
 		s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
@@ -118,11 +182,17 @@ func (s *mcpServer) handleRequestConnection(ctx context.Context, req *mcp.CallTo
 	if reason != "" {
 		body.Reason = &reason
 	}
+	if registration != "" {
+		body.OauthAppRegistrationId = &registration
+	}
+	if len(rules) > 0 {
+		body.RequestedPermissionRules = &rules
+	}
 	// Never set body.AgentId: the caller IS the agent — the control plane
 	// injects the caller's identity, and a supplied agent_id is refused (403).
 	resp, callErr := client.IntegrationsConnectWithResponse(cctx, body)
 	if err := apiErrorFor(resp, callErr); err != nil {
-		return s.requestConnectionError(cctx, vendor, err, connectRetryAfter(resp)), nil
+		return s.requestConnectionError(cctx, client, vendor, err, connectRetryAfter(resp)), nil
 	}
 	var created connectResponse
 	if err := json.Unmarshal(resp.Body, &created); err != nil {
@@ -161,7 +231,14 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 //   - 404 (unknown vendor) / 400 (unsupported flow) — a correctable ask:
 //     RESOLVE_FAILED with the rediscovery/operator step.
 //   - 400 ambiguous_vendor — several shared OAuth apps serve the vendor and
-//     the tool can't pin one: RESOLVE_FAILED routed to the operator.
+//     the call carried no pin: RESOLVE_FAILED listing the apps
+//     (details.candidates) with "ask your user, then retry with the id";
+//     next_tool is request_connection.
+//   - 400 invalid_oauth_app_registration — the pin is unusable for the
+//     vendor: RESOLVE_FAILED, retry without it to see the candidates.
+//   - 422 — the route rejected the request shape (in practice a permission
+//     rule the client-side decode can't judge, e.g. an invalid path regex):
+//     RESOLVE_FAILED with the route's reason.
 //   - 403 — the missing credentials:connect permission (agents hold it by
 //     default): a permission gap for the operator, not a revoked identity —
 //     mirrors the search_catalog/import_api special case.
@@ -169,18 +246,31 @@ func connectRetryAfter(resp *control.IntegrationsConnectHTTPResp) float64 {
 //     carrying the route's Retry-After as retry_after_s (Python-mount twin).
 //   - 503 (vendor not configured) — the vendor is registered but its OAuth
 //     client is not configured on this deployment: operator action.
-func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, err error, retryAfterS float64) *mcp.CallToolResult {
+func (s *mcpServer) requestConnectionError(
+	ctx context.Context, client *control.ClientWithResponses, vendor string, err error, retryAfterS float64,
+) *mcp.CallToolResult {
 	s.logger.Warn("request_connection failed", "vendor", vendor, "error", redactedErr(err))
 	var he *HTTPError
 	if errors.As(err, &he) {
 		if isAmbiguousVendor(he) {
-			return s.softError(ctx, &ux.CodedError{
-				Code:       ux.CodeResolveFailed,
-				Msg:        fmt.Sprintf("cannot start a connect session for vendor %q: %v", vendor, err),
-				Actionable: ambiguousVendorActionable,
-			})
+			candidates := listVendorAppCandidates(ctx, client, vendor, he)
+			return s.softErrorNext(ctx, ambiguousVendorCoded(vendor, err, candidates,
+				requestConnectionRegistrationRetry), "request_connection")
+		}
+		if isInvalidRegistration(he) {
+			return s.softErrorNext(ctx, invalidRegistrationCoded(vendor, err,
+				"call request_connection again without oauth_app_registration_id to see the shared apps that serve it"),
+				"request_connection")
 		}
 		switch he.StatusCode {
+		case http.StatusUnprocessableEntity:
+			return s.softError(ctx, &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  fmt.Sprintf("the connect request for vendor %q was rejected: %v", vendor, err),
+				Actionable: "Fix the argument the error names (usually a requested_permission_rules entry: " +
+					"a valid path pattern, and an allow rule must constrain methods, path, or operations), " +
+					"then retry request_connection.",
+			})
 		case http.StatusBadRequest, http.StatusNotFound:
 			return s.softErrorNext(ctx, &ux.CodedError{
 				Code: ux.CodeResolveFailed,
@@ -220,6 +310,11 @@ func (s *mcpServer) requestConnectionError(ctx context.Context, vendor string, e
 	return s.transportSoftError(ctx, err, nil)
 }
 
+// requestConnectionRegistrationRetry is the MCP lanes' retry form in the
+// ambiguous_vendor advice (the Python mount renders the same text).
+const requestConnectionRegistrationRetry = "call request_connection again with " +
+	"oauth_app_registration_id set to the registration_id they pick"
+
 // connectToolSpecs declares the connect tool surface. No readOnlyHint (the
 // tool creates a session + pending credential row — --read-only withholds
 // it), no idempotentHint (every call files a fresh session), and no
@@ -238,7 +333,10 @@ func (s *mcpServer) connectToolSpecs() []mcpToolSpec {
 					"cannot open the URL or approve it yourself. Once they confirm, call whoami to see the " +
 					"new credential binding, then retry the blocked call. This tool only STARTS the flow " +
 					"and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes " +
-					"are flagged for the approver) and a reason the approver will see. Only vendors in the " +
+					"are flagged for the approver), requested_permission_rules (the binding rules you need; " +
+					"the approver reviews them) and a reason the approver will see. If several shared OAuth " +
+					"apps serve the vendor, the error lists them: ask your human user which one to use " +
+					"(choosing it is their call, not yours) and retry with its oauth_app_registration_id. Only vendors in the " +
 					"deployment's connect registry work; for any other API, ask your operator to connect a " +
 					"credential in the dashboard. Binding an EXISTING credential and scope grants stay " +
 					"operator actions.",

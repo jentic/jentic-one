@@ -84,20 +84,21 @@ func CuratedBindings() []CuratedBinding {
 		{
 			// connect: start a connect session for a registry vendor (theme-7
 			// Phase 1b). The vendor key is the positional argument;
-			// --scopes/--reason shape the ask the human approver reviews.
+			// --scopes/--reason shape the ask the human approver reviews;
+			// --registration pins the shared OAuth app the user picked.
 			Command: "connect",
 			Params:  control.IntegrationsConnectRequest{},
 			Bind: map[string]string{
-				"vendor":           PositionalArg,
-				"requested_scopes": "scopes",
-				"reason":           "reason",
+				"vendor":                    PositionalArg,
+				"requested_scopes":          "scopes",
+				"reason":                    "reason",
+				"oauth_app_registration_id": "registration",
 			},
 			NotExposed: map[string]string{
 				"agent_id":                   "never sent: an agent caller IS the agent (identity injected server-side; an override is refused 403); connecting FOR an agent is a dashboard action",
 				"preferred_flow":             "the deployment's registry default flow is the right answer on this surface; flow selection is reachable via `jentic api IntegrationsConnect`",
 				"requested_permission_rules": "a nested rule list has no sane flag shape; the approver sets rules on the approve page, and a pre-filled ask is reachable via `jentic api IntegrationsConnect`",
 				"name":                       "credential label is a UI affordance for distinguishing multiple credentials on the credentials page; the CLI creates one credential per connect and the server defaults the label to the vendor display name; the raw field is still reachable via `jentic api IntegrationsConnect`",
-				"oauth_app_registration_id":  "shared-app pinning is a dashboard picker affordance; unpinned, the server uses the platform vendor entry or the vendor's only active shared app (and refuses to guess between several), and the raw field is still reachable via `jentic api IntegrationsConnect`",
 			},
 		},
 		{
