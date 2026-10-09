@@ -303,9 +303,17 @@ function accessFromRules(rules: readonly PermissionRuleReadSchema[]): 'blocked' 
 	return rules.some((r) => !r._system && String(r.effect) === 'allow') ? 'open' : 'blocked';
 }
 
-/** Mirrors `agentsKeys.ruleSet` — the agent rules editor reads the same slice. */
+/**
+ * Under `agentsKeys.ruleSet(id)`, never AT it: that slice holds the agents
+ * module's mapped `BindingRuleSetEntity`, while this read caches the wire
+ * `RuleSetResponse`. One key holding two shapes would hand whichever surface
+ * reads second the other's object (an `undefined` binding count, a missing
+ * `id`). Nesting one level down keeps the prefix, so the agents module's
+ * `ruleSetRoot()` / `ruleSet(id)` invalidations still reach this read and a
+ * save in the rule-set panel still shows here.
+ */
 function ruleSetKey(ruleSetId: string) {
-	return [...sharedQueryKeys.agentsRoot, 'rule-set', ruleSetId] as const;
+	return [...sharedQueryKeys.agentsRoot, 'rule-set', ruleSetId, 'access'] as const;
 }
 
 /** One binding, as the access read needs it. */

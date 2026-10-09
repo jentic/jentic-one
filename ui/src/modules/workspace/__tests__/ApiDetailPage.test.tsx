@@ -22,6 +22,7 @@ import {
 	seedCredentialBindings,
 	seedPermissionRuleSets,
 } from '@/modules/agents/mocks/handlers';
+import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 
 const PATH = '/library/workspace/:vendor/:name/:version';
 
@@ -685,6 +686,22 @@ describe('ApiDetailPage', () => {
 					expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull(),
 				);
 				expect(within(agent).queryByTestId('hub-access-agent-blocked')).toBeNull();
+			});
+
+			it("caches the set beside, not inside, the agents module's rule-set slice", async () => {
+				// The agents module stores its MAPPED rule-set entity at
+				// `agentsKeys.ruleSet(id)`; this read fetches the wire response. If the
+				// two shared one key, opening the Agents page after this hub would read
+				// a wire object as the entity.
+				const { queryClient } = renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+				const access = await screen.findByTestId('hub-access');
+				const agent = await within(access).findByRole('link', { name: /support-agent/ });
+				await waitFor(() =>
+					expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull(),
+				);
+				expect(
+					queryClient.getQueryData(agentsKeysForTest.ruleSet(RULE_SET)),
+				).toBeUndefined();
 			});
 
 			it('still reads Blocked when the governing set itself allows nothing', async () => {
