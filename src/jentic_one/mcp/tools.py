@@ -36,6 +36,7 @@ import mcp.types as mcp_types
 import structlog
 from jentic.problem_details import Forbidden, Unauthorized
 from mcp.shared.exceptions import MCPError
+from pydantic import ValidationError
 
 from jentic_one.admin.services.errors import JobNotFoundError
 from jentic_one.admin.services.job_result_service import JobResultService
@@ -47,14 +48,19 @@ from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
 )
-from jentic_one.control.services.integrations.errors import NoOpForFlowError
+from jentic_one.control.services.integrations.errors import (
+    InvalidOAuthAppRegistrationError,
+    NoOpForFlowError,
+)
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
     UnknownVendorError,
     UnsupportedFlowError,
     VendorNotConfiguredError,
+    VendorRegistryService,
 )
 from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
+from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
 from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
@@ -89,6 +95,7 @@ from jentic_one.registry.services.search_service import SearchService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
+from jentic_one.shared.catalog.protocols import CatalogAutoImportProtocol
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
@@ -114,6 +121,10 @@ class CallEnv:
     base_url: str
     #: sanitized ``X-Jentic-Session-Id`` when the inbound request carried one.
     session_id: str | None
+    #: the process-level catalog auto-importer the HTTP connect route threads
+    #: into ``ConnectSessionService`` (``app.state.catalog_auto_importer``);
+    #: ``None`` when this process does not serve the registry.
+    catalog_auto_importer: CatalogAutoImportProtocol | None = None
 
 
 Handler = Callable[[CallEnv, dict[str, Any]], Awaitable[mcp_types.CallToolResult]]
@@ -1188,6 +1199,8 @@ _REQUEST_CONNECTION_PARAMS = [
     ParamSpec("vendor", "string"),
     ParamSpec("requested_scopes", "string_list", ("scopes",)),
     ParamSpec("reason", "string"),
+    ParamSpec("oauth_app_registration_id", "string", ("registration_id",)),
+    ParamSpec("requested_permission_rules", "json", ("permission_rules",)),
 ]
 
 #: The operator-relay guidance stamped on every successful result (Go:
@@ -1209,6 +1222,102 @@ _REQUEST_CONNECTION_REASON_MAX = 1024
 #: Upper bound on ``requested_scopes`` — the Go mount's ``connectScopesMax``
 #: twin, so neither mount forwards an unbounded list to the vendor authorize URL.
 _REQUEST_CONNECTION_SCOPES_MAX = 100
+
+#: The route's ``oauth_app_registration_id`` bound (``max_length=30``) — the
+#: Go mount's ``connectRegistrationMax`` twin.
+_REQUEST_CONNECTION_REGISTRATION_MAX = 30
+
+#: The route's ``requested_permission_rules`` bound (``max_length=100``) — the
+#: Go mount's ``connectRulesMax`` twin.
+_REQUEST_CONNECTION_RULES_MAX = 100
+
+#: The MCP lanes' retry form in the ambiguous-vendor advice (Go:
+#: ``requestConnectionRegistrationRetry``).
+_REQUEST_CONNECTION_REGISTRATION_RETRY = (
+    "call request_connection again with oauth_app_registration_id set to the "
+    "registration_id they pick"
+)
+
+
+def _ambiguous_vendor_actionable(vendor: str, *, listed: bool) -> str:
+    """The ask-your-user advice (Go: ``ambiguousVendorActionable``, same text).
+
+    Choosing which shared OAuth app mints the credential is the user's policy
+    decision, so the agent asks and retries with the id — it never picks.
+    """
+    which = "ask your human user which app to use and for its registration_id"
+    if listed:
+        which = (
+            "show your human user the apps in details.candidates (name and "
+            "registration_id) and ask which one to use"
+        )
+    return (
+        f'Several shared OAuth apps serve vendor "{vendor}", and choosing one is your '
+        f"user's decision, not yours: {which}, then {_REQUEST_CONNECTION_REGISTRATION_RETRY}."
+    )
+
+
+async def _ambiguous_vendor_candidates(
+    env: CallEnv, registration_ids: list[str]
+) -> list[dict[str, str]]:
+    """The shared apps an ambiguous connect matched, as ``GET /vendors`` rows.
+
+    Same projection and gate as the Go mount's ``GET /vendors`` read
+    (``capabilities:read``), narrowed to the registrations the resolver
+    counted. Best effort: a failure yields ``[]`` and the advice still routes
+    the choice to the user.
+    """
+    try:
+        require_permissions(env.identity, ["capabilities:read"])
+    except ToolError:
+        return []
+    wanted = set(registration_ids)
+    try:
+        entries = await VendorRegistryService(env.ctx).list_entries()
+    except Exception:
+        logger.warning("mcp_request_connection_candidates_failed", exc_info=True)
+        return []
+    return [
+        {
+            "registration_id": e.registration_id,
+            "name": e.name,
+            "display_name": e.display_name,
+        }
+        for e in entries
+        if e.registration_id is not None and e.registration_id in wanted
+    ]
+
+
+def _requested_permission_rules(raw: Any) -> list[dict[str, object]] | None:
+    """Validate the rule ask with the route's schema (``PermissionRuleSchema``).
+
+    The in-process call skips the route's pydantic validation, so the same
+    model runs here; a malformed ask is an invalid-params error. Returns the
+    route's wire shape (``model_dump(exclude_none=True)``), or ``None`` when
+    no rules were passed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise invalid_params(
+            "requested_permission_rules must be a list of rule objects "
+            "({effect, methods, path, match_mode, operations})"
+        )
+    if len(raw) > _REQUEST_CONNECTION_RULES_MAX:
+        raise invalid_params(
+            f"requested_permission_rules must list at most {_REQUEST_CONNECTION_RULES_MAX} "
+            f"rules, got {len(raw)}"
+        )
+    rules: list[dict[str, object]] = []
+    for idx, item in enumerate(raw):
+        try:
+            rule = PermissionRuleSchema.model_validate(item)
+        except ValidationError as exc:
+            reasons = "; ".join(str(e.get("msg", "")) for e in exc.errors())
+            raise invalid_params(f"requested_permission_rules[{idx}]: {reasons}") from None
+        rules.append(rule.model_dump(exclude_none=True))
+    return rules or None
+
 
 #: Per-actor rate-limit twin of the route's: the mount calls the
 #: connect-session service in-process, bypassing the route's app-state
@@ -1236,7 +1345,9 @@ async def handle_request_connection(
     approval_url → operator approves → confirm via whoami → retry); it still
     rides the approval_url's query string, which the approving human needs. ``agent_id``
     is never taken from arguments: the caller *is* the agent (the route
-    refuses a supplied agent_id with 403 for the same reason).
+    refuses a supplied agent_id with 403 for the same reason). Like the route,
+    it forwards ``oauth_app_registration_id``, the validated
+    ``requested_permission_rules`` and the process's catalog auto-importer.
     """
     args = normalize_tool_args(arguments, _REQUEST_CONNECTION_PARAMS)
     vendor = args.get("vendor", "")
@@ -1256,6 +1367,13 @@ async def handle_request_connection(
             f"requested_scopes must list at most {_REQUEST_CONNECTION_SCOPES_MAX} scopes, "
             f"got {len(requested_scopes)}"
         )
+    registration_id = args.get("oauth_app_registration_id") or None
+    if registration_id is not None and len(registration_id) > _REQUEST_CONNECTION_REGISTRATION_MAX:
+        raise invalid_params(
+            "oauth_app_registration_id must be at most "
+            f"{_REQUEST_CONNECTION_REGISTRATION_MAX} characters, got {len(registration_id)}"
+        )
+    requested_rules = _requested_permission_rules(args.get("requested_permission_rules"))
     try:
         # The route's any-of gate (credentials:connect | credentials:write);
         # agents hold credentials:connect by default.
@@ -1286,13 +1404,17 @@ async def handle_request_connection(
     # unbound credential (the tool surface carries no agent_id).
     agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
     try:
-        created = await ConnectSessionService(env.ctx).create_session(
+        created = await ConnectSessionService(
+            env.ctx, catalog_auto_importer=env.catalog_auto_importer
+        ).create_session(
             vendor_key=vendor,
             agent_id=agent_id,
             initiator_actor_id=env.identity.sub,
             requested_scopes=requested_scopes,
+            requested_permission_rules=requested_rules,
             preferred_flow=None,
             reason=reason or None,
+            oauth_app_registration_id=registration_id,
         )
     except UnknownVendorError as exc:
         raise ToolError(
@@ -1305,16 +1427,25 @@ async def handle_request_connection(
             next_tool="search_catalog",
         ) from None
     except AmbiguousVendorError as exc:
-        # Several admin-registered OAuth apps serve this vendor and the tool
-        # carries no registration pin — only the human can pick one.
+        # Several admin-registered OAuth apps serve this vendor and the call
+        # carried no pin: list them so the agent can ask its user, then retry
+        # with the picked id (Go mount: the 400 ambiguous_vendor arm).
+        candidates = await _ambiguous_vendor_candidates(env, exc.registration_ids)
         raise ToolError(
             CODE_RESOLVE_FAILED,
             f"cannot start a connect session for vendor {vendor!r}: {exc}",
-            actionable="Several shared OAuth apps are registered for this vendor, so "
-            "this tool cannot pick one: ask your human operator to connect a credential "
-            "for it in the dashboard instead.",
-            # Same recovery shape as the Go mount's 400 arm.
-            next_tool="search_catalog",
+            actionable=_ambiguous_vendor_actionable(vendor, listed=bool(candidates)),
+            details={"candidates": candidates} if candidates else None,
+            next_tool="request_connection",
+        ) from None
+    except InvalidOAuthAppRegistrationError as exc:
+        raise ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            actionable="The registration_id does not name an active shared OAuth app for "
+            f'"{vendor}". Check the id with your human user, or call request_connection '
+            "again without oauth_app_registration_id to see the shared apps that serve it.",
+            next_tool="request_connection",
         ) from None
     except (UnsupportedFlowError, NoOpForFlowError) as exc:
         # Aligned with the Go mount's 400/404 arm (review L1): the route

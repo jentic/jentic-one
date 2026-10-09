@@ -339,6 +339,7 @@ def _call_env(ctx: Context, sctx: ServerRequestContext[Any, Any]) -> CallEnv:
         credential=credential,
         base_url=state.get("mcp_base_url", ""),
         session_id=state.get("mcp_session_id"),
+        catalog_auto_importer=state.get("mcp_catalog_auto_importer"),
     )
 
 
@@ -639,6 +640,11 @@ class McpMount:
         state["mcp_credential"] = credential
         state["mcp_base_url"] = deployment_base_url(self.ctx.config, request)
         state["mcp_session_id"] = valid_session_id_or_none(request.headers.get(SESSION_ID_HEADER))
+        # The connect route's seam (control/web/deps.py): request_connection
+        # threads the same process-level importer into ConnectSessionService.
+        state["mcp_catalog_auto_importer"] = getattr(
+            self.parent_app.state, "catalog_auto_importer", None
+        )
 
     async def _buffered_body(self, receive: Receive) -> bytes | None:
         """Read the full request body (``None`` when it exceeds the bound)."""
