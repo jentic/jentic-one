@@ -250,6 +250,9 @@ async def served(env: Context, restore_logging: None) -> AsyncGenerator[tuple[st
         update={"runtime": env.config.runtime.model_copy(update={"log_level": "INFO"})}
     )
     configure_logging(app_config)
+    # No first-use caching, so module loggers bound in this window do not keep
+    # the app's processors after ``restore_logging`` (later tests capture logs).
+    structlog.configure(cache_logger_on_first_use=False)
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(build_app(env, AGENT), host="127.0.0.1", port=port))
     access = logging.getLogger("uvicorn.access")
