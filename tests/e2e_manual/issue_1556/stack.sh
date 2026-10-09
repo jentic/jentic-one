@@ -163,7 +163,7 @@ down() {
   done
   # uv run spawns a python child; reap anything still bound to our ports.
   for port in "$APP_PORT" "$BROKER_PORT" "$UPSTREAM_PORT" "$FAKE_AS_PORT" $(seq 55620 55640); do
-    lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null | xargs -r kill 2>/dev/null || true
+    for pid in $(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null); do kill "$pid" 2>/dev/null || true; done
   done
 }
 
