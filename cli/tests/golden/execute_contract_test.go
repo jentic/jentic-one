@@ -115,6 +115,31 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			}
 		}`))
 	}
+	// The off-registry no_credential_binding 403 when the deployment takes API
+	// connect requests: the directive names the API itself as the connect
+	// target (suggested_command + the structured parameters.connect.api).
+	brokerDenial403ConnectAPI := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{
+			"type": "no_credential_binding",
+			"title": "No credential binding for this API",
+			"status": 403,
+			"error_origin": "broker",
+			"agent_directive": {
+				"strategy": "prompt_human",
+				"parameters": {
+					"api": {"vendor": "acme", "name": "pets", "version": "v1"},
+					"api_served": false,
+					"suggested_command": "jentic connect --api acme/pets/v1",
+					"connect": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}}
+				},
+				"human_readable_instruction": "No credential is provisioned for 'acme/pets' yet. Start the request yourself: run ` + "`jentic connect --api acme/pets/v1 --reason \\\"…\\\"`" + ` (or call the request_connection tool with api {\"vendor\": \"acme\", \"name\": \"pets\", \"version\": \"v1\"} and a reason), and relay the approval_url it returns to your operator — a human enters the credential in the browser, which can take a while, so end your turn and retry this call later. Only a human can approve."
+			}
+		}`))
+	}
 	// A broker denial with NO agent_directive (e.g. action_denied): exit 2 with
 	// the synthesized status-keyed recovery, never a dead end.
 	brokerDenial424NoDirective := func(w http.ResponseWriter, _ *http.Request) {
@@ -167,6 +192,11 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			name:   "execute_broker_denial_credential_binding_json",
 			target: "GET:/v1/pets",
 			broker: brokerDenial403CredentialBinding,
+		},
+		{
+			name:   "execute_broker_denial_connect_api_json",
+			target: "GET:/v1/pets",
+			broker: brokerDenial403ConnectAPI,
 		},
 		{
 			name:   "execute_broker_denial_no_directive_json",

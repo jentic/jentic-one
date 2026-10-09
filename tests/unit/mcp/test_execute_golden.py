@@ -225,6 +225,20 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
             "request_connection",
         ),
         (
+            403,
+            {
+                "type": "no_credential_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect --api acme/pets/v1`.",
+                    "parameters": {
+                        "suggested_command": "jentic connect --api acme/pets/v1",
+                        "connect": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}},
+                    },
+                },
+            },
+            "request_connection",
+        ),
+        (
             424,
             {
                 "type": "credential_not_provisioned",
