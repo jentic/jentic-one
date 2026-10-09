@@ -388,7 +388,7 @@
       "properties": {
         "manual_flows_enabled": {
           "default": false,
-          "description": "Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. Not usable in this release: leave it off. Once usable, turn it on only after every control replica runs a release that understands these sessions.",
+          "description": "Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. The dashboard cannot approve these sessions yet, so leave it off outside testing; turn it on only after every control replica runs a release that understands them.",
           "title": "Manual Flows Enabled",
           "type": "boolean"
         },
@@ -397,6 +397,27 @@
           "description": "Hours an API-target connect session (a human-entered credential, or an OAuth API waiting for an app) stays open before it expires. Vendor OAuth sessions keep their fixed 30-minute lifetime.",
           "minimum": 1,
           "title": "Manual Flows Ttl Hours",
+          "type": "integer"
+        },
+        "max_open_sessions_per_agent": {
+          "default": 10,
+          "description": "Most open connect sessions one agent may hold at once while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`.",
+          "minimum": 1,
+          "title": "Max Open Sessions Per Agent",
+          "type": "integer"
+        },
+        "max_open_sessions_per_owner": {
+          "default": 50,
+          "description": "Most open connect sessions across one user and the agents they own while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`.",
+          "minimum": 1,
+          "title": "Max Open Sessions Per Owner",
+          "type": "integer"
+        },
+        "rejection_cooldown_hours": {
+          "default": 24,
+          "description": "Hours after a human rejects an agent's connect request during which the agent's repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the cooldown off.",
+          "minimum": 0,
+          "title": "Rejection Cooldown Hours",
           "type": "integer"
         }
       },

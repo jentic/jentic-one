@@ -266,8 +266,11 @@ Control surface configuration. Unknown subkeys are ignored, so a `control:` sect
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
-| `control.connect.manual_flows_enabled` | boolean | `false` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED` | Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. Not usable in this release: leave it off. Once usable, turn it on only after every control replica runs a release that understands these sessions. |
+| `control.connect.manual_flows_enabled` | boolean | `false` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED` | Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential at approval. While off, `:connect` refuses API targets with `manual_flows_disabled`. The dashboard cannot approve these sessions yet, so leave it off outside testing; turn it on only after every control replica runs a release that understands them. |
 | `control.connect.manual_flows_ttl_hours` | integer (>= 1) | `72` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_TTL_HOURS` | Hours an API-target connect session (a human-entered credential, or an OAuth API waiting for an app) stays open before it expires. Vendor OAuth sessions keep their fixed 30-minute lifetime. |
+| `control.connect.max_open_sessions_per_agent` | integer (>= 1) | `10` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_AGENT` | Most open connect sessions one agent may hold at once while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
+| `control.connect.max_open_sessions_per_owner` | integer (>= 1) | `50` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_OWNER` | Most open connect sessions across one user and the agents they own while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
+| `control.connect.rejection_cooldown_hours` | integer (>= 0) | `24` | `JENTIC__CONTROL__CONNECT__REJECTION_COOLDOWN_HOURS` | Hours after a human rejects an agent's connect request during which the agent's repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the cooldown off. |
 
 ## `ingest`
 
