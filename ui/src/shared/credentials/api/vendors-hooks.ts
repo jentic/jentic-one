@@ -185,21 +185,29 @@ export function useStartIntegrationConnect() {
  * binding list and its rules on this credential, plus the credential's agent
  * roster — the slice the API hub's "Who can use it" and the Library's
  * workspace agent counts read (the prefix also sweeps its all-pages variant).
+ *
+ * Resolves once the on-screen ones have refetched. The mutations return it
+ * from `onSettled`, so they stay pending — and a caller's `onSuccess` (a
+ * dialog closing onto the card) waits — until those surfaces are current. A
+ * read that raced the run (the binding listed before its rules landed) would
+ * otherwise show its stale "Blocked" until the refetch lands.
  */
 function invalidateBindingSurfaces(
 	client: QueryClient,
 	credentialId: string,
 	agentIds: readonly string[],
-): void {
-	for (const aid of agentIds) {
-		void client.invalidateQueries({
-			queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
-		});
-		void client.invalidateQueries({
-			queryKey: bindingPermissionsKey(aid, credentialId),
-		});
-	}
-	void client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) });
+): Promise<unknown> {
+	return Promise.all([
+		...agentIds.flatMap((aid) => [
+			client.invalidateQueries({
+				queryKey: [...sharedQueryKeys.agentsRoot, 'credential-bindings', aid],
+			}),
+			client.invalidateQueries({
+				queryKey: bindingPermissionsKey(aid, credentialId),
+			}),
+		]),
+		client.invalidateQueries({ queryKey: credentialKeys.agents(credentialId) }),
+	]);
 }
 
 /** Mirrors `agentsKeys.bindingPermissions` — the agent rules editor reads the same slice. */

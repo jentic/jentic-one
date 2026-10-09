@@ -706,6 +706,38 @@ describe('ApiDetailPage', () => {
 				expect(within(agent).queryByTestId('hub-access-agent-blocked')).toBeNull();
 			});
 
+			it('closes onto a settled card, never a stale "Blocked", when the rules save is slow', async () => {
+				// The create refreshes the card while the bind runs, so it can read
+				// the binding (and its empty rules) before the rules land. The
+				// dialog must not close until that read has caught up.
+				const user = userEvent.setup();
+				resetCredentialsStore([]);
+				worker.use(
+					// No response: falls through to the store's handler, late.
+					http.put('*/credentials/:cid/agents/:aid/permissions', async () => {
+						await new Promise((r) => setTimeout(r, 300));
+					}),
+				);
+				renderAt(BIGCO);
+
+				await user.click(await screen.findByTestId('hub-access-give-agent-access'));
+				const dialog = await screen.findByRole('dialog', { name: 'Bind to an agent' });
+				await user.click(
+					await within(dialog).findByRole('checkbox', { name: 'support-agent' }),
+				);
+				await user.click(
+					within(dialog).getByRole('radio', { name: /Allow all operations/ }),
+				);
+				await user.click(within(dialog).getByTestId('bind-agent-confirm'));
+
+				await waitFor(() => expect(dialog).not.toBeVisible());
+				const agent = within(screen.getByTestId('hub-access')).getByRole('link', {
+					name: /support-agent/,
+				});
+				expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull();
+				expect(within(agent).queryByTestId('hub-access-agent-blocked')).toBeNull();
+			});
+
 			it('cancelling leaves no credential behind', async () => {
 				const user = userEvent.setup();
 				resetCredentialsStore([]);
