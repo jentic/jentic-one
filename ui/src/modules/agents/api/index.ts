@@ -18,6 +18,7 @@ export {
 	usePurgeOrphanBindings,
 	useResumeAgentCredentialBinding,
 	useInvalidateCredentialBindingSurfaces,
+	usePrimeBindingPermissions,
 	useAgentBindingPermissions,
 	useAgentBindingEffectiveRules,
 	useDetachAgentBindingRuleSet,
@@ -42,6 +43,8 @@ export {
 	useActorUsageDetail,
 	useCredentialUsageTotals,
 	useActorExecutions,
+	useActorApiUsage,
+	useActorRecentCalls,
 	useActorAudit,
 	useUpdateAgent,
 	useMcpSessions,
@@ -60,7 +63,13 @@ export {
 	isAgentsAccessDenied,
 	isAgentsSessionEnded,
 } from '@/modules/agents/api/client';
-export type { ActorUsageDetail, AgentPatch } from '@/modules/agents/api/client';
+export type {
+	ActorApiUsage,
+	ActorExecutionEntity,
+	ActorUsageDetail,
+	AgentPatch,
+	ApiCredentialUsage,
+} from '@/modules/agents/api/client';
 
 export {
 	STATUS_DOT,
