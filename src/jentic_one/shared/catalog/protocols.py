@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -48,3 +49,77 @@ class CatalogAutoImportProtocol(Protocol):
         becomes non-null and the SPA's ops query can enable.
         """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class DeclaredSecurityScheme:
+    """One security scheme an API revision's spec declares (OpenAPI ``securitySchemes``).
+
+    ``type`` is the raw OpenAPI type (``apiKey``, ``http``, ``oauth2``,
+    ``openIdConnect``, ``mutualTLS``). ``http_scheme`` is the lowercased
+    ``scheme`` of an ``http`` scheme (``bearer``, ``basic``); ``location`` and
+    ``field_name`` are an ``apiKey`` scheme's ``in`` and ``name``. The OAuth
+    fields come from the scheme's flows: every scope any flow declares, and the
+    authorization-code flow's endpoints when it has one.
+    """
+
+    name: str
+    type: str
+    http_scheme: str | None = None
+    location: str | None = None
+    field_name: str | None = None
+    oauth_scopes: tuple[str, ...] = ()
+    authorization_url: str | None = None
+    token_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiProvenance:
+    """Where an API's live revision came from — shown to the human who approves a credential.
+
+    ``origin`` is the revision's origin (``catalog`` for a public-catalog
+    import, ``None`` or another value for a spec someone submitted);
+    ``submitted_by`` is the actor that submitted it and ``source_url`` the URL
+    it was fetched from, when known.
+    """
+
+    origin: str | None
+    catalog_api_id: str | None
+    submitted_by: str | None
+    source_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiSecurityView:
+    """An API's live revision as the connect flow needs it.
+
+    ``hosts`` is the sorted origin set (``scheme://host[:port]``) every server
+    of the revision can target, with host-position server variables expanded
+    over their default and enum values. ``unpinned_host_variables`` names the
+    host-position variables that declare no ``enum`` — their value is free, so
+    a credential sent to that server could be steered to any host.
+    """
+
+    vendor: str
+    name: str
+    version: str
+    display_name: str | None
+    revision_id: str
+    schemes: tuple[DeclaredSecurityScheme, ...]
+    hosts: tuple[str, ...]
+    provenance: ApiProvenance
+    unpinned_host_variables: tuple[str, ...] = field(default_factory=tuple)
+
+
+class SecuritySchemesLookupProtocol(Protocol):
+    """Read an API's live revision for the connect flow without importing the registry.
+
+    Consumed by ``ConnectSessionService`` for connect sessions that target a
+    registry API: the declared schemes decide which credential a human enters,
+    and the hosts are pinned for the session's lifetime.
+
+    Contract: returns ``None`` when no API with that identity exists or it has
+    no live (current) revision. Lookup failures other than "not found" raise.
+    """
+
+    async def lookup(self, *, vendor: str, name: str, version: str) -> ApiSecurityView | None: ...
