@@ -1658,8 +1658,8 @@ async def _credential_created_by(ctx: Context, session_id: str) -> str | None:
     [
         ([], _USER_ID),
         (["credentials:connect"], _USER_ID),
-        (["credentials:write"], _AGENT_ID),
-        (["org:admin"], _AGENT_ID),
+        (["credentials:write"], _USER_ID),
+        (["org:admin"], _USER_ID),
     ],
     ids=["no-grants", "connect-only", "credentials-write", "org-admin"],
 )
@@ -1672,8 +1672,8 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
     agent_permissions: list[str],
     expected_creator: str,
 ) -> None:
-    # The approving human becomes the credential's creator, unless the
-    # initiating agent itself holds credentials:write (org:admin implies it).
+    # The approver always becomes the credential's creator, whatever the
+    # initiating agent's own permissions.
     ctx = integration_context
     for permission in agent_permissions:
         await _grant_agent(ctx, permission)
@@ -1693,7 +1693,7 @@ async def test_confirm_attributes_agent_started_credential_to_the_approver(
     assert await _credential_created_by(ctx, created.session_id) == expected_creator
 
 
-async def test_confirm_keeps_user_started_credential_with_its_initiator(
+async def test_confirm_attributes_user_started_credential_to_the_approver(
     integration_context: Context,
     seed_test_vendors: None,
     seed_agent: None,
@@ -1711,7 +1711,7 @@ async def test_confirm_keeps_user_started_credential_with_its_initiator(
         permission_rules=[],
         identity=_ADMIN_IDENTITY,
     )
-    assert await _credential_created_by(ctx, created.session_id) == _USER_ID
+    assert await _credential_created_by(ctx, created.session_id) == _ADMIN_IDENTITY.sub
 
 
 @pytest.mark.parametrize("status", ["archived", "disabled", "rejected"])
