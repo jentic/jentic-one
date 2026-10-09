@@ -367,12 +367,13 @@ describe('AgentDock — fixed bottom action dock', () => {
 	it('surface with the dock mounted passes axe', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await findDock();
-		// The panel fades in (180ms); axe must not sample contrast mid-animation or
-		// muted copy reads as low-contrast against the blended background.
+		// The card's content and the list fade in (180ms); axe must not sample
+		// contrast mid-animation or muted copy reads as low-contrast against the
+		// blended background.
 		await waitFor(() => {
-			const section = document.querySelector('section[aria-label="APIs for support-agent"]');
-			expect(section).not.toBeNull();
-			expect(getComputedStyle(section as Element).opacity).toBe('1');
+			for (const id of ['agent-card-content', 'can-call']) {
+				expect(getComputedStyle(screen.getByTestId(id)).opacity).toBe('1');
+			}
 		});
 		await checkA11y(document.body);
 	});

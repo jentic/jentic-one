@@ -26,7 +26,7 @@ import { useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
-import { Tooltip } from '@/shared/ui';
+import { Tooltip, TruncateWithTooltip } from '@/shared/ui';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import { useNow } from '@/shared/app/rail/useNow';
 import {
@@ -159,23 +159,41 @@ function RailEventRowContent({
 	const actions = inlineActionsFor(ev);
 	const who = hideActor ? undefined : actorName;
 	const text = groupTitle ?? railTitle(ev);
-	const sentence = (
-		<>
-			{who && (
-				<>
-					<span className="text-foreground font-medium">{who}</span>
-					<span aria-hidden="true"> · </span>
-				</>
-			)}
-			{text}
-		</>
-	);
 	// The conflict "why" hint (if any) rides in the detail line alongside the
 	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
 	// digest drift without a new layout element.
 	const detail = [ev.meta, conflictHint(ev)].filter(Boolean).join(' · ');
 	const grouped = groupCount > 1;
 	const dest = onNavigate && !grouped ? primaryDestinationFor(ev) : null;
+	/** What the row's overlay does: the name, lifted above it, does the same. */
+	const activate = grouped ? onToggleExpand : dest ? () => onNavigate?.(dest) : undefined;
+	const sentence = (
+		<>
+			{who && (
+				<>
+					{/* Cut to a budget so a long agent name can't fill the row's two
+					    lines; hovering the cut name shows it whole (the row's control
+					    names the actor in full for assistive tech). Above the row's
+					    overlay so the hover reaches it; a click on it does what the
+					    overlay does. */}
+					<span
+						className={cn(activate && 'relative z-10 cursor-pointer')}
+						onClick={activate}
+					>
+						<TruncateWithTooltip
+							inline
+							focusable={false}
+							className="text-foreground max-w-[18ch] font-medium"
+						>
+							{who}
+						</TruncateWithTooltip>
+					</span>
+					<span aria-hidden="true"> · </span>
+				</>
+			)}
+			{text}
+		</>
+	);
 	// The whole row is one control — it opens the detail, or, for a folded
 	// group, unfolds it — but its verbs (inline actions) must not nest inside
 	// that control. A stretched overlay carries the click; the verbs sit above

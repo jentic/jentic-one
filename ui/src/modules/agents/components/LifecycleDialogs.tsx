@@ -11,6 +11,7 @@
  */
 import { CascadeDeleteDialog, ConfirmDialog } from '@/shared/ui';
 import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 /** A destructive lifecycle action awaiting confirmation in a dialog. */
 export type PendingConfirm =
@@ -69,7 +70,15 @@ export function LifecycleDialogs({
 
 			<ConfirmDialog
 				open={confirm?.kind === 'disable'}
-				title={confirm?.kind === 'disable' ? `Disable ${confirm.name}` : 'Disable'}
+				title={
+					confirm?.kind === 'disable' ? (
+						<>
+							Disable <AgentNameText name={confirm.name} className="max-w-[32ch]" />
+						</>
+					) : (
+						'Disable'
+					)
+				}
 				body={disableBody}
 				confirmLabel="Disable"
 				pending={disable.isPending}
@@ -90,6 +99,7 @@ export function LifecycleDialogs({
 					open
 					entityType="agent"
 					entityName={confirm.name}
+					truncateName
 					loading={archive.isPending}
 					error={archive.error}
 					onConfirm={async () => {

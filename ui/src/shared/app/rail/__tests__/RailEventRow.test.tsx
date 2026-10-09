@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { checkA11y, render, screen } from '@/__tests__/test-utils';
+import { describe, it, expect, vi } from 'vitest';
+import { checkA11y, render, screen, userEvent, waitFor } from '@/__tests__/test-utils';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import type { StreamEvent } from '@/shared/lib/agentStream';
 
@@ -94,6 +94,30 @@ describe('RailEventRow — plain-language rows', () => {
 		render(<RailEventRow ev={ev} actorName="invoice-bot" />);
 		expect(screen.getByText('invoice-bot')).toBeInTheDocument();
 		expect(screen.getByText(/Called GitHub · createIssue/)).toBeInTheDocument();
+	});
+
+	it("cuts a long actor name and shows it whole on hover; a click on it is the row's", async () => {
+		const user = userEvent.setup();
+		const long = `agent-${'x'.repeat(80)}`;
+		const onToggleExpand = vi.fn();
+		render(
+			<div style={{ width: 320 }}>
+				<RailEventRow
+					ev={makeEvent({ title: 'Called GitHub', actorId: 'agnt_1' })}
+					actorName={long}
+					groupCount={2}
+					onToggleExpand={onToggleExpand}
+				/>
+			</div>,
+		);
+		const name = screen.getByText(long);
+		await waitFor(() => expect(name.scrollWidth).toBeGreaterThan(name.clientWidth));
+		// Out of the tab order: the row's control already names the actor.
+		expect(name).not.toHaveAttribute('tabindex');
+		await user.hover(name);
+		expect(await screen.findByRole('tooltip')).toHaveTextContent(long);
+		await user.click(name);
+		expect(onToggleExpand).toHaveBeenCalledTimes(1);
 	});
 
 	it('shows just the summary when the actor is unknown (no jargon prefix)', () => {
