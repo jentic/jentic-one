@@ -123,7 +123,9 @@ async def test_no_credential_binding_denial_carries_connect_from_a_registration(
     assert directive is not None
     assert raised.value.type == "no_credential_binding"
     assert directive.parameters["connect"] == {"vendor_key": "google", "registration_id": gmail}
-    assert directive.parameters["suggested_command"] == "jentic connect google"
+    assert (
+        directive.parameters["suggested_command"] == f"jentic connect google --registration {gmail}"
+    )
     assert directive.parameters["suggested_rules"] == [
         {
             "effect": "allow",
