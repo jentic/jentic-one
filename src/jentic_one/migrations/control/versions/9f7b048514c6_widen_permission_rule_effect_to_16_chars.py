@@ -6,7 +6,7 @@ new ``require-approval`` value (16 characters) fits. The previous maximum
 was ``allow`` / ``deny`` (5 and 4 characters respectively).
 
 Revision ID: 9f7b048514c6
-Revises: aa1b2c3d4e5f
+Revises: cc3d4e5f6a7b
 Create Date: 2026-10-05
 
 """
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "9f7b048514c6"  # pragma: allowlist secret
-down_revision: str | None = "aa1b2c3d4e5f"  # pragma: allowlist secret
+down_revision: str | None = "cc3d4e5f6a7b"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -8,6 +8,10 @@ The partial unique index on ``(request_fingerprint) WHERE state = 'pending'``
 enforces at most one pending approval per request fingerprint, so an identical
 retry joins the existing hold instead of filing a duplicate.
 
+Downgrading cancels every ``held`` job before dropping the table: a schema
+without the approval tier has no way to release one, and an application
+without ``JobStatus.HELD`` cannot read the status.
+
 Revision ID: 3306fb9172f1
 Revises: d2e3f4a5b6c7
 Create Date: 2026-10-05
@@ -83,6 +87,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        sa.text(
+            "UPDATE jobs SET status = 'cancelled', visible_at = NULL,"
+            " error = 'approval tier removed by downgrade' WHERE status = 'held'"
+        )
+    )
     op.drop_index("uq_execution_approvals_pending_fingerprint", table_name="execution_approvals")
     op.drop_index("ix_execution_approvals_state_expires", table_name="execution_approvals")
     op.drop_index("ix_execution_approvals_job_id", table_name="execution_approvals")
