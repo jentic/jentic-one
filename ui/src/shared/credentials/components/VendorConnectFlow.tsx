@@ -30,6 +30,7 @@ import {
 } from '@/shared/ui';
 import type { RadioCardOption } from '@/shared/ui';
 import {
+	invalidateBindingSurfaces,
 	useAgentsForPicker,
 	useCancelConnectSession,
 	useConfirmConnectSession,
@@ -332,9 +333,15 @@ function VendorSelfConnectFlow({
 					variant: 'success',
 				});
 				void queryClient.invalidateQueries({ queryKey: ['credentials'] });
+				// The connect bound the credential to the picked agent, so that
+				// agent's binding list (its page, the Add APIs tray) is stale too.
+				const credentialId = polling.data.credential_id;
+				if (credentialId && agentId) {
+					invalidateBindingSurfaces(queryClient, credentialId, [agentId]);
+				}
 			}
 		}
-	}, [phase, polling.data, polling.error, vendor.display_name, queryClient]);
+	}, [phase, polling.data, polling.error, vendor.display_name, queryClient, agentId]);
 
 	// Cancel-on-unmount: if the user closes the dialog / navigates away
 	// mid-flow, the backend needs to know so the pending credential +

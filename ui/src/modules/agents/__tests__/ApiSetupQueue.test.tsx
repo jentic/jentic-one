@@ -553,6 +553,120 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		expect(screen.getByText('1 API added')).toBeInTheDocument();
 	});
 
+	it('adds a catalog pick signed in through a shared app without importing or binding it again', async () => {
+		// The server imports the app's catalog API at connect and binds the new
+		// credential to the agent, so the queue only marks the row added.
+		const posts: string[] = [];
+		worker.use(
+			http.get('/vendors', () =>
+				HttpResponse.json({
+					data: [
+						{
+							entry_id: 'oar_gmail',
+							registration_id: 'oar_gmail',
+							key: 'googleapis.com',
+							vendor: 'googleapis.com',
+							display_name: 'Acme Gmail',
+							name: 'Acme Gmail',
+							source: 'db',
+							flow_kinds: ['device_authorization'],
+							catalog_api_id: 'googleapis.com/gmail',
+						},
+					],
+				}),
+			),
+			http.get('/vendors/:key/auth-capabilities', () =>
+				HttpResponse.json({
+					vendor: 'googleapis.com',
+					display_name: 'Acme Gmail',
+					flows: [{ kind: 'device_authorization' }],
+					scopes: [],
+				}),
+			),
+			http.post('/integrations:connect', () =>
+				HttpResponse.json(
+					{
+						session_id: 'sess_q',
+						approval_url:
+							'https://example.com/app/agents?approve=sess_q&poll_token=tok',
+						poll_token: 'tok',
+						resolved_flow: 'device_authorization',
+					},
+					{ status: 201 },
+				),
+			),
+			http.get('/connect-sessions/sess_q', () =>
+				HttpResponse.json({
+					session_id: 'sess_q',
+					state: 'created',
+					vendor_key: 'googleapis.com',
+					vendor_display_name: 'Acme Gmail',
+					resolved_flow: 'device_authorization',
+					reason: null,
+					requested_by_actor_id: 'usr_alice',
+					scopes: [],
+					requested_permission_rules: [],
+					api_reference: null,
+				}),
+			),
+			http.post('/connect-sessions/sess_q\\:confirm', () =>
+				HttpResponse.json({
+					kind: 'device_authorization',
+					user_code: 'ABCD-1234',
+					verification_uri: 'https://google.com/device',
+					verification_uri_complete: null,
+					poll_interval_seconds: 5,
+				}),
+			),
+			http.get('/connect-sessions/:id/status', () =>
+				HttpResponse.json({
+					status: 'connected',
+					connected_as: 'me@acme.com',
+					credential_id: 'cred_gmail',
+					bound_scopes: null,
+					error_code: null,
+				}),
+			),
+			http.post(/\/catalog\/.*import/, ({ request }) => {
+				posts.push(request.url);
+				return undefined;
+			}),
+			http.post('/agents/:id/credentials', ({ request }) => {
+				posts.push(request.url);
+				return undefined;
+			}),
+		);
+		const gmail = makeItem('googleapis.com', 'form', {
+			key: 'googleapis.com/gmail',
+			importsApi: true,
+			api: {
+				source: 'catalog',
+				vendor: 'googleapis.com',
+				name: 'gmail',
+				version: '',
+				apiId: 'googleapis.com/gmail',
+				label: 'Gmail',
+			},
+		});
+		const user = userEvent.setup();
+		renderWithProviders(<QueueHarness items={[gmail]} />);
+
+		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
+		await user.click(await screen.findByRole('button', { name: /Acme Gmail/ }));
+		const next = async (): Promise<void> => {
+			const button = await screen.findByRole('button', {
+				name: /(skip.*continue|^continue$)/i,
+			});
+			await waitFor(() => expect(button).not.toBeDisabled());
+			await user.click(button);
+		};
+		await next();
+		await next();
+
+		await waitFor(() => expect(rowFor('Gmail')).toHaveAttribute('data-status', 'added'));
+		expect(posts).toEqual([]);
+	});
+
 	it('saves a credential for an umbrella catalog pick while its import is still running', async () => {
 		// The live GitHub pick: name is the whole `api_id`, which the backend
 		// rejects in `api.name` (`/` reads as a spec path). The import answers 202

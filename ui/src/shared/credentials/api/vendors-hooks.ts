@@ -193,7 +193,7 @@ export function useStartIntegrationConnect() {
  * roster — the slice the API hub's "Who can use it" and the Library's
  * workspace agent counts read (the prefix also sweeps its all-pages variant).
  */
-function invalidateBindingSurfaces(
+export function invalidateBindingSurfaces(
 	client: QueryClient,
 	credentialId: string,
 	agentIds: readonly string[],

@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { page } from 'vitest/browser';
+import { page, userEvent as browserUser } from 'vitest/browser';
 import {
 	renderWithProviders,
 	screen,
@@ -765,5 +765,32 @@ describe('AddApisTray — one-click sign-in (shared OAuth apps)', () => {
 		// The connect is pinned to the tray's agent, so the picker is locked.
 		const picker = await screen.findByRole('radiogroup', { name: /which agent uses this/i });
 		expect(within(picker).getByRole('radio', { checked: true })).toBeDisabled();
+	});
+
+	it('Escape dismisses the stacked sign-in and leaves the tray open', async () => {
+		const onClose = vi.fn();
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AddApisTray
+				open
+				onClose={onClose}
+				agentId="agnt_1"
+				agentName="Support bot"
+				bindings={[]}
+				bindingsError={null}
+				onContinue={(): void => {}}
+				seed={null}
+			/>,
+		);
+
+		const section = await screen.findByRole('region', { name: /one-click sign-in/i });
+		await user.click(within(section).getByRole('button', { name: /Acme Gmail/ }));
+		expect(await screen.findByText('via Acme Gmail')).toBeInTheDocument();
+
+		// The real (CDP-driven) keyboard: both sheets see the same Escape.
+		await browserUser.keyboard('{Escape}');
+		await waitFor(() => expect(screen.queryByText('via Acme Gmail')).not.toBeInTheDocument());
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.getByRole('heading', { name: 'Add APIs' })).toBeInTheDocument();
 	});
 });

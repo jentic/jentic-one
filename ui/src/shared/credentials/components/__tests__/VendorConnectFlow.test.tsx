@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { QueryClient } from '@tanstack/react-query';
 import { worker } from '@/mocks/browser';
 import {
 	checkA11y,
@@ -313,11 +314,10 @@ describe('VendorConnectFlow — self mode', () => {
 		expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
 	});
 
-	it('reports the created credential once when the sign-in completes', async () => {
-		// Post-refactor: ``:connect`` fires at mount (so the session +
-		// import exist before the user reaches the rules page), and
-		// ``:confirm`` fires when the user continues off the rules page.
-		// Self and approve flows now share the same shape from mount onward.
+	it('reports the created credential once and refreshes the agent bindings', async () => {
+		// ``:connect`` fires on Continue off the configure page and ``:confirm``
+		// on Continue off the rules page.
+		const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
 		worker.use(
 			http.post('/integrations:connect', () =>
 				HttpResponse.json(
@@ -402,6 +402,11 @@ describe('VendorConnectFlow — self mode', () => {
 			}),
 		);
 		expect(onConnected).toHaveBeenCalledTimes(1);
+		// The connect bound the credential to Scout, so Scout's binding list
+		// (agent page, Add APIs tray) is refetched.
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ['agents', 'credential-bindings', 'agnt_1'],
+		});
 	});
 
 	it('threads a user-typed credential name through the :connect payload', async () => {
