@@ -261,8 +261,10 @@ func TestConnect_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want %q", coded.Code, ux.CodeResolveFailed)
 	}
-	for _, want := range []string{"your human user", "details.candidates",
-		"jentic connect googleapis-com --registration <registration_id>"} {
+	for _, want := range []string{
+		"your human user", "details.candidates",
+		"jentic connect googleapis-com --registration <registration_id>",
+	} {
 		if !strings.Contains(coded.Actionable, want) {
 			t.Errorf("actionable %q missing %q", coded.Actionable, want)
 		}
