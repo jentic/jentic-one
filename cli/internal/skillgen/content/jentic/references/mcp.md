@@ -191,8 +191,10 @@ happens out-of-band, and re-sending duplicates the side effect.
 And know the recovery split: a `credential_not_provisioned` (424) or an
 unserved `no_credential_binding` (403) denial is **provisioning-shaped** —
 its envelope points `next_tool` at `request_connection`. When the directive
-carries a `suggested_command` naming the registry key, start the fix
-yourself (`request_connection` with that key) and relay the `approval_url`;
+names a connect target (`parameters.connect.vendor_key`, or a
+`suggested_command` naming the key), start the fix yourself — the envelope's
+`next_tool_arguments` (`{"vendor": …}`) are the `request_connection`
+arguments — and relay the `approval_url`;
 a denial whose recovery carries only a `provisioning_url` is for your
 operator — relay it so they can connect the account. The denial taxonomy
 (`no_credential_binding`, `credential_undecryptable`,
