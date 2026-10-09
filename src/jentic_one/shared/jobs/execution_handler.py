@@ -65,6 +65,18 @@ from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
+#: Result problem of a held payload this worker has no keyset to decrypt.
+_HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
+    "type": "approval_hold_unavailable",
+    "title": "Held execution could not run",
+    "status": 503,
+    "detail": (
+        "The worker has no credentials encryption keyset to read this held execution; "
+        "it was not run"
+    ),
+    "error_origin": "broker",
+}
+
 # The resolved-identity dataclass needs an ``active`` flag; the worker only
 # injects after the job passed the run-time ``ExecutionAuthorizer`` re-check
 # (which includes the actor-still-active check), so it is always True here.
@@ -117,8 +129,16 @@ class ExecutionHandler:
         # before reading any field.
         if ENCRYPTED_PAYLOAD_KEY in payload:
             if self._encryption is None:
-                raise RuntimeError(
-                    "Encrypted execution payload found but no EncryptionService is configured"
+                # Fail closed with a result the agent can read, never a run.
+                logger.error("held_payload_undecryptable", job_id=job_id)
+                return JobResultPayload(
+                    body={
+                        "execution_id": f"exec_{job_id}",
+                        "status": ExecutionStatus.FAILED,
+                        "http_status": 503,
+                        "duration_ms": 0,
+                        "problem": _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM,
+                    }
                 )
             payload = json.loads(self._encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
 

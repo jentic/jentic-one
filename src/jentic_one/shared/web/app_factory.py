@@ -190,7 +190,9 @@ def _start_worker(
                 execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
-                encryption=(ctx.encryption if ctx.config.credentials.encryption.entries else None),
+                # Same predicate the broker's hold path files under, so a held
+                # payload the broker encrypted is one this worker can decrypt.
+                encryption=ctx.encryption if ctx.has_encryption_keyset else None,
             ),
         )
 

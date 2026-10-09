@@ -30,6 +30,7 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.core.exceptions import (
+    ApprovalHoldUnavailableError,
     ApprovalPendingLimitError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -946,6 +947,13 @@ async def _handle_hold(
     one admin-DB transaction; an identical pending request joins its existing
     hold, and an agent at its pending cap is denied before anything is written.
     """
+    if not ctx.has_encryption_keyset:
+        raise ApprovalHoldUnavailableError(
+            "This call needs human approval, but the deployment has no credentials "
+            "encryption keyset to keep the held request in (credentials.encryption)",
+            type="approval_hold_unavailable",
+            instance=request.url.path,
+        )
     cfg = ctx.config.execution_approvals
     credential_id = authorization.selected_credential.credential_id
     parsed_url = urlparse(ctx_req.upstream_url)

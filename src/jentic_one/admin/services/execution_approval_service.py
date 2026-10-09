@@ -115,6 +115,9 @@ class ExecutionApprovalService:
         if not payload:
             return None
         if ENCRYPTED_PAYLOAD_KEY in payload:
+            if not self._ctx.has_encryption_keyset:
+                logger.warning("held_payload_unreadable_without_keyset")
+                return None
             payload = json.loads(self._ctx.encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
         raw = base64.b64decode(payload["body_b64"]) if payload.get("body_b64") else b""
         truncated = len(raw) > _MAX_REVIEW_BODY_BYTES

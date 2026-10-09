@@ -200,6 +200,15 @@ class ApprovalPendingLimitError(BrokerError):
     """The agent already holds the configured maximum of pending approvals (403)."""
 
 
+class ApprovalHoldUnavailableError(BrokerError):
+    """A require-approval rule matched but this deployment cannot hold the call (503).
+
+    A held call's payload is encrypted at rest with the credentials keyset;
+    without one configured there is nowhere safe to keep it, so the call is
+    refused rather than run or stored in plaintext.
+    """
+
+
 class CredentialIdentityMismatchError(BrokerError):
     """Bound, but no bound credential's identity covers this API (403).
 
