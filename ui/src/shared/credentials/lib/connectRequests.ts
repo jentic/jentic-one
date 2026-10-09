@@ -4,6 +4,13 @@
  * disagree on what an agent is waiting for.
  */
 import type { ConnectSessionSummaryResponse } from '@/shared/api';
+import {
+	AGENTS_WRITE,
+	CREDENTIALS_READ,
+	CREDENTIALS_WRITE,
+	OWNER_CREDENTIALS_READ,
+	useCanAccess,
+} from '@/shared/auth';
 
 export interface AgentConnectRequests {
 	agentId: string;
@@ -47,4 +54,18 @@ export function summariseConnectTargets(
 	if (names.length === 2) return `${names[0]} and ${names[1]}`;
 	const rest = names.length - 2;
 	return `${names[0]}, ${names[1]} and ${rest} more`;
+}
+
+/**
+ * Whether the viewer may approve an agent's connect request: `org:admin`, or
+ * holding both `credentials:write` and `agents:write` (approving writes the
+ * agent's binding), plus a credentials read to list the requests. The waiting
+ * signals show only to approvers: a request the viewer may list but cannot
+ * open is not waiting for them. A UI gate; the server enforces.
+ */
+export function useCanApproveConnectRequests(): boolean {
+	const canRead = useCanAccess(CREDENTIALS_READ, OWNER_CREDENTIALS_READ);
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
+	const canWriteAgents = useCanAccess(AGENTS_WRITE);
+	return canRead && canWriteCredentials && canWriteAgents;
 }

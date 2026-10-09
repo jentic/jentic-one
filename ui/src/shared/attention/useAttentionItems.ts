@@ -18,7 +18,9 @@
  *   - credentials whose OAuth sign-in never finished (joined from the credential list,
  *                                    `credentials:read` or `owner:credentials:read`)
  *   - agents waiting on a connect request (`GET /connect-sessions`, `created` /
- *                                    `polling`, collapsed per agent; same permissions)
+ *                                    `awaiting_app` / `polling`, collapsed per agent;
+ *                                    listed only to approvers — `org:admin`, or
+ *                                    `credentials:write` and `agents:write`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
  * client's registration) are dropped — the queue row is the actionable one —
@@ -44,6 +46,7 @@ import { useAllCredentials, useOpenConnectRequests } from '@/shared/credentials/
 import {
 	groupConnectRequestsByAgent,
 	summariseConnectTargets,
+	useCanApproveConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
 import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 import { ROUTE_PATHS } from '@/shared/app/routes';
@@ -140,6 +143,9 @@ export function useAttentionItems(): AttentionState {
 
 	const canReadCredentials = useCanAccess(CREDENTIALS_READ, OWNER_CREDENTIALS_READ);
 	const credentials = useAllCredentials({ enabled: canReadCredentials });
+	// Read for every credentials reader (an open request's pending credential
+	// is not a separate unfinished sign-in), listed only to approvers.
+	const canApproveConnectRequests = useCanApproveConnectRequests();
 	const connectRequests = useOpenConnectRequests({ enabled: canReadCredentials });
 	const connectGroups = useMemo(
 		() => groupConnectRequestsByAgent(connectRequests.data ?? []),
@@ -181,6 +187,7 @@ export function useAttentionItems(): AttentionState {
 		const connectCredentialIds = new Set<string>();
 		for (const group of connectGroups) {
 			for (const session of group.sessions) connectCredentialIds.add(session.credential_id);
+			if (!canApproveConnectRequests) continue;
 			const oldest = group.sessions[0];
 			const name = actors.resolve(group.agentId) ?? group.agentId;
 			out.push({
@@ -237,6 +244,7 @@ export function useAttentionItems(): AttentionState {
 		pendingAgents.agents,
 		oauthClients.data,
 		connectGroups,
+		canApproveConnectRequests,
 		actors,
 		credentials.complete,
 		credentials.items,

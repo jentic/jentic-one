@@ -13,6 +13,7 @@ import {
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
+import { useOpenConnectRequests } from '@/shared/credentials/api';
 import { Toaster } from '@/shared/ui';
 import { AuthProvider } from '@/shared/auth';
 import {
@@ -2164,6 +2165,15 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 	});
 });
 
+let inboxRead = false;
+
+/** Reads the open connect requests the way the attention inbox does. */
+function InboxReader() {
+	const requests = useOpenConnectRequests();
+	if (requests.data) inboxRead = true;
+	return null;
+}
+
 describe('AgentsPage — agents waiting on a connect request', () => {
 	beforeEach(async () => {
 		await page.viewport(1280, 900);
@@ -2219,6 +2229,29 @@ describe('AgentsPage — agents waiting on a connect request', () => {
 		expect(links[1].getAttribute('href')).toContain(`approve=${slack.session_id}`);
 		for (const link of links) expect(link.getAttribute('href')).not.toContain('poll_token');
 		await checkA11y(section);
+	});
+
+	it('lists requests only to a viewer who may approve them', async () => {
+		seedMockAgentConnectSession({ agent_id: 'agnt_active_1', vendor_key: 'github' });
+		// An owner holding credentials:write but not agents:write can list the
+		// request but not open it, so it is not waiting for them.
+		// The inbox reads the same query for any credentials reader, so the
+		// cache holds the request even though this section never fetches it.
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read']);
+		const { unmount } = renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<InboxReader />
+			</AuthProvider>,
+		);
+		await screen.findAllByText('inbox-triage-bot');
+		await waitFor(() => expect(inboxRead).toBe(true));
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+		unmount();
+
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read', 'agents:write']);
+		renderPage('/', { withAuth: true });
+		expect(await waitingSection()).toHaveTextContent('wants to connect github');
 	});
 
 	it('opens the request token-less from its Review link and strips the param', async () => {
