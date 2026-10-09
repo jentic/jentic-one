@@ -175,7 +175,11 @@ def test_connect_maps_ambiguous_vendor_to_400() -> None:
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "googleapis-com"})
     assert resp.status_code == 400
-    assert resp.json()["type"].endswith("ambiguous_vendor")
+    body = resp.json()
+    assert body["type"].endswith("ambiguous_vendor")
+    # The key and the apps it counted, so a client lists exactly those.
+    assert body["vendor"] == "googleapis-com"
+    assert body["registration_ids"] == ["oar_a", "oar_b"]
 
 
 def test_connect_rejects_unknown_fields() -> None:

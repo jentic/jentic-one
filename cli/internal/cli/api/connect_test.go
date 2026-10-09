@@ -282,6 +282,38 @@ func TestConnect_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
 	}
 }
 
+// When the 400 ambiguous_vendor names the registrations it counted, exactly
+// those are listed rather than every app under the key.
+func TestConnect_AmbiguousVendorListsTheCountedRegistrations(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_other", Name: "Slack", DisplayName: "Slack"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (the registrations the problem counted)", got, want)
+	}
+}
+
 // When GET /vendors is unavailable the advice still routes the choice to the
 // user, just without the list.
 func TestConnect_AmbiguousVendorWithoutVendorListStillAsksTheUser(t *testing.T) {

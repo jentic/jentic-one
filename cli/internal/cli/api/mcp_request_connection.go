@@ -253,7 +253,7 @@ func (s *mcpServer) requestConnectionError(
 	var he *HTTPError
 	if errors.As(err, &he) {
 		if isAmbiguousVendor(he) {
-			candidates := listVendorAppCandidates(ctx, client, vendor)
+			candidates := listVendorAppCandidates(ctx, client, vendor, he)
 			return s.softErrorNext(ctx, ambiguousVendorCoded(vendor, err, candidates,
 				requestConnectionRegistrationRetry), "request_connection")
 		}
