@@ -58,10 +58,10 @@ this file adds the lane-specific detail.
   `get_execution_result` with the job id; approval happens out-of-band and
   re-sending duplicates the side effect.
 - A 424 `credential_not_provisioned` error means no account is connected
-  yet. If the denial's directive carries a `suggested_command` (`jentic
-  connect <key>`), the vendor is in the connect registry: call
-  `request_connection` with that key and relay the returned `approval_url`
-  to your operator. Otherwise relay the directive's `provisioning_url`
+  yet. If the denial's directive carries a connect target, call
+  `request_connection` with it — `parameters.connect.api` as `api`, or the
+  registry key from `suggested_command` (`jentic connect <key>`) as
+  `vendor` — and relay the returned `approval_url` to your operator. Otherwise relay the directive's `provisioning_url`
   (when present) — or report the gap — so they can connect the account.
   Either way a human approves; no tool you can call completes the
   connection.
@@ -90,10 +90,14 @@ as a coded error envelope. The meanings below are surface-independent; the
 CLI delivery mechanics (flags, exit codes) live in
 `references/cli.md` step 2, the MCP envelope caveats in `references/mcp.md`
 step 5. **Approval is always your operator's** — but for the
-credential-*provisioning* denials below you can now start the fix yourself
-when the vendor is in the connect registry: run `jentic connect <vendor>`
-(CLI) or call `request_connection` (MCP), relay the returned `approval_url`
-to your operator, confirm with `whoami` once they approve, then retry.
+credential-*provisioning* denials below you can start the fix yourself
+whenever the directive names a connect target: run its `suggested_command`
+(`jentic connect <vendor>` or `jentic connect --api <vendor/name/version>`,
+CLI) or call `request_connection` with `parameters.connect` (MCP), relay
+the returned `approval_url` to your operator, confirm with `whoami` once
+they approve, then retry. When a human must enter the credential (a
+`manual_*` or `awaiting_app` flow), end your turn after relaying the URL
+and retry later; after a rejection, don't ask again — tell your user.
 Everything else (binding an existing credential, permission grants, rule
 changes) is performed by your operator in the Jentic One dashboard — relay
 the right ask, then retry once they confirm.
@@ -102,20 +106,23 @@ the right ask, then retry once they confirm.
   this API. The ask forks on the directive/envelope's `api_served`
   field:
   - `false` — **no** credential is provisioned for this API at all. If the
-    directive carries a `suggested_command` (`jentic connect <vendor>`),
-    start the connect session yourself and relay its `approval_url`;
-    otherwise ask your operator to connect or provision a credential for
-    the API and bind you to it — include the auth type and permission
-    rules you read from the spec so they can set it up in one pass.
+    directive carries a connect target (`suggested_command` /
+    `parameters.connect`), start the connect session yourself — with the
+    directive's `suggested_rules` and your reason — and relay its
+    `approval_url`; otherwise ask your operator to connect or provision a
+    credential for the API and bind you to it — include the auth type and
+    permission rules you read from the spec so they can set it up in one
+    pass.
   - `true` — a credential already serves this API and you just aren't bound
     to it; ask your operator to bind you to the existing credential
-    (binding is always theirs — a fresh `jentic connect` also works for a
-    registry vendor, but prefer the existing credential).
+    (binding is always theirs). When the directive carries a connect
+    target, starting it also works — the approver can bind you to the
+    existing credential from the approval page.
 - **`credential_not_provisioned` (424)** — you're bound, but no
   credential (account) is connected. If the directive carries a
-  `suggested_command` (`jentic connect <key>`), the vendor is in the
-  connect registry — start the reconnect yourself (run that command, or
-  call `request_connection` with the key it names) and relay the
+  connect target (`suggested_command` / `parameters.connect`), start the
+  reconnect yourself (run that command, or call `request_connection` with
+  the target it names) and relay the
   `approval_url`; otherwise hand the directive's `provisioning_url` to
   your operator to connect the account. Then retry.
 - **`credential_undecryptable` (424)** — a credential *is* connected, but
@@ -151,14 +158,17 @@ the right ask, then retry once they confirm.
 - `jentic whoami` — your identity, status, permissions, and credential
   bindings with the APIs each one **serves** (check this before executing;
   it renders the same `GET /me` view `jentic api GET /me` returns). When
-  access is missing, start a registry vendor's connect yourself
-  (`jentic connect <vendor>`) or report the gap to your operator —
-  approval, binding, and permission grants happen in the dashboard.
-- `jentic connect <vendor>` — start a connect session for a registry
-  vendor (e.g. `jentic connect github`): prints the `approval_url` a human
-  approves in the browser (`--scopes`, `--reason` shape the ask; `--wait`
-  polls until it connects or ends — rejected, expired, or cancelled). You never open or approve the
-  URL yourself.
+  access is missing, start the connect yourself (`jentic connect <vendor>`
+  or `jentic connect --api <vendor/name/version>`) or report the gap to
+  your operator — approval, binding, and permission grants happen in the
+  dashboard.
+- `jentic connect <vendor>` / `jentic connect --api <vendor/name/version>`
+  — start a connect session for a registry vendor or any registry API:
+  prints the `approval_url` a human approves in the browser (`--reason`,
+  `--rules`, `--scopes`, `--auth-type` shape the ask; `--wait` polls until
+  it connects or ends, and returns at once for a human-entry `manual_*` /
+  `awaiting_app` flow unless `--timeout` is set). You never open or approve
+  the URL yourself.
 - `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>`
   — find and import APIs (import first; `search` only sees imported
   operations).
@@ -210,9 +220,10 @@ The mount serves exactly nine tools; the stdio server adds `get_started`.
 Each maps onto the loop — the one-line whens and the structural facts (the
 `instance` stamp; the CLI verbs that do **not** exist on the mount) are in
 `references/mcp.md`, which is the authoritative lane reference. In short:
-`whoami` (identity + bindings; decide access from it) → when a registry
-vendor's credential is missing, `request_connection` (relay the
-`approval_url` to your operator; other gaps you report) → `search_catalog`
+`whoami` (identity + bindings; decide access from it) → when a credential
+is missing, `request_connection` by `vendor` or `api` (relay the
+`approval_url` to your operator; where that isn't available, report the
+gap) → `search_catalog`
 → `import_api`
 → `search_apis` → `inspect_operation` → `execute` / `execute_read` (prefer
 `execute_read` for reads) → `get_execution_result` (poll jobs; never
