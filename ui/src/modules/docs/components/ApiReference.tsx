@@ -396,7 +396,7 @@ function ParamRow({ p }: { p: SpecOperation['parameters'][number] }) {
 						<span className="text-danger text-[10px] font-medium">required</span>
 					)}
 				</div>
-				{p.type && <code className="text-primary/70 font-mono text-[11px]">{p.type}</code>}
+				{p.type && <code className="text-primary font-mono text-[11px]">{p.type}</code>}
 			</div>
 			<div className="min-w-0">
 				{p.description && (

@@ -10,7 +10,9 @@ import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
 import '@/index.css';
 
 // Every file renders on the product's default palette, so axe colour-contrast
-// checks see one theme whether or not a file imports `shared/lib/theme`.
+// checks see one theme. A stored choice left by another file is cleared first
+// so `shared/lib/theme` reads the default when it loads.
+window.localStorage.removeItem('jentic-one.theme');
 document.documentElement.dataset.theme = 'light';
 
 // All test files run in parallel inside a single Chromium, so on a loaded CI
@@ -37,6 +39,7 @@ afterEach(() => {
 	resetRailEventsStore();
 	window.localStorage.clear();
 	window.sessionStorage.clear();
+	document.documentElement.dataset.theme = 'light';
 });
 
 afterAll(() => {

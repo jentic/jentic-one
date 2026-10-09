@@ -111,7 +111,7 @@ function Signature({ cmd }: { cmd: CliCommand }) {
 	const args = argSpec(cmd);
 	return (
 		<code className="text-foreground font-mono text-[15px] font-semibold break-all">
-			<span className="text-primary/70 mr-1.5 select-none">$</span>
+			<span className="text-primary mr-1.5 select-none">$</span>
 			{cmd.path}
 			{args && <span className="text-accent-orange/90 ml-1.5 font-normal">{args}</span>}
 		</code>

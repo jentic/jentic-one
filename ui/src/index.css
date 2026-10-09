@@ -61,7 +61,7 @@
 	--color-toolbar-glass: hsl(var(--background) / 0.9);
 	/* Text inside a search-match highlight (`<mark>`). */
 	--color-search-highlight: hsl(var(--foreground));
-	/* An idle (suspended / not-serving) tile's title — dimmed white. */
+	/* An idle (suspended / not-serving) tile's title — the foreground, dimmed. */
 	--color-foreground-idle: color-mix(in oklab, hsl(var(--foreground)) 60%, transparent);
 	/* The one resting edge for form controls (see :root). Not for buttons. */
 	--color-control-edge: hsl(var(--control-edge));
@@ -249,7 +249,7 @@
 	--page-header-rule: 185 20% 60% / 0.1;
 	--page-header-tick: var(--primary); /* the title accent on the foot */
 	/* Header actions: no edges — prominence comes from a fill two tonal steps
-	   above the band (the band is ≈ L11–15% where the actions sit), a faint
+	   above the band, a faint
 	   inner top highlight and a very soft drop shadow. */
 	--header-btn-bg: 192 20% 22%;
 	--header-btn-bg-hover: 192 18% 26%;
@@ -384,7 +384,7 @@
 	--foreground-lighter: 192 25% 18%;
 	--foreground-name: 192 35% 10% / 0.92;
 	--muted: 190 18% 94%;
-	--foreground-sub: 188 14% 34%; /* ≈ 7:1 on white */
+	--foreground-sub: 188 14% 34%; /* ≈ 6.7:1 on white */
 	--foreground-faint: 188 12% 37%; /* ≥ 4.5:1 on every surface up to chip-active */
 	--foreground-group: 186 18% 36%;
 	--foreground-disabled: 188 8% 66%;
@@ -406,7 +406,7 @@
 	--surface-drop: 186 30% 96%;
 	--surface-drop-over: 176 40% 92%;
 	--surface-ghost: 186 34% 92%;
-	--control-edge: 188 14% 56%; /* ≈ 2.7:1 on a card / sheet */
+	--control-edge: 188 14% 56%; /* ≈ 3:1 on a card / sheet */
 	--control-edge-hover: 186 42% 30% / 0.55;
 
 	--hairline: 192 30% 20% / 0.09;

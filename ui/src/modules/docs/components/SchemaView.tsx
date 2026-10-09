@@ -280,7 +280,7 @@ function PropertyRow({
 				) : (
 					<code className="text-foreground font-mono text-[13px]">{name}</code>
 				)}
-				<span className="text-primary/80 font-mono text-[11px]">
+				<span className="text-primary font-mono text-[11px]">
 					{typeLabel(spec, schema)}
 				</span>
 				{required && <span className="text-danger text-[10px] font-medium">required</span>}

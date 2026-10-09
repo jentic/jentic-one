@@ -1,9 +1,16 @@
 import { useRef } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { page } from 'vitest/browser';
-import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
+import {
+	renderWithProviders,
+	screen,
+	stubLocalStorage,
+	userEvent,
+	waitFor,
+} from '@/__tests__/test-utils';
 import { Layout } from '@/shared/app/Layout';
 import { AuthProvider } from '@/shared/auth/AuthContext';
+import { setTheme } from '@/shared/lib/theme';
 import { setToken } from '@/shared/api';
 import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
@@ -71,6 +78,20 @@ describe('app shell / navbar', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: 'User menu' }));
 		expect(await screen.findByRole('menuitem', { name: /sign out/i })).toBeVisible();
+	});
+
+	it('switches the palette from the user menu', async () => {
+		const restoreStorage = stubLocalStorage();
+		onTestFinished(() => {
+			setTheme('light');
+			restoreStorage();
+		});
+		renderShell();
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: 'User menu' }));
+		await user.click(screen.getByRole('menuitem', { name: 'Dark theme' }));
+		expect(document.documentElement.dataset.theme).toBe('dark');
+		expect(screen.getByRole('menuitem', { name: 'Light theme' })).toBeVisible();
 	});
 });
 

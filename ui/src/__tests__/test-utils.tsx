@@ -126,6 +126,36 @@ export async function checkA11y(
 }
 
 /**
+ * Swap `window.localStorage` for an in-memory store until the returned restore
+ * runs. Test files share one origin, so a real write reaches every other file
+ * as a `storage` event; tests that write app-wide preferences (the theme) use
+ * this so their writes stay inside the file. `failWrites` makes `setItem`
+ * throw, as a browser with storage blocked does.
+ */
+export function stubLocalStorage(options: { failWrites?: boolean } = {}): () => void {
+	const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+	const data = new Map<string, string>();
+	const memory: Storage = {
+		get length() {
+			return data.size;
+		},
+		clear: () => data.clear(),
+		getItem: (key) => data.get(key) ?? null,
+		key: (index) => [...data.keys()][index] ?? null,
+		removeItem: (key) => void data.delete(key),
+		setItem: (key, value) => {
+			if (options.failWrites) throw new DOMException('Storage is blocked', 'SecurityError');
+			data.set(key, String(value));
+		},
+	};
+	Object.defineProperty(window, 'localStorage', { configurable: true, value: memory });
+	return () => {
+		if (real) Object.defineProperty(window, 'localStorage', real);
+		else delete (window as { localStorage?: Storage }).localStorage;
+	};
+}
+
+/**
  * Factory for one-off MSW error/edge handlers, registered per-test via
  * `worker.use(createErrorHandler('get', '/apis', { status: 500 }))`.
  */
