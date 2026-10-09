@@ -186,14 +186,6 @@ def oauth_scopes_of(view: ApiSecurityView) -> list[str]:
     return scopes
 
 
-def oauth_endpoints_of(view: ApiSecurityView) -> tuple[str | None, str | None]:
-    """The first declared authorization-code flow's ``(authorization_url, token_url)``."""
-    for scheme in sorted(view.schemes, key=lambda s: s.name):
-        if scheme_kind(scheme) == SCHEME_OAUTH2 and scheme.authorization_url:
-            return scheme.authorization_url, scheme.token_url
-    return None, None
-
-
 def review_digest(payload: Mapping[str, object]) -> str:
     """Stable SHA-256 over the review fields an approver decides on."""
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
