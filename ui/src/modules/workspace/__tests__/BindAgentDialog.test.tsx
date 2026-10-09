@@ -205,6 +205,33 @@ describe('BindAgentDialog — what the agent may call', () => {
 			expect(call.body).toEqual([{ effect: 'allow', methods: ['GET'] }]);
 	});
 
+	it('the shared access step: same question, same presets, Allow all writes `.*`, no inline tester', async () => {
+		serveRules();
+		const user = userEvent.setup();
+		renderDialog();
+		await user.click(await screen.findByRole('checkbox', { name: 'agent_1' }));
+		const group = screen.getByRole('radiogroup', { name: 'What can this agent call?' });
+		expect(
+			within(group)
+				.getAllByRole('radio')
+				.map((r) => r.textContent),
+		).toEqual([
+			expect.stringMatching(/^Allow all operations/),
+			expect.stringMatching(/^Read-only \(GET only\)/),
+			expect.stringMatching(/^Custom rules/),
+		]);
+		expect(screen.getByTestId('bind-agent-rules')).toContainElement(group);
+		// The dry run is the Add-APIs queue's; the workspace bind stays as it was.
+		expect(screen.queryByText('Try a request')).not.toBeInTheDocument();
+		await user.click(within(group).getByRole('radio', { name: /Custom rules/ }));
+		expect(screen.queryByLabelText('Request path')).not.toBeInTheDocument();
+
+		await user.click(within(group).getByRole('radio', { name: /Allow all/ }));
+		await user.click(screen.getByTestId('bind-agent-confirm'));
+		await waitFor(() => expect(ruleCalls).toHaveLength(1));
+		expect(ruleCalls[0].body).toEqual([{ effect: 'allow', path: '.*' }]);
+	});
+
 	it('Custom rules needs at least one rule before Bind is enabled', async () => {
 		serveRules();
 		const user = userEvent.setup();
