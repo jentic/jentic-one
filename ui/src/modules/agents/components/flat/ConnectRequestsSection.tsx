@@ -8,29 +8,31 @@
  * with a Review link per request that opens it for approval. The links are the
  * token-less `?approve=<sid>` address the backend relays to the agent, plus
  * `?agent=` so the requesting agent is selected behind the dialog.
- * Nothing open renders NOTHING; a caller who cannot read credentials makes no
- * request.
+ * Nothing open renders NOTHING; a caller who cannot approve requests (see
+ * `useCanApproveConnectRequests`) makes no request.
  */
 import { useMemo } from 'react';
 import { AppLink } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
-import { CREDENTIALS_READ, OWNER_CREDENTIALS_READ, useCanAccess } from '@/shared/auth';
 import { useActorDirectory } from '@/shared/hooks';
 import { formatTimestamp } from '@/shared/lib/utils';
 import { useOpenConnectRequests } from '@/shared/credentials/api';
 import {
 	groupConnectRequestsByAgent,
 	summariseConnectTargets,
+	useCanApproveConnectRequests,
 } from '@/shared/credentials/lib/connectRequests';
 import { waitingLabel } from '@/modules/agents/components/flat/PendingApprovalBanner';
 
 export function ConnectRequestsSection() {
-	const canRead = useCanAccess(CREDENTIALS_READ, OWNER_CREDENTIALS_READ);
-	const requests = useOpenConnectRequests({ enabled: canRead });
+	const canApprove = useCanApproveConnectRequests();
+	const requests = useOpenConnectRequests({ enabled: canApprove });
 	const groups = useMemo(() => groupConnectRequestsByAgent(requests.data ?? []), [requests.data]);
 	const directory = useActorDirectory(groups.map((g) => g.agentId));
 
-	if (groups.length === 0) return null;
+	// The inbox reads the same query for every credentials reader, so the
+	// cache can hold requests this viewer may not approve: gate the render too.
+	if (!canApprove || groups.length === 0) return null;
 
 	return (
 		<section role="region" aria-labelledby="connect-requests-heading" className="space-y-1.5">
