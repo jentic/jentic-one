@@ -125,7 +125,7 @@ from jentic_one.control.services.vendors.service import (
     VendorNotConfiguredError,
     VendorRegistryService,
 )
-from jentic_one.shared.access_guidance import catalog_import_name
+from jentic_one.shared.access_guidance import catalog_api_id_covers, catalog_import_name
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import (
@@ -150,7 +150,6 @@ from jentic_one.shared.models.actors import Origin, actor_type_label_from_id
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
-    credential_covers,
     slugify_api_field,
 )
 from jentic_one.shared.models.credentials import StoredCredentialType
@@ -622,14 +621,14 @@ def _outcome_for(state: str, error_code: str | None) -> str:
 def _api_covers(row_vendor: str, api_name: str, api_version: str) -> Callable[[str], bool]:
     """Whether a catalog api_id (config entry / shared app) is the given API identity.
 
-    Decomposed exactly like a vendor connect stamps the credential's scope, so
-    the match uses the same footing the broker does.
+    Matched on every name a catalog import of the api_id can register under
+    (``catalog_api_id_covers``), the same footing the broker's directives use.
     """
 
     def covers(catalog_api_id: str) -> bool:
-        raw_vendor = vendor_from_api_id(catalog_api_id) or catalog_api_id
-        scope = canonical_credential_scope(vendor=raw_vendor, name=catalog_api_id, version=None)
-        return credential_covers(scope, vendor=row_vendor, name=api_name, version=api_version)
+        return catalog_api_id_covers(
+            catalog_api_id, vendor=row_vendor, name=api_name, version=api_version
+        )
 
     return covers
 
