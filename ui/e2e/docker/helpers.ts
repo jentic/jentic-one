@@ -357,7 +357,7 @@ export function sampleOpenApiSpec(title: string): string {
  */
 export async function importInlineApi(
 	request: APIRequestContext,
-	opts: { vendor: string; apiName: string; title?: string },
+	opts: { vendor: string; apiName: string; title?: string; content?: string },
 ): Promise<void> {
 	const res = await request.post('/apis', {
 		headers: authHeaders(),
@@ -365,7 +365,7 @@ export async function importInlineApi(
 			sources: [
 				{
 					type: 'inline',
-					content: sampleOpenApiSpec(opts.title ?? opts.apiName),
+					content: opts.content ?? sampleOpenApiSpec(opts.title ?? opts.apiName),
 					filename: `${opts.apiName}.json`,
 					vendor: opts.vendor,
 					api_name: opts.apiName,
@@ -394,4 +394,128 @@ export async function importInlineApi(
 			},
 		)
 		.toMatch(/succeeded|completed|done/);
+}
+
+// ── Non-admin viewers ──────────────────────────────────────────────────────
+//
+// Permission-gated surfaces can only be proved against a viewer who LACKS a
+// permission, which the admin storageState never does. These helpers create an
+// invited member with an explicit permission list (POST /users → invite token
+// → POST /users:redeem-invite, both public) and hand its JWT to a page.
+
+export interface MemberIdentity {
+	id: string;
+	email: string;
+	password: string;
+	/** The member's own Bearer JWT (from redeeming the invite). */
+	token: string;
+}
+
+/** POST /users + POST /users:redeem-invite → a member holding exactly `permissions`. */
+export async function createMember(
+	request: APIRequestContext,
+	permissions: string[],
+): Promise<MemberIdentity> {
+	const email = `e2e-member-${uniqueSuffix()}@local`;
+	const password = 'E2eMemberPass123!'; // pragma: allowlist secret
+	const created = await request.post('/users', {
+		headers: authHeaders(),
+		data: { email, first_name: 'E2e', last_name: 'Member', permissions },
+	});
+	expect(created.status(), `createMember failed: ${await created.text()}`).toBe(201);
+	const { user, invite_token } = (await created.json()) as {
+		user: { id: string };
+		invite_token: string;
+	};
+	const redeemed = await request.post('/users:redeem-invite', {
+		headers: { 'content-type': 'application/json' },
+		data: { invite_token, password },
+	});
+	expect(redeemed.status(), `redeem invite failed: ${await redeemed.text()}`).toBe(200);
+	const token = ((await redeemed.json()) as { access_token: string }).access_token;
+	return { id: user.id, email, password, token };
+}
+
+/** PUT /users/{id}/permissions → 200 (bulk replace; read live by /users/me). */
+export async function setUserPermissions(
+	request: APIRequestContext,
+	userId: string,
+	permissions: string[],
+): Promise<void> {
+	const res = await request.put(`/users/${userId}/permissions`, {
+		headers: authHeaders(),
+		data: { permissions },
+	});
+	expect(res.status(), `setUserPermissions failed: ${await res.text()}`).toBe(200);
+}
+
+/** Bearer headers for a member's own API calls. */
+export function bearer(token: string): Record<string, string> {
+	return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+}
+
+/**
+ * Sign the page in as `token` before the SPA boots — the same localStorage key
+ * the login form writes. Pair with an empty storageState so the admin JWT is
+ * not already present.
+ */
+export async function signInPageAs(page: Page, token: string): Promise<void> {
+	await page.addInitScript(([key, value]) => window.localStorage.setItem(key, value), [
+		TOKEN_STORAGE_KEY,
+		token,
+	] as const);
+}
+
+/** PUT /credentials/{cid}/agents/{aid}/permissions → 200 (the binding's inline rules). */
+export async function replaceBindingRules(
+	request: APIRequestContext,
+	credentialId: string,
+	agentId: string,
+	rules: Record<string, unknown>[],
+): Promise<void> {
+	const res = await request.put(`/credentials/${credentialId}/agents/${agentId}/permissions`, {
+		headers: authHeaders(),
+		data: rules,
+	});
+	expect(res.status(), `replaceBindingRules failed: ${await res.text()}`).toBe(200);
+}
+
+/** POST /permission-rule-sets → 201, then PUT …/rule-set → 204: attach a shared set. */
+export async function attachNewRuleSet(
+	request: APIRequestContext,
+	credentialId: string,
+	agentId: string,
+	opts: { name: string; rules: Record<string, unknown>[] },
+): Promise<string> {
+	const created = await request.post('/permission-rule-sets', {
+		headers: authHeaders(),
+		data: { name: opts.name, rules: opts.rules },
+	});
+	expect(created.status(), `create rule set failed: ${await created.text()}`).toBe(201);
+	const ruleSetId = ((await created.json()) as { rule_set_id: string }).rule_set_id;
+	const attached = await request.put(`/credentials/${credentialId}/agents/${agentId}/rule-set`, {
+		headers: authHeaders(),
+		data: { rule_set_id: ruleSetId },
+	});
+	expect(attached.status(), `attach rule set failed: ${await attached.text()}`).toBe(204);
+	return ruleSetId;
+}
+
+/**
+ * Promote an API's newest revision to live. An inline import lands as a draft,
+ * and the broker only routes to a live revision.
+ */
+export async function promoteLatestRevision(
+	request: APIRequestContext,
+	api: { vendor: string; name: string; version: string },
+): Promise<void> {
+	const base = `/apis/${api.vendor}/${api.name}/${api.version}`;
+	const list = await request.get(`${base}/revisions`, { headers: authHeaders() });
+	expect(list.ok(), `list revisions failed: ${await list.text()}`).toBeTruthy();
+	const [latest] = ((await list.json()) as { data: { revision_id: string }[] }).data;
+	expect(latest, `no revision under ${base}`).toBeTruthy();
+	const res = await request.post(`${base}/revisions/${latest.revision_id}:promote`, {
+		headers: authHeaders(),
+	});
+	expect(res.ok(), `promote failed: ${await res.text()}`).toBeTruthy();
 }
