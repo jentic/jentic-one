@@ -31,6 +31,7 @@ from jentic_one.mcp.installer import (
     mcp_lifespan,
 )
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
@@ -148,6 +149,15 @@ class InProcessCatalogAutoImporter:
             return None
         except Exception:
             _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
+            return None
+
+    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
+        """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None."""
+        try:
+            async with self._ctx.registry_db.session() as session:
+                return await ApiRepository.identity_for_catalog_api_id(session, api_id)
+        except Exception:
+            _logger.warning("catalog_registered_identity.failed", api_id=api_id, exc_info=True)
             return None
 
     async def current_version(self, *, api_id: str) -> str | None:

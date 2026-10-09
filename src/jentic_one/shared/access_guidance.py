@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from jentic_one.shared.config import VendorRegistryConfig
 from jentic_one.shared.models.api_identity import (
+    CredentialScope,
     canonical_credential_scope,
     credential_covers,
 )
@@ -51,13 +52,11 @@ def connect_vendor_key(
     The connect surface (``POST /integrations:connect``, ``jentic connect``,
     the ``request_connection`` MCP tool) takes the registry *key* (e.g.
     ``github``), while broker directives know the resolved API identity axes
-    (e.g. ``github-com`` / ``github-com-api-github-com``). Each registry
-    entry's ``VendorAuthConfig.vendor`` holds the catalog api_id
-    (``github.com/api.github.com``); decomposing it exactly like the
-    connect-session service does at credential-create time
-    (``canonical_credential_scope`` over ``domain`` / ``api_id``) yields the
-    same identity a registered operation resolves to, so ``credential_covers``
-    decides coverage on the same footing the broker itself uses.
+    (e.g. ``github-com`` / ``api-github-com``). Each registry entry's
+    ``VendorAuthConfig.vendor`` holds the catalog api_id
+    (``github.com/api.github.com``); ``catalog_api_id_covers`` matches it
+    against every identity a catalog import of that id can register under, so
+    coverage is decided on the same footing the broker itself uses.
 
     Returns the registry key when exactly the identity is covered by a
     registry entry, else ``None`` — callers gate ``suggested_command`` /
@@ -68,8 +67,40 @@ def connect_vendor_key(
     # registry's insertion (config) order, so overlapping entries resolve
     # to the earliest-declared key.
     for key, entry in vendors.entries.items():
-        raw_vendor = vendor_from_api_id(entry.vendor) or entry.vendor
-        scope = canonical_credential_scope(vendor=raw_vendor, name=entry.vendor, version=None)
-        if credential_covers(scope, vendor=vendor, name=name, version=version):
+        if catalog_api_id_covers(entry.vendor, vendor=vendor, name=name, version=version):
             return key
     return None
+
+
+def catalog_import_name(catalog_api_id: str) -> str:
+    """The ``api_name`` a first catalog import of ``catalog_api_id`` seeds.
+
+    A ``domain/sub`` id seeds its sub segment (``github.com/api.github.com`` →
+    ``api.github.com``); a bare-domain id seeds the whole id. This is the
+    registry's derivation for an entry whose sub segment clashes with no other
+    manifest entry; a clashing entry (and an API imported before the sub-segment
+    naming) carries the whole id instead.
+    """
+    _, sep, sub = catalog_api_id.partition("/")
+    return sub if sep and sub else catalog_api_id
+
+
+def catalog_api_scopes(catalog_api_id: str) -> tuple[CredentialScope, ...]:
+    """Every API scope an import of ``catalog_api_id`` can be registered under.
+
+    The vendor axis is the registrable domain of the api_id's host; the name
+    axis is either the sub segment (a regular catalog import) or the whole id
+    (a clashing entry, or an API imported before the sub-segment naming). The
+    version is unscoped.
+    """
+    raw_vendor = vendor_from_api_id(catalog_api_id) or catalog_api_id
+    names = dict.fromkeys((catalog_import_name(catalog_api_id), catalog_api_id))
+    return tuple(canonical_credential_scope(vendor=raw_vendor, name=n, version=None) for n in names)
+
+
+def catalog_api_id_covers(catalog_api_id: str, *, vendor: str, name: str, version: str) -> bool:
+    """Whether the API identity is one a catalog import of ``catalog_api_id`` registers."""
+    return any(
+        credential_covers(scope, vendor=vendor, name=name, version=version)
+        for scope in catalog_api_scopes(catalog_api_id)
+    )

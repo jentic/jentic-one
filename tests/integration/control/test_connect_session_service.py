@@ -15,6 +15,8 @@ find them.
 
 from __future__ import annotations
 
+import json
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -22,8 +24,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, select, text, update
 
+from jentic_one.admin.core.schema.agent_credential_bindings import AgentCredentialBinding
+from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.device_authorization_credentials import (
@@ -51,6 +55,15 @@ from jentic_one.control.services.integrations.flow_handlers.base import StatusRe
 from jentic_one.control.services.integrations.flow_handlers.device_authorization import (
     DeviceAuthorizationHandler,
 )
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
+from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
+from jentic_one.registry.core.schema.servers import Server, ServerVariable
+from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
+from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import OWNER_CREDENTIALS_READ
 from jentic_one.shared.config import (
@@ -63,8 +76,10 @@ from jentic_one.shared.config import (
 )
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
+from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ActorType
+from jentic_one.wiring import InProcessCatalogAutoImporter
 
 pytestmark = pytest.mark.integration
 
@@ -296,6 +311,203 @@ async def test_create_session_persists_requested_permission_rules(
     # both key off this to gate execution.
     assert credential.state == "pending"
     assert credential.catalog_api_id == "testdev.example/api.testdev.example"
+
+
+# ---------------------------------------------------------------------------
+# create_session — the credential takes the imported API's identity
+# ---------------------------------------------------------------------------
+
+_TESTDEV_CATALOG_ID = "testdev.example/api.testdev.example"
+
+_TESTDEV_OPENAPI = json.dumps(
+    {
+        "openapi": "3.1.0",
+        "info": {"title": "Test Device API", "version": "1.0.0"},
+        "servers": [{"url": "https://api.testdev.example"}],
+        "paths": {
+            "/items": {
+                "get": {
+                    "operationId": "listItems",
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+)
+
+
+@pytest.fixture()
+async def clean_registry_and_bindings(
+    registry_db: DatabaseSession, admin_db: DatabaseSession
+) -> AsyncGenerator[None, None]:
+    """Reset the registry tables a catalog import writes and the agent bindings."""
+
+    async def _truncate() -> None:
+        async with admin_db.session() as session:
+            await session.execute(delete(AgentCredentialBinding))
+            await session.commit()
+        async with registry_db.session() as session:
+            for table in (
+                OperationURLIndex,
+                SecuritySchemeFlow,
+                SecurityScheme,
+                ServerVariable,
+                Server,
+                Operation,
+                SpecFile,
+            ):
+                await session.execute(delete(table))
+            await session.execute(update(Api).values(current_revision_id=None))
+            await session.execute(delete(ApiRevision))
+            await session.execute(delete(Api))
+            await session.commit()
+
+    await _truncate()
+    yield
+    await _truncate()
+
+
+def _spec_client() -> AsyncMock:
+    """An httpx.AsyncClient double serving the test spec for any GET."""
+    body = _TESTDEV_OPENAPI.encode()
+    response = AsyncMock()
+    response.status_code = 200
+    response.text = _TESTDEV_OPENAPI
+    response.content = body
+    response.headers = {"content-length": str(len(body))}
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    return client
+
+
+async def _import_testdev_from_catalog(ctx: Context, *, name: str | None = None) -> Api:
+    """Run the real catalog import of the testdev entry; return the registered Api.
+
+    ``name`` overrides the derived api_name, standing in for a clashing
+    manifest entry or an API imported before the sub-segment naming.
+    """
+    entry = CatalogEntryView(
+        api_id=_TESTDEV_CATALOG_ID,
+        vendor="testdev.example",
+        path=None,
+        spec_url="https://catalog.example.com/testdev/openapi.json",
+        github_url=None,
+        registered=False,
+    )
+    source = CatalogService(ctx)._to_import_source(
+        entry, Identity(sub=_USER_ID, permissions=["org:admin"]), name=name
+    )
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=_spec_client()):
+        await ImportHandler(ctx).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by=_USER_ID,
+        )
+    async with ctx.registry_db.session() as session:
+        [api] = (
+            (await session.execute(select(Api).where(Api.catalog_api_id == _TESTDEV_CATALOG_ID)))
+            .scalars()
+            .all()
+        )
+    return api
+
+
+async def _connect_and_bind(ctx: Context) -> Credential:
+    """Vendor-connect ``testdev`` for the agent, finish it, and bind the agent.
+
+    The flow's token exchange is out of scope here: the credential is flipped
+    to ``connected`` and bound directly, the shape ``:confirm`` + the poll
+    scanner leave behind.
+    """
+    created = await ConnectSessionService(
+        ctx, catalog_auto_importer=InProcessCatalogAutoImporter(ctx)
+    ).create_session(vendor_key="testdev", agent_id=_AGENT_ID, initiator_actor_id=_USER_ID)
+    async with ctx.control_db.session() as session:
+        row = await ConnectSessionRepository.get_by_id(session, created.session_id)
+        assert row is not None
+        await session.execute(
+            update(Credential).where(Credential.id == row.credential_id).values(state="connected")
+        )
+        await session.commit()
+        credential = await CredentialRepository.get_by_id(session, row.credential_id)
+    assert credential is not None
+    async with ctx.admin_db.session() as session:
+        session.add(
+            AgentCredentialBinding(
+                id=generate_ksuid("acb"), agent_id=_AGENT_ID, credential_id=credential.id
+            )
+        )
+        await session.commit()
+    return credential
+
+
+async def _assert_binding_resolves(ctx: Context, api: Api, credential: Credential) -> None:
+    derivation = await CredentialBindingResolver(ctx.admin_db, ctx.control_db).derive_credentials(
+        agent_id=_AGENT_ID, vendor=api.vendor, name=api.name, version=api.version
+    )
+    assert [c.credential_id for c in derivation.credentials] == [credential.id]
+    assert derivation.identity_mismatch is None
+
+
+async def test_vendor_connect_after_catalog_import_resolves_for_the_imported_api(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    # A catalog import names ``testdev.example/api.testdev.example`` by its
+    # sub segment; the vendor connect stamps that identity, so the broker
+    # resolves the agent's binding for the imported API.
+    ctx = integration_context
+    api = await _import_testdev_from_catalog(ctx)
+    assert (api.vendor, api.name) == ("testdev-example", "api-testdev-example")
+
+    credential = await _connect_and_bind(ctx)
+
+    assert (credential.api_vendor, credential.api_name) == (api.vendor, api.name)
+    await _assert_binding_resolves(ctx, api, credential)
+
+
+async def test_vendor_connect_before_catalog_import_resolves_once_imported(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    # The agent-driven order: the connect mints the credential before the
+    # post-connect auto-import lands the API, so the credential carries the
+    # identity a first catalog import seeds.
+    ctx = integration_context
+    credential = await _connect_and_bind(ctx)
+    api = await _import_testdev_from_catalog(ctx)
+
+    assert (credential.api_vendor, credential.api_name) == (api.vendor, api.name)
+    await _assert_binding_resolves(ctx, api, credential)
+
+
+async def test_vendor_connect_follows_an_already_imported_apis_registered_name(
+    integration_context: Context,
+    seed_test_vendors: None,
+    seed_agent: None,
+    clean_session_tables: None,
+    clean_registry_and_bindings: None,
+) -> None:
+    # An API registered under the whole catalog id (a clashing manifest entry,
+    # or imported before the sub-segment naming) keeps that name; the connect
+    # follows the registered identity rather than the derivation.
+    ctx = integration_context
+    api = await _import_testdev_from_catalog(ctx, name=_TESTDEV_CATALOG_ID)
+    assert api.name == "testdev-example-api-testdev-example"
+
+    credential = await _connect_and_bind(ctx)
+
+    assert (credential.api_vendor, credential.api_name) == (api.vendor, api.name)
+    await _assert_binding_resolves(ctx, api, credential)
 
 
 # ---------------------------------------------------------------------------

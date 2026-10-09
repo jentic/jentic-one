@@ -3,15 +3,19 @@
 ``connect_vendor_key`` bridges two vocabularies: broker directives know the
 resolved API identity axes (slugged vendor/name), while the connect surface
 (``POST /integrations:connect``, ``jentic connect``, ``request_connection``)
-takes the vendor-registry *key*. The lookup must decompose each registry
-entry's catalog api_id exactly like the connect-session service does at
-credential-create time, so a directive only ever suggests a connect that would
-actually cover the denied operation.
+takes the vendor-registry *key*. The lookup must match each registry entry's
+catalog api_id against every identity a catalog import of it can register
+under, so a directive only ever suggests a connect that would actually cover
+the denied operation.
 """
 
 from __future__ import annotations
 
-from jentic_one.shared.access_guidance import connect_vendor_key
+from jentic_one.shared.access_guidance import (
+    catalog_api_id_covers,
+    catalog_import_name,
+    connect_vendor_key,
+)
 from jentic_one.shared.config import (
     VendorAuthConfig,
     VendorDeviceAuthorizationFlowConfig,
@@ -43,9 +47,8 @@ _REGISTRY = VendorRegistryConfig(
 
 
 def test_registry_api_reverse_maps_to_its_key() -> None:
-    """The identity a connect-created credential would carry (api_vendor from
-    the domain, api_name slugged from the whole api_id — the service's own
-    decomposition) covers the operation's axes, so the key comes back."""
+    """An API carrying the whole-id name (a clashing catalog entry, or one
+    imported before the sub-segment naming) still maps back to the key."""
     assert (
         connect_vendor_key(
             _REGISTRY, vendor="github.com", name="github.com/api.github.com", version="1.0.0"
@@ -97,3 +100,36 @@ def test_registry_entry_vendor_uses_registrable_domain() -> None:
     assert connect_vendor_key(registry, vendor="finage.co.uk", name=name) == "finage"
     assert connect_vendor_key(registry, vendor="co.uk", name=name) is None
     assert connect_vendor_key(registry, vendor="apex27.co.uk", name=name) is None
+
+
+def test_catalog_import_name_is_the_sub_segment() -> None:
+    """A catalog import names a ``domain/sub`` API by its sub segment; a bare
+    domain keeps the whole id."""
+    assert catalog_import_name("github.com/api.github.com") == "api.github.com"
+    assert catalog_import_name("coincap.io") == "coincap.io"
+    assert catalog_import_name("coincap.io/") == "coincap.io/"
+
+
+def test_registry_entry_covers_the_catalog_imported_identity() -> None:
+    """A catalog import registers ``github.com/api.github.com`` as
+    ``github-com/api-github-com``; the config entry's key comes back for it,
+    raw or slugged."""
+    assert (
+        connect_vendor_key(_REGISTRY, vendor="github-com", name="api-github-com", version="1.0.0")
+        == "github"
+    )
+    assert connect_vendor_key(_REGISTRY, vendor="github.com", name="api.github.com") == "github"
+
+
+def test_sub_segment_match_still_requires_the_vendor_axis() -> None:
+    """The sub-segment name alone is not enough: the same sub under another
+    vendor domain is a different API."""
+    assert connect_vendor_key(_REGISTRY, vendor="gitlab-com", name="api-github-com") is None
+    assert not catalog_api_id_covers(
+        "github.com/api.github.com", vendor="github-com", name="uploads-github-com", version="v1"
+    )
+
+
+def test_bare_domain_entry_covers_its_whole_id_name() -> None:
+    """A bare-domain catalog id seeds its whole id as the name."""
+    assert catalog_api_id_covers("coincap.io", vendor="coincap-io", name="coincap-io", version="2")
