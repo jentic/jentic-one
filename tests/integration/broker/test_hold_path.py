@@ -83,9 +83,9 @@ def _request(body: bytes) -> Request:
     return Request(scope, receive)
 
 
-def _ctx_req() -> ExecuteRequestContext:
+def _ctx_req(query: str = "") -> ExecuteRequestContext:
     return ExecuteRequestContext(
-        upstream_url=_URL,
+        upstream_url=f"{_URL}?{query}" if query else _URL,
         method="POST",
         trace_id="b" * 32,
         api_vendor="api.example.com",
@@ -110,8 +110,8 @@ def _authorization() -> ExecutionAuthorization:
     )
 
 
-async def _hold(ctx: Context, body: bytes = _BODY) -> dict[str, Any]:
-    response = await _handle_hold(_request(body), _ctx_req(), ctx, _AGENT, _authorization())
+async def _hold(ctx: Context, body: bytes = _BODY, query: str = "") -> dict[str, Any]:
+    response = await _handle_hold(_request(body), _ctx_req(query), ctx, _AGENT, _authorization())
     assert response.status_code == 202
     assert response.headers["Preference-Applied"] == "respond-async"
     return dict(json.loads(bytes(response.body)))
@@ -243,3 +243,23 @@ async def test_pending_cap_is_a_distinct_403_denial(
     async with ctx.admin_db.session() as session:
         jobs = (await session.execute(select(Job))).scalars().all()
     assert len(jobs) == 1
+
+
+async def test_a_different_query_or_body_files_a_new_hold(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx, query="a=1&b=2")
+    reordered = await _hold(ctx, query="b=2&a=1")
+    other_query = await _hold(ctx, query="a=1&b=3")
+    no_query = await _hold(ctx)
+    other_body = await _hold(ctx, body=b'{"amount": 501}', query="a=1&b=2")
+
+    assert reordered["approval"]["id"] == first["approval"]["id"]
+    ids = {
+        first["approval"]["id"],
+        other_query["approval"]["id"],
+        no_query["approval"]["id"],
+        other_body["approval"]["id"],
+    }
+    assert len(ids) == 4

@@ -9,6 +9,7 @@ from jentic_one.shared.jobs.hold import (
     approval_expired_problem,
     approval_resume_failed_problem,
     canonical_body,
+    canonical_query,
     compute_execution_fingerprint,
 )
 
@@ -51,3 +52,14 @@ def test_denied_and_expired_problems_are_permission_denied() -> None:
     assert expired["status"] == 403
     assert expired["type"] == APPROVAL_EXPIRED_TYPE
     assert approval_resume_failed_problem("exap_1")["approval"]["state"] == "approved"
+
+
+def test_query_string_is_part_of_the_fingerprint() -> None:
+    assert _fp(None, query="limit=10") != _fp(None, query="limit=20")
+    assert _fp(None, query="limit=10") != _fp(None)
+    assert _fp(None, query="a=1&b=") != _fp(None, query="a=1")
+
+
+def test_query_parameter_order_does_not_split_identical_requests() -> None:
+    assert _fp(None, query="a=1&b=2") == _fp(None, query="b=2&a=1")
+    assert canonical_query("b=2&a=1&a=0") == "a=0&a=1&b=2"

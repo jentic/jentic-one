@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlencode
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -92,17 +93,33 @@ def canonical_body(body: bytes | None) -> bytes:
     return json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
+def canonical_query(query: str) -> str:
+    """The query string in a stable form for fingerprinting.
+
+    Parameters are sorted (blank values kept) so their order does not split
+    identical requests; a different value or parameter files a new hold.
+    """
+    if not query:
+        return ""
+    return urlencode(sorted(parse_qsl(query, keep_blank_values=True)))
+
+
 def compute_execution_fingerprint(
     *,
     agent_id: str,
     credential_id: str,
     method: str,
     path: str,
+    query: str = "",
     body: bytes | None,
 ) -> str:
-    """SHA-256 over ``(agent_id, credential_id, method, path, canonical body)``."""
+    """SHA-256 over ``(agent_id, credential_id, method, path, query, body)``.
+
+    The query and body are canonicalised (:func:`canonical_query`,
+    :func:`canonical_body`).
+    """
     digest = hashlib.sha256()
-    for part in (agent_id, credential_id, method.upper(), path):
+    for part in (agent_id, credential_id, method.upper(), path, canonical_query(query)):
         digest.update(part.encode())
         digest.update(b"\x00")
     digest.update(canonical_body(body))
@@ -158,6 +175,7 @@ async def file_hold(
     operation_id: str | None,
     method: str,
     path: str,
+    query: str = "",
     body: bytes | None,
     trace_id: str | None,
     execution_id: str,
@@ -179,7 +197,12 @@ async def file_hold(
         raise PendingApprovalLimitError(pending, max_pending)
 
     fingerprint = compute_execution_fingerprint(
-        agent_id=agent_id, credential_id=credential_id, method=method, path=path, body=body
+        agent_id=agent_id,
+        credential_id=credential_id,
+        method=method,
+        path=path,
+        query=query,
+        body=body,
     )
     existing = await _pending_by_fingerprint(session, fingerprint)
     if existing is not None:

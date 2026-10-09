@@ -948,7 +948,8 @@ async def _handle_hold(
     """
     cfg = ctx.config.execution_approvals
     credential_id = authorization.selected_credential.credential_id
-    path = urlparse(ctx_req.upstream_url).path
+    parsed_url = urlparse(ctx_req.upstream_url)
+    path = parsed_url.path
     execution_id = mint_execution_id()
     body = await _read_request_body(request, ctx_req.method, ctx)
     raw_payload = _async_job_payload(
@@ -978,6 +979,7 @@ async def _handle_hold(
                 operation_id=ctx_req.operation_id,
                 method=ctx_req.method,
                 path=path,
+                query=parsed_url.query,
                 body=body,
                 trace_id=valid_trace_id_or_none(ctx_req.trace_id),
                 execution_id=execution_id,
