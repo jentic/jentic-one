@@ -653,15 +653,15 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 
 		await user.click(await screen.findByRole('button', { name: 'Add credential' }));
 		await user.click(await screen.findByRole('button', { name: /Acme Gmail/ }));
-		const next = async (): Promise<void> => {
-			const button = await screen.findByRole('button', {
-				name: /(skip.*continue|^continue$)/i,
-			});
-			await waitFor(() => expect(button).not.toBeDisabled());
-			await user.click(button);
+		// Re-query on every check: each step renders its own Continue, and the
+		// configure step's stays busy while ``:connect`` is in flight.
+		const continueOn = async (name: RegExp): Promise<void> => {
+			await waitFor(() => expect(screen.getByRole('button', { name })).not.toBeDisabled());
+			await user.click(screen.getByRole('button', { name }));
 		};
-		await next();
-		await next();
+		await continueOn(/^continue$/i);
+		expect(await screen.findByText(/permission rules/i)).toBeInTheDocument();
+		await continueOn(/(skip.*continue|^continue$)/i);
 
 		await waitFor(() => expect(rowFor('Gmail')).toHaveAttribute('data-status', 'added'));
 		expect(posts).toEqual([]);
