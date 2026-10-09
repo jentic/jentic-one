@@ -1,7 +1,9 @@
 """Architecture enforcement: mandatory query scoping coverage.
 
 1. Every model referenced in a surface's scoping/filters.py must appear in that
-   surface's scoping dicts (_OWNER_MODELS / _DELEGATION_PERMISSIONS).
+   surface's scoping dicts (_OWNER_MODELS / _DELEGATION_PERMISSIONS), and every
+   control model widened by the owned-agent axis (_OWNED_AGENT_MODELS) must
+   also be owner-scoped.
 2. No service in control/ or admin/ (the scoped surfaces) may declare
    `identity: Identity | None` — identity must be mandatory.
 3. verify_only_presence must not appear anywhere in the codebase.
@@ -17,6 +19,7 @@ from jentic_one.admin.scoping.filters import _OWNER_MODELS as _ADMIN_OWNER_MODEL
 from jentic_one.control.scoping.filters import (
     _DELEGATION_PERMISSIONS as _CONTROL_DELEGATION_PERMISSIONS,
 )
+from jentic_one.control.scoping.filters import _OWNED_AGENT_MODELS as _CONTROL_OWNED_AGENT_MODELS
 from jentic_one.control.scoping.filters import _OWNER_MODELS as _CONTROL_OWNER_MODELS
 
 from .conftest import SRC_ROOT, python_files_in
@@ -85,6 +88,18 @@ def test_control_scoping_model_completeness() -> None:
     covered_names = {cls.__name__ for cls in covered}
     missing = [m for m in imported_models if m not in covered_names]
     assert not missing, f"Models imported but not in scoping dicts: {missing}"
+
+
+@pytest.mark.arch
+def test_control_owned_agent_models_are_owner_scoped() -> None:
+    """The owned-agent read axis only widens models that already have an owner column.
+
+    It OR-merges into the owner clause, so a model outside ``_OWNER_MODELS``
+    would never reach it — and adding one there would silently scope it by
+    agent ownership alone.
+    """
+    stray = [m.__name__ for m in _CONTROL_OWNED_AGENT_MODELS if m not in _CONTROL_OWNER_MODELS]
+    assert not stray, f"Owned-agent models missing from _OWNER_MODELS: {stray}"
 
 
 @pytest.mark.arch

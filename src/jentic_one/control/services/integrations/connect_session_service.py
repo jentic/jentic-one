@@ -28,10 +28,12 @@ from jentic_one.control.repos import (
 )
 from jentic_one.control.repos.connect_session_repo import ConnectSessionRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.errors import (
+    AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
     CredentialMissingCreatorError,
@@ -64,12 +66,18 @@ from jentic_one.control.services.vendors.service import (
 from jentic_one.shared.access_guidance import catalog_import_name
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import (
+    AGENTS_WRITE,
+    CREDENTIALS_WRITE,
+    ORG_ADMIN,
+    compute_effective,
+)
 from jentic_one.shared.catalog import CatalogAutoImportProtocol
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import hash_secret
 from jentic_one.shared.metrics import get_meter
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.actors import Origin, actor_type_label_from_id
 from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -331,10 +339,29 @@ def _forbid_self_confirm(row: ConnectSession, caller_actor_type: ActorType) -> N
         raise ConfirmationForbiddenError("agent-initiated sessions cannot be confirmed by an agent")
 
 
-def _verify_poll_token(row: ConnectSession, token: str) -> None:
+def _poll_token_matches(row: ConnectSession, token: str | None) -> bool:
     """Hash the presented poll_token and compare it to the stored digest in constant time."""
-    if not secrets.compare_digest(row.poll_token_hash, hash_secret(token)):
-        raise InvalidPollTokenError("poll_token mismatch")
+    if token is None:
+        return False
+    return secrets.compare_digest(row.poll_token_hash, hash_secret(token))
+
+
+# Agents in these states can no longer use a credential, so ``:confirm`` refuses
+# to bind one in their name.
+_UNUSABLE_AGENT_STATUSES: frozenset[str] = frozenset(
+    {ActorStatus.ARCHIVED.value, ActorStatus.DISABLED.value, ActorStatus.REJECTED.value}
+)
+
+
+def _is_owner_approver(identity: Identity) -> bool:
+    """An agent's owner may approve for it only with both write permissions.
+
+    Confirm writes the agent's credential binding (which the bind route gates
+    on ``agents:write``) and its permission rules on a credential
+    (``credentials:write``). ``org:admin`` implies both.
+    """
+    effective = compute_effective(set(identity.permissions))
+    return ORG_ADMIN in effective or {CREDENTIALS_WRITE, AGENTS_WRITE} <= effective
 
 
 def _terminal_status(
@@ -552,15 +579,19 @@ class ConnectSessionService:
 
     # ---- review data ------------------------------------------------------
 
-    async def get_review_data(self, session_id: str, *, poll_token: str) -> ReviewData:
+    async def get_review_data(
+        self, session_id: str, *, poll_token: str | None, identity: Identity
+    ) -> ReviewData:
         """Return everything the review page needs to render.
 
-        Gated by the session's ``poll_token`` — session ids travel in
-        approval URLs, so they are not secrets, and the review payload
-        (vendor, scopes, requested rules, initiator) must not be readable
-        by any actor that merely holds ``credentials:write``. Missing
-        session and token mismatch surface identically (mirrors
-        ``get_status`` — no session-id enumeration oracle).
+        Gated by :meth:`_require_session_access` — the session's
+        ``poll_token``, or a human who is the target agent's owner or
+        ``org:admin``. Session ids travel in approval URLs, so they are not
+        secrets, and the review payload (vendor, scopes, requested rules,
+        initiator) must not be readable by any actor that merely holds
+        ``credentials:write``. Missing session, token mismatch and a caller
+        who is neither surface identically (no session-id enumeration
+        oracle).
 
         The scope list is the union of the vendor's catalog with the
         initiator's as-requested list — flagged so the UI can highlight
@@ -570,9 +601,8 @@ class ConnectSessionService:
         """
         async with self._ctx.control_db.session() as session:
             row = await ConnectSessionRepository.get_by_id(session, session_id)
-            if row is None:
-                raise InvalidPollTokenError("invalid poll_token")
-            _verify_poll_token(row, poll_token)
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
+        async with self._ctx.control_db.session() as session:
             # Pull the credential's api coords so the SPA can call
             # ``/apis/{vendor}/{name}/{version}/operations`` for the
             # rules-page preview. ``api_version`` is nullable — the
@@ -628,8 +658,9 @@ class ConnectSessionService:
 
         Visibility follows the credential axis (``build_access_filters``):
         plain callers see sessions they initiated, ``org:admin`` sees all,
-        and a delegated agent holding ``owner:credentials:read`` also sees
-        its owner's sessions. Rows are slim summaries — the ``poll_token``
+        a delegated agent holding ``owner:credentials:read`` also sees its
+        owner's sessions, and a human also sees the sessions of agents they
+        own. Rows are slim summaries — the ``poll_token``
         capability never leaves the service on this path.
         """
         decoded_cursor = None
@@ -637,7 +668,11 @@ class ConnectSessionService:
             ts, sid = decode_cursor_str(cursor)
             decoded_cursor = (ts, sid)
 
-        access_filters = build_access_filters(identity, ConnectSession)
+        access_filters = build_access_filters(
+            identity,
+            ConnectSession,
+            owned_agent_ids=await self._owned_agent_ids(identity),
+        )
 
         async with self._ctx.control_db.session() as session:
             rows = await ConnectSessionRepository.list_all(
@@ -699,7 +734,7 @@ class ConnectSessionService:
         self,
         session_id: str,
         *,
-        poll_token: str,
+        poll_token: str | None,
         confirmed_scopes: list[str],
         # Rules arrive already-shaped as ``AgentPermissionRule`` dicts
         # (``{effect, methods, path, match_mode, operations, comment}``) —
@@ -715,10 +750,15 @@ class ConnectSessionService:
     ) -> ConfirmResult:
         """Confirm scopes + permissions and kick off the vendor-side flow.
 
-        Gated by the ``poll_token`` capability like ``get_review_data`` —
-        without it, any actor holding ``credentials:write`` could confirm
-        any session (ids travel in approval URLs) and bind an arbitrary
-        agent. Missing session and token mismatch surface identically.
+        Gated like ``get_review_data`` (``poll_token``, or the target
+        agent's owner / ``org:admin``) — otherwise any actor holding
+        ``credentials:write`` could confirm any session (ids travel in
+        approval URLs) and bind an arbitrary agent. Missing session, token
+        mismatch and a caller who is neither surface identically.
+
+        An agent-initiated session's credential is re-attributed to the
+        approving human (``created_by``) unless the initiating agent itself
+        holds ``credentials:write``.
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
@@ -731,9 +771,7 @@ class ConnectSessionService:
                 if row is not None
                 else None
             )
-        if row is None:
-            raise InvalidPollTokenError("invalid poll_token")
-        _verify_poll_token(row, poll_token)
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
 
         pinned_registration_id = (
             credential.oauth_app_registration_id if credential is not None else None
@@ -820,7 +858,13 @@ class ConnectSessionService:
                 )
             raise
 
+        attributed_to = await self._confirm_attribution(row, identity)
+
         async with self._ctx.control_db.transaction() as session:
+            if attributed_to is not None:
+                await CredentialRepository.set_created_by(
+                    session, row.credential_id, created_by=attributed_to
+                )
             # Persist the approved rules as direct agent-credential binding
             # rules (theme 5): ``agent_permission_rules`` is the list the
             # broker enforces for the ``(agent, credential)`` pair. Skipped
@@ -889,6 +933,7 @@ class ConnectSessionService:
                 "agent_id": effective_agent_id,
                 "confirmed_scopes": list(confirmed_scopes),
                 "rules_count": len(permission_rules),
+                "credential_created_by": attributed_to or row.initiator_actor_id,
             },
         )
         if challenge.kind == "device_authorization":
@@ -901,26 +946,106 @@ class ConnectSessionService:
         return AuthCodeConfirmResult(authorize_url=challenge.authorize_url)
 
     async def _require_agent_binding_allowed(self, agent_id: str, identity: Identity) -> None:
-        """The target agent must exist and be governable by the confirming caller.
+        """The target agent must exist, be governable by the caller, and be usable.
 
         Cross-DB read (agents live in the admin DB) through the
-        ``EffectsRepository`` seam. Owner-or-admin mirrors the
-        query-scoping conventions: the confirm is about to write
-        ``agent_permission_rules`` and an admin-DB binding in this
-        agent's name, so the caller must own the agent or hold
-        ``org:admin``.
+        ``EffectsRepository`` seam. The confirm is about to write
+        ``agent_permission_rules`` and an admin-DB binding in this agent's
+        name, so the caller must be ``org:admin`` or the agent's owner
+        holding both ``credentials:write`` and ``agents:write`` (the bind
+        route's own gate). An archived, disabled or rejected agent is
+        refused — it can no longer use the credential, and archive revokes
+        its bindings.
         """
         async with self._ctx.admin_db.session() as admin_session:
-            exists, owner_id = await EffectsRepository.get_agent_owner(admin_session, agent_id)
-        if not exists:
+            agent = await EffectsRepository.get_agent_owner(admin_session, agent_id)
+        if agent is None:
             raise AgentNotFoundError(agent_id)
-        if "org:admin" in identity.permissions:
-            return
-        # An ownerless agent (nullable ``owner_id``) has no owner to match —
-        # only ``org:admin`` may bind in its name. Fail closed.
-        if owner_id is not None and identity.sub == owner_id:
-            return
-        raise ConfirmationForbiddenError(f"agent {agent_id!r} is not owned by the caller")
+        if ORG_ADMIN not in identity.permissions:
+            # An ownerless agent (nullable ``owner_id``) has no owner to
+            # match — only ``org:admin`` may bind in its name. Fail closed.
+            if agent.owner_id is None or identity.sub != agent.owner_id:
+                raise ConfirmationForbiddenError(f"agent {agent_id!r} is not owned by the caller")
+            if not _is_owner_approver(identity):
+                raise ConfirmationForbiddenError(
+                    "approving for an agent requires credentials:write and agents:write"
+                )
+        if agent.status in _UNUSABLE_AGENT_STATUSES:
+            raise AgentInactiveError(agent_id, agent.status)
+
+    async def _confirm_attribution(self, row: ConnectSession, identity: Identity) -> str | None:
+        """Who the session's credential is attributed to once it is confirmed.
+
+        Returns the approving human's id for an agent-initiated session, or
+        ``None`` to keep the initiator as ``created_by``: a user-initiated
+        session stays its initiator's, and an initiating agent that itself
+        holds ``credentials:write`` keeps ownership of what it asked for.
+        """
+        if identity.actor_type != ActorType.USER:
+            return None
+        if actor_type_label_from_id(row.initiator_actor_id) != ActorType.AGENT.value:
+            return None
+        async with self._ctx.admin_db.session() as admin_session:
+            grants = await EffectsRepository.list_actor_permissions(
+                admin_session, row.initiator_actor_id
+            )
+        if CREDENTIALS_WRITE in compute_effective(set(grants)):
+            return None
+        return identity.sub
+
+    async def _require_session_access(
+        self,
+        row: ConnectSession | None,
+        *,
+        poll_token: str | None,
+        identity: Identity,
+    ) -> ConnectSession:
+        """Gate review / status / confirm / cancel: poll token, or owner / ``org:admin``.
+
+        The ``poll_token`` is the agent-side capability. A human who is
+        ``org:admin``, or the owner of the session's target agent holding
+        both ``credentials:write`` and ``agents:write``, may act without it.
+        Agents never get the token-less path. Every refusal — no session,
+        wrong token, a caller who is neither — is the same
+        ``InvalidPollTokenError`` so the routes stay free of a session-id
+        enumeration oracle.
+        """
+        if row is None:
+            raise InvalidPollTokenError("invalid poll_token")
+        if _poll_token_matches(row, poll_token):
+            return row
+        if await self._is_session_approver(row, identity):
+            return row
+        raise InvalidPollTokenError("invalid poll_token")
+
+    async def _is_session_approver(self, row: ConnectSession, identity: Identity) -> bool:
+        """Whether a human may act on the session without its ``poll_token``."""
+        if identity.actor_type != ActorType.USER or not identity.sub:
+            return False
+        if ORG_ADMIN in identity.permissions:
+            return True
+        if row.agent_id is None or not _is_owner_approver(identity):
+            return False
+        async with self._ctx.admin_db.session() as admin_session:
+            agent = await EffectsRepository.get_agent_owner(admin_session, row.agent_id)
+        return agent is not None and agent.owner_id is not None and agent.owner_id == identity.sub
+
+    async def _owned_agent_ids(self, identity: Identity) -> list[str]:
+        """Agent ids the caller owns, for the read-only owned-agent scoping clause.
+
+        Only humans own agents; ``org:admin`` is unrestricted already, so both
+        skip the admin-DB lookup.
+        """
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.USER
+            or not identity.sub
+        ):
+            return []
+        async with self._ctx.admin_db.session() as admin_session:
+            return await PrerequisiteRepository.list_agent_ids_owned_by(
+                admin_session, owner_id=identity.sub
+            )
 
     # ---- status --------------------------------------------------------
 
@@ -928,7 +1053,8 @@ class ConnectSessionService:
         self,
         session_id: str,
         *,
-        poll_token: str,
+        poll_token: str | None,
+        identity: Identity,
     ) -> StatusResult:
         """Return the session's current status — stored-state read only.
 
@@ -940,15 +1066,14 @@ class ConnectSessionService:
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
-            # Uniformly surface "missing session" as ``InvalidPollTokenError``
-            # (403) rather than ``SessionNotFoundError`` (404). Anything else
-            # would give an unauth'd caller a session-id enumeration oracle:
-            # the ``credentials:connect`` permission guards the endpoint, but the
-            # ``poll_token`` is the real capability — without it, 403 for
-            # every id (missing or existing) is the only non-leaky answer.
-            if row is None:
-                raise InvalidPollTokenError("invalid poll_token")
-            _verify_poll_token(row, poll_token)
+        # Uniformly surface "missing session" as ``InvalidPollTokenError``
+        # (403) rather than ``SessionNotFoundError`` (404). Anything else
+        # would give a caller a session-id enumeration oracle: the
+        # ``credentials:connect`` permission guards the endpoint, but the
+        # ``poll_token`` (or being the agent's owner / ``org:admin``) is the
+        # real capability — without it, 403 for every id is the only
+        # non-leaky answer.
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
 
         # Terminal states are immutable. bound_scopes comes off
         # ``oauth_token.scope`` — a single flow-agnostic column that
@@ -1591,25 +1716,25 @@ class ConnectSessionService:
         await self._mark_terminal(state.session_id, "failed", error, error_code="callback_error")
         return state.session_id
 
-    async def cancel_session(self, session_id: str, *, poll_token: str) -> None:
+    async def cancel_session(
+        self, session_id: str, *, poll_token: str | None, identity: Identity
+    ) -> None:
         """User-driven cancellation from the SPA (Cancel button or dialog dismiss).
 
-        Gated by the session's ``poll_token`` — same capability the SPA
-        already holds to poll ``/status``, so we don't force the caller
-        to bring a heavier scope. Idempotent: already-terminal sessions
-        are a no-op (the credential + session have already been cleaned
-        up by ``_mark_terminal`` on a prior terminal transition).
+        Gated like ``/status`` — the session's ``poll_token`` (the SPA
+        already holds it), or the target agent's owner / ``org:admin``.
+        Idempotent: already-terminal sessions are a no-op (the credential +
+        session have already been cleaned up by ``_mark_terminal`` on a
+        prior terminal transition).
         """
         async with self._ctx.control_db.session() as read_session:
             row = await ConnectSessionRepository.get_by_id(read_session, session_id)
-        # ``get_status`` parity: no session-existence oracle. An attacker
-        # without a valid ``poll_token`` gets 403 whether the session
-        # exists or not; a legitimate caller with a poll_token that
-        # predates cleanup also gets 403, which is harmless for the
-        # fire-and-forget unmount cancel (the caller ``.catch``es it).
-        if row is None:
-            raise InvalidPollTokenError("invalid poll_token")
-        _verify_poll_token(row, poll_token)
+        # ``get_status`` parity: no session-existence oracle. A caller
+        # without a valid ``poll_token`` who is not the owner / admin gets
+        # 403 whether the session exists or not; a legitimate caller with a
+        # poll_token that predates cleanup also gets 403, which is harmless
+        # for the fire-and-forget unmount cancel (the caller ``.catch``es it).
+        row = await self._require_session_access(row, poll_token=poll_token, identity=identity)
         if row.state in ("connected", "failed", "expired"):
             return
         await self._mark_terminal(session_id, "failed", "user cancelled", error_code="cancelled")

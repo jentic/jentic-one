@@ -7,11 +7,20 @@ NOTHING for idempotent inserts without requiring rollback.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.db.ids import generate_ksuid
 from jentic_one.shared.models.api_identity import credential_coverage_where, slugify_api_field
+
+
+class AgentOwnerRow(NamedTuple):
+    """Owner and lifecycle status of an agent, read from the admin DB."""
+
+    owner_id: str | None
+    status: str
 
 
 class EffectsRepository:
@@ -170,24 +179,41 @@ class EffectsRepository:
         return [str(row[0]) for row in result.fetchall()]
 
     @staticmethod
-    async def get_agent_owner(session: AsyncSession, agent_id: str) -> tuple[bool, str | None]:
-        """Return ``(exists, owner_id)`` for an agent via raw SQL (admin DB).
+    async def get_agent_owner(session: AsyncSession, agent_id: str) -> AgentOwnerRow | None:
+        """Return the agent's owner and status via raw SQL (admin DB), ``None`` if missing.
 
-        Cross-DB seam for the connect flow's agent-binding validation: the
-        control-side ``:confirm`` must verify the target agent exists and is
-        owned by the confirming caller before writing the binding, and the
-        broker/control modules may not import admin ORM models. The two
-        axes are separate because ``agents.owner_id`` is nullable — an
-        existing but ownerless agent is ``(True, None)``, not "missing".
+        Cross-DB seam for the connect flow's agent checks: the control-side
+        session routes verify the target agent is owned by the caller, and
+        ``:confirm`` also refuses an agent that is no longer usable (archived,
+        disabled, rejected) before writing a binding in its name. The broker
+        and control modules may not import admin ORM models. ``owner_id`` is
+        nullable — an existing but ownerless agent has ``owner_id=None``, not
+        "missing".
         """
         result = await session.execute(
-            text("SELECT owner_id FROM agents WHERE id = :agent_id"),
+            text("SELECT owner_id, status FROM agents WHERE id = :agent_id"),
             {"agent_id": agent_id},
         )
         row = result.first()
         if row is None:
-            return False, None
-        return True, (str(row[0]) if row[0] is not None else None)
+            return None
+        return AgentOwnerRow(
+            owner_id=str(row[0]) if row[0] is not None else None,
+            status=str(row[1]),
+        )
+
+    @staticmethod
+    async def list_actor_permissions(session: AsyncSession, actor_id: str) -> list[str]:
+        """Return the permissions granted directly to an actor via raw SQL (admin DB).
+
+        Unexpanded grant names from ``actor_permission_grants``; callers expand
+        them with ``compute_effective`` when implications matter.
+        """
+        result = await session.execute(
+            text("SELECT permission FROM actor_permission_grants WHERE actor_id = :actor_id"),
+            {"actor_id": actor_id},
+        )
+        return [str(row[0]) for row in result.fetchall()]
 
     @staticmethod
     async def bind_agent_to_credential(

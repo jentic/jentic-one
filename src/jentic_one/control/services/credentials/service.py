@@ -87,6 +87,7 @@ from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_RE
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
@@ -147,6 +148,25 @@ class CredentialService:
         async with self._ctx.admin_db.session() as session:
             return await PrerequisiteRepository.list_credential_ids_for_agent(
                 session, agent_id=identity.sub
+            )
+
+    async def _owned_agent_ids(self, identity: Identity) -> list[str]:
+        """Agent ids the caller owns, for the read-only owned-agent scoping clause.
+
+        Lets a human read the pending credential of a connect session one of
+        their agents opened (see ``build_access_filters``). Only humans own
+        agents and ``org:admin`` is unrestricted already, so both skip the
+        lookup.
+        """
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.USER
+            or not identity.sub
+        ):
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_agent_ids_owned_by(
+                session, owner_id=identity.sub
             )
 
     def list_providers(
@@ -458,6 +478,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -496,6 +517,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -605,6 +627,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -1086,6 +1109,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
 

@@ -23,6 +23,7 @@ from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationError,
 )
 from jentic_one.control.services.integrations.errors import (
+    AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
     ConnectSessionServiceError,
@@ -75,16 +76,18 @@ credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
 # subclasses (500 with a static detail — never ``str(exc)``, which could
 # carry internals).
 #
-# ``InvalidPollTokenError`` is deliberately the only answer for both
-# "session missing" and "token mismatch" on the poll_token-gated endpoints
-# (review / confirm / status / cancel): session ids travel in approval
-# URLs, so a 404-vs-403 split would be a session-id enumeration oracle.
+# ``InvalidPollTokenError`` is deliberately the only answer for "session
+# missing", "token mismatch" and "not the agent's owner / org:admin" on the
+# session endpoints (review / confirm / status / cancel): session ids travel
+# in approval URLs, so a 404-vs-403 split would be a session-id enumeration
+# oracle. Its client detail is static for the same reason.
 _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     SessionNotFoundError: (404, "connect_session_not_found"),
     InvalidPollTokenError: (403, "invalid_poll_token"),
     InvalidStateTransitionError: (409, "connect_session_invalid_state"),
     ConfirmationForbiddenError: (403, "connect_session_confirmation_forbidden"),
     AgentNotFoundError: (400, "connect_session_agent_not_found"),
+    AgentInactiveError: (409, "connect_session_agent_inactive"),
     ScopeValidationError: (400, "connect_session_unknown_scopes"),
     NoOpForFlowError: (400, "connect_session_unsupported_flow"),
     InvalidOAuthAppRegistrationError: (400, "invalid_oauth_app_registration"),
@@ -93,6 +96,7 @@ _CONNECT_SESSION_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
 }
 
 _CONNECT_SESSION_SAFE_DETAILS: dict[type[Exception], str] = {
+    InvalidPollTokenError: "Connect session not found or not accessible to the caller",
     ConnectSessionServiceError: "Internal error handling the connect session.",
 }
 
