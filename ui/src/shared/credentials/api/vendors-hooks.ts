@@ -28,6 +28,7 @@ import {
 	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
+	rejectConnectSession,
 	startIntegrationConnect,
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
@@ -41,8 +42,8 @@ import type {
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
 import type {
-	ConfirmRequest,
-	ConfirmResponse,
+	ConfirmSessionBody,
+	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
 	ReviewSession,
@@ -133,9 +134,32 @@ export function useConnectSession(
 	});
 }
 
+/**
+ * ``:confirm`` for every variant. ``gcTime: 0`` drops a settled mutation (and
+ * the body it was called with — possibly a typed secret) from the mutation
+ * cache as soon as no component observes it; callers sending a secret also
+ * ``reset()`` once it settles so the body is not kept as ``variables``.
+ */
 export function useConfirmConnectSession(sessionId: string, pollToken: string | undefined) {
-	return useMutation<ConfirmResponse, Error, ConfirmRequest>({
+	return useMutation<ConfirmSessionResponse, Error, ConfirmSessionBody>({
 		mutationFn: (body) => confirmConnectSession(sessionId, pollToken, body),
+		gcTime: 0,
+	});
+}
+
+/**
+ * Reject an agent's connect request (the approve dialog's Reject). Refreshes
+ * the open-request signals and the credentials list (the session's pending
+ * credential goes with it).
+ */
+export function useRejectConnectSession() {
+	const client = useQueryClient();
+	return useMutation<void, Error, { sessionId: string }>({
+		mutationFn: ({ sessionId }) => rejectConnectSession(sessionId),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ['credentials'] });
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
+		},
 	});
 }
 
@@ -444,7 +468,7 @@ const CONNECT_REQUESTS_REFETCH_MS = 45_000;
 
 /**
  * Connect sessions an agent opened and is still waiting on a human for
- * (`created` / `polling`), oldest first — the live state behind the
+ * (`created` / `awaiting_app` / `polling`), oldest first — the live state behind the
  * attention inbox's "waiting for you" rows and the Agents page section.
  * Pass `enabled: false` for a caller who cannot read credentials (the list
  * needs `credentials:read` or `owner:credentials:read`).

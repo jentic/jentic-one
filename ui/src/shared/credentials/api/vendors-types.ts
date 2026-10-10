@@ -50,6 +50,70 @@ export interface ReviewSession {
 		name: string | null;
 		version: string | null;
 	};
+	/** ``vendor`` for a vendor-registry key, ``api`` for a registry API identity. */
+	target_kind?: 'vendor' | 'api';
+	/** OAuth scopes the session asks for — compared with an existing credential's grant. */
+	requested_scopes?: string[];
+	/** Where an API target's live revision came from; null for vendor targets. */
+	provenance?: ReviewProvenance | null;
+	/** The agent the session binds and its owner (server data). */
+	agent?: ReviewAgent | null;
+	/** The declared scheme an API target collects; null for vendor targets. */
+	scheme?: ReviewScheme | null;
+	/** The hosts the credential may be sent to, pinned at ``:connect``. */
+	pinned_hosts?: string[] | null;
+	/**
+	 * Fingerprint of what the approver decides on. Echoed on ``:confirm`` with
+	 * ``expected_agent_id``; a mismatch is 409 ``review_stale``.
+	 */
+	digest: string;
+	/** Whether this viewer may confirm the session as it stands. */
+	can_confirm: boolean;
+	/** Credentials the viewer already holds for the target. */
+	existing_credentials?: ExistingCredential[];
+}
+
+/** Session states a review can show; the terminal ones never reach the review read. */
+export type ReviewSessionState = 'created' | 'awaiting_app' | 'polling' | 'connected';
+
+export interface ReviewProvenance {
+	/** ``catalog`` for a public-catalog import; anything else is a submitted spec. */
+	origin: string | null;
+	catalog_api_id: string | null;
+	/** Actor id of whoever submitted the spec, when known. */
+	submitted_by: string | null;
+	source_url: string | null;
+	revision_id: string;
+}
+
+export interface ReviewAgent {
+	agent_id: string;
+	name: string | null;
+	owner_id: string | null;
+	status: string;
+}
+
+export interface ReviewScheme {
+	type: 'api_key' | 'bearer' | 'basic' | 'oauth2';
+	/** ``header`` / ``query`` / ``cookie`` for an API key. */
+	location: string | null;
+	field_name: string | null;
+}
+
+/**
+ * A credential the viewer already holds for the session's target.
+ * ``granted_scopes`` / ``missing_scopes`` are set for OAuth credentials only.
+ * ``can_reauthorize`` is false whenever another agent is bound to it.
+ */
+export interface ExistingCredential {
+	credential_id: string;
+	name: string;
+	type: string;
+	granted_scopes: string[] | null;
+	missing_scopes: string[] | null;
+	other_bound_agent_ids: string[];
+	can_bind: boolean;
+	can_reauthorize: boolean;
 }
 
 /**
@@ -74,7 +138,9 @@ export interface PermissionRule {
 	comment?: string | null;
 }
 
+/** The OAuth confirm — the default variant (a body without ``kind``). */
 export interface ConfirmRequest {
+	kind?: 'oauth';
 	confirmed_scopes: string[];
 	permission_rules: PermissionRule[];
 	// Set when the caller wants the credential bound to an agent that
@@ -84,7 +150,60 @@ export interface ConfirmRequest {
 	// agent_id — so this is only meaningful for user-initiated
 	// unbound sessions.
 	agent_id?: string | null;
+	/** The review the approver saw; checked when given, required for an API target. */
+	expected_agent_id?: string | null;
+	digest?: string | null;
 }
+
+/** Fields every non-OAuth confirm carries: the rules and the review it answers. */
+interface ReviewedConfirm {
+	permission_rules: PermissionRule[];
+	agent_id?: string | null;
+	expected_agent_id: string | null;
+	digest: string;
+}
+
+export interface ApiKeyConfirmRequest extends ReviewedConfirm {
+	kind: 'api_key';
+	key: string;
+}
+
+export interface BearerConfirmRequest extends ReviewedConfirm {
+	kind: 'bearer';
+	token: string;
+}
+
+export interface BasicConfirmRequest extends ReviewedConfirm {
+	kind: 'basic';
+	username: string;
+	password: string;
+}
+
+/** Resolve an ``awaiting_app`` session with the approver's own OAuth client. */
+export interface OwnOAuthClientConfirmRequest extends ReviewedConfirm {
+	kind: 'own_oauth_client';
+	client_id: string;
+	client_secret: string;
+	/** Default to the API's declared authorization-code endpoints when omitted. */
+	authorize_url?: string | null;
+	token_url?: string | null;
+	confirmed_scopes: string[];
+}
+
+/** Bind a credential the approver already holds (optionally re-consenting it). */
+export interface ExistingCredentialConfirmRequest extends ReviewedConfirm {
+	kind: 'existing_credential' | 'reauthorize';
+	credential_id: string;
+}
+
+/** Every ``:confirm`` body; ``kind`` picks the variant server-side. */
+export type ConfirmSessionBody =
+	| ConfirmRequest
+	| ApiKeyConfirmRequest
+	| BearerConfirmRequest
+	| BasicConfirmRequest
+	| OwnOAuthClientConfirmRequest
+	| ExistingCredentialConfirmRequest;
 
 /**
  * Discriminated on ``kind`` — the UI branches on the tag, not on which
@@ -97,6 +216,28 @@ export interface ConfirmRequest {
  *   ``/credentials/oauth/callback`` and the SPA observes it via ``/status``.
  */
 export type ConfirmResponse = DeviceAuthorizationConfirmResponse | AuthCodeConfirmResponse;
+
+/**
+ * Every ``:confirm`` result. Beyond the vendor challenges above:
+ *
+ * * ``connected`` — the confirm finished the session (a typed secret or an
+ *   existing credential); ``credential_id`` is bound to the agent.
+ * * ``reauthorize`` — the agent is bound to ``credential_id``; ``authorize_url``
+ *   asks the vendor for the wider scopes on that credential.
+ */
+export type ConfirmSessionResponse =
+	ConfirmResponse | ConnectedConfirmResponse | ReauthorizeConfirmResponse;
+
+export interface ConnectedConfirmResponse {
+	kind: 'connected';
+	credential_id: string;
+}
+
+export interface ReauthorizeConfirmResponse {
+	kind: 'reauthorize';
+	credential_id: string;
+	authorize_url: string;
+}
 
 export interface DeviceAuthorizationConfirmResponse {
 	kind: 'device_authorization';

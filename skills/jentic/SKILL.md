@@ -84,7 +84,7 @@ error), **stop and relay to your operator** — registration and approval block
 on a human and cannot be completed by an autonomous agent. Your lane's
 reference names the exact recovery for each state.
 
-### 2. Check what you can do, and report access gaps to your operator
+### 2. Check what you can do, and start connecting what's missing
 
 Your identity view (CLI `jentic whoami`; MCP `whoami`) lists your
 status, permissions, and credential bindings; each binding lists the APIs it
@@ -99,8 +99,8 @@ can tell in advance:
 - If a binding already **serves** the API you need → you have access. Skip
   straight to inspect/execute.
 - If **nothing** you're bound to serves it → you do **not** have access yet.
-  Report the gap to your operator **before** your first execute — do not
-  "try execute and branch on the denial".
+  Start the connection (below) — or report the gap — **before** your first
+  execute; do not "try execute and branch on the denial".
 
 **Report once, richly — never thrash.** Work out the full access end-state
 up front — from your identity view, the catalog, and the task — and hand
@@ -112,18 +112,33 @@ declares, the operations you intend to call, and **why** — a clear one-liner
 faster.
 
 **Starting the credential connection is something you CAN do — approval is
-not.** When the missing credential is for a vendor in the deployment's
-connect registry (GitHub, Google, …), start the connect session yourself:
-run `jentic connect <vendor>` (CLI) or call `request_connection` (MCP). It
-returns an `approval_url` — relay it to your operator, who opens it in
-their browser and approves the connection and its scopes; you never open
-or approve it. Once they confirm, re-check your identity view (`whoami`) —
-an agent-initiated connect binds you at approval — and retry the blocked
-call. For APIs outside the registry, and always for **binding an existing
-credential or granting permissions**, the operator acts in the Jentic One
-dashboard: granting is always a human action — you report (or start the
-connect) and wait, you never grant yourself anything. Bindings take effect
-live: once the operator confirms, retry the call that was blocked.
+not.** For every API the job needs, start a connect session yourself and
+relay its URL: a vendor in the deployment's connect registry (GitHub,
+Google, …) by its key (`jentic connect <vendor>` / `request_connection
+{"vendor": …}`); any other registry API by its identity (`jentic connect
+--api <vendor/name/version>` / `request_connection {"api": {…}}`). Put your
+one-liner reason on the request — the approver reads it. It returns an
+`approval_url`: relay it to your operator, who opens it in their browser
+and approves (for an API key or token, they enter it there); you never open
+or approve it, and you never see the secret. Once they confirm, re-check
+your identity view (`whoami`) — an agent-initiated connect binds you at
+approval — and retry the blocked call.
+
+- **A human entering a credential can take hours** (`resolved_flow`
+  `manual_*` or `awaiting_app`): relay the URL, **end your turn**, and retry
+  the original call later — don't wait or poll. Asking again for the same
+  API returns the same request.
+- **Rejected means stop.** If a request comes back rejected (or
+  `recently_rejected`), don't ask again — tell your user what was rejected
+  and why you needed it.
+- **Where API connect requests aren't available** (the error says so), or
+  the spec declares no auth the flow can collect, fall back to reporting the
+  gap — once, richly, as above.
+
+Binding an existing credential and granting permissions stay human: the
+operator acts in the Jentic One dashboard (or from the approval page), and
+you never grant yourself anything. Bindings take effect live: once the
+operator confirms, retry the call that was blocked.
 
 #### Proposing permission rules from the spec
 
@@ -235,13 +250,13 @@ a failure by its symptom, not by assuming access: transport failures
   imported yet**, not that you lack access. Go through the catalog, then
   search again.
 - **Don't execute to test access.** Your identity view already tells you
-  what your bindings **serve**; if the API you need isn't there, report the
-  gap to your operator and wait. The recovery directive is a fallback for
-  surprises, not a discovery step.
+  what your bindings **serve**; if the API you need isn't there, start the
+  connect (or report the gap) and wait. The recovery directive is a fallback
+  for surprises, not a discovery step.
 - Access is granted by a human: your operator approves every connection and
-  binds you in the dashboard. You can *start* a registry vendor's connect
-  session yourself (`jentic connect <vendor>` / `request_connection`), but
-  you can't approve it, bind an existing credential, or grant yourself
+  binds you in the dashboard. You can *start* a connect session yourself
+  (`jentic connect` / `request_connection`, by vendor key or API identity),
+  but you can't approve it, bind an existing credential, or grant yourself
   permissions.
 - **Verify which backend you're talking to before diagnosing "missing" APIs
   or credentials** — compare `instance` stamps (see step 3) and stick to one

@@ -21,8 +21,8 @@ import {
 	type RuleSetResponse,
 } from '@/shared/api';
 import type {
-	ConfirmRequest,
-	ConfirmResponse,
+	ConfirmSessionBody,
+	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
 	ReviewSession,
@@ -34,14 +34,35 @@ import type {
 export class IntegrationsApiError extends Error {
 	readonly status: number | null;
 	readonly cause?: unknown;
+	/**
+	 * The problem's ``type`` slug (e.g. ``review_stale``) — what callers branch
+	 * on. Null for a network error or a body that isn't problem+json.
+	 */
+	readonly code: string | null;
+	/**
+	 * The problem body's extension members (e.g. ``missing_scopes``). Server
+	 * data only: the connect-session routes never echo request input.
+	 */
+	readonly extensions: Readonly<Record<string, unknown>>;
 
-	constructor(message: string, status: number | null, cause?: unknown) {
+	constructor(
+		message: string,
+		status: number | null,
+		cause?: unknown,
+		code: string | null = null,
+		extensions: Readonly<Record<string, unknown>> = {},
+	) {
 		super(message);
 		this.name = 'IntegrationsApiError';
 		this.status = status;
 		this.cause = cause;
+		this.code = code;
+		this.extensions = extensions;
 	}
 }
+
+/** Problem+json members every problem carries; the rest are extensions. */
+const PROBLEM_MEMBERS = new Set(['type', 'title', 'detail', 'status', 'instance']);
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	const token = await getToken();
@@ -61,14 +82,27 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 		// Errors are RFC 9457 problem+json ({type, title, detail, instance, …});
 		// prefer the human-readable ``detail`` over the status text.
 		let detail: string | null = null;
+		let code: string | null = null;
+		const extensions: Record<string, unknown> = {};
 		try {
-			detail = problemDetailText(await response.json());
+			const body: unknown = await response.json();
+			detail = problemDetailText(body);
+			if (body && typeof body === 'object') {
+				const record = body as Record<string, unknown>;
+				if (typeof record.type === 'string' && record.type) code = record.type;
+				for (const [k, v] of Object.entries(record)) {
+					if (!PROBLEM_MEMBERS.has(k)) extensions[k] = v;
+				}
+			}
 		} catch {
 			// ignore parse failure — fall back to statusText
 		}
 		throw new IntegrationsApiError(
 			detail ?? (response.statusText || `HTTP ${response.status}`),
 			response.status,
+			undefined,
+			code,
+			extensions,
 		);
 	}
 	if (response.status === 204) return undefined as T;
@@ -138,15 +172,18 @@ export function getConnectSession(sessionId: string, pollToken?: string): Promis
 }
 
 /**
- * Confirm scopes + rules and kick off the vendor flow. Gated like the review
- * read (403 on mismatch, missing session, or a token-less caller who is not
- * the owner / admin) and shares the ``:connect`` rate bucket (429 possible).
+ * Confirm the session: OAuth scopes + rules (kicks off the vendor flow), a
+ * typed secret, the approver's own OAuth client, or an existing credential —
+ * ``body.kind`` picks the variant. Gated like the review read (403 on
+ * mismatch, missing session, or a token-less caller who is not the owner /
+ * admin) and shares the ``:connect`` rate bucket (429 possible). A secret in
+ * the body is never echoed back, including in an error.
  */
 export function confirmConnectSession(
 	sessionId: string,
 	pollToken: string | undefined,
-	body: ConfirmRequest,
-): Promise<ConfirmResponse> {
+	body: ConfirmSessionBody,
+): Promise<ConfirmSessionResponse> {
 	return request(sessionUrl(sessionId, ':confirm', pollToken), {
 		method: 'POST',
 		body: JSON.stringify(body),
@@ -191,15 +228,29 @@ export function cancelConnectSessionOnUnload(sessionId: string, pollToken?: stri
 	return true;
 }
 
-/** Session states in which an agent is still waiting on a human. */
-const OPEN_CONNECT_STATES = ['created', 'polling'] as const;
+/**
+ * Reject an agent's request — the approve dialog's explicit Reject. The agent
+ * sees ``failed`` with ``error_code: rejected`` and may not ask again for the
+ * same target during the rejection cooldown. Owner (``credentials:write`` and
+ * ``agents:write``) or ``org:admin`` only; there is no poll-token path, so the
+ * route takes none. Closing the dialog without rejecting sends nothing.
+ */
+export function rejectConnectSession(sessionId: string): Promise<void> {
+	return request(sessionUrl(sessionId, ':reject'), { method: 'POST' });
+}
+
+/**
+ * Session states in which an agent is still waiting on a human —
+ * ``awaiting_app`` is an OAuth API with no app to connect through yet.
+ */
+const OPEN_CONNECT_STATES = ['created', 'awaiting_app', 'polling'] as const;
 
 /** Upper bound per state; open sessions expire fast, so one page holds them. */
 const OPEN_CONNECT_PAGE_LIMIT = 200;
 
 /**
  * The connect sessions an agent opened and is still waiting on a human for
- * (``created`` or ``polling``), oldest first. The list is scoped server-side:
+ * (``created``, ``awaiting_app`` or ``polling``), oldest first. The list is scoped server-side:
  * the caller's own sessions, plus — for a human — those of the agents they own
  * (``org:admin`` sees all). Sessions a human started from their own dialog are
  * dropped: nobody is waiting on them but that same human. Rows never carry the
