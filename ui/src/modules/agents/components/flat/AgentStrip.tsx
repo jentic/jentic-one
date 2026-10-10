@@ -240,8 +240,11 @@ const StripTab = memo(function StripTab({
 						)}
 					/>
 				)}
-				{/* Struck through when the name will not serve and won't change on its own. */}
+				{/* Struck through when the name will not serve and won't change on its own.
+				    `dir="auto"` isolates the operator-chosen name so an override inside
+				    it cannot reverse the count beside it (#1543). */}
 				<span
+					dir="auto"
 					className={cn(
 						'min-w-0 truncate',
 						slim ? 'max-w-[8ch]' : 'max-w-[18ch] max-md:max-w-[11ch]',

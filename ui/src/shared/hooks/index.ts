@@ -5,6 +5,7 @@ export { useHotkey } from '@/shared/hooks/useHotkey';
 export { useCommandHotkey } from '@/shared/hooks/useCommandHotkey';
 export { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 export { useConsumedFlagParam } from '@/shared/hooks/useConsumedFlagParam';
+export { useIsRenderedPathCurrent } from '@/shared/hooks/useIsRenderedPathCurrent';
 export { usePendingAgentsCount, pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
 export {
 	useActorDirectory,

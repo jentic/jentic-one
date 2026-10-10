@@ -105,7 +105,12 @@ export function ActorLabel({ actorId, actorType, resolvedName, className }: Acto
 	// stays reachable on hover so operators can still copy/correlate it.
 	if (name) {
 		return (
-			<span className={className} title={actorId}>
+			// `dir="auto"` isolates the resolved name: a direction override inside
+			// an operator-chosen agent name is resolved within this span and cannot
+			// reverse the copy around the label (#1543). It sits on the element that
+			// already exists rather than nesting a `<bdi>`, so the DOM — and the
+			// `title` an operator hovers — stays exactly as it was.
+			<span className={className} title={actorId} dir="auto">
 				{typeLabel && <span className="text-muted-foreground">{typeLabel} </span>}
 				{name}
 			</span>

@@ -217,10 +217,6 @@ type BaseModel map[string]interface{}
 
 // Broker surface configuration.
 type BrokerConfig struct {
-	// AccountLinkingBaseUrl corresponds to the JSON schema field
-	// "account_linking_base_url".
-	AccountLinkingBaseUrl interface{} `json:"account_linking_base_url,omitempty,omitzero" yaml:"account_linking_base_url,omitempty" mapstructure:"account_linking_base_url,omitempty"`
-
 	// Egress corresponds to the JSON schema field "egress".
 	Egress *EgressConfig `json:"egress,omitempty,omitzero" yaml:"egress,omitempty" mapstructure:"egress,omitempty"`
 
@@ -259,8 +255,6 @@ type BrokerConfig struct {
 	// envelope.
 	UpstreamTimeoutS float64 `json:"upstream_timeout_s,omitempty,omitzero" yaml:"upstream_timeout_s,omitempty" mapstructure:"upstream_timeout_s,omitempty"`
 }
-
-type BrokerConfigAccountLinkingBaseUrl_0 *string
 
 type BrokerConfigJobsApiBaseUrl_0 *string
 
@@ -547,7 +541,7 @@ type ConfigSchemaJson struct {
 	Catalog *CatalogConfig `json:"catalog,omitempty,omitzero" yaml:"catalog,omitempty" mapstructure:"catalog,omitempty"`
 
 	// Control corresponds to the JSON schema field "control".
-	Control ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
+	Control *ControlSurfaceConfig `json:"control,omitempty,omitzero" yaml:"control,omitempty" mapstructure:"control,omitempty"`
 
 	// Credentials corresponds to the JSON schema field "credentials".
 	Credentials *CredentialsConfig `json:"credentials,omitempty,omitzero" yaml:"credentials,omitempty" mapstructure:"credentials,omitempty"`
@@ -643,13 +637,86 @@ func (j *ConnectConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+// Agent connect-session settings on the control surface.
+type ControlConnectConfig struct {
+	// Allow connect sessions that target a registry API (rather than a
+	// vendor-registry key), where a human enters the credential, or brings an OAuth
+	// app, when approving them in the dashboard. While off, `:connect` refuses API
+	// targets with `manual_flows_disabled`. Turn it on only after every control
+	// replica runs a release that understands them.
+	ManualFlowsEnabled bool `json:"manual_flows_enabled,omitempty,omitzero" yaml:"manual_flows_enabled,omitempty" mapstructure:"manual_flows_enabled,omitempty"`
+
+	// Hours an API-target connect session (a human-entered credential, or an OAuth
+	// API waiting for an app) stays open before it expires. Vendor OAuth sessions
+	// keep their fixed 30-minute lifetime.
+	ManualFlowsTtlHours int `json:"manual_flows_ttl_hours,omitempty,omitzero" yaml:"manual_flows_ttl_hours,omitempty" mapstructure:"manual_flows_ttl_hours,omitempty"`
+
+	// Most open connect sessions one agent may hold at once while
+	// `manual_flows_enabled` is on; one more `:connect` gets 429
+	// `too_many_open_sessions`.
+	MaxOpenSessionsPerAgent int `json:"max_open_sessions_per_agent,omitempty,omitzero" yaml:"max_open_sessions_per_agent,omitempty" mapstructure:"max_open_sessions_per_agent,omitempty"`
+
+	// Most open connect sessions across one user and the agents they own while
+	// `manual_flows_enabled` is on; one more `:connect` gets 429
+	// `too_many_open_sessions`.
+	MaxOpenSessionsPerOwner int `json:"max_open_sessions_per_owner,omitempty,omitzero" yaml:"max_open_sessions_per_owner,omitempty" mapstructure:"max_open_sessions_per_owner,omitempty"`
+
+	// Hours after a human rejects an agent's connect request during which the agent's
+	// repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the
+	// cooldown off.
+	RejectionCooldownHours int `json:"rejection_cooldown_hours,omitempty,omitzero" yaml:"rejection_cooldown_hours,omitempty" mapstructure:"rejection_cooldown_hours,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ControlConnectConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain ControlConnectConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["manual_flows_enabled"]; !ok || v == nil {
+		plain.ManualFlowsEnabled = false
+	}
+	if v, ok := raw["manual_flows_ttl_hours"]; !ok || v == nil {
+		plain.ManualFlowsTtlHours = 72
+	}
+	if 1 > plain.ManualFlowsTtlHours {
+		return fmt.Errorf("field %s: must be >= %v", "manual_flows_ttl_hours", 1)
+	}
+	if v, ok := raw["max_open_sessions_per_agent"]; !ok || v == nil {
+		plain.MaxOpenSessionsPerAgent = 10
+	}
+	if 1 > plain.MaxOpenSessionsPerAgent {
+		return fmt.Errorf("field %s: must be >= %v", "max_open_sessions_per_agent", 1)
+	}
+	if v, ok := raw["max_open_sessions_per_owner"]; !ok || v == nil {
+		plain.MaxOpenSessionsPerOwner = 50
+	}
+	if 1 > plain.MaxOpenSessionsPerOwner {
+		return fmt.Errorf("field %s: must be >= %v", "max_open_sessions_per_owner", 1)
+	}
+	if v, ok := raw["rejection_cooldown_hours"]; !ok || v == nil {
+		plain.RejectionCooldownHours = 24
+	}
+	if 0 > plain.RejectionCooldownHours {
+		return fmt.Errorf("field %s: must be >= %v", "rejection_cooldown_hours", 0)
+	}
+	*j = ControlConnectConfig(plain)
+	return nil
+}
+
 // Control surface configuration.
 //
-// Empty since theme 7 removed the access-request subsystem (its
-// “access_requests.ttl_days“/“canonical_base_url“ knobs). The section
-// stays so a “control:“ key in existing YAML keeps validating and future
-// control-surface knobs have a home; unknown subkeys are ignored.
-type ControlSurfaceConfig map[string]interface{}
+// Unknown subkeys are ignored, so a “control:“ section written for another
+// release keeps validating.
+type ControlSurfaceConfig struct {
+	// Agent connect-session settings.
+	Connect *ControlConnectConfig `json:"connect,omitempty,omitzero" yaml:"connect,omitempty" mapstructure:"connect,omitempty"`
+}
 
 // Credentials subsystem configuration.
 type CredentialsConfig struct {
@@ -2750,31 +2817,83 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
 
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
+}
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+type VendorScopeConfigClassification string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+	for _, expected := range enumValues_VendorScopeConfigClassification {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
 	}
-	*j = VendorIdentityProbeConfigMethod(v)
+	*j = VendorScopeConfigClassification(v)
 	return nil
 }
 
@@ -2805,92 +2924,15 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
-}
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
-}
-
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
-
-type VendorScopeConfigClassification string
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
-	}
-	*j = VendorScopeConfigClassification(v)
-	return nil
 }
 
 // Background job-worker durability knobs.
@@ -2946,4 +2988,29 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	}
 	*j = WorkerConfig(plain)
 	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
+	}
+	*j = VendorIdentityProbeConfigMethod(v)
+	return nil
+}
+
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }

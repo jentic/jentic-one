@@ -108,11 +108,9 @@ interface CreateCredentialFlowProps {
 	surface?: 'sheet' | 'dialog';
 	/**
 	 * Pre-select this auth type when the dialog opens (the user can still change
-	 * it). Used by the provisioning wizard to honour the agent-declared
-	 * `--auth` type (read from the API spec's securitySchemes) so the human
-	 * doesn't re-pick what the agent already determined. A spec-driven selection
-	 * (picking an API) still overrides it — the spec is more authoritative than
-	 * the agent's guess.
+	 * it), e.g. OAuth 2.0 for registering a shared app. A spec-driven selection
+	 * (picking an API) still overrides it — the API's declared security schemes
+	 * are more authoritative than a host's default.
 	 */
 	initialType?: CredentialType;
 	/**
@@ -144,8 +142,10 @@ interface CreateCredentialFlowProps {
 	 * "approve" mode — landing here from the `approval_url` an agent handed its
 	 * owner. It fetches the session, skips the picker + agent selection, and
 	 * shows the agent-requested scopes for the human to review + confirm.
+	 * `pollToken` is set only for an older link that still carries one; the
+	 * agent's owner or an org admin approves without it.
 	 */
-	approvalSession?: { sessionId: string; pollToken: string };
+	approvalSession?: { sessionId: string; pollToken?: string };
 	/**
 	 * When set, the vendor connect opens with this agent locked in as the
 	 * binding target (``VendorConnectFlow``'s ``preselectedAgentId`` greys the

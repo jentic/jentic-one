@@ -23,10 +23,14 @@ interface CredentialsListProps {
 	credentials: Credential[];
 	isLoading: boolean;
 	error?: Error | null;
-	onAdd: () => void;
+	/** Omitted ⇒ the empty state offers no "Add your first credential" (the
+	 * viewer may not create one). */
+	onAdd?: () => void;
 	onEdit: (cred: Credential) => void;
 	onDelete: (cred: Credential) => void;
-	onConnect: (cred: Credential) => void;
+	/** Omitted ⇒ the cards offer no Connect (the viewer may not write
+	 * credentials, so the sign-in call would be refused). */
+	onConnect?: (cred: Credential) => void;
 	/**
 	 * Empty body for a host whose list is narrowed by a filter, where the
 	 * default "No credentials stored" would be a claim about the store rather
@@ -149,7 +153,9 @@ export function CredentialsList({
 				icon={<Key className="h-10 w-10 opacity-30" />}
 				title="No credentials stored"
 				description="Add a credential to authenticate agents with external APIs."
-				action={<Button onClick={onAdd}>Add your first credential</Button>}
+				action={
+					onAdd ? <Button onClick={onAdd}>Add your first credential</Button> : undefined
+				}
 			/>
 		);
 	}

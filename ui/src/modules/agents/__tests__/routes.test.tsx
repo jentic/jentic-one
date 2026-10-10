@@ -89,8 +89,24 @@ describe('retired Credentials page', () => {
 		expect(screen.getByTestId('location-search').textContent).toBe('?credentials=1');
 	});
 
-	it("keeps an agent's approval link params, so the approval still opens on Agents", async () => {
+	it("keeps an agent's approval link param, so the approval still opens on Agents", async () => {
 		// A link minted before the backend moved approvals to `/app/agents`.
+		renderWithProviders(
+			<>
+				<Harness />
+				<LocationProbe />
+			</>,
+			{ route: '/credentials?approve=sess_1' },
+		);
+
+		expect(await screen.findByRole('heading', { name: 'Agents stub' })).toBeInTheDocument();
+		const params = new URLSearchParams(screen.getByTestId('location-search').textContent!);
+		expect(params.get('approve')).toBe('sess_1');
+		expect(params.has('poll_token')).toBe(false);
+		expect(params.get('credentials')).toBe('1');
+	});
+
+	it('keeps the poll token an older approval link still carries', async () => {
 		renderWithProviders(
 			<>
 				<Harness />
@@ -103,7 +119,6 @@ describe('retired Credentials page', () => {
 		const params = new URLSearchParams(screen.getByTestId('location-search').textContent!);
 		expect(params.get('approve')).toBe('sess_1');
 		expect(params.get('poll_token')).toBe('tok_1');
-		expect(params.get('credentials')).toBe('1');
 	});
 });
 

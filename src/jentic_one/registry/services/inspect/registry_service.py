@@ -16,7 +16,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from jentic_one.registry.ingest.host_change_guard import may_approve_host_change
+from jentic_one.registry.ingest.host_change_guard import (
+    may_approve_host_change,
+    pending_host_change,
+)
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.url_index_repo import UrlIndexRepository
@@ -27,6 +30,7 @@ from jentic_one.shared.broker.protocols import (
     RevisionPinOutcome,
     RevisionPinResult,
 )
+from jentic_one.shared.context import Context
 from jentic_one.shared.models import ApiRevisionState
 from jentic_one.shared.schemas import OperationInfo
 
@@ -39,8 +43,11 @@ _REV_LABEL_PREFIX = "rev_"
 class RegistryService:
     """In-process URL → operation + API-identity resolver (reads the Registry DB)."""
 
-    def __init__(self, session: Any) -> None:  # AsyncSession
+    def __init__(self, session: Any, *, ctx: Context | None = None) -> None:  # AsyncSession
         self._session = session
+        # Reaches the control/admin DBs for the server-host change guard on pinned
+        # drafts; without it a host-changing draft counts as credential-bound.
+        self._ctx = ctx
 
     async def resolve_operation(
         self, *, method: str, url: str, revision_id: uuid.UUID | None = None
@@ -91,6 +98,11 @@ class RegistryService:
         - unpublished ``draft`` not owned by the caller → ``FORBIDDEN`` (→ 403),
         - ``draft`` held for server-host review, for a caller without
           ``credentials:write`` (even its submitter) → ``FORBIDDEN`` (→ 403),
+        - owned ``draft`` whose server hosts differ from the API's live ones, on
+          an API with bound credentials, for a caller without
+          ``credentials:write`` → ``HOST_CHANGE_HELD`` (→ 403): pinning it would
+          send those credentials to hosts no operator approved, which
+          promoting it would refuse (``registry/ingest/host_change_guard.py``),
         - ``published`` revision, or an owned ``draft`` → ``RESOLVED``.
 
         Ownership of a ``draft`` is decided by ``submitted_by == identity.sub`` —
@@ -120,6 +132,20 @@ class RegistryService:
                     return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
             elif revision.submitted_by != identity.sub:
                 return RevisionPinResult(RevisionPinOutcome.FORBIDDEN)
+            elif not may_approve_host_change(identity.permissions):
+                held = await pending_host_change(
+                    self._ctx,
+                    self._session,
+                    api_id=api.id,
+                    revision_id=revision_id,
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                )
+                if held is not None:
+                    return RevisionPinResult(
+                        RevisionPinOutcome.HOST_CHANGE_HELD, revision_id=revision_id
+                    )
 
         return RevisionPinResult(RevisionPinOutcome.RESOLVED, revision_id=revision_id)
 

@@ -223,18 +223,37 @@ func TestConnect_UnknownVendor404IsResolveFailed(t *testing.T) {
 	}
 }
 
+// ambiguousVendorsBody is a GET /vendors page with two shared apps for
+// googleapis-com, one for another vendor, and a config entry — only the first
+// two are candidates.
+const ambiguousVendorsBody = `{"data":[
+	{"entry_id":"oar_gmail","registration_id":"oar_gmail","key":"googleapis-com","vendor":"googleapis-com",
+	 "display_name":"Google","name":"Gmail (work)","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"oar_cal","registration_id":"oar_cal","key":"googleapis-com","vendor":"googleapis-com",
+	 "display_name":"Google","name":"Calendar","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"oar_other","registration_id":"oar_other","key":"slack-com","vendor":"slack-com",
+	 "display_name":"Slack","name":"Slack","source":"db","flow_kinds":["authorization_code"]},
+	{"entry_id":"github","key":"github","vendor":"github.com/github","display_name":"GitHub",
+	 "name":"GitHub","source":"config","flow_kinds":["device_authorization"]}]}`
+
 // Several shared OAuth apps for one vendor answer 400 ambiguous_vendor; the
-// advice must route to the operator, not suggest another registry key.
-func TestConnect_AmbiguousVendorRoutesToOperator(t *testing.T) {
+// error lists them and tells the agent to ask its user, then retry with
+// --registration (choosing the app is the user's call).
+func TestConnect_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
 	withXDG(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'github' is ambiguous"}`))
+		_, _ = w.Write([]byte(`{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps"}`))
 	}))
 	defer srv.Close()
 
-	_, err := runConnectTree(t, srv.URL, "connect", "github")
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
 	var coded *ux.CodedError
 	if !errors.As(err, &coded) {
 		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
@@ -242,8 +261,177 @@ func TestConnect_AmbiguousVendorRoutesToOperator(t *testing.T) {
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want %q", coded.Code, ux.CodeResolveFailed)
 	}
-	if coded.Actionable != ambiguousVendorActionable {
-		t.Errorf("actionable = %q, want the ask-your-operator advice", coded.Actionable)
+	for _, want := range []string{
+		"your human user", "details.candidates",
+		"jentic connect googleapis-com --registration <registration_id>",
+	} {
+		if !strings.Contains(coded.Actionable, want) {
+			t.Errorf("actionable %q missing %q", coded.Actionable, want)
+		}
+	}
+	if strings.Contains(coded.Actionable, "cannot pick") {
+		t.Errorf("actionable %q must route the choice to the user, not declare it impossible", coded.Actionable)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_cal", Name: "Calendar", DisplayName: "Google"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (registration rows for this vendor only)", got, want)
+	}
+}
+
+// When the 400 ambiguous_vendor names the registrations it counted, exactly
+// those are listed rather than every app under the key.
+func TestConnect_AmbiguousVendorListsTheCountedRegistrations(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_other", Name: "Slack", DisplayName: "Slack"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (the registrations the problem counted)", got, want)
+	}
+}
+
+// An API-target connect counts the shared apps that serve that API: the 400
+// ambiguous_vendor names them in registration_ids, and only those are listed
+// (not every app under the key).
+func TestConnect_APITargetAmbiguousListsTheCountedApps(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(ambiguousVendorsBody))
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "googleapis-com/gmail/v1")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous api target returned %T (%v), want *ux.CodedError", err, err)
+	}
+	got, _ := coded.Details["candidates"].([]vendorAppCandidate)
+	want := []vendorAppCandidate{
+		{RegistrationID: "oar_gmail", Name: "Gmail (work)", DisplayName: "Google"},
+		{RegistrationID: "oar_other", Name: "Slack", DisplayName: "Slack"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("candidates = %+v, want %+v (the registrations the problem counted)", got, want)
+	}
+	if !strings.Contains(coded.Actionable, "jentic connect --api googleapis-com/gmail/v1 --registration <registration_id>") {
+		t.Errorf("actionable %q must name the --api retry with --registration", coded.Actionable)
+	}
+}
+
+// When GET /vendors is unavailable the advice still routes the choice to the
+// user, just without the list.
+func TestConnect_AmbiguousVendorWithoutVendorListStillAsksTheUser(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/vendors" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"ambiguous_vendor","detail":"ambiguous"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("ambiguous vendor returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if _, has := coded.Details["candidates"]; has {
+		t.Errorf("details = %v, want no candidates when the vendor list is unreadable", coded.Details)
+	}
+	if !strings.Contains(coded.Actionable, "your human user") || !strings.Contains(coded.Actionable, "--registration") {
+		t.Errorf("actionable %q must ask the user and name --registration", coded.Actionable)
+	}
+}
+
+func TestConnect_RegistrationFlagPinsTheSharedApp(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"session_id":"cs_r","approval_url":"https://one.example/c/r","poll_token":"pt","resolved_flow":"authorization_code"}`))
+	}))
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "connect", "googleapis-com", "--registration", "oar_gmail")
+	if err != nil {
+		t.Fatalf("connect --registration: %v\n%s", err, out)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	if wire["oauth_app_registration_id"] != "oar_gmail" || wire["vendor"] != "googleapis-com" {
+		t.Errorf("wire body = %v, want vendor + oauth_app_registration_id from --registration", wire)
+	}
+}
+
+func TestConnect_InvalidRegistrationIsResolveFailed(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"invalid_oauth_app_registration","detail":"oauth_app_registration 'oar_x' is not usable for this vendor"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "googleapis-com", "--registration", "oar_x")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("invalid registration returned %T (%v), want RESOLVE_FAILED", err, err)
+	}
+	if !strings.Contains(coded.Actionable, "without --registration") {
+		t.Errorf("actionable %q must point at the unpinned retry that lists the apps", coded.Actionable)
+	}
+}
+
+func TestConnect_OverlongRegistrationIsArgumentError(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("an overlong --registration must never reach the wire")
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "github", "--registration", strings.Repeat("x", connectRegistrationMax+1))
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+		t.Fatalf("overlong registration returned %T (%v), want MISSING_ARGUMENT", err, err)
 	}
 }
 
@@ -382,5 +570,291 @@ func TestWhoami_RendersNonAgentVariantsVerbatim(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("whoami output missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+// --- registry-API targets (--api) ---------------------------------------------
+
+// connectAPIServer answers POST /integrations:connect with a created session of
+// the given flow, recording the body, and the status poll with statusBody
+// (counting polls).
+func connectAPIServer(t *testing.T, flow, statusBody string, seen *[]byte, polls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/integrations:connect":
+			*seen, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"session_id":"cs_api","approval_url":"https://one.example/app/agents?approve=cs_api",`+
+				`"poll_token":"pt_api","resolved_flow":%q}`, flow)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/connect-sessions/cs_api/status"):
+			*polls++
+			_, _ = w.Write([]byte(statusBody))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestConnect_APITargetWireShapeAndHumanEntryAdvice(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "manual_api_key", `{"status":"pending"}`, &seen, &polls)
+	defer srv.Close()
+
+	rules := `[{"effect":"allow","methods":["GET"],"path":"/v1/charges","match_mode":"exact"}]`
+	out, err := runConnectTree(t, srv.URL, "connect", "--api", "stripe-com/stripe-com-api/2024-06-20",
+		"--auth-type", "api_key", "--rules", rules, "--reason", "list charges")
+	if err != nil {
+		t.Fatalf("connect --api: %v\n%s", err, out)
+	}
+
+	var wire map[string]any
+	if err := json.Unmarshal(seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	if _, has := wire["vendor"]; has {
+		t.Errorf("vendor rode the wire with --api (%v) — the route takes exactly one target", wire["vendor"])
+	}
+	api, _ := wire["api"].(map[string]any)
+	if api["vendor"] != "stripe-com" || api["name"] != "stripe-com-api" || api["version"] != "2024-06-20" {
+		t.Errorf("api = %v, want the parsed vendor/name/version", wire["api"])
+	}
+	if wire["auth_type"] != "api_key" || wire["reason"] != "list charges" {
+		t.Errorf("wire body = %v, want auth_type api_key + reason", wire)
+	}
+	if got, _ := wire["requested_permission_rules"].([]any); len(got) != 1 {
+		t.Errorf("requested_permission_rules = %v, want the one --rules entry", wire["requested_permission_rules"])
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, out)
+	}
+	step, _ := doc["next_step"].(string)
+	if !strings.Contains(step, "end your turn") || !strings.Contains(step, "jentic whoami") {
+		t.Errorf("next_step %q must say relay, end your turn, check whoami later", step)
+	}
+	if strings.Contains(out, "pt_api") {
+		t.Errorf("poll_token leaked into the envelope\n%s", out)
+	}
+}
+
+// A human typing a key can take hours: --wait without an explicit --timeout
+// renders the pending envelope at once instead of blocking the agent's turn.
+func TestConnect_WaitOnHumanEntryFlowReturnsPendingWithoutPolling(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "awaiting_app", `{"status":"pending"}`, &seen, &polls)
+	defer srv.Close()
+
+	out, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait")
+	if err != nil {
+		t.Fatalf("connect --api --wait: %v\n%s", err, out)
+	}
+	if polls != 0 {
+		t.Errorf("polls = %d, want no status poll for a human-entry flow without --timeout", polls)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, out)
+	}
+	if doc["status"] != "pending" || doc["resolved_flow"] != "awaiting_app" {
+		t.Errorf("envelope = %v, want status pending for awaiting_app", doc)
+	}
+}
+
+// A rejection arrives on /status as failed + error_code rejected: the agent
+// must not ask again and must tell its user.
+func TestConnect_WaitRejectedOutcomeSaysDoNotAskAgain(t *testing.T) {
+	withXDG(t)
+	var seen []byte
+	polls := 0
+	srv := connectAPIServer(t, "manual_bearer", `{"status":"failed","error_code":"rejected"}`, &seen, &polls)
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait", "--timeout", "5s")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("rejected session returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if polls == 0 {
+		t.Errorf("an explicit --timeout must still poll a human-entry flow")
+	}
+	if coded.Code != ux.CodeBrokerDenied {
+		t.Errorf("code = %q, want %q", coded.Code, ux.CodeBrokerDenied)
+	}
+	if !strings.Contains(coded.Msg, "rejected") || !strings.Contains(coded.Actionable, "Do not ask again") {
+		t.Errorf("rejection must say so and say not to ask again: msg=%q actionable=%q", coded.Msg, coded.Actionable)
+	}
+}
+
+func TestConnect_WaitTerminalOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		status, code, wantCode, wantStep string
+	}{
+		{`{"status":"failed","error_code":"cancelled"}`, "cancelled", ux.CodeResolveFailed, "still want"},
+		{`{"status":"failed","error_code":"scheme_changed"}`, "scheme_changed", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
+		{`{"status":"expired"}`, "", ux.CodeResolveFailed, "jentic connect --api acme/acme-api/v1"},
+		{`{"status":"failed","error_code":"vendor_error"}`, "vendor_error", ux.CodeBrokerDenied, "dashboard"},
+	} {
+		t.Run(valueOr(tc.code, "expired"), func(t *testing.T) {
+			withXDG(t)
+			var seen []byte
+			polls := 0
+			srv := connectAPIServer(t, "manual_basic", tc.status, &seen, &polls)
+			defer srv.Close()
+
+			_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1", "--wait", "--timeout", "5s")
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				t.Fatalf("terminal outcome returned %T (%v), want *ux.CodedError", err, err)
+			}
+			if coded.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", coded.Code, tc.wantCode)
+			}
+			if !strings.Contains(coded.Actionable, tc.wantStep) {
+				t.Errorf("actionable %q must contain %q", coded.Actionable, tc.wantStep)
+			}
+		})
+	}
+}
+
+// A 403 on the poll means the session ended or a newer request for the same
+// target replaced this token (dedupe rotation) — the CLI cannot tell which.
+func TestConnect_WaitForbiddenPollSaysEndedOrReplaced(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"session_id":"cs_r","approval_url":"https://one.example/c/r","poll_token":"pt_r","resolved_flow":"authorization_code"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"invalid_poll_token","detail":"invalid poll_token"}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "github", "--wait")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("403 poll returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if !strings.Contains(coded.Msg, "replaced") || !strings.Contains(coded.Actionable, "jentic whoami") {
+		t.Errorf("msg=%q actionable=%q must name the replaced case and the whoami check", coded.Msg, coded.Actionable)
+	}
+}
+
+func TestConnect_TargetArgumentErrors(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("an argument error must never reach the wire")
+	}))
+	defer srv.Close()
+
+	for name, args := range map[string][]string{
+		"no target":          {"connect"},
+		"both targets":       {"connect", "github", "--api", "acme/acme-api/v1"},
+		"two-part api":       {"connect", "--api", "acme/acme-api"},
+		"auth-type no api":   {"connect", "github", "--auth-type", "api_key"},
+		"overlong auth-type": {"connect", "--api", "acme/acme-api/v1", "--auth-type", strings.Repeat("x", 256)},
+		"rules not a list":   {"connect", "--api", "acme/acme-api/v1", "--rules", `{"effect":"allow"}`},
+		"rules bad effect":   {"connect", "--api", "acme/acme-api/v1", "--rules", `[{"effect":"maybe"}]`},
+		"rules unknown key":  {"connect", "--api", "acme/acme-api/v1", "--rules", `[{"effect":"allow","pattern":".*"}]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runConnectTree(t, srv.URL, args...)
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) || coded.Code != ux.CodeMissingArgument {
+				t.Fatalf("%v returned %T (%v), want MISSING_ARGUMENT", args, err, err)
+			}
+		})
+	}
+}
+
+// The API-target error codes map to coded errors whose actionable step is the
+// lane's recovery: retry with --auth-type, import the API, report once, or do
+// not ask again.
+func TestConnect_APITargetErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		body     string
+		wantCode string
+		wantStep string
+	}{
+		{
+			http.StatusBadRequest, `{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`,
+			ux.CodeResolveFailed, "--auth-type",
+		},
+		{
+			http.StatusUnprocessableEntity, `{"type":"auth_type_not_declared","detail":"nope","options":["api_key"]}`,
+			ux.CodeResolveFailed, "api_key",
+		},
+		{http.StatusNotFound, `{"type":"unknown_api","detail":"not found"}`, ux.CodeResolveFailed, "jentic catalog import"},
+		{http.StatusNotFound, `{"type":"manual_flows_disabled","detail":"off"}`, ux.CodeBrokerDenied, "Report the gap"},
+		{http.StatusConflict, `{"type":"no_declared_scheme","detail":"none"}`, ux.CodeBrokerDenied, "Do not retry"},
+		{
+			http.StatusConflict, `{"type":"host_variable_not_pinned","detail":"x","variables":["region"]}`,
+			ux.CodeBrokerDenied, "enum",
+		},
+		{http.StatusUnprocessableEntity, `{"type":"reserved_auth_field","detail":"Host"}`, ux.CodeBrokerDenied, "operator"},
+		{
+			http.StatusServiceUnavailable, `{"type":"security_schemes_lookup_unavailable","detail":"x"}`,
+			ux.CodeBrokerDenied, "registry",
+		},
+		{
+			http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap","scope":"agent","limit":10}`,
+			ux.CodeBrokerDenied, "Do not open more",
+		},
+		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "Do not ask again"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			withXDG(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1")
+			var coded *ux.CodedError
+			if !errors.As(err, &coded) {
+				t.Fatalf("returned %T (%v), want *ux.CodedError", err, err)
+			}
+			if coded.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", coded.Code, tc.wantCode)
+			}
+			if !strings.Contains(coded.Actionable, tc.wantStep) {
+				t.Errorf("actionable %q must contain %q", coded.Actionable, tc.wantStep)
+			}
+		})
+	}
+}
+
+func TestConnect_AuthTypeRequiredListsOptions(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := runConnectTree(t, srv.URL, "connect", "--api", "acme/acme-api/v1")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if !strings.Contains(coded.Actionable, "api_key, oauth2") ||
+		!strings.Contains(coded.Actionable, "jentic connect --api acme/acme-api/v1 --auth-type") {
+		t.Errorf("actionable %q must list the options and the exact re-run", coded.Actionable)
+	}
+	if opts, _ := coded.Details["options"].([]string); len(opts) != 2 {
+		t.Errorf("details.options = %v, want both declared schemes", coded.Details["options"])
 	}
 }

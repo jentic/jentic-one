@@ -213,7 +213,7 @@ func (a *App) printNextSteps(st theme.Styles) {
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
-		{"See what you can run right now", "jentic api GET /me"},
+		{"See what you can run right now", "jentic whoami"},
 		{"A fresh agent is bound to no APIs — ask your operator to connect one and bind you (dashboard)", ""},
 		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
 		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},

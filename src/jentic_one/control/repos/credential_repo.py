@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -174,6 +174,21 @@ class CredentialRepository:
         return {row.id: row.display_name for row in result}
 
     @staticmethod
+    async def set_created_by(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        created_by: str,
+    ) -> Credential | None:
+        """Re-attribute a credential to a different creator (connect-session confirm)."""
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.created_by = created_by
+        await session.flush()
+        return credential
+
+    @staticmethod
     async def set_oauth_app_registration(
         session: AsyncSession,
         credential_id: str,
@@ -191,6 +206,73 @@ class CredentialRepository:
         credential.oauth_app_registration_id = registration_id
         await session.flush()
         return credential
+
+    @staticmethod
+    async def set_state(session: AsyncSession, credential_id: str, state: str) -> Credential | None:
+        """Set a credential's lifecycle state (``pending`` → ``connected`` on a connect)."""
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.state = state
+        await session.flush()
+        return credential
+
+    @staticmethod
+    async def set_type_and_provider(
+        session: AsyncSession,
+        credential_id: str,
+        *,
+        type: str,
+        provider: str,
+        catalog_api_id: str | None = None,
+    ) -> Credential | None:
+        """Re-type a still-pending connect-session credential once its flow is known."""
+        credential = await session.get(Credential, credential_id)
+        if credential is None:
+            return None
+        credential.type = type
+        credential.provider = provider
+        if catalog_api_id is not None:
+            credential.catalog_api_id = catalog_api_id
+        await session.flush()
+        return credential
+
+    @staticmethod
+    async def list_connected_covering(
+        session: AsyncSession,
+        *,
+        vendor: str,
+        name: str | None,
+        version: str | None,
+        exclude_ids: Sequence[str] = (),
+        filters: Sequence[ColumnElement[bool]] | None = None,
+        limit: int = 50,
+    ) -> list[Credential]:
+        """Connected, active credentials whose API scope covers the identity.
+
+        A NULL ``api_name`` / ``api_version`` on the credential is a wildcard;
+        a ``None`` reference axis matches any value. ``filters`` carries the
+        caller's access scoping.
+        """
+        stmt = select(Credential).where(
+            Credential.api_vendor == vendor,
+            Credential.state == "connected",
+            Credential.active.is_(True),
+        )
+        if name is not None:
+            stmt = stmt.where(or_(Credential.api_name.is_(None), Credential.api_name == name))
+        if version is not None:
+            stmt = stmt.where(
+                or_(Credential.api_version.is_(None), Credential.api_version == version)
+            )
+        if exclude_ids:
+            stmt = stmt.where(Credential.id.not_in(list(exclude_ids)))
+        if filters is not None:
+            for f in filters:
+                stmt = stmt.where(f)
+        stmt = stmt.order_by(Credential.created_at.desc(), Credential.id.desc()).limit(limit)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     async def delete(session: AsyncSession, credential_id: str) -> bool:

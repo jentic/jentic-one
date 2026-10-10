@@ -22,8 +22,11 @@ export function AgentNameText({
 	focusable?: boolean;
 }) {
 	return (
+		// `dir="auto"` makes the name its own bidi run: a direction override inside
+		// it ends at the name instead of reversing the sentence around it (#1543).
 		<TruncateWithTooltip
 			inline
+			dir="auto"
 			focusable={focusable}
 			className={cn(AGENT_NAME_INLINE_BUDGET, className)}
 		>

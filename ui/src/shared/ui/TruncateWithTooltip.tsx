@@ -53,6 +53,8 @@ interface TruncateWithTooltipProps {
 	focusable?: boolean;
 	/** The tooltip's text, when it isn't the children themselves. */
 	tooltip?: ReactNode;
+	/** `auto` isolates user-chosen text as its own bidi run. */
+	dir?: 'auto' | 'ltr' | 'rtl';
 }
 
 /**
@@ -69,6 +71,7 @@ export function TruncateWithTooltip({
 	inline = false,
 	focusable = true,
 	tooltip,
+	dir,
 }: TruncateWithTooltipProps) {
 	const ref = useRef<HTMLSpanElement>(null);
 	const overflows = useIsTruncated(ref, children);
@@ -108,6 +111,7 @@ export function TruncateWithTooltip({
 	return (
 		<span
 			ref={ref}
+			dir={dir}
 			className={cn(
 				inline ? 'inline-block max-w-full truncate align-bottom' : 'block truncate',
 				className,

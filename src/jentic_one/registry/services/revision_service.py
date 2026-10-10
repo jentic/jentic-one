@@ -10,14 +10,12 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
-from jentic_one.registry.core.server_hosts import hosts_from_servers, needs_review
 from jentic_one.registry.ingest.host_change_guard import (
-    api_has_bound_credentials,
     may_approve_host_change,
+    pending_host_change,
 )
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
-from jentic_one.registry.repos.server_repo import ServerRepository
 from jentic_one.registry.repos.url_index_repo import (
     UrlIndexRepository,
     describe_live_host_owners,
@@ -307,30 +305,23 @@ class RevisionService:
         """Refuse a promote that changes the server hosts of a credential-bound API.
 
         Only called for callers without ``credentials:write``. Same rules as the
-        catalog re-import guard (``registry/ingest/host_change_guard.py``): the
-        baseline is the current revision, else the most recently live one, so
-        archiving the current revision first does not skip the check. When the
-        API has never had a live revision there is no baseline and every origin
-        of the draft is new: a draft that declares any server is refused if
-        credentials are bound.
+        catalog re-import guard (``registry/ingest/host_change_guard.py``); see
+        ``pending_host_change`` for the baseline and the never-live case.
         """
-        baseline = await ApiRevisionRepository.host_baseline_revision_id(
-            session, api_id, exclude=revision_id
+        held = await pending_host_change(
+            self._ctx,
+            session,
+            api_id=api_id,
+            revision_id=revision_id,
+            vendor=vendor,
+            name=name,
+            version=version,
         )
-        current = (
-            hosts_from_servers(await ServerRepository.list_url_specs(session, baseline))
-            if baseline is not None
-            else frozenset()
-        )
-        new = hosts_from_servers(await ServerRepository.list_url_specs(session, revision_id))
-        if not needs_review(current, new):
+        if held is None:
             return
-        if not await api_has_bound_credentials(
-            self._ctx, vendor=vendor, name=name, version=version
-        ):
-            return
+        current_hosts, new_hosts = held
         raise HostChangeRequiresOperatorError(
-            str(revision_id), current_hosts=sorted(current), new_hosts=sorted(new)
+            str(revision_id), current_hosts=current_hosts, new_hosts=new_hosts
         )
 
     async def archive(

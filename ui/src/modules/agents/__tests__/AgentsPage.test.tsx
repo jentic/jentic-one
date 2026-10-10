@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { use } from 'react';
 import { page } from 'vitest/browser';
-import { useLocation } from 'react-router';
+import { Link, Route, Routes, useLocation } from 'react-router';
 import {
 	act,
 	renderWithProviders,
@@ -14,6 +15,7 @@ import {
 } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
+import { useOpenConnectRequests } from '@/shared/credentials/api';
 import { Toaster } from '@/shared/ui';
 import { AuthProvider } from '@/shared/auth';
 import {
@@ -27,7 +29,9 @@ import { dismissFirstRun } from '@/modules/agents/lib/firstRun';
 import {
 	makeMockCredential,
 	resetApisStore,
+	resetConnectSessionsStore,
 	resetCredentialsStore,
+	seedMockAgentConnectSession,
 } from '@/shared/credentials/mocks/handlers';
 import {
 	CredentialType,
@@ -296,6 +300,62 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2'),
 		);
+	});
+
+	it('a fallback write-back landing mid-navigation does not undo the navigation', async () => {
+		// React Router commits a navigation as a transition, so the Agents page
+		// stays mounted on its old location until the destination has rendered.
+		// A roster that resolves in that window must not write `?agent=` — it
+		// would resolve against `/agents` and replace the operator's navigation.
+		let releaseRoster!: () => void;
+		const rosterHeld = new Promise<void>((resolve) => (releaseRoster = resolve));
+		worker.use(
+			http.get('/agents', async () => {
+				await rosterHeld;
+				// Nothing returned: the default roster handler answers.
+			}),
+		);
+		let releaseLibrary!: () => void;
+		const libraryHeld = new Promise<void>((resolve) => (releaseLibrary = resolve));
+		function HeldLibrary() {
+			use(libraryHeld);
+			return <h1>Library</h1>;
+		}
+		function PathProbe() {
+			const { pathname, search } = useLocation();
+			return <div data-testid="location-path">{pathname + search}</div>;
+		}
+		const user = userEvent.setup();
+		renderWithProviders(
+			<>
+				<Routes>
+					<Route
+						path="/agents"
+						element={
+							<>
+								<Link to="/library">Go to Library</Link>
+								<AgentsPage />
+							</>
+						}
+					/>
+					<Route path="/library" element={<HeldLibrary />} />
+				</Routes>
+				<PathProbe />
+			</>,
+			{ route: '/agents' },
+		);
+
+		// Leave while the roster is still loading; the destination suspends, so
+		// the transition stays pending and the Agents page stays on screen.
+		await user.click(screen.getByRole('link', { name: 'Go to Library' }));
+		releaseRoster();
+		// The roster lands in the page being left (its strip renders there).
+		await screen.findAllByText('inbox-triage-bot');
+		expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/agents$/);
+
+		releaseLibrary();
+		await screen.findByRole('heading', { name: 'Library' });
+		expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/library$/);
 	});
 
 	it('selecting a pill switches the surface in place and writes ?agent=', async () => {
@@ -675,6 +735,9 @@ describe('AgentsPage — flat agents surface', () => {
 				seedOrphan('agnt_disabled_1');
 				renderPage('/?agent=agnt_disabled_1', { withAuth: true });
 
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
 					await screen.findByRole('heading', {
 						name: 'legacy-scraper can reach nothing yet',
@@ -719,6 +782,9 @@ describe('AgentsPage — flat agents surface', () => {
 
 				// The empty state only shows once the credentials list has drained.
 				// Nothing is served, so there are no tiles, but both bindings are counted.
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
 					await screen.findByRole('heading', {
 						name: 'legacy-scraper can reach nothing yet',
@@ -730,7 +796,12 @@ describe('AgentsPage — flat agents surface', () => {
 		});
 
 		describe('seen by a non-admin (whose credentials list is only their own)', () => {
-			beforeEach(() => seedViewer(['agents:read', 'agents:write', 'credentials:read']));
+			beforeEach(() =>
+				// `apis:read` included because `GET /apis` requires it and the page no
+				// longer sends that read without it (#1543); this spec is about an
+				// orphaned binding, not about an API-blind viewer.
+				seedViewer(['agents:read', 'agents:write', 'apis:read', 'credentials:read']),
+			);
 
 			it('is neither hidden nor purged — missing from their list is not proof', async () => {
 				const purges = recordPurges();
@@ -761,6 +832,9 @@ describe('AgentsPage — flat agents surface', () => {
 
 				// The empty state only shows once the credentials list has drained.
 				// Nothing is served, so there are no tiles, but both bindings are counted.
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
 					await screen.findByRole('heading', {
 						name: 'legacy-scraper can reach nothing yet',
@@ -997,6 +1071,43 @@ describe('AgentsPage — flat agents surface', () => {
 	});
 
 	// --- Empty state / non-active treatment ---------------------------------
+
+	/**
+	 * Pins #1543 item 7, with the exact name from the report.
+	 *
+	 * U+202E (RIGHT-TO-LEFT OVERRIDE) has no terminator: once opened, its effect
+	 * runs to the end of the enclosing BIDI PARAGRAPH, not to the end of the
+	 * string that contained it. The empty state puts the agent's name and the
+	 * words "can reach nothing yet" in one heading, so an agent named
+	 * `invoice\u202ebot` reversed the product copy after it — the reader saw the
+	 * sentence backwards.
+	 *
+	 * The fix must be ISOLATION, not sanitisation: the name keeps every character
+	 * it was given (an RTL name must not be mutilated, and the next control
+	 * character Unicode adds must not need a new denylist), while the element
+	 * carrying it resolves it as a self-contained directional run that cannot
+	 * reorder its siblings.
+	 */
+	it('keeps a direction override inside an agent name from reversing the copy beside it', async () => {
+		const HOSTILE = 'invoice\u202ebot';
+		clearAgentsStore();
+		seedExtraAgents([{ id: 'agnt_hostile_1', name: HOSTILE, status: 'active' }]);
+		// A lone active agent with no APIs would resume the first-run landing;
+		// this spec is about the fleet's empty state, so dismiss that suggestion.
+		dismissFirstRun('agnt_hostile_1');
+		renderPage('/?agent=agnt_hostile_1');
+
+		// The whole sentence is still the heading's accessible name…
+		const heading = await screen.findByRole('heading', {
+			name: `${HOSTILE} can reach nothing yet`,
+		});
+		// …the name survives intact, character for character — nothing stripped…
+		const name = within(heading).getByText(HOSTILE);
+		expect(name.textContent).toBe(HOSTILE);
+		// …and it is its own bidi run, so the override dies at the element edge
+		// instead of running on through " can reach nothing yet".
+		expect(getComputedStyle(name).unicodeBidi).toBe('isolate');
+	});
 
 	it('shows the can-reach-nothing empty state and opens the Add-APIs tray', async () => {
 		const user = userEvent.setup();
@@ -2477,5 +2588,123 @@ describe('AgentsPage — long agent names', () => {
 			'[role="tab"][data-agent-id="agnt_first"]',
 		)!;
 		expect(cut(within(tab).getByText('my-first-agent'))).toBe(false);
+	});
+});
+
+let inboxRead = false;
+
+/** Reads the open connect requests the way the attention inbox does. */
+function InboxReader() {
+	const requests = useOpenConnectRequests();
+	if (requests.data) inboxRead = true;
+	return null;
+}
+
+describe('AgentsPage — agents waiting on a connect request', () => {
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+		seedComposedStores();
+		resetOrphanPurgeAttemptsForTest();
+		resetConnectSessionsStore();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+	});
+
+	function waitingSection() {
+		return screen.findByRole('region', { name: 'Waiting for you' });
+	}
+
+	it('shows nothing while no agent is waiting', async () => {
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+	});
+
+	it("collapses an agent's open requests into one row, with a Review link per request", async () => {
+		const github = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'github',
+			created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+		});
+		const slack = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'slack',
+			state: 'polling',
+			created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+		});
+		renderPage();
+
+		const section = await waitingSection();
+		const rows = within(section).getAllByRole('listitem');
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toHaveTextContent('support-agent');
+		expect(rows[0]).toHaveTextContent('wants to connect github and slack');
+		expect(rows[0]).toHaveTextContent(/waiting 20m/);
+		const links = within(rows[0]).getAllByRole('link');
+		expect(links.map((l) => l.textContent)).toEqual([
+			'Review github for support-agent',
+			'Review slack for support-agent',
+		]);
+		expect(links[0].getAttribute('href')).toContain(`approve=${github.session_id}`);
+		expect(links[1].getAttribute('href')).toContain(`approve=${slack.session_id}`);
+		for (const link of links) expect(link.getAttribute('href')).not.toContain('poll_token');
+		await checkA11y(section);
+	});
+
+	it('lists requests only to a viewer who may approve them', async () => {
+		seedMockAgentConnectSession({ agent_id: 'agnt_active_1', vendor_key: 'github' });
+		// An owner holding credentials:write but not agents:write can list the
+		// request but not open it, so it is not waiting for them.
+		// The inbox reads the same query for any credentials reader, so the
+		// cache holds the request even though this section never fetches it.
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read']);
+		const { unmount } = renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<InboxReader />
+			</AuthProvider>,
+		);
+		await screen.findAllByText('inbox-triage-bot');
+		await waitFor(() => expect(inboxRead).toBe(true));
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+		unmount();
+
+		seedViewer(['credentials:read', 'credentials:write', 'agents:read', 'agents:write']);
+		renderPage('/', { withAuth: true });
+		expect(await waitingSection()).toHaveTextContent('wants to connect github');
+	});
+
+	it('opens the request token-less from its Review link and strips the param', async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_active_1',
+			vendor_key: 'github',
+		});
+		const user = userEvent.setup();
+		// Another agent is selected; the link selects the requesting one.
+		renderPage('/?agent=agnt_pending_2');
+
+		const section = await waitingSection();
+		await user.click(within(section).getByRole('link', { name: /Review support-agent/ }));
+
+		const dialog = await screen.findByRole('dialog', { name: /^Approve integration$/ });
+		// The review read succeeded with no poll token (the mock admits only
+		// the owner path without one).
+		expect(
+			await within(dialog).findByText(/an agent is asking to connect/i),
+		).toBeInTheDocument();
+		await waitFor(() => {
+			const params = new URLSearchParams(
+				screen.getByTestId('location-search').textContent ?? '',
+			);
+			expect(params.has('approve')).toBe(false);
+			expect(params.get('agent')).toBe('agnt_active_1');
+		});
+		expect(seeded.poll_token).toBeTruthy();
 	});
 });

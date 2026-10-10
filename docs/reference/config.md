@@ -217,7 +217,6 @@ Broker surface configuration.
 | `broker.jwt_verification.trusted_issuers.<n>.issuer` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__ISSUER` |  |
 | `broker.jwt_verification.trusted_issuers.<n>.jwks_url` | string | *required* | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__JWKS_URL` |  |
 | `broker.jwt_verification.trusted_issuers.<n>.algorithms` | list of string | — | `JENTIC__BROKER__JWT_VERIFICATION__TRUSTED_ISSUERS__<N>__ALGORITHMS` |  |
-| `broker.account_linking_base_url` | string \| null | `null` | `JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL` |  |
 | `broker.resilience.max_in_flight` | integer | `200` | `JENTIC__BROKER__RESILIENCE__MAX_IN_FLIGHT` | Hard admission cap on concurrently executing brokered calls, **per broker process** — replicas multiply it. At the cap, new requests are shed with 429 + `Retry-After: shed_retry_after_s`. |
 | `broker.resilience.shed_retry_after_s` | integer | `5` | `JENTIC__BROKER__RESILIENCE__SHED_RETRY_AFTER_S` | `Retry-After` (seconds) returned with the 429 when admission sheds at `max_in_flight`. |
 | `broker.resilience.request_deadline_s` | number | `30.0` | `JENTIC__BROKER__RESILIENCE__REQUEST_DEADLINE_S` | Overall wall-clock budget (seconds) for one upstream call, enforced by the always-on DeadlineRunner outside the circuit breaker — distinct from the per-attempt connect/read timeout on the transport client. Exceeding it returns 504 with a `wait` agent directive; 0 disables the budget. Size ABOVE upstream read timeouts so a single healthy slow attempt isn't pre-empted by the envelope deadline. |
@@ -262,10 +261,15 @@ Broker surface configuration.
 
 ## `control`
 
-Control surface configuration. Empty since theme 7 removed the access-request subsystem (its `access_requests.ttl_days`/`canonical_base_url` knobs). The section stays so a `control:` key in existing YAML keeps validating and future control-surface knobs have a home; unknown subkeys are ignored.
+Control surface configuration. Unknown subkeys are ignored, so a `control:` section written for another release keeps validating.
 
 | Key | Type | Default | Env var | Description |
 | --- | ---- | ------- | ------- | ----------- |
+| `control.connect.manual_flows_enabled` | boolean | `false` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED` | Allow connect sessions that target a registry API (rather than a vendor-registry key), where a human enters the credential, or brings an OAuth app, when approving them in the dashboard. While off, `:connect` refuses API targets with `manual_flows_disabled`. Turn it on only after every control replica runs a release that understands them. |
+| `control.connect.manual_flows_ttl_hours` | integer (>= 1) | `72` | `JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_TTL_HOURS` | Hours an API-target connect session (a human-entered credential, or an OAuth API waiting for an app) stays open before it expires. Vendor OAuth sessions keep their fixed 30-minute lifetime. |
+| `control.connect.max_open_sessions_per_agent` | integer (>= 1) | `10` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_AGENT` | Most open connect sessions one agent may hold at once while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
+| `control.connect.max_open_sessions_per_owner` | integer (>= 1) | `50` | `JENTIC__CONTROL__CONNECT__MAX_OPEN_SESSIONS_PER_OWNER` | Most open connect sessions across one user and the agents they own while `manual_flows_enabled` is on; one more `:connect` gets 429 `too_many_open_sessions`. |
+| `control.connect.rejection_cooldown_hours` | integer (>= 0) | `24` | `JENTIC__CONTROL__CONNECT__REJECTION_COOLDOWN_HOURS` | Hours after a human rejects an agent's connect request during which the agent's repeat `:connect` for the same target gets 429 `recently_rejected`. 0 turns the cooldown off. |
 
 ## `ingest`
 

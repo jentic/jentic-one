@@ -503,12 +503,22 @@ describe('CredentialInventorySheet — credential flows', () => {
 	});
 
 	describe("an agent's approval link", () => {
-		it('opens the wizard in approve mode, and closing it drops the link params', async () => {
-			renderInventory('/?agent=agnt_active_1&approve=sess_1&poll_token=tok_1');
+		it('opens the wizard in approve mode and strips the link params on load', async () => {
+			renderInventory('/?agent=agnt_active_1&approve=sess_1');
 
 			expect(
 				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
 			).toBeVisible();
+			// Stripped while the wizard is still open: history, bookmarks and a
+			// shared screen never keep the session id. The selection survives.
+			await waitFor(() => {
+				const params = new URLSearchParams(
+					screen.getByTestId('location-search').textContent ?? '',
+				);
+				expect(params.has('approve')).toBe(false);
+				expect(params.get('agent')).toBe('agnt_active_1');
+			});
+			expect(screen.getByRole('dialog', { name: /^Approve integration$/ })).toBeVisible();
 
 			await browserUser.keyboard('{Escape}');
 			await waitFor(() =>
@@ -516,30 +526,39 @@ describe('CredentialInventorySheet — credential flows', () => {
 					screen.queryByRole('dialog', { name: /^Approve integration$/ }),
 				).not.toBeInTheDocument(),
 			);
-			// Spent, so a reload doesn't reopen a stale prompt; the selection survives.
-			// Wait on the params themselves: `?agent=` is in the URL before the clear too.
+			// Backing out of the approval leaves the operator in the inventory.
+			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
+		});
+
+		it('opens from the link exactly as the backend mints it (session id only)', async () => {
+			renderInventory('/?approve=sess_1');
+			expect(
+				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
+			).toBeVisible();
+		});
+
+		it('still opens an older link that carries a poll token, and strips both params', async () => {
+			renderInventory('/?approve=sess_1&poll_token=tok_1');
+			expect(
+				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
+			).toBeVisible();
 			await waitFor(() => {
 				const params = new URLSearchParams(
 					screen.getByTestId('location-search').textContent ?? '',
 				);
 				expect(params.has('approve')).toBe(false);
 				expect(params.has('poll_token')).toBe(false);
-				expect(params.get('agent')).toBe('agnt_active_1');
 			});
-			// Backing out of the approval leaves the operator in the inventory.
-			expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
 		});
 
-		it('opens from the link exactly as the backend mints it (no agent selected)', async () => {
-			renderInventory('/?approve=sess_1&poll_token=tok_1');
-			expect(
-				await screen.findByRole('dialog', { name: /^Approve integration$/ }),
-			).toBeVisible();
-		});
-
-		it('ignores a link missing its poll token', async () => {
-			renderInventory('/?approve=sess_1');
+		it('drops a stray poll token with no session id and opens nothing', async () => {
+			renderInventory('/?poll_token=tok_1');
 			await screen.findByRole('button', { name: 'Credentials' });
+			await waitFor(() =>
+				expect(screen.getByTestId('location-search').textContent).not.toContain(
+					'poll_token',
+				),
+			);
 			expect(
 				screen.queryByRole('dialog', { name: /^Approve integration$/ }),
 			).not.toBeInTheDocument();

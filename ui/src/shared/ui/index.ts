@@ -160,6 +160,9 @@ export type { LazyMountProps } from '@/shared/ui/LazyMount';
 
 export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
+export { UserText } from '@/shared/ui/UserText';
+export type { UserTextProps } from '@/shared/ui/UserText';
+
 export { ExpandableText } from '@/shared/ui/ExpandableText';
 export { ExpandReveal, REVEAL_MOTION } from '@/shared/ui/ExpandReveal';
 export type { ExpandRevealProps } from '@/shared/ui/ExpandReveal';

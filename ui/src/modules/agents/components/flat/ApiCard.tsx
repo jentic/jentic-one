@@ -10,7 +10,7 @@
  * `multiCredentialExplanation` as `ApiRow` — the two views can never disagree.
  */
 import { KeyRound } from 'lucide-react';
-import { Tag, Tooltip, TruncateWithTooltip, VendorIcon } from '@/shared/ui';
+import { Tag, Tooltip, TruncateWithTooltip, UserText, VendorIcon } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
 import { cn } from '@/shared/lib/utils';
 import type { BindingRulesState } from '@/modules/agents/api';
@@ -110,7 +110,7 @@ export function ApiCard({
 					focusable={false}
 					className="font-heading text-foreground-name min-w-0 flex-1 text-[13.5px] leading-[18px] font-semibold tracking-[-0.01em]"
 				>
-					{tile.title}
+					<UserText>{tile.title}</UserText>
 				</TruncateWithTooltip>
 				{accountCount > 1 && (
 					// Hover-only inside the card: the card is the one focus stop, and
@@ -134,7 +134,7 @@ export function ApiCard({
 			>
 				<KeyRound aria-hidden="true" className="text-foreground-faint h-3 w-3 shrink-0" />
 				<TruncateWithTooltip focusable={false} className="min-w-0 flex-1">
-					{credentialLabel}
+					<UserText>{credentialLabel}</UserText>
 				</TruncateWithTooltip>
 			</p>
 			{/* Row 3 (18px): status dot + word. */}

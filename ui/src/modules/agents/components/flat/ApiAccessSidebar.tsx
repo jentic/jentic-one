@@ -17,6 +17,7 @@ import {
 	SheetHeader,
 	SheetPrimitive,
 	Skeleton,
+	UserText,
 	VendorIcon,
 	toast,
 	ConfirmDialog,
@@ -25,7 +26,7 @@ import {
 	type DangerZoneAction,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
-import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { formatTimestamp, isolateText, timeAgo } from '@/shared/lib/utils';
 import {
 	AGENTS_WRITE,
 	CREDENTIALS_WRITE,
@@ -169,12 +170,14 @@ export function ApiAccessSidebar({
 
 	const credentialId = shown?.credentialId ?? null;
 	// A credential shared with the viewer is theirs to bind and use, not to edit or
-	// delete. An unreachable credential row leaves the owner unknown — keep the
-	// actions and let the server decide.
+	// delete. Ownership that cannot be read is treated as NOT the viewer's — fail
+	// closed. `credentialCreatedBy` is absent (not null) when no credential row
+	// backed the tile at all, which is exactly what an owner-scoped
+	// `GET /credentials` returns for someone else's credential bound to this
+	// agent: offering Edit there would open a blank sheet, and both verbs 404 (#1543).
 	const viewer = useOptionalCurrentUser();
 	const credentialReadOnly =
-		shown?.credentialCreatedBy !== undefined &&
-		!credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
+		shown != null && !credentialEditableBy({ created_by: shown.credentialCreatedBy }, viewer);
 	// Pause, resume and unbind write the agent's bindings (`agents:write`); editing,
 	// deleting or connecting the credential and its binding rules need
 	// `credentials:write`. Either needs `org:admin` otherwise. Without them the
@@ -321,7 +324,7 @@ export function ApiAccessSidebar({
 							{
 								key: 'unbind',
 								title: 'Unbind from this agent',
-								description: `The binding and its rules are deleted for ${clipName(agent.name)} only — the credential survives for every other agent.`,
+								description: `The binding and its rules are deleted for ${isolateText(clipName(agent.name))} only — the credential survives for every other agent.`,
 								buttonLabel: 'Unbind from this agent',
 								ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
 								emphasis: 'outline' as const,
@@ -366,6 +369,7 @@ export function ApiAccessSidebar({
 									<div className="flex min-w-0 items-center gap-2">
 										<h2
 											id={headingId}
+											dir="auto"
 											className="font-heading text-foreground-name min-w-0 text-base font-semibold"
 										>
 											<TruncateWithTooltip>{shown.title}</TruncateWithTooltip>
@@ -373,9 +377,11 @@ export function ApiAccessSidebar({
 										<TileStatusChip status={status} className="shrink-0" />
 									</div>
 									<p className="text-muted-foreground truncate text-xs">
-										{shown.host}
-										{shown.authLabel ? ` · ${shown.authLabel}` : ''} — access
-										for {agent.name}
+										<UserText>
+											{shown.host}
+											{shown.authLabel ? ` · ${shown.authLabel}` : ''}
+										</UserText>{' '}
+										— access for <UserText>{agent.name}</UserText>
 										{shown.suspended ? ' · not serving calls' : ''}
 										{shown.suspended && shown.suspendedReason === 'api_deleted'
 											? ' because its API was deleted — review the rules before resuming'
@@ -475,7 +481,7 @@ export function ApiAccessSidebar({
 								<div className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-3">
 									<div className="min-w-0 flex-1">
 										<p className="text-foreground-name truncate text-sm font-semibold">
-											{shown.credentialName}
+											<UserText>{shown.credentialName}</UserText>
 										</p>
 										<p className="text-muted-foreground text-xs">
 											{shown.authLabel ?? 'Credential'} · bound{' '}
@@ -678,8 +684,11 @@ export function ApiAccessSidebar({
 					}
 					body={
 						<>
-							Permanently unbind <strong>{shown.credentialName}</strong> from{' '}
-							<AgentNameText name={agent.name} className="font-semibold" />? The
+							Permanently unbind{' '}
+							<strong>
+								<UserText>{shown.credentialName}</UserText>
+							</strong>{' '}
+							from <AgentNameText name={agent.name} className="font-semibold" />? The
 							binding and its rules are deleted — the credential survives for every
 							other agent.
 						</>

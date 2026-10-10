@@ -24,24 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import MAX_EVENT_SUMMARY_FIELD_LEN, emit_event
+from jentic_one.shared.events import emit_event, summary_text
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import OperationInfo
 
 logger = structlog.get_logger(__name__)
-
-
-def _bounded(label: str) -> str:
-    """Bound the operation label for ``Event.summary``.
-
-    The label renders the registry's unbounded ``operations.path`` (Text) into a
-    ``String(512)`` column; an oversized INSERT fails the emit. An ellipsis marks
-    the cut so an operator doesn't read a clipped path as the real template.
-    """
-    if len(label) <= MAX_EVENT_SUMMARY_FIELD_LEN:
-        return label
-    return label[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
 
 
 async def maybe_emit_repeated_failure(
@@ -157,7 +145,7 @@ async def maybe_emit_repeated_failure(
                 severity=severity,
                 summary=(
                     f"{failure_count} failures for operation "
-                    f"{_bounded(operation.display)} "
+                    f"{summary_text(operation.display)} "
                     f"on {axis_label} in {config.execution_repeated_failure_window_s}s"
                 ),
                 requires_action=True,

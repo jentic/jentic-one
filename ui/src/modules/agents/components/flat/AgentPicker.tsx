@@ -266,6 +266,7 @@ function PickerRow({
 		>
 			<AgentBadge id={agent.id} name={agent.name} size="xs" shape="circle" />
 			<span
+				dir="auto"
 				className={cn(
 					'min-w-0 flex-1 truncate',
 					(agent.status === 'rejected' || agent.status === 'archived') &&

@@ -13,9 +13,10 @@ import {
 	type QueryClient,
 	type UseQueryOptions,
 } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
 	bindCredentialToAgentBlocked,
+	getPermissionRuleSet,
 	listBindingPermissions,
 	replaceBindingPermissions,
 	cancelConnectSession,
@@ -24,21 +25,25 @@ import {
 	getVendorAuthCapabilities,
 	listAgentsForPicker,
 	listAllVendorOperations,
+	listOpenConnectRequests,
 	listVendors,
 	pollConnectSessionStatus,
+	rejectConnectSession,
 	startIntegrationConnect,
 	type VendorOperationsPage,
 } from '@/shared/credentials/api/vendors-client';
 import type {
 	AgentListResponse,
+	ConnectSessionSummaryResponse,
 	PermissionRuleReadSchema,
 	PermissionRuleSchema,
+	RuleSetResponse,
 } from '@/shared/api';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { credentialKeys } from './keys';
 import type {
-	ConfirmRequest,
-	ConfirmResponse,
+	ConfirmSessionBody,
+	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
 	ReviewSession,
@@ -48,6 +53,7 @@ import type {
 } from '@/shared/credentials/api/vendors-types';
 
 const KEYS = {
+	// A token-less (owner / admin) read keys on `''`, apart from any token holder's.
 	session: (id: string, token: string) => ['integrations', 'session', id, token] as const,
 	status: (id: string, token: string) => ['integrations', 'status', id, token] as const,
 	vendors: ['integrations', 'vendors'] as const,
@@ -86,6 +92,10 @@ export function useAgentsForPicker() {
 	});
 }
 
+/**
+ * Review data for a connect session. `pollToken` is optional: without it the
+ * read succeeds only for the target agent's owner or `org:admin`.
+ */
 export function useConnectSession(
 	sessionId: string | undefined,
 	pollToken: string | undefined,
@@ -93,13 +103,14 @@ export function useConnectSession(
 ) {
 	return useQuery<ReviewSession>({
 		queryKey: KEYS.session(sessionId ?? '', pollToken ?? ''),
-		queryFn: () => getConnectSession(sessionId as string, pollToken as string),
-		enabled: Boolean(sessionId) && Boolean(pollToken),
+		queryFn: () => getConnectSession(sessionId as string, pollToken),
+		enabled: Boolean(sessionId),
 		staleTime: 5_000,
-		// A 403 means the poll_token doesn't match or the session is gone
-		// (the backend deliberately conflates the two — no enumeration
-		// oracle). Retrying can't fix either, so fail fast; the caller
-		// surfaces "the approval link is no longer valid".
+		// A 403 means the poll_token doesn't match, the session is gone, or
+		// a token-less caller isn't the owner / admin (the backend
+		// deliberately conflates them — no enumeration oracle). Retrying
+		// can't fix any of them, so fail fast; the caller surfaces "the
+		// approval link is no longer valid".
 		retry: (failureCount, error) => {
 			const status = (error as { status?: number | null })?.status;
 			if (typeof status === 'number' && status >= 400 && status < 500) return false;
@@ -123,9 +134,32 @@ export function useConnectSession(
 	});
 }
 
-export function useConfirmConnectSession(sessionId: string, pollToken: string) {
-	return useMutation<ConfirmResponse, Error, ConfirmRequest>({
+/**
+ * ``:confirm`` for every variant. ``gcTime: 0`` drops a settled mutation (and
+ * the body it was called with — possibly a typed secret) from the mutation
+ * cache as soon as no component observes it; callers sending a secret also
+ * ``reset()`` once it settles so the body is not kept as ``variables``.
+ */
+export function useConfirmConnectSession(sessionId: string, pollToken: string | undefined) {
+	return useMutation<ConfirmSessionResponse, Error, ConfirmSessionBody>({
 		mutationFn: (body) => confirmConnectSession(sessionId, pollToken, body),
+		gcTime: 0,
+	});
+}
+
+/**
+ * Reject an agent's connect request (the approve dialog's Reject). Refreshes
+ * the open-request signals and the credentials list (the session's pending
+ * credential goes with it).
+ */
+export function useRejectConnectSession() {
+	const client = useQueryClient();
+	return useMutation<void, Error, { sessionId: string }>({
+		mutationFn: ({ sessionId }) => rejectConnectSession(sessionId),
+		onSuccess: () => {
+			void client.invalidateQueries({ queryKey: ['credentials'] });
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
+		},
 	});
 }
 
@@ -302,18 +336,82 @@ function accessFromRules(rules: readonly PermissionRuleReadSchema[]): 'blocked' 
 }
 
 /**
+ * Under `agentsKeys.ruleSet(id)`, never AT it: that slice holds the agents
+ * module's mapped `BindingRuleSetEntity`, while this read caches the wire
+ * `RuleSetResponse`. One key holding two shapes would hand whichever surface
+ * reads second the other's object (an `undefined` binding count, a missing
+ * `id`). Nesting one level down keeps the prefix, so the agents module's
+ * `ruleSetRoot()` / `ruleSet(id)` invalidations still reach this read and a
+ * save in the rule-set panel still shows here.
+ */
+function ruleSetKey(ruleSetId: string) {
+	return [...sharedQueryKeys.agentsRoot, 'rule-set', ruleSetId, 'access'] as const;
+}
+
+/** One binding, as the access read needs it. */
+export interface BindingAccessPair {
+	agentId: string;
+	credentialId: string;
+	/**
+	 * The shared rule set attached to the binding, or `null`/absent for one
+	 * governed by its own inline rules.
+	 */
+	ruleSetId?: string | null;
+}
+
+/**
  * The access state of each (agent, credential) binding, keyed
- * `${agentId}\n${credentialId}` — read from the binding's rules in the same
- * cache slice the agent's rules editor uses, so a save there shows here.
+ * `${agentId}\n${credentialId}`.
+ *
+ * Read from whatever the BROKER evaluates, which is the attached rule set when
+ * there is one and the binding's inline rules otherwise — a set takes
+ * precedence and leaves the inline list dormant. Judging a governed binding by
+ * its dormant inline rules would read "Blocked" over a rule set that allows the
+ * call (#1543). Both reads use the same cache slices as
+ * the agent's rules editor and its rule-set panel, so a save there shows here.
  */
 export function useBindingAccessStates(
-	pairs: ReadonlyArray<{ agentId: string; credentialId: string }>,
+	pairs: ReadonlyArray<BindingAccessPair>,
 ): ReadonlyMap<string, BindingAccessState> {
+	// Deduplicated and sorted so the query list is stable across renders that
+	// only reorder the bindings.
+	const ruleSetIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const p of pairs) if (p.ruleSetId) ids.add(p.ruleSetId);
+		return [...ids].sort();
+	}, [pairs]);
+
+	const combineRuleSets = useCallback(
+		(results: { data?: RuleSetResponse; isError: boolean }[]) => {
+			const map = new Map<string, BindingAccessState>();
+			results.forEach((r, i) => {
+				const id = ruleSetIds[i];
+				if (id == null) return;
+				map.set(
+					id,
+					r.data ? accessFromRules(r.data.rules) : r.isError ? 'unknown' : 'loading',
+				);
+			});
+			return map;
+		},
+		[ruleSetIds],
+	);
+	const ruleSetStates = useQueries({
+		queries: ruleSetIds.map((ruleSetId) => ({
+			queryKey: ruleSetKey(ruleSetId),
+			queryFn: () => getPermissionRuleSet(ruleSetId),
+		})),
+		combine: combineRuleSets,
+	});
+
+	// The inline list is only read for bindings that actually use it: a governed
+	// binding's inline rules decide nothing, so fetching them says nothing.
+	const inlinePairs = useMemo(() => pairs.filter((p) => !p.ruleSetId), [pairs]);
 	const combine = useCallback(
 		(results: { data?: PermissionRuleReadSchema[]; isError: boolean }[]) => {
 			const map = new Map<string, BindingAccessState>();
 			results.forEach((r, i) => {
-				const pair = pairs[i];
+				const pair = inlinePairs[i];
 				if (!pair) return;
 				map.set(
 					`${pair.agentId}\n${pair.credentialId}`,
@@ -322,15 +420,29 @@ export function useBindingAccessStates(
 			});
 			return map;
 		},
-		[pairs],
+		[inlinePairs],
 	);
-	return useQueries({
-		queries: pairs.map(({ agentId, credentialId }) => ({
+	const inlineStates = useQueries({
+		queries: inlinePairs.map(({ agentId, credentialId }) => ({
 			queryKey: bindingPermissionsKey(agentId, credentialId),
 			queryFn: () => listBindingPermissions(agentId, credentialId),
 		})),
 		combine,
 	});
+
+	return useMemo(() => {
+		const map = new Map<string, BindingAccessState>();
+		for (const pair of pairs) {
+			const key = `${pair.agentId}\n${pair.credentialId}`;
+			map.set(
+				key,
+				pair.ruleSetId
+					? (ruleSetStates.get(pair.ruleSetId) ?? 'loading')
+					: (inlineStates.get(key) ?? 'loading'),
+			);
+		}
+		return map;
+	}, [pairs, ruleSetStates, inlineStates]);
 }
 
 /**
@@ -341,13 +453,41 @@ export function useBindingAccessStates(
  */
 export function useCancelConnectSession() {
 	const client = useQueryClient();
-	return useMutation<void, Error, { sessionId: string; pollToken: string }>({
+	return useMutation<void, Error, { sessionId: string; pollToken?: string }>({
 		mutationFn: ({ sessionId, pollToken }) => cancelConnectSession(sessionId, pollToken),
 		onSuccess: () => {
 			// The credential + session are cascade-deleted on the backend;
-			// invalidate so the credentials list drops the stale row.
+			// invalidate so the credentials list and the open-request
+			// signals drop the stale rows.
 			void client.invalidateQueries({ queryKey: ['credentials'] });
+			void client.invalidateQueries({ queryKey: connectRequestsKey });
 		},
+	});
+}
+
+/**
+ * The open-request list's key. Under the attention root, so anything that
+ * refreshes the inbox (an approval decided elsewhere) refreshes it too.
+ */
+export const connectRequestsKey = [...sharedQueryKeys.attentionRoot, 'connect-requests'] as const;
+
+/** Same cadence as the rest of the inbox: roughly live without a push channel. */
+const CONNECT_REQUESTS_REFETCH_MS = 45_000;
+
+/**
+ * Connect sessions an agent opened and is still waiting on a human for
+ * (`created` / `awaiting_app` / `polling`), oldest first — the live state behind the
+ * attention inbox's "waiting for you" rows and the Agents page section.
+ * Pass `enabled: false` for a caller who cannot read credentials (the list
+ * needs `credentials:read` or `owner:credentials:read`).
+ */
+export function useOpenConnectRequests(options?: { enabled?: boolean }) {
+	return useQuery<ConnectSessionSummaryResponse[]>({
+		queryKey: connectRequestsKey,
+		queryFn: listOpenConnectRequests,
+		enabled: options?.enabled ?? true,
+		staleTime: 30_000,
+		refetchInterval: CONNECT_REQUESTS_REFETCH_MS,
 	});
 }
 
@@ -358,14 +498,14 @@ export function useCancelConnectSession() {
  */
 export function usePollConnectSessionStatus(
 	sessionId: string,
-	pollToken: string,
+	pollToken: string | undefined,
 	options?: {
 		enabled?: boolean;
 		intervalMs?: number;
 	},
 ) {
 	return useQuery<StatusResponse>({
-		queryKey: KEYS.status(sessionId, pollToken),
+		queryKey: KEYS.status(sessionId, pollToken ?? ''),
 		queryFn: () => pollConnectSessionStatus(sessionId, pollToken),
 		enabled: options?.enabled ?? true,
 		// Default matches RFC 8628 §3.5's device-flow ``interval`` fallback

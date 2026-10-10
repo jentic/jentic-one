@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { QueryClient } from '@tanstack/react-query';
 import { worker } from '@/mocks/browser';
@@ -19,7 +19,9 @@ import {
 	getMockConnectSessions,
 	resetConnectSessionsStore,
 	resetCredentialsStore,
+	seedMockAgentConnectSession,
 } from '@/shared/credentials/mocks/handlers';
+import { getToken, setToken } from '@/shared/api';
 import type {
 	ConfirmRequest,
 	PermissionRule,
@@ -36,7 +38,8 @@ import type {
  *     polling reports a terminal state.
  *   * ``approve`` — an agent already started the session and passed its
  *     owner an approval URL; the human lands here with just the session id
- *     + poll token and reviews what the agent asked for before confirming.
+ *     (plus a poll token only from an older link) and reviews what the agent
+ *     asked for before confirming.
  *
  * These tests focus on the load-bearing bits: the configure step in ``self``
  * mode surfaces the vendor catalog + agent picker; a start-and-confirm
@@ -265,6 +268,8 @@ describe('VendorConnectFlow — self mode', () => {
 					scopes: [],
 					requested_permission_rules: [],
 					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+					digest: 'dig_test',
+					can_confirm: true,
 				}),
 			),
 			http.post('/connect-sessions/sess_1\\:confirm', () =>
@@ -595,6 +600,8 @@ describe('VendorConnectFlow — approve mode', () => {
 			reason: 'Need repo push access to open a follow-up PR on issue #42.',
 			requested_permission_rules: [],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_9', () => HttpResponse.json(session)),
@@ -668,6 +675,8 @@ describe('VendorConnectFlow — approve mode', () => {
 				{ effect: 'allow', methods: ['GET'], path: '/repos', match_mode: 'prefix' },
 			],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_rules', () => HttpResponse.json(session)),
@@ -722,6 +731,8 @@ describe('VendorConnectFlow — approve mode', () => {
 			reason: null,
 			requested_permission_rules: [],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_edit', () => HttpResponse.json(session)),
@@ -789,6 +800,8 @@ describe('VendorConnectFlow — approve mode', () => {
 				{ effect: 'allow', methods: ['GET'], path: '/repos', match_mode: 'prefix' },
 			],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_ed', () => HttpResponse.json(session)),
@@ -863,6 +876,8 @@ describe('VendorConnectFlow — approve mode', () => {
 				},
 			],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_partial', () => HttpResponse.json(session)),
@@ -952,6 +967,8 @@ describe('VendorConnectFlow — approve mode', () => {
 				},
 			],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_noops', () => HttpResponse.json(session)),
@@ -1016,6 +1033,8 @@ describe('VendorConnectFlow — approve mode', () => {
 			reason: null,
 			requested_permission_rules: [],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: '1.0.0' },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_ac', () => HttpResponse.json(session)),
@@ -1192,6 +1211,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 					scopes: [],
 					requested_permission_rules: [],
 					api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+					digest: 'dig_test',
+					can_confirm: true,
 				}),
 			),
 			http.post('/connect-sessions/:id\\:confirm', () =>
@@ -1302,6 +1323,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 			reason: null,
 			requested_permission_rules: [requestedRule],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		let confirmBody: ConfirmRequest | null = null;
 		let confirmToken: string | null = null;
@@ -1393,6 +1416,8 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 			reason: null,
 			requested_permission_rules: [],
 			api_reference: { vendor: 'github-com', name: 'github-com', version: null },
+			digest: 'dig_test',
+			can_confirm: true,
 		};
 		worker.use(
 			http.get('/connect-sessions/sess_noscopes', () => HttpResponse.json(session)),
@@ -1415,5 +1440,167 @@ describe('VendorConnectFlow — connect-wizard regressions', () => {
 		expect(cont).not.toBeDisabled();
 		await user.click(cont);
 		expect(await screen.findByText('Permission rules')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Token-less approve mode: the approval URL carries only the session id, and
+ * the backend authorises the target agent's owner (or an org admin) without
+ * the poll token. Every session-scoped call — review, confirm, status, the
+ * unmount cancel and the tab-close cancel — must go out without one. Driven
+ * through the credentials module's own MSW handlers, whose gate admits a
+ * token-less caller only on the owner path (`ownerCanAct`).
+ */
+describe('VendorConnectFlow — token-less approve (owner / org admin)', () => {
+	let sessionRequests: Request[] = [];
+	const record = ({ request }: { request: Request }): void => {
+		if (new URL(request.url).pathname.startsWith('/connect-sessions/')) {
+			sessionRequests.push(request);
+		}
+	};
+
+	beforeEach(() => {
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+		stubAgents();
+		vi.spyOn(window, 'open').mockReturnValue(null);
+		sessionRequests = [];
+		worker.events.on('request:start', record);
+	});
+
+	afterEach(() => {
+		worker.events.removeListener('request:start', record);
+		vi.restoreAllMocks();
+		resetConnectSessionsStore();
+		resetCredentialsStore();
+	});
+
+	async function driveToAwaiting(
+		sessionId: string,
+	): Promise<ReturnType<typeof renderWithProviders>> {
+		const view = renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId={sessionId}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		const user = userEvent.setup();
+		await screen.findByText(/an agent is asking to connect/i);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /^continue$/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.click(await screen.findByRole('button', { name: /skip.*continue/i }));
+		expect(await screen.findByText('MOCK-1234')).toBeInTheDocument();
+		return view;
+	}
+
+	function expectNoPollToken(): void {
+		expect(sessionRequests.length).toBeGreaterThan(0);
+		for (const request of sessionRequests) {
+			expect(new URL(request.url).searchParams.has('poll_token')).toBe(false);
+		}
+	}
+
+	it('reviews and confirms with no poll token on any request', async () => {
+		const seeded = seedMockAgentConnectSession({ agent_id: 'agnt_1', vendor_key: 'github' });
+		await driveToAwaiting(seeded.session_id);
+
+		expect(getMockConnectSessions()[0].confirmBodies).toHaveLength(1);
+		expect(screen.queryByText(/isn't yours to approve/i)).not.toBeInTheDocument();
+		await waitFor(() =>
+			expect(sessionRequests.some((r) => new URL(r.url).pathname.endsWith('/status'))).toBe(
+				true,
+			),
+		);
+		expectNoPollToken();
+	});
+
+	it('cancels token-less when unmounted mid-sign-in', async () => {
+		const seeded = seedMockAgentConnectSession({ agent_id: 'agnt_1', vendor_key: 'github' });
+		const view = await driveToAwaiting(seeded.session_id);
+
+		view.unmount();
+		// The mock :cancel cascades the session away, which it only does once
+		// the token-less request passed the owner gate.
+		await waitFor(() => expect(getMockConnectSessions()).toHaveLength(0));
+		expectNoPollToken();
+	});
+
+	it('cancels on tab close with an authenticated keepalive request and no token', async () => {
+		const previousToken = getToken();
+		setToken('bearer-for-unload');
+		onTestFinished(() => setToken(previousToken));
+		// Capture the flow's own unload handler rather than dispatching a real
+		// `beforeunload`: MSW's worker treats that event as the page closing
+		// and stops intercepting for every later test.
+		const unloadHandlers: EventListener[] = [];
+		const addListener = window.addEventListener.bind(window);
+		vi.spyOn(window, 'addEventListener').mockImplementation(((
+			type: string,
+			listener: EventListenerOrEventListenerObject,
+			options?: boolean | AddEventListenerOptions,
+		) => {
+			if (type === 'beforeunload' && typeof listener === 'function') {
+				unloadHandlers.push(listener);
+			}
+			addListener(type, listener, options);
+		}) as typeof window.addEventListener);
+		const seeded = seedMockAgentConnectSession({ agent_id: 'agnt_1', vendor_key: 'github' });
+		await driveToAwaiting(seeded.session_id);
+
+		expect(unloadHandlers.length).toBeGreaterThan(0);
+		for (const handler of unloadHandlers) handler(new Event('beforeunload'));
+		await waitFor(() => expect(getMockConnectSessions()).toHaveLength(0));
+		const cancel = sessionRequests.find((r) => new URL(r.url).pathname.endsWith(':cancel'));
+		expect(cancel).toBeDefined();
+		expect(cancel!.keepalive).toBe(true);
+		expect(cancel!.headers.get('Authorization')).toBe('Bearer bearer-for-unload');
+		expectNoPollToken();
+	});
+
+	it("tells a caller who is neither the agent's owner nor an admin that it isn't theirs", async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			vendor_key: 'github',
+			ownerCanAct: false,
+		});
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId={seeded.session_id}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		expect(
+			await screen.findByText(
+				"This request is no longer open, or it isn't yours to approve.",
+			),
+		).toBeInTheDocument();
+		expectNoPollToken();
+	});
+
+	it('still honours a poll token from an older link', async () => {
+		const seeded = seedMockAgentConnectSession({
+			agent_id: 'agnt_1',
+			vendor_key: 'github',
+			ownerCanAct: false,
+		});
+		renderWithProviders(
+			<VendorConnectFlow
+				mode="approve"
+				sessionId={seeded.session_id}
+				pollToken={seeded.poll_token}
+				onBack={vi.fn()}
+				onDone={vi.fn()}
+			/>,
+		);
+		expect(await screen.findByText(/an agent is asking to connect/i)).toBeInTheDocument();
+		expect(new URL(sessionRequests[0].url).searchParams.get('poll_token')).toBe(
+			seeded.poll_token,
+		);
 	});
 });

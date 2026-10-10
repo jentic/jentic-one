@@ -12,8 +12,14 @@ import {
 import { worker } from '@/mocks/browser';
 import { setToken, sharedQueryKeys } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { setImportPollIntervalForTests } from '@/modules/discover/api';
+import { setImportPollIntervalForTests, useWorkspaceDigest } from '@/modules/discover/api';
+import { WorkspaceApiCount } from '@/modules/discover/components/WorkspaceDockPanel';
 import LibraryPage from '@/modules/discover/pages/LibraryPage';
+
+/** The docked panel's "N APIs" figure, reading the digest the panel reads. */
+function DockCountProbe() {
+	return <WorkspaceApiCount digest={useWorkspaceDigest()} />;
+}
 
 describe('LibraryPage', () => {
 	let restorePollInterval: (() => void) | null = null;
@@ -67,6 +73,76 @@ describe('LibraryPage', () => {
 		// Available cards expose Import, never the workspace link — there's exactly
 		// one imported entry in the default catalog, so exactly one such link.
 		expect(screen.getAllByTestId('catalog-row-open')).toHaveLength(1);
+	});
+
+	/**
+	 * Pins #1543 item 3, reproducing the reported divergence (4 vs 6).
+	 *
+	 * The manifest's `registered_count` counts CATALOG entries whose spec url
+	 * matches something local — so a locally-imported or pasted spec, which has
+	 * no catalog entry to match, is invisible to it. A header reading "N in your
+	 * workspace" over that number disagrees with the docked panel's `GET /apis`
+	 * figure, and the panel is right: the label is a claim about the
+	 * WORKSPACE, so the number must be the workspace's own.
+	 *
+	 * The NUMBER is what changes, not the label: a reader of "in your workspace"
+	 * wants to know how many APIs they have. "How many catalog entries happen to
+	 * match a local spec url" is a manifest statistic no surface asks for, and
+	 * relabelling it would have left two different figures for one question.
+	 */
+	it('counts "in your workspace" from the workspace itself, not the manifest’s registered_count', async () => {
+		/** A workspace API row, as `GET /apis` serves it. */
+		const row = (vendor: string, catalogApiId: string | null) => ({
+			api: { vendor, name: `${vendor}-api`, version: '1', host: null },
+			display_name: vendor,
+			description: null,
+			icon_url: null,
+			catalog_api_id: catalogApiId,
+			current_revision_id: `rev_${vendor}`,
+			revision_count: 1,
+			operation_count: 2,
+			security_schemes: [],
+			update_available: false,
+			created_at: '2026-01-01T00:00:00Z',
+			updated_at: null,
+			_links: { self: `/apis/${vendor}/${vendor}-api/1` },
+		});
+
+		// The default manifest matches exactly ONE local spec (stripe.com), while
+		// the workspace holds three — the other two are pasted specs with no
+		// catalog entry for `registered_count` to have counted.
+		worker.use(
+			http.get('/apis', () =>
+				HttpResponse.json({
+					data: [
+						row('stripe.com', 'stripe.com'),
+						row('billing', null),
+						row('ledger', null),
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(
+			<>
+				<LibraryPage />
+				{/* The docked panel's own figure, from the same digest — mounted
+				    beside the page so the two numbers can be compared in one
+				    render. The report's symptom was precisely their divergence. */}
+				<DockCountProbe />
+			</>,
+		);
+		const status = await screen.findByTestId('discover-status');
+
+		// The workspace's own count — not 1.
+		await waitFor(() =>
+			expect(within(status).getByTestId('discover-status-workspace')).toHaveTextContent(
+				'3 in your workspace',
+			),
+		);
+		// And the docked panel agrees: one figure, one question.
+		expect(await screen.findByTestId('workspace-api-count')).toHaveTextContent('3 APIs');
 	});
 
 	it('shows the whole-manifest status row', async () => {

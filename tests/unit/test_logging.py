@@ -30,6 +30,7 @@ from jentic_one.shared.logging import (
     configure_logging,
     request_id_ctx,
 )
+from jentic_one.shared.redaction import REDACTED
 
 
 @pytest.fixture()
@@ -408,3 +409,107 @@ async def test_middleware_does_not_trap_cancel_scope_on_disconnect(tmp_path: Pat
     finally:
         with contextlib.suppress(Exception):
             await engine.dispose()
+
+
+# uvicorn's access-log format and argument order (``httptools_impl`` / ``h11_impl``).
+_ACCESS_FMT = '%s - "%s %s HTTP/%s" %d'
+
+
+def _access_record(args: object) -> logging.LogRecord:
+    return logging.LogRecord("uvicorn.access", logging.INFO, __file__, 0, _ACCESS_FMT, args, None)  # type: ignore[arg-type]
+
+
+def test_configure_logging_installs_the_access_log_filter_once_across_uvicorn_dictconfig(
+    minimal_config: AppConfig,
+) -> None:
+    configure_logging(minimal_config)
+    configure_logging(minimal_config)
+    logging.config.dictConfig(LOGGING_CONFIG)
+    filters = logging.getLogger("uvicorn.access").filters
+    assert sum(type(f).__name__ == "_AccessLogQueryFilter" for f in filters) == 1
+
+
+@pytest.mark.parametrize(
+    ("full_path", "expected_path", "secrets"),
+    [
+        (
+            "/connect-sessions/cs_1/status?poll_token=pt_secret",
+            f"/connect-sessions/cs_1/status?poll_token={REDACTED}",
+            ["pt_secret"],
+        ),
+        (
+            "/oauth/callback?code=c_secret&state=s_secret",
+            f"/oauth/callback?code={REDACTED}&state={REDACTED}",
+            ["c_secret", "s_secret"],
+        ),
+        ("/search?q=a&bare_secret", f"/search?q={REDACTED}&{REDACTED}", ["bare_secret"]),
+        ("/connect-sessions/cs_1/status", "/connect-sessions/cs_1/status", []),
+        ("/health?", "/health", []),
+    ],
+)
+def test_access_log_filter_masks_query_values_and_keeps_method_path_status(
+    minimal_config: AppConfig, full_path: str, expected_path: str, secrets: list[str]
+) -> None:
+    configure_logging(minimal_config)
+    logging.config.dictConfig(LOGGING_CONFIG)
+    access = logging.getLogger("uvicorn.access")
+    record = _access_record(("127.0.0.1:5000", "GET", full_path, "1.1", 200))
+
+    assert access.filter(record)
+    message = record.getMessage()
+    assert message == f'127.0.0.1:5000 - "GET {expected_path} HTTP/1.1" 200'
+    for secret in secrets:
+        assert secret not in message
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        None,
+        (),
+        {"path": "/x?token=t"},
+        ("127.0.0.1:5000", "GET", b"/x?token=t", "1.1", 200),
+    ],
+)
+def test_access_log_filter_passes_unexpected_record_shapes_through(
+    minimal_config: AppConfig, args: object
+) -> None:
+    configure_logging(minimal_config)
+    access = logging.getLogger("uvicorn.access")
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 0, "line", None, None)
+    record.args = args  # type: ignore[assignment]
+
+    assert access.filter(record)
+    assert record.args == args
+
+
+def test_access_log_filter_replaces_an_unparseable_path_wholesale(
+    minimal_config: AppConfig,
+) -> None:
+    configure_logging(minimal_config)
+    access = logging.getLogger("uvicorn.access")
+    record = _access_record(("127.0.0.1:5000", "GET", "//[bad?token=t_secret", "1.1", 400))
+
+    assert access.filter(record)
+    message = record.getMessage()
+    assert "t_secret" not in message
+    assert message == f'127.0.0.1:5000 - "GET {REDACTED} HTTP/1.1" 400'
+
+
+def test_access_log_line_reaches_uvicorn_handler_masked(
+    minimal_config: AppConfig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_logging(minimal_config)
+    logging.config.dictConfig(LOGGING_CONFIG)
+    logging.getLogger("uvicorn.access").info(
+        _ACCESS_FMT,
+        "127.0.0.1:5000",
+        "GET",
+        "/oauth/callback?code=c_secret&state=s_secret",
+        "1.1",
+        302,
+    )
+
+    out = capsys.readouterr().out
+    assert f'"GET /oauth/callback?code={REDACTED}&state={REDACTED} HTTP/1.1" 302' in out
+    assert "c_secret" not in out and "s_secret" not in out

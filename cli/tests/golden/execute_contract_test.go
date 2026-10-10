@@ -67,7 +67,8 @@ func TestGolden_ExecuteContract(t *testing.T) {
 	// A broker denial carrying a rich agent_directive: every rendering branch
 	// (instruction, run:, open:, candidates, retry-after, stuck?) is frozen.
 	// The wire type is no_credential_binding with a suggested_command (the
-	// disambiguation header form; access requests are retired).
+	// disambiguation header form; access requests are retired), plus the
+	// structured connect target and suggested_rules, which ride stdout verbatim.
 	brokerDenial403Directive := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header()["Date"] = nil
 		w.Header().Set("Content-Type", "application/problem+json")
@@ -84,7 +85,9 @@ func TestGolden_ExecuteContract(t *testing.T) {
 					"suggested_command": "jentic execute --header Jentic-Credential-Id=cred_pets ...",
 					"provisioning_url": "https://console.example/connect/acme",
 					"candidates": ["cred_pets", "cred_pets_admin"],
-					"retry_after_seconds": 30
+					"retry_after_seconds": 30,
+					"connect": {"vendor_key": "acme", "registration_id": "oar_acme"},
+					"suggested_rules": [{"effect": "allow", "methods": ["GET"], "path": "/v1/pets", "match_mode": "exact"}]
 				},
 				"human_readable_instruction": "You are not bound for 'acme/pets'. Ask your operator to bind this agent to the credential serving 'acme/pets' (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
 			}
@@ -109,6 +112,31 @@ func TestGolden_ExecuteContract(t *testing.T) {
 					"api_served": true
 				},
 				"human_readable_instruction": "You have no credential binding for 'acme/pets', but a credential already serves it. Ask your operator to bind this agent to that credential (in the dashboard, or via POST /agents/{agent_id}/credentials) — only a human can grant the binding. Once bound, retry this call."
+			}
+		}`))
+	}
+	// The off-registry no_credential_binding 403 when the deployment takes API
+	// connect requests: the directive names the API itself as the connect
+	// target (suggested_command + the structured parameters.connect.api).
+	brokerDenial403ConnectAPI := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Jentic-Error-Origin", "broker")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{
+			"type": "no_credential_binding",
+			"title": "No credential binding for this API",
+			"status": 403,
+			"error_origin": "broker",
+			"agent_directive": {
+				"strategy": "prompt_human",
+				"parameters": {
+					"api": {"vendor": "acme", "name": "pets", "version": "v1"},
+					"api_served": false,
+					"suggested_command": "jentic connect --api acme/pets/v1",
+					"connect": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}}
+				},
+				"human_readable_instruction": "No credential is provisioned for 'acme/pets' yet. Start the request yourself: run ` + "`jentic connect --api acme/pets/v1 --reason \\\"…\\\"`" + ` (or call the request_connection tool with api {\"vendor\": \"acme\", \"name\": \"pets\", \"version\": \"v1\"} and a reason), and relay the approval_url it returns to your operator — a human enters the credential in the browser, which can take a while, so end your turn and retry this call later. Only a human can approve."
 			}
 		}`))
 	}
@@ -164,6 +192,11 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			name:   "execute_broker_denial_credential_binding_json",
 			target: "GET:/v1/pets",
 			broker: brokerDenial403CredentialBinding,
+		},
+		{
+			name:   "execute_broker_denial_connect_api_json",
+			target: "GET:/v1/pets",
+			broker: brokerDenial403ConnectAPI,
 		},
 		{
 			name:   "execute_broker_denial_no_directive_json",

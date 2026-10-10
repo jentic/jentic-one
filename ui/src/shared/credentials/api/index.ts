@@ -528,10 +528,13 @@ export {
 } from './apis-hooks';
 
 export {
+	connectRequestsKey,
 	useAgentsForPicker,
 	useConfirmConnectSession,
 	useConnectSession,
+	useOpenConnectRequests,
 	usePollConnectSessionStatus,
+	useRejectConnectSession,
 	useStartIntegrationConnect,
 	useVendorAuthCapabilities,
 	useVendors,
@@ -540,11 +543,18 @@ export {
 export type {
 	ConfirmRequest,
 	ConfirmResponse,
+	ConfirmSessionBody,
+	ConfirmSessionResponse,
 	ConnectRequest,
 	ConnectResponse,
+	ExistingCredential,
 	PermissionRule,
+	ReviewAgent,
+	ReviewProvenance,
+	ReviewScheme,
 	ReviewScope,
 	ReviewSession,
+	ReviewSessionState,
 	ScopeClassification,
 	SessionStatus,
 	StatusResponse,
@@ -569,6 +579,7 @@ export { jobSucceeded, pollJobToTerminal } from './apis-hooks';
 export type {
 	ApiResponse,
 	ApiListResponse,
+	ConnectSessionSummaryResponse,
 	CatalogEntryResponse,
 	CatalogListResponse,
 	ProviderDiscoveryResponse,

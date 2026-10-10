@@ -6,28 +6,32 @@
  * Items are grouped by what they ask of you:
  *
  *   Alerts     — recent failures and warnings that need a look (view)
- *   Approvals  — agents and OAuth clients waiting to be let in (approve / review)
+ *   Approvals  — agents and OAuth clients waiting to be let in, and agents
+ *                waiting on an account connection (approve / review)
  *   Setup      — credential sign-ins nobody finished
  *
  * The cheap, reversible verb (approve an agent) runs inline; anything that
- * needs context links to where it is resolved. Approve
- * shows only to a caller who may approve (`agents:write` or `org:admin`); the
- * row still links to the agent for anyone else.
+ * needs context links to where it is resolved. Every verb is permission-gated so
+ * a row never offers a call the server refuses: Approve needs `agents:write`
+ * (the row still links to the agent for anyone else), and "Finish setup" needs
+ * `credentials:write`.
  */
 import { type ComponentType } from 'react';
-import { AlertTriangle, Bot, KeyRound, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Bot, KeyRound, PlugZap, ShieldQuestion } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
+import { UserText } from '@/shared/ui/UserText';
 import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 import { useApproveAgent } from '@/shared/attention/actions';
-import { AGENTS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
+import { AGENTS_WRITE, CREDENTIALS_WRITE, useCanAccess } from '@/shared/auth/useCanAccess';
 import type { AttentionItem, AttentionKind } from '@/shared/attention/useAttentionItems';
 import { cn, timeAgo } from '@/shared/lib/utils';
 
 const KIND_ICON: Record<AttentionKind, ComponentType<{ className?: string }>> = {
 	agent: Bot,
 	oauth_client: ShieldQuestion,
+	connect_request: PlugZap,
 	credential: KeyRound,
 	event: AlertTriangle,
 };
@@ -38,6 +42,7 @@ const GROUP_OF: Record<AttentionKind, Group> = {
 	event: 'alerts',
 	agent: 'approvals',
 	oauth_client: 'approvals',
+	connect_request: 'approvals',
 	credential: 'setup',
 };
 
@@ -138,11 +143,16 @@ function AttentionRow({
 				{tile}
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground-name line-clamp-2 text-[13px] leading-snug font-semibold">
-						{item.title}
+						<UserText>{item.title}</UserText>
 					</p>
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">
 						<span title={item.since}>{timeAgo(item.since)}</span>
-						{item.detail && <> · {item.detail}</>}
+						{item.detail && (
+							<>
+								{' · '}
+								<UserText>{item.detail}</UserText>
+							</>
+						)}
 					</p>
 					<div className="mt-2 flex items-center gap-1.5">
 						<RowActions item={item} onNavigate={onNavigate} />
@@ -156,9 +166,13 @@ function AttentionRow({
 		<li className="flex flex-wrap items-center gap-3 px-5 py-3 sm:flex-nowrap">
 			{tile}
 			<div className="min-w-0 flex-1 basis-40">
-				<p className="text-foreground-name truncate text-sm font-semibold">{item.title}</p>
+				<p className="text-foreground-name truncate text-sm font-semibold">
+					<UserText>{item.title}</UserText>
+				</p>
 				{item.detail && (
-					<p className="text-muted-foreground truncate text-xs">{item.detail}</p>
+					<p className="text-muted-foreground truncate text-xs">
+						<UserText>{item.detail}</UserText>
+					</p>
 				)}
 			</div>
 			<span
@@ -188,17 +202,29 @@ function RowActions({ item, onNavigate }: { item: AttentionItem; onNavigate?: ()
 		case 'event':
 			return <ReviewLink href={item.href} label="View" onNavigate={onNavigate} />;
 		case 'oauth_client':
+		case 'connect_request':
 			return <ReviewLink href={item.href} label="Review" onNavigate={onNavigate} />;
 		case 'credential':
 			// The inventory is a sheet on the Agents page; there is no per-credential route.
-			return (
-				<ReviewLink
-					href={ROUTE_PATHS.credentialInventory()}
-					label="Finish setup"
-					onNavigate={onNavigate}
-				/>
-			);
+			// Finishing an OAuth sign-in writes the credential's tokens, so without
+			// `credentials:write` the verb is not offered — the row stays in the
+			// list as the standing fact it is, for whoever can act on it.
+			return <FinishCredentialSetupLink onNavigate={onNavigate} />;
 	}
+}
+
+/** "Finish setup" for an unfinished OAuth sign-in, shown only to a caller who
+ * may actually complete it. */
+function FinishCredentialSetupLink({ onNavigate }: { onNavigate?: () => void }) {
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
+	if (!canWriteCredentials) return null;
+	return (
+		<ReviewLink
+			href={ROUTE_PATHS.credentialInventory()}
+			label="Finish setup"
+			onNavigate={onNavigate}
+		/>
+	);
 }
 
 function ReviewLink({

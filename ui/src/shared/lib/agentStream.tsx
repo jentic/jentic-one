@@ -94,6 +94,9 @@ export type StreamTokens = {
 	// `oauth_client_id` data key (the token-lineage join key).
 	oauth_client_id?: string;
 	grant_id?: string;
+	// Connect-session events (`connect_session.created`) carry the session id,
+	// which opens the agent's connect request for approval.
+	session_id?: string;
 };
 
 /** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
@@ -176,10 +179,15 @@ export function isRetiredEventType(type: string): boolean {
  * `oauth_client.*` and `oauth_grant.*` likewise collapse into one `oauth` kind:
  * client registration/approval and consent-grant lifecycle
  * are two halves of the same interactive-OAuth surface.
+ *
+ * `connect_session.*` events are an agent asking for a credential, so they
+ * share the `credential` kind (filter chip, label) with the credential
+ * lifecycle they start.
  */
 export function kindForType(type: string): StreamKind {
 	const ns = type.split('.', 1)[0];
 	if (ns === 'overlay') return 'catalog';
+	if (ns === 'connect_session') return 'credential';
 	if (ns === 'oauth_client' || ns === 'oauth_grant') return 'oauth';
 	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
@@ -349,11 +357,20 @@ export function conflictHint(ev: StreamEvent): string | null {
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
 	const data = (e.data ?? {}) as Record<string, unknown>;
-	// `agent.*` events (e.g. self-registration) identify the agent via the
-	// top-level `actor_id`, not the free-form `data` map — fall back to it so
-	// the row can deep-link to the agent's approval page.
+	// `agent_id` names the agent an event is ABOUT — never merely the one that
+	// emitted it. `agent.*` events (e.g. self-registration) are the one family
+	// whose subject IS the actor and which carry no `data.agent_id`, so the
+	// top-level `actor_id` back-fills the token there and only there. Every
+	// other namespace gets its subject from `data`: `credential.accessed` names
+	// a credential and rides on the USING agent's actor id, and treating that
+	// actor as the subject would send the row to `/agents?agent=<actor>` — which
+	// answers "Agent not found" whenever the actor sits outside the reader's
+	// roster (#1543).
 	const actorAgentId =
-		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
+		kindForType(e.type) === 'agent' &&
+		e.actor_type === 'agent' &&
+		typeof e.actor_id === 'string' &&
+		e.actor_id.length > 0
 			? e.actor_id
 			: undefined;
 	// The linked execution/job is surfaced as a HAL link (`_links.execution` =
@@ -370,11 +387,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		credential_id: stringField(data, 'credential_id'),
 		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
 		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
-		// Precedence matters: explicit `data.agent_id` first, then the top-level
-		// actor when it IS an agent (guarded — e.g. DCR self-registration). No
-		// `data.actor_id` fallback: no current emitter populates it, and one
-		// that did could carry a NON-agent id (e.g. the deciding user), which
-		// would deep-link "View agent" to /agents/<user_id>.
+		// Precedence matters: explicit `data.agent_id` first, then — for `agent.*`
+		// events only — the top-level actor when it IS an agent (e.g. DCR
+		// self-registration). No `data.actor_id` fallback: no current emitter
+		// populates it, and one that did could carry a NON-agent id (e.g. the
+		// deciding user), which would deep-link "View agent" to /agents/<user_id>.
 		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
 		// Catalog/overlay events carry the affected API's identity so the row can
 		// deep-link into Workspace: `api_id` (catalog slug) + the (vendor, name,
@@ -389,6 +406,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		// picked up by the shared field above).
 		oauth_client_id: stringField(data, 'oauth_client_id'),
 		grant_id: stringField(data, 'grant_id'),
+		session_id: stringField(data, 'session_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
@@ -1064,6 +1082,18 @@ const NAV = {
 	// `ROUTE_PATHS.agentTab`, inlined like `workspaceApi` below.
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents?agent=${encodeURIComponent(ev.tokens.agent_id)}` : null,
+	// An agent's connect request opened for approval, with the requesting agent
+	// selected behind the dialog — the shape of `ROUTE_PATHS.connectApproval`
+	// (the session's `approval_url`), inlined like `agent` above. Token-less:
+	// the agent's owner or an org admin acts without the poll token.
+	connectApproval: (ev: StreamEvent) => {
+		const sessionId = ev.tokens.session_id;
+		if (!sessionId) return null;
+		const q = new URLSearchParams();
+		if (ev.tokens.agent_id) q.set('agent', ev.tokens.agent_id);
+		q.set('approve', sessionId);
+		return `/agents?${q}`;
+	},
 	// Catalog/overlay events deep-link to the affected API's hub in the
 	// Library: `/library/workspace/:vendor/:name/:version`, each segment
 	// percent-encoded (the shape `ROUTE_PATHS.workspaceApiHub` builds; inlined
@@ -1172,9 +1202,14 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 		case 'import':
 			return NAV.job(ev) ?? NAV.trace(ev);
 		case 'credential':
-			// The agent the event is about when it names one (binding events);
-			// otherwise the credential inventory, which has no per-credential URL.
-			return NAV.agent(ev) ?? (ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev));
+			// A connect request opens its approval; otherwise the agent the event
+			// is about when it names one (binding events); otherwise the
+			// credential inventory, which has no per-credential URL.
+			return (
+				NAV.connectApproval(ev) ??
+				NAV.agent(ev) ??
+				(ev.tokens.credential_id ? NAV.credentials() : NAV.trace(ev))
+			);
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
 		case 'catalog':

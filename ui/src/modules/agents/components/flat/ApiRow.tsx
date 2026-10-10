@@ -286,7 +286,13 @@ export const ApiRow = memo(function ApiRow({
 				/>
 				<div className="min-w-0 lg:col-start-2 lg:row-start-1">
 					<div className="flex min-w-0 items-center gap-1.5">
-						<h3 className="font-heading text-foreground-name truncate text-sm leading-[19px] font-semibold">
+						{/* `dir="auto"`: the API's chosen display name, the host and the credential
+						    label take their own base direction, so a name in an RTL script
+						    reads as written beside the row's copy (#1543). */}
+						<h3
+							dir="auto"
+							className="font-heading text-foreground-name truncate text-sm leading-[19px] font-semibold"
+						>
 							{tile.title}
 						</h3>
 						{accountCount > 1 && (
@@ -302,7 +308,9 @@ export const ApiRow = memo(function ApiRow({
 						)}
 					</div>
 					<p className="text-foreground-sub flex min-w-0 items-center gap-2 text-xs leading-[18px]">
-						<span className="truncate">{identity}</span>
+						<span dir="auto" className="truncate">
+							{identity}
+						</span>
 						{tile.updateAvailable && (
 							<Tooltip
 								content="The upstream spec has an update this API hasn't adopted yet — re-import it to pick it up."
@@ -343,6 +351,7 @@ export const ApiRow = memo(function ApiRow({
 										Credential<span className="sr-only">: </span>
 									</span>
 									<b
+										dir="auto"
 										className="text-foreground-sub min-w-0 truncate font-semibold"
 										data-testid="tile-credential-label"
 									>

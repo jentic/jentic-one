@@ -39,7 +39,13 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { shellScroller, shellScrollTop } from '@/shared/lib/shellScroll';
 import { smartInitials } from '@/shared/lib/smartInitials';
-import { useEagerCursorDrain, useHotkey, usePersistedChoice, usePinStack } from '@/shared/hooks';
+import {
+	useEagerCursorDrain,
+	useHotkey,
+	useIsRenderedPathCurrent,
+	usePersistedChoice,
+	usePinStack,
+} from '@/shared/hooks';
 import {
 	useAllApis,
 	useAllCredentials,
@@ -287,9 +293,14 @@ export function FlatAgentsSection({
 		agentParam == null && fleetShown && landing.handoffAgentId == null
 			? (selected?.id ?? null)
 			: null;
+	// Not once a navigation away is under way: this page stays mounted until the
+	// destination renders, and a write-back then would replace that navigation
+	// with this page's own URL.
+	const isRenderedPathCurrent = useIsRenderedPathCurrent();
 	useEffect(() => {
-		if (fallbackId != null) selectAgent(fallbackId, { replace: true });
-	}, [fallbackId, selectAgent]);
+		if (fallbackId != null && isRenderedPathCurrent())
+			selectAgent(fallbackId, { replace: true });
+	}, [fallbackId, selectAgent, isRenderedPathCurrent]);
 
 	/** The unfinished Add-APIs batch per agent. Held here, not in
 	 *  `SelectedAgentPanel`, which unmounts on a tab switch. */
@@ -1049,8 +1060,17 @@ function SelectedAgentPanel({
 	// skeleton while either source drains. No live bindings, no gate — a hidden
 	// orphan alone must not hold the skeleton.
 	const hasBindings = liveBindings.length > 0;
-	const sourcesError = credentialsSource.error ?? apisSource.error;
-	const sourcesDraining = !sourcesError && (!credentialsSource.complete || !apisSource.complete);
+	// The API registry is ENRICHMENT, not the grid's subject: a binding's own
+	// `serves` tuple draws a tile without it (untitled, no icon, no operation
+	// count). So a failed — or forbidden, for a viewer without `apis:read` —
+	// `GET /apis` degrades the tiles rather than replacing the whole grid with an
+	// error card whose Try again can never succeed (#1543). The credential list
+	// still gates the grid: it decides ownership, orphans and sign-in state, and
+	// tiles that quietly assert those unread is the defect above it.
+	const apisDegraded = Boolean(apisSource.error);
+	const sourcesError = credentialsSource.error;
+	const sourcesDraining =
+		!sourcesError && (!credentialsSource.complete || (!apisDegraded && !apisSource.complete));
 
 	// `undefined` = still loading → skeleton; `null` = failed → em-dash. A
 	// bindings-less agent skips the drain gate and renders honest zeros.
@@ -1536,11 +1556,8 @@ function SelectedAgentPanel({
 				) : hasBindings && sourcesError ? (
 					<div className="pt-[13px] pl-[65px]">
 						<ErrorAlert
-							message="Couldn't load the credential and API details behind these rows."
-							onRetry={() => {
-								if (credentialsSource.error) credentialsSource.retry();
-								if (apisSource.error) apisSource.retry();
-							}}
+							message="Couldn't load the credential details behind these rows."
+							onRetry={() => credentialsSource.retry()}
 						/>
 					</div>
 				) : tiles.length === 0 && isArchived ? (
@@ -1573,6 +1590,29 @@ function SelectedAgentPanel({
 					</ul>
 				) : (
 					<>
+						{/* Non-blocking: the rows below are drawn from the bindings
+						    themselves, just without the registry's titles and icons. */}
+						{apisDegraded && (
+							<div className="pt-[13px] pl-[65px]">
+								<div
+									role="status"
+									data-testid="agent-apis-degraded"
+									className="bg-surface-inset flex flex-wrap items-center gap-3 rounded-lg px-4 py-2.5"
+								>
+									<p className="text-muted-foreground min-w-0 flex-1 text-sm">
+										These APIs are showing without their details — the API list
+										couldn&rsquo;t be read. Access is unaffected.
+									</p>
+									<Button
+										variant="tonal"
+										size="xs"
+										onClick={() => apisSource.retry()}
+									>
+										Try again
+									</Button>
+								</div>
+							</div>
+						)}
 						{/* A non-active agent's ROWS/CARDS are what read inactive — the
 						    card, its verb and the dock stay full strength and clickable.
 						    Switching the lens is a staggered fade/lift with the height
