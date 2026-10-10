@@ -1,0 +1,31 @@
+exit: 3
+--- stdout ---
+{
+  "body": {
+    "_links": {
+      "self": "https://console.example/jobs/job_held1"
+    },
+    "agent_directive": "This call needs human approval.",
+    "approval": {
+      "expires_at": "2026-10-10T12:00:00Z",
+      "id": "apr_1",
+      "review_url": "https://console.example/app/agents/approvals/apr_1"
+    },
+    "job_id": "job_held1",
+    "status": "held"
+  },
+  "headers": {
+    "Content-Length": "277",
+    "Content-Type": "application/json",
+    "Preference-Applied": "respond-async"
+  },
+  "schema_version": "1",
+  "status": 202
+}
+--- stderr ---
+Held — this call needs human approval before it runs:
+  Show the user this link; they approve or deny the call there.
+  open: https://console.example/app/agents/approvals/apr_1
+  expires: 2026-10-10T12:00:00Z
+  then: jentic jobs wait job_held1 (do not re-send the call)
+{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/apr_1) — they approve or deny the call there. Then run `jentic jobs wait job_held1` for the result. Do not re-send the call.","details":{"approval_id":"apr_1","expires_at":"2026-10-10T12:00:00Z","job_id":"job_held1","review_url":"https://console.example/app/agents/approvals/apr_1"},"error":"the call is held for human approval (job job_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}

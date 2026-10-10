@@ -3,6 +3,7 @@ package golden
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +15,8 @@ import (
 //	resolve ok   × upstream 4xx pass-through   → envelope, exit 0 (origin: upstream)
 //	resolve ok   × broker denial + directive   → envelope + recovery stderr, exit 2
 //	resolve ok   × broker denial, no directive → envelope + synthesized stderr, exit 2
+//	resolve ok   × held for approval           → held envelope + review link, exit 3
+//	resolve ok   × held, --wait, denied        → denial envelope + reviewer reason, exit 2
 //	resolve ok   × transport failure           → coded TRANSPORT_ERROR, exit 1
 //	resolve fail (404 / backend error)         → coded RESOLVE_FAILED, exit 2
 //
@@ -130,12 +133,43 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		}`))
 	}
 
+	// A call a require-approval rule held: the 202 held envelope (job, review
+	// link, directive) instead of a run.
+	brokerHeld := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["Date"] = nil
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Preference-Applied", "respond-async")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"job_id":"job_held1","status":"held",` +
+			`"approval":{"id":"apr_1","review_url":"https://console.example/app/agents/approvals/apr_1",` +
+			`"expires_at":"2026-10-10T12:00:00Z"},"agent_directive":"This call needs human approval.",` +
+			`"_links":{"self":"https://console.example/jobs/job_held1"}}`))
+	}
+	// The held job's control-plane routes once a reviewer denied it: the job
+	// failed and its result is the approval_denied problem.
+	jobsDenied := func(w http.ResponseWriter, r *http.Request) {
+		w.Header()["Date"] = nil
+		if r.URL.Path == "/jobs/job_held1/result" {
+			w.Header().Set("Content-Type", "application/problem+json")
+			_, _ = w.Write([]byte(`{"type":"approval_denied","title":"Execution approval denied","status":403,` +
+				`"detail":"A reviewer denied this held execution: not today","error_origin":"broker",` +
+				`"approval":{"id":"apr_1","state":"denied"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"job_id":"job_held1","kind":"execution","status":"failed","approval_id":"apr_1",` +
+			`"execution_id":"exec_held1","error":"approval denied","created_at":"2026-10-09T12:00:00Z",` +
+			`"_links":{"self":"/jobs/job_held1"}}`))
+	}
+
 	cases := []struct {
 		name    string
 		target  string
 		flags   []string // appended after the broker flags
 		inspect http.HandlerFunc
 		broker  http.HandlerFunc
+		// jobs plays the control plane's /jobs routes (--wait on a held call).
+		jobs http.HandlerFunc
 		// fixedBroker overrides the mock's address with a static broker target
 		// (the SEC-1 transport case must not depend on an ephemeral port).
 		fixedBroker []string
@@ -181,6 +215,18 @@ func TestGolden_ExecuteContract(t *testing.T) {
 			fixedBroker: []string{"--broker-scheme", "http", "--broker-host", "203.0.113.9:8100"},
 		},
 		{
+			name:   "execute_held_json",
+			target: "POST:/v1/orders",
+			broker: brokerHeld,
+		},
+		{
+			name:   "execute_held_wait_denied_json",
+			target: "POST:/v1/orders",
+			flags:  []string{"--wait"},
+			broker: brokerHeld,
+			jobs:   jobsDenied,
+		},
+		{
 			name:    "execute_resolve_not_found_json",
 			target:  "nonexistentOp",
 			inspect: inspectNotFound,
@@ -202,6 +248,15 @@ func TestGolden_ExecuteContract(t *testing.T) {
 						return
 					}
 					tc.inspect(w, r)
+					return
+				}
+				if strings.HasPrefix(r.URL.Path, "/jobs/") {
+					if tc.jobs == nil {
+						t.Errorf("unexpected %s call in case %s", r.URL.Path, tc.name)
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					tc.jobs(w, r)
 					return
 				}
 				if tc.broker == nil {

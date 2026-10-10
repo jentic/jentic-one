@@ -76,6 +76,7 @@ def _request(body: bytes) -> Request:
         "query_string": b"",
         "headers": [
             (b"content-type", b"application/json"),
+            (b"notion-version", b"2022-06-28"),
             (b"host", b"broker.local:8080"),
             (b"authorization", b"Bearer agent-token"),
         ],
@@ -155,9 +156,13 @@ async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
     decrypted = json.loads(ctx.encryption.decrypt(payload[ENCRYPTED_PAYLOAD_KEY]))
     assert decrypted["method"] == "POST"
     assert decrypted["credential_id"] == "cred_holdpath"
-    # Only the replay allow-list is kept: the run sends the body as described,
-    # and the agent's own bearer token never sits in the admin DB.
-    assert decrypted["headers"] == {"content-type": "application/json"}
+    # Only the replay allow-list is kept: the run sends the body as described
+    # at the API version the caller chose, and the agent's own bearer token
+    # never sits in the admin DB.
+    assert decrypted["headers"] == {
+        "content-type": "application/json",
+        "notion-version": "2022-06-28",
+    }
     assert row.matched_rule_id == "apr_holdpath"
     assert row.path == "/v1/charges"
 
@@ -240,6 +245,27 @@ async def test_pending_cap_is_a_distinct_403_denial(
     assert status_for_broker_error(exc.value) == 403
     assert problem["type"] == "approval_pending_limit_reached"
     assert problem["agent_directive"]["strategy"] == "prompt_human"
+    async with ctx.admin_db.session() as session:
+        jobs = (await session.execute(select(Job))).scalars().all()
+    assert len(jobs) == 1
+
+
+async def test_identical_retry_at_the_pending_cap_joins_its_hold(
+    integration_context: Context, clean: None
+) -> None:
+    """The join runs before the cap: retrying a call that is already held
+    returns its hold even when the agent has no pending slot left."""
+    ctx = integration_context
+    ctx.config.execution_approvals.max_pending_per_agent = 1
+    try:
+        first = await _hold(ctx, b'{"n": 1}')
+        again = await _hold(ctx, b'{"n": 1}')
+        with pytest.raises(ApprovalPendingLimitError):
+            await _hold(ctx, b'{"n": 2}')
+    finally:
+        ctx.config.execution_approvals.max_pending_per_agent = 10
+    assert again["job_id"] == first["job_id"]
+    assert again["approval"]["id"] == first["approval"]["id"]
     async with ctx.admin_db.session() as session:
         jobs = (await session.execute(select(Job))).scalars().all()
     assert len(jobs) == 1

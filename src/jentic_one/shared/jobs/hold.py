@@ -213,20 +213,16 @@ async def file_hold(
 ) -> HoldOutcome:
     """File (or join) a hold inside the caller's admin-DB transaction.
 
-    Order: the per-agent pending cap first (raises
-    :class:`PendingApprovalLimitError`), then the fingerprint join — an
-    identical pending request returns its existing job — then the insert of the
-    ``held`` job and its ``pending`` approval. A concurrent identical filing
-    that wins the partial unique index between the join check and the insert
-    is joined as well, so two racing retries never produce two holds. The cap
-    is counted under a per-agent lock held to the end of the transaction, so
-    concurrent filings cannot together exceed it.
+    Order: the fingerprint join first — an identical pending request returns
+    its existing job, so a retry of a call that is already held joins it even
+    when the agent is at its cap — then the per-agent pending cap (raises
+    :class:`PendingApprovalLimitError`), then the insert of the ``held`` job
+    and its ``pending`` approval. A concurrent identical filing that wins the
+    partial unique index between the join check and the insert is joined as
+    well, so two racing retries never produce two holds. The join and the cap
+    run under a per-agent lock held to the end of the transaction, so
+    concurrent filings cannot together exceed the cap.
     """
-    await _lock_agent_holds(session, agent_id)
-    pending = await count_pending_by_agent(session, agent_id)
-    if pending >= max_pending:
-        raise PendingApprovalLimitError(pending, max_pending)
-
     fingerprint = compute_execution_fingerprint(
         agent_id=agent_id,
         credential_id=credential_id,
@@ -235,9 +231,14 @@ async def file_hold(
         query=query,
         body=body,
     )
+    await _lock_agent_holds(session, agent_id)
     existing = await _pending_by_fingerprint(session, fingerprint)
     if existing is not None:
         return await _joined(session, existing)
+
+    pending = await count_pending_by_agent(session, agent_id)
+    if pending >= max_pending:
+        raise PendingApprovalLimitError(pending, max_pending)
 
     # The database clock: the decide path and the expiry sweep compare
     # against it too, wherever they run.
