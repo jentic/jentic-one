@@ -720,7 +720,7 @@ describe('seedFormFromSelectedApi', () => {
 				apiId: 'github.com/api.github.com',
 			},
 		);
-		expect(next.apiName).toBe('github-com-api-github-com');
+		expect(next.apiName).toBe('api-github-com');
 		expect(next.catalogApiId).toBe('github.com/api.github.com');
 	});
 

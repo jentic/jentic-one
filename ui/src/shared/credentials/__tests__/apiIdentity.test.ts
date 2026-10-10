@@ -61,13 +61,16 @@ describe('apiScopeCovers', () => {
 });
 
 describe('catalogImportRef', () => {
-	it('mirrors the import: slugged entry vendor + slugged whole api_id', () => {
+	it('mirrors the import: slugged entry vendor + slugged sub segment (or bare id)', () => {
 		expect(
 			catalogImportRef({ apiId: 'nytimes.com/article_search', vendor: 'nytimes.com' }),
 		).toEqual({
 			vendor: 'nytimes-com',
-			name: 'nytimes-com-article-search',
+			name: 'article-search',
 		});
+		expect(
+			catalogImportRef({ apiId: 'github.com/api.github.com', vendor: 'github.com' }),
+		).toEqual({ vendor: 'github-com', name: 'api-github-com' });
 		expect(catalogImportRef({ apiId: 'stripe.com', vendor: 'stripe.com' })).toEqual({
 			vendor: 'stripe-com',
 			name: 'stripe-com',

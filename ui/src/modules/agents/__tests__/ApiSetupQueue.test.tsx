@@ -789,7 +789,7 @@ describe('ApiSetupQueue — finishing a batch one API at a time', () => {
 		// The identity the import registers (slug), with the verbatim id as provenance.
 		expect(creates[0]!.api).toMatchObject({
 			vendor: 'github.com',
-			name: 'github-com-api-github-com',
+			name: 'api-github-com',
 			catalog_api_id: 'github.com/api.github.com',
 		});
 		await waitFor(() => expect(calls).toHaveLength(1));
