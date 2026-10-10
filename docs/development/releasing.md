@@ -309,6 +309,21 @@ pre-upgrade snapshot of every database first
     (#1574).** A vendor connect stamps the credential with the `(vendor,
     name)` the registry gives the API, so executes through it match instead
     of failing with `credential_identity_mismatch`.
+- **Catalog imports name an API by its sub segment (#1067).** A first import
+  of the catalog entry `posthog.com/posthog-api` registers as
+  `posthog-com/posthog-api` (0.41 registered
+  `posthog-com/posthog-com-posthog-api`); entries whose sub segments would
+  collide keep the full id. APIs already imported keep their names: a
+  re-import or a catalog update lands on the stored identity (looked up by
+  the API's catalog id, then its spec URL), so credentials, bindings and
+  rules keep matching. Two cases get the new name and stop matching
+  credentials scoped to the old one (`credential_identity_mismatch` at
+  execute): an API **deleted and imported again** after the upgrade, and an
+  API **first imported** after the upgrade for which a credential was
+  created on 0.41 under the doubled name. Re-scope those credentials to the
+  new identity. Creating a credential whose API scope matches no imported
+  API now answers with `warnings` and records a `credential.unmatched_api`
+  event; it is advisory and never blocks the create.
 - **Access logs mask query-string values (#1572).** uvicorn's access line
   keeps the method, path, parameter names and status, and replaces every
   query value with `***REDACTED***`. Log queries that matched on query values
