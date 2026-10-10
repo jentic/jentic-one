@@ -117,6 +117,15 @@ def _check_serving() -> None:
     if deep.status_code != 200 or "<!doctype html" not in deep.text.lower():
         raise AssertionError("client-routed deep link did not fall back to index.html")
 
+    # A deep link whose final segment carries a dot (an API version) is still a
+    # navigation and must get the shell (issue #647). Checked against the locked
+    # FastAPI, since its frontend fallback decides this.
+    dotted = client.get(
+        f"{SPA_MOUNT_PATH}/library/workspace/httpbin.org/httpbin.org/1.2.3", headers=html_headers
+    )
+    if dotted.status_code != 200 or "<!doctype html" not in dotted.text.lower():
+        raise AssertionError("dotted deep link did not fall back to index.html")
+
     # Anything OUTSIDE the /app namespace is unambiguously a backend call: an
     # unknown path is a true 404 for every client (no Accept-header guesswork),
     # so the SPA mount can never shadow the API.
