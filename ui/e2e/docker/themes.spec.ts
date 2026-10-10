@@ -188,6 +188,11 @@ for (const theme of THEMES) {
 			await expect(page.getByTestId('api-tile').first()).toBeVisible();
 			await capture(page, theme, 'agents');
 
+			await page.getByRole('radio', { name: 'Cards view' }).click();
+			await expect(page.getByTestId('api-card').first()).toBeVisible();
+			await capture(page, theme, 'agents-cards');
+			await page.getByRole('radio', { name: 'List view' }).click();
+
 			await page
 				.getByRole('button', { name: /open access details|^Manage access for / })
 				.first()
