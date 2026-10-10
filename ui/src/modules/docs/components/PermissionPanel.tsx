@@ -57,7 +57,7 @@ function PermissionChip({
 function Row({ label, children }: { label: string; children: ReactNode }) {
 	return (
 		<div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[8rem_minmax(0,1fr)]">
-			<dt className="text-foreground/60 text-[11px] font-semibold tracking-wider uppercase">
+			<dt className="text-foreground-sub text-[11px] font-semibold tracking-wider uppercase">
 				{label}
 			</dt>
 			<dd className="min-w-0 text-sm">{children}</dd>
@@ -94,9 +94,9 @@ export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 		<section className="jentic-permission-panel border-border bg-card/40 overflow-hidden rounded-lg border text-sm">
 			{/* Header — states the gate in one line. */}
 			<header className="border-border/60 bg-muted/20 flex items-center gap-2 border-b px-3 py-2">
-				<Lock className="text-foreground/55 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+				<Lock className="text-foreground-sub h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 				<span className="text-foreground/80 text-[13px] font-semibold">Authorization</span>
-				<span className="text-foreground/60 ml-auto text-[11px]">
+				<span className="text-foreground-sub ml-auto text-[11px]">
 					Permissions are the gate
 				</span>
 			</header>
@@ -112,7 +112,7 @@ export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 							{permissions.map((permission, i) => (
 								<span key={permission} className="flex items-center gap-1.5">
 									{i > 0 && (
-										<span className="text-foreground/60 text-[11px]">or</span>
+										<span className="text-foreground-sub text-[11px]">or</span>
 									)}
 									<PermissionChip permission={permission} />
 								</span>
@@ -127,7 +127,7 @@ export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 							{TYPICAL_CALLER_LABEL[endpoint.typical_caller] ??
 								endpoint.typical_caller}
 						</span>
-						<span className="text-foreground/60 ml-1.5 text-[11px]">advisory</span>
+						<span className="text-foreground-sub ml-1.5 text-[11px]">advisory</span>
 					</Row>
 				)}
 
@@ -136,7 +136,7 @@ export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 						{allActors ? (
 							<span className="text-foreground/75">
 								Any actor type{' '}
-								<span className="text-foreground/60 text-[11px]">
+								<span className="text-foreground-sub text-[11px]">
 									(user, agent)
 								</span>
 							</span>
@@ -171,7 +171,7 @@ export function PermissionPanel({ endpoint }: PermissionPanelProps) {
 								>
 									<PermissionChip permission={permission} />
 									<ArrowRight
-										className="text-foreground/35 h-3 w-3 shrink-0"
+										className="text-foreground-faint h-3 w-3 shrink-0"
 										aria-hidden="true"
 									/>
 									{implied.map((p) => (

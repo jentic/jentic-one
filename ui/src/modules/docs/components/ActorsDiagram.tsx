@@ -26,7 +26,7 @@ function ActorNode({
 			<Icon className={`mt-0.5 h-6 w-6 shrink-0 ${accent}`} aria-hidden="true" />
 			<div className="min-w-0">
 				<code className="text-foreground font-mono text-sm font-semibold">{title}</code>
-				<p className="text-foreground/55 mt-0.5 text-[11px] leading-snug">{subtitle}</p>
+				<p className="text-foreground-sub mt-0.5 text-[11px] leading-snug">{subtitle}</p>
 			</div>
 		</div>
 	);
@@ -45,7 +45,7 @@ function Edge({ label }: { label: string }) {
 export function ActorsDiagram() {
 	return (
 		<figure className="border-border bg-background/30 rounded-xl border p-4 sm:p-6">
-			<figcaption className="text-foreground/55 mb-4 text-xs">
+			<figcaption className="text-foreground-sub mb-4 text-xs">
 				How the actor types relate — who creates whom, and what carries credentials.
 			</figcaption>
 
@@ -89,7 +89,7 @@ export function ActorsDiagram() {
 				</div>
 			</div>
 
-			<p className="text-foreground/50 border-border/50 mt-4 border-t pt-3 text-[11px] leading-relaxed">
+			<p className="text-foreground-sub border-border/50 mt-4 border-t pt-3 text-[11px] leading-relaxed">
 				The type says <em>who</em> an identity is. What it may actually do is governed
 				separately by permissions and ownership — see{' '}
 				<a href="#permissions" className="text-primary underline">

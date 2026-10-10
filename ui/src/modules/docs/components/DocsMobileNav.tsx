@@ -34,12 +34,12 @@ export function DocsMobileNav({ activeId, onNavigate }: DocsMobileNavProps) {
 				className="border-border bg-card/60 text-foreground flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium"
 			>
 				<Menu className="text-primary h-4 w-4 shrink-0" aria-hidden="true" />
-				<span className="text-foreground/50 text-xs">Docs</span>
+				<span className="text-foreground-sub text-xs">Docs</span>
 				<span className="text-foreground/30">/</span>
 				<span className="truncate">{current?.label}</span>
 				<ChevronDown
 					className={cn(
-						'text-foreground/40 ml-auto h-4 w-4 shrink-0 transition-transform',
+						'text-foreground-faint ml-auto h-4 w-4 shrink-0 transition-transform',
 						open && 'rotate-180',
 					)}
 					aria-hidden="true"
@@ -53,7 +53,7 @@ export function DocsMobileNav({ activeId, onNavigate }: DocsMobileNavProps) {
 				>
 					{DOCS_NAV.map((group) => (
 						<div key={group.title}>
-							<p className="text-foreground/40 px-2 py-1 text-[11px] font-semibold tracking-wider uppercase">
+							<p className="text-foreground-faint px-2 py-1 text-[11px] font-semibold tracking-wider uppercase">
 								{group.title}
 							</p>
 							{group.sections.map((section) => {

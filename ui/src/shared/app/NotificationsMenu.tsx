@@ -65,7 +65,7 @@ export function NotificationsMenu() {
 					<span
 						className={cn(
 							'ring-background absolute -top-0.5 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold tabular-nums ring-2',
-							urgent ? 'bg-danger text-white' : 'bg-warning text-black',
+							urgent ? 'bg-danger text-background' : 'bg-warning text-background',
 						)}
 						aria-hidden="true"
 					>
@@ -79,7 +79,7 @@ export function NotificationsMenu() {
 					ref={panelRef}
 					role="dialog"
 					aria-labelledby={titleId}
-					className="border-border/60 bg-background absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
+					className="border-border/60 bg-popover absolute top-full right-0 z-50 mt-2 flex max-h-[min(36rem,calc(100dvh-4.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border shadow-xl"
 				>
 					{view === 'list' ? (
 						<>

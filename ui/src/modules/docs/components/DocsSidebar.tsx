@@ -59,7 +59,7 @@ export function DocsSidebar({
 		<nav ref={navRef} aria-label="Documentation sections" className="space-y-5">
 			{DOCS_NAV.map((group) => (
 				<div key={group.title}>
-					<p className="text-foreground/40 mb-1.5 px-2 text-[11px] font-semibold tracking-wider uppercase">
+					<p className="text-foreground-faint mb-1.5 px-2 text-[11px] font-semibold tracking-wider uppercase">
 						{group.title}
 					</p>
 					<ul className="space-y-0.5">
@@ -114,7 +114,7 @@ export function DocsSidebar({
 																child.mono && 'font-mono',
 																childActive
 																	? 'text-primary font-medium'
-																	: 'text-foreground/55 hover:bg-muted hover:text-foreground',
+																	: 'text-foreground-sub hover:bg-muted hover:text-foreground',
 															)}
 														>
 															{child.label}

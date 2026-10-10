@@ -90,7 +90,7 @@ function PermissionEndpoints({
 	);
 	if (endpoints.length === 0) {
 		return (
-			<p className="text-foreground/50 px-3 py-2 text-xs italic">
+			<p className="text-foreground-sub px-3 py-2 text-xs italic">
 				No endpoint in this instance requires this permission directly.
 			</p>
 		);
@@ -102,7 +102,7 @@ function PermissionEndpoints({
 					<MethodBadge method={e.method} />
 					<code className="text-foreground/90 text-xs break-all">{e.path}</code>
 					{e.summary && (
-						<span className="text-foreground/50 truncate text-xs">— {e.summary}</span>
+						<span className="text-foreground-sub truncate text-xs">— {e.summary}</span>
 					)}
 				</li>
 			))}
@@ -145,7 +145,7 @@ function PermissionCard({
 						{permission.description}
 					</span>
 					{impliedNames.length > 0 && (
-						<span className="text-foreground/55 mt-1.5 block text-xs">
+						<span className="text-foreground-sub mt-1.5 block text-xs">
 							Grants:{' '}
 							{impliedNames.map((n, i) => (
 								<span key={n}>
@@ -157,13 +157,13 @@ function PermissionCard({
 					)}
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
-					<span className="text-foreground/55 text-xs">
+					<span className="text-foreground-sub text-xs">
 						{permission.endpointCount} endpoint
 						{permission.endpointCount === 1 ? '' : 's'}
 					</span>
 					<ChevronRight
 						className={cn(
-							'text-foreground/40 h-4 w-4 transition-transform',
+							'text-foreground-faint h-4 w-4 transition-transform',
 							open && 'rotate-90',
 						)}
 						aria-hidden="true"
@@ -214,12 +214,12 @@ function SuperuserBanner({
 					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
-					<span className="text-foreground/55 text-xs">
+					<span className="text-foreground-sub text-xs">
 						{permission.endpointCount} direct
 					</span>
 					<ChevronRight
 						className={cn(
-							'text-foreground/40 h-4 w-4 transition-transform',
+							'text-foreground-faint h-4 w-4 transition-transform',
 							open && 'rotate-90',
 						)}
 						aria-hidden="true"
@@ -244,7 +244,7 @@ export function PermissionTree({ payload }: PermissionTreeProps) {
 
 	if (!families) {
 		return (
-			<p className="text-foreground/60 text-sm">
+			<p className="text-foreground-sub text-sm">
 				This server doesn't publish the permission catalogue yet (it predates jentic-one
 				#602). The API reference still works.
 			</p>
@@ -261,11 +261,11 @@ export function PermissionTree({ payload }: PermissionTreeProps) {
 		<div className="space-y-5">
 			{/* Legend */}
 			<div className="border-border bg-muted/30 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2">
-				<span className="text-foreground/60 text-xs font-medium">Tiers:</span>
+				<span className="text-foreground-sub text-xs font-medium">Tiers:</span>
 				{(['admin', 'write', 'execute', 'read'] as const).map((tier) => (
 					<TierChip key={tier} tier={tier} />
 				))}
-				<span className="text-foreground/50 ml-auto text-xs">
+				<span className="text-foreground-sub ml-auto text-xs">
 					Indented permissions are <em>implied</em> — holding the parent grants them.
 				</span>
 			</div>
@@ -281,12 +281,12 @@ export function PermissionTree({ payload }: PermissionTreeProps) {
 					<header className="mb-3">
 						<h3 className="text-foreground flex items-baseline gap-2 text-base font-semibold">
 							{family.label}
-							<span className="text-foreground/45 font-mono text-xs">
+							<span className="text-foreground-faint font-mono text-xs">
 								{family.name}:*
 							</span>
 						</h3>
 						{family.blurb && (
-							<p className="text-foreground/60 mt-0.5 text-sm">{family.blurb}</p>
+							<p className="text-foreground-sub mt-0.5 text-sm">{family.blurb}</p>
 						)}
 					</header>
 

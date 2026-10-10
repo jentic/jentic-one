@@ -63,18 +63,20 @@ function OwnershipEndpoints({ payload }: { payload: ReferencePayload }) {
 					<span className="font-heading text-foreground block font-semibold">
 						Ownership-gated endpoints
 					</span>
-					<span className="text-foreground/60 mt-0.5 block text-sm">
+					<span className="text-foreground-sub mt-0.5 block text-sm">
 						Authenticated, but require <em>no</em> permission — you may act on resources
 						you own (or any, with <code className="font-mono">org:admin</code>).
 					</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2">
-					<span className="text-foreground/55 text-xs">{endpoints.length} endpoints</span>
+					<span className="text-foreground-sub text-xs">
+						{endpoints.length} endpoints
+					</span>
 					<ChevronRight
 						className={
 							open
-								? 'text-foreground/40 h-4 w-4 rotate-90'
-								: 'text-foreground/40 h-4 w-4'
+								? 'text-foreground-faint h-4 w-4 rotate-90'
+								: 'text-foreground-faint h-4 w-4'
 						}
 						aria-hidden="true"
 					/>
@@ -134,7 +136,7 @@ export function PermissionsSection({ payload }: { payload: ReferencePayload }) {
 				<h3 className="font-heading text-foreground mb-1 text-base font-semibold">
 					Who can call what
 				</h3>
-				<p className="text-foreground/55 mb-2 text-sm">
+				<p className="text-foreground-sub mb-2 text-sm">
 					Pick an actor to see exactly which endpoints it can call, grouped by typical
 					caller — the interactive form of{' '}
 					<code className="text-foreground/75 font-mono text-xs">jentic endpoints</code>.

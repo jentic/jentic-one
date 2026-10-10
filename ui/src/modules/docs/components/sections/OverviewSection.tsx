@@ -30,7 +30,7 @@ function PlaneBox({ title, sub, items }: { title: string; sub: string; items: st
 	return (
 		<div className="border-border bg-card/60 rounded-lg border p-4">
 			<p className="font-heading text-foreground font-semibold">{title}</p>
-			<p className="text-foreground/50 mt-0.5 text-xs">{sub}</p>
+			<p className="text-foreground-sub mt-0.5 text-xs">{sub}</p>
 			<div className="mt-3 flex flex-wrap gap-1.5">
 				{items.map((it) => (
 					<span
@@ -65,7 +65,7 @@ export function OverviewSection() {
 
 			{/* Three pillars */}
 			<div>
-				<p className="text-foreground/55 mb-2 text-sm font-medium">
+				<p className="text-foreground-sub mb-2 text-sm font-medium">
 					It answers three questions about every action:
 				</p>
 				<div className="grid gap-3 sm:grid-cols-3">
@@ -88,7 +88,9 @@ export function OverviewSection() {
 
 			{/* Architecture shape */}
 			<div>
-				<p className="text-foreground/55 mb-2 text-sm font-medium">How it fits together:</p>
+				<p className="text-foreground-sub mb-2 text-sm font-medium">
+					How it fits together:
+				</p>
 				<div className="grid gap-3 lg:grid-cols-2">
 					<PlaneBox
 						title="App · control plane"
@@ -101,7 +103,7 @@ export function OverviewSection() {
 						items={['Inject secrets', 'Forward request', 'Record execution']}
 					/>
 				</div>
-				<div className="text-foreground/40 my-1 flex justify-center">
+				<div className="text-foreground-faint my-1 flex justify-center">
 					<ArrowDown className="h-4 w-4" aria-hidden="true" />
 				</div>
 				<div className="border-border bg-muted/40 text-foreground/70 rounded-lg border px-4 py-3 text-center text-sm">

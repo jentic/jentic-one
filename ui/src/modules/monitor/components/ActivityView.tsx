@@ -163,7 +163,7 @@ export function ActivityView({
 					'-mx-page-gutter px-page-gutter -mt-2 mb-2 py-2',
 					'transition-[background-color,box-shadow] duration-200',
 					'lg:sticky lg:top-0 lg:z-30',
-					'lg:data-stuck:bg-background/85 lg:data-stuck:shadow-[0_8px_16px_-12px_rgb(0_0_0/0.5)] lg:data-stuck:backdrop-blur-md',
+					'lg:data-stuck:bg-background/85 lg:data-stuck:shadow-[0_8px_16px_-12px_hsl(var(--shadow)/calc(.5*var(--shadow-k)))] lg:data-stuck:backdrop-blur-md',
 				)}
 			>
 				{leading && (

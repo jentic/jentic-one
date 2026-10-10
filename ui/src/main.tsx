@@ -1,3 +1,4 @@
+import '@/shared/lib/theme'; // owns <html data-theme>; index.html's inline script sets the first paint
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
