@@ -1,5 +1,107 @@
 # Changelog
 
+## [0.42.0](https://github.com/jentic/jentic-one/compare/v0.41.0...v0.42.0) (2026-10-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **auth:** rename internal authorization scopes to permissions ([#1399](https://github.com/jentic/jentic-one/issues/1399))
+* **agents:** the agent detail page is removed. /app/agents/<id> now redirects to /app/agents?agent=<id>; the ?tab= parameter is ignored.
+
+### Features
+
+* **agents:** redesign the Agents page first run and remove the agent detail page ([#1475](https://github.com/jentic/jentic-one/issues/1475)) ([1de91e4](https://github.com/jentic/jentic-one/commit/1de91e437366eaa0e22551dee5049465e456635a))
+* **agents:** redesign the Agents tab — strip, sticky card, rows, cards and access step ([#1570](https://github.com/jentic/jentic-one/issues/1570)) ([fefe78f](https://github.com/jentic/jentic-one/commit/fefe78f2229885f9969f0b571358f0275accd4a7))
+* **broker:** link missing-credential denials to the agent's open connect session ([#1565](https://github.com/jentic/jentic-one/issues/1565)) ([ccbda77](https://github.com/jentic/jentic-one/commit/ccbda77316b573b6012e01a59dbe1d62b90137dd))
+* **broker:** record operation method + path on executions; steer agents to search-hit targets ([#1381](https://github.com/jentic/jentic-one/issues/1381)) ([2f13db4](https://github.com/jentic/jentic-one/commit/2f13db494179e12f54e931e211c41cc720d826b3))
+* **broker:** tell agents which shared OAuth app connects a denied API ([#1560](https://github.com/jentic/jentic-one/issues/1560)) ([24b551b](https://github.com/jentic/jentic-one/commit/24b551b73e99978256eab9369cef1626c529c3ae))
+* **cli:** let agents pick a shared OAuth app when connecting ([#1559](https://github.com/jentic/jentic-one/issues/1559)) ([1930115](https://github.com/jentic/jentic-one/commit/1930115598afb6fa61db4c1df2f966c9973a4a22))
+* **cli:** let agents start a connect for any registry API (CLI, MCP, broker, skills) ([#1569](https://github.com/jentic/jentic-one/issues/1569)) ([fe3f706](https://github.com/jentic/jentic-one/commit/fe3f70642a6ea2ad3901881e706211507c5ae32c))
+* **control:** admin-registered shared OAuth apps for user SSO ([#1435](https://github.com/jentic/jentic-one/issues/1435)) ([e25263a](https://github.com/jentic/jentic-one/commit/e25263af878c7cf32f5c51a826649108e6740706))
+* **control:** connect sessions for registry APIs with human-entered credentials ([#1567](https://github.com/jentic/jentic-one/issues/1567)) ([66d5fc1](https://github.com/jentic/jentic-one/commit/66d5fc198d37baa5b34bb8332c70ae1f3ffa7c1f))
+* **control:** connect-session target kinds, outcomes table and manual-flows gate ([#1566](https://github.com/jentic/jentic-one/issues/1566)) ([4326ff4](https://github.com/jentic/jentic-one/commit/4326ff408eeef6e4744682ffaf376e80a08f946f))
+* **control:** let agent owners and org:admin act on connect sessions ([#1561](https://github.com/jentic/jentic-one/issues/1561)) ([15620de](https://github.com/jentic/jentic-one/commit/15620de6f83344e235bb6f9445df90cf7656da5d))
+* **events:** remove the event acknowledgement feature ([#1400](https://github.com/jentic/jentic-one/issues/1400)) ([d014401](https://github.com/jentic/jentic-one/commit/d014401faaca8692549eed68f0bd88ed32262d5e))
+* **ui:** add a light theme and make it the default ([#1564](https://github.com/jentic/jentic-one/issues/1564)) ([5eb6dfd](https://github.com/jentic/jentic-one/commit/5eb6dfd768cf29ba3a5048424ae90977222b35b8))
+* **ui:** approve manual and awaiting-app connect sessions ([#1568](https://github.com/jentic/jentic-one/issues/1568)) ([3a8fbca](https://github.com/jentic/jentic-one/commit/3a8fbcacba69486f2153b735cf5e417977c1f53a))
+* **ui:** catalog, workspace & agents onboarding redesign ([#1476](https://github.com/jentic/jentic-one/issues/1476)) ([ac66cc8](https://github.com/jentic/jentic-one/commit/ac66cc88536d7fb5889840e6c24785a1233d2254))
+* **ui:** surface shared OAuth apps in every add-credential flow ([#1555](https://github.com/jentic/jentic-one/issues/1555)) ([c6d1104](https://github.com/jentic/jentic-one/commit/c6d1104c6bf70b5961c9b3b21b447b7a97a834ae))
+* **ui:** token-less connect approval links and a waiting-for-you inbox ([#1562](https://github.com/jentic/jentic-one/issues/1562)) ([9cf776a](https://github.com/jentic/jentic-one/commit/9cf776af7b612e213be159c4f99693304ba443fd))
+
+
+### Bug Fixes
+
+* **admin:** resolve actor names for any signed-in caller ([#1529](https://github.com/jentic/jentic-one/issues/1529)) ([762887b](https://github.com/jentic/jentic-one/commit/762887b405180d615e645c6a63fe7d22df00f140))
+* **admin:** scope event reads to the caller ([#1508](https://github.com/jentic/jentic-one/issues/1508)) ([d9d93bb](https://github.com/jentic/jentic-one/commit/d9d93bba25fdfd496e86a5354b1c70e93dab6848))
+* **admin:** scope execution reads to the caller ([#1507](https://github.com/jentic/jentic-one/issues/1507)) ([6d0926a](https://github.com/jentic/jentic-one/commit/6d0926aa8dc9197be40c4ccb33b5f14da11fe4eb))
+* **auth:** admit first-time Google Workspace users on OAuth-client SSO ([#1387](https://github.com/jentic/jentic-one/issues/1387)) ([c01db60](https://github.com/jentic/jentic-one/commit/c01db60cb3658f36928c2afb75e086f1335ece29))
+* **auth:** answer 404 for agents the caller cannot see on the oauth-grants route ([#1534](https://github.com/jentic/jentic-one/issues/1534)) ([de9a8b3](https://github.com/jentic/jentic-one/commit/de9a8b3a280a8869cbe8a592a0ef11c5a0ce8ca7))
+* **auth:** restrict agent approval to the agent's owner or an admin ([#1525](https://github.com/jentic/jentic-one/issues/1525)) ([47b0dc5](https://github.com/jentic/jentic-one/commit/47b0dc58ede4b5117a88f8519369b4cce6ad1ec3))
+* **broker:** recompute Content-Length on forwarded requests ([#1524](https://github.com/jentic/jentic-one/issues/1524)) ([2cc283d](https://github.com/jentic/jentic-one/commit/2cc283d3911b5834d7567f2a99dc79360a34a5eb))
+* **broker:** replay content and version headers on async executions ([#1583](https://github.com/jentic/jentic-one/issues/1583)) ([a639659](https://github.com/jentic/jentic-one/commit/a6396592149165a10738b42a5fa998b49d492c16))
+* **cli:** tell a pending upgrade step apart from a schema behind head on start ([#1538](https://github.com/jentic/jentic-one/issues/1538)) ([4572f72](https://github.com/jentic/jentic-one/commit/4572f72d04cb1fdb4ca76c46da635134c4281a61))
+* **cli:** treat broker resolve failures as errors on execute ([#1429](https://github.com/jentic/jentic-one/issues/1429)) ([#1517](https://github.com/jentic/jentic-one/issues/1517)) ([b29ab5d](https://github.com/jentic/jentic-one/commit/b29ab5de8279e2582e489a1a0c06bee40b1af94d))
+* **control:** give vendor-connect credentials the API's registered identity ([#1574](https://github.com/jentic/jentic-one/issues/1574)) ([bb492c2](https://github.com/jentic/jentic-one/commit/bb492c2a08ca989f350b9f62b3dec59d7c5d60f4))
+* **control:** limit binding permission reads to caller-visible agents ([#1532](https://github.com/jentic/jentic-one/issues/1532)) ([f9f5a2c](https://github.com/jentic/jentic-one/commit/f9f5a2c1f970f215593aea03fe4db01c11662b51))
+* **control:** list only caller-visible agents bound to a credential ([#1522](https://github.com/jentic/jentic-one/issues/1522)) ([6b2f638](https://github.com/jentic/jentic-one/commit/6b2f638cbc1a7aa1b7069df4e90552b61820ebb1))
+* **control:** restrict who can attach a permission rule set ([#1528](https://github.com/jentic/jentic-one/issues/1528)) ([14c250e](https://github.com/jentic/jentic-one/commit/14c250e30f46411ef1c757c70864fc78074d7de7))
+* **control:** return created_by when creating a credential ([#1521](https://github.com/jentic/jentic-one/issues/1521)) ([7db9139](https://github.com/jentic/jentic-one/commit/7db91391652f7097cbd4d07779998bb0d56c0b32))
+* **events:** name credentials and agents in event summaries ([#1541](https://github.com/jentic/jentic-one/issues/1541)) ([acfcdf4](https://github.com/jentic/jentic-one/commit/acfcdf49120cbeb92d23043a72fa4af17661d8c8))
+* **events:** name the credential owner on credential use and health events ([#1523](https://github.com/jentic/jentic-one/issues/1523)) ([0a64f9c](https://github.com/jentic/jentic-one/commit/0a64f9cd9c0ebc89ef355fed8b854a86f193d50d))
+* **jobs:** emit import.completed only for import jobs ([#1526](https://github.com/jentic/jentic-one/issues/1526)) ([74ef7cb](https://github.com/jentic/jentic-one/commit/74ef7cb81faec8dae33eb9d8faa8c8894c164eb9))
+* **logging:** mask query-string values in access logs ([#1572](https://github.com/jentic/jentic-one/issues/1572)) ([f89fa4d](https://github.com/jentic/jentic-one/commit/f89fa4db758c13e0f9e337aad5d5d23436a66344))
+* **migrations:** leave the vector extension in place during lexical search setup ([#1519](https://github.com/jentic/jentic-one/issues/1519)) ([0cefce0](https://github.com/jentic/jentic-one/commit/0cefce0f8ce794d1df717a3927a7e74fab2d8eff))
+* **migrations:** rerun the rule-set curation step on every upgrade and report pending steps ([#1536](https://github.com/jentic/jentic-one/issues/1536)) ([da2cc7f](https://github.com/jentic/jentic-one/commit/da2cc7fe9ab294a863c103b7c8d6c50fe626d875))
+* **migrations:** sweep oauth_clients.allowed_scopes as a native array on PostgreSQL ([#1544](https://github.com/jentic/jentic-one/issues/1544)) ([53d0002](https://github.com/jentic/jentic-one/commit/53d0002c90f9fd964aa14e2c1dd143a98d8865e3))
+* **openapi:** publish placeholder hosts and advertise the deployment's own hosts ([#1504](https://github.com/jentic/jentic-one/issues/1504)) ([7b99c77](https://github.com/jentic/jentic-one/commit/7b99c771761fabe6318e7f8a3f5ae9b8e95d5fc9))
+* **registry:** catalog import derives vendor-doubled api_name; warn on unmatched credential scope ([#1067](https://github.com/jentic/jentic-one/issues/1067)) ([b30eb07](https://github.com/jentic/jentic-one/commit/b30eb07ce06e013f9327e09914bbd17c7c18429f))
+* **registry:** report declared security schemes from inspect ([#1554](https://github.com/jentic/jentic-one/issues/1554)) ([05994ae](https://github.com/jentic/jentic-one/commit/05994ae615f2bb30d822ee04bb8ebdeff4928b1f)), closes [#1553](https://github.com/jentic/jentic-one/issues/1553)
+* **registry:** require operator approval to pin a draft that changes server hosts ([#1573](https://github.com/jentic/jentic-one/issues/1573)) ([f5d9bad](https://github.com/jentic/jentic-one/commit/f5d9bad2123fde0cfc8fbcf4986043c51e0f1ab0))
+* **registry:** scope note updates and deletes to the caller ([#1518](https://github.com/jentic/jentic-one/issues/1518)) ([accf0b3](https://github.com/jentic/jentic-one/commit/accf0b3c91dac52f310f1ca6bcf3c2d14583a91e))
+* **ui:** clearer not-found and no-access states ([#1537](https://github.com/jentic/jentic-one/issues/1537)) ([56fef88](https://github.com/jentic/jentic-one/commit/56fef88826aa3ff7db577f59aea8d250376ab952))
+* **ui:** follow-ups from the post-redesign walk of the agents and library pages ([#1557](https://github.com/jentic/jentic-one/issues/1557)) ([4c404b2](https://github.com/jentic/jentic-one/commit/4c404b23d8698fe323a11fef39ee3500b9063b75))
+* **ui:** gate binding pause and tidy no-access copy ([#1540](https://github.com/jentic/jentic-one/issues/1540)) ([765ccdc](https://github.com/jentic/jentic-one/commit/765ccdc59bd0a1ead59069fc6e987224a44fdd70))
+* **ui:** hide actions the caller's permissions don't allow ([#1535](https://github.com/jentic/jentic-one/issues/1535)) ([2567d23](https://github.com/jentic/jentic-one/commit/2567d23fde2caf9e01ab3cb44146c6ea3f861006))
+* **ui:** keep the Agents ?agent= write-back from undoing a navigation away ([#1584](https://github.com/jentic/jentic-one/issues/1584)) ([65e7593](https://github.com/jentic/jentic-one/commit/65e75936fb94dc4b2ca684193917d192cefcf540))
+* **ui:** keep the client and raw request on the api facade ([#1542](https://github.com/jentic/jentic-one/issues/1542)) ([121495a](https://github.com/jentic/jentic-one/commit/121495a71e6323497760c68e04c8c6d72fb958b3))
+* **ui:** keep the query string when returning from sign-in ([#1571](https://github.com/jentic/jentic-one/issues/1571)) ([9c36f6b](https://github.com/jentic/jentic-one/commit/9c36f6b4f95e43d5600bb51aa35c764084118861))
+* **ui:** show credentials shared with the caller as read-only ([#1520](https://github.com/jentic/jentic-one/issues/1520)) ([dbc9326](https://github.com/jentic/jentic-one/commit/dbc9326dee61ad100ce822a8ae555de31e11e34e))
+* **ui:** show the attached rule set on a credential binding ([#1533](https://github.com/jentic/jentic-one/issues/1533)) ([3be1f47](https://github.com/jentic/jentic-one/commit/3be1f47426b4420936e19d9a5d1fd117cffa0796))
+* **ui:** stop event streams and show a clear state for callers without event access ([#1527](https://github.com/jentic/jentic-one/issues/1527)) ([b6478e0](https://github.com/jentic/jentic-one/commit/b6478e0cedacd6178c1f1e014a6c37451e04239c))
+* **ui:** wait for the connect-request read in the attention access tests ([#1581](https://github.com/jentic/jentic-one/issues/1581)) ([5a72b50](https://github.com/jentic/jentic-one/commit/5a72b500c44dfebbda3f63d03c891b71ccf68e2e))
+
+
+### Refactors
+
+* **auth:** rename internal authorization scopes to permissions ([#1399](https://github.com/jentic/jentic-one/issues/1399)) ([3ecdd53](https://github.com/jentic/jentic-one/commit/3ecdd53a9fa0df2066d8d560152c0423cdff5096))
+* **control:** extract typed-secret writers from CredentialService.create ([#1563](https://github.com/jentic/jentic-one/issues/1563)) ([9323ce6](https://github.com/jentic/jentic-one/commit/9323ce6ce646280fbf23a7fa76f578cd5b89c5c9))
+
+
+### Documentation
+
+* **changelog:** add the 0.41.1 hotfix entry ([#1549](https://github.com/jentic/jentic-one/issues/1549)) ([8083c1d](https://github.com/jentic/jentic-one/commit/8083c1d0955b598e1902dfea208e72f5e36f5fc6))
+* **releasing:** add the upgrading-to-0.42.0 notes ([#1589](https://github.com/jentic/jentic-one/issues/1589)) ([0ff9047](https://github.com/jentic/jentic-one/commit/0ff90479349658c4f6465ca3ff682bff3e1e1233))
+* **skills:** point agents at whoami and the security-schemes route ([#1558](https://github.com/jentic/jentic-one/issues/1558)) ([8bfe7b2](https://github.com/jentic/jentic-one/commit/8bfe7b2b025e0c10cf28a38f97301916e2d19665))
+* **skills:** tell agents private upstream targets need an operator allowlist ([#1551](https://github.com/jentic/jentic-one/issues/1551)) ([c58c020](https://github.com/jentic/jentic-one/commit/c58c02069397bf9b89159cebb814eddbb4293d56))
+* **telemetry:** enable anonymous telemetry in the shipped install examples ([#1545](https://github.com/jentic/jentic-one/issues/1545)) ([6e1aa2e](https://github.com/jentic/jentic-one/commit/6e1aa2e4eaaa4191f70dae4a4fe745aaa44826d1))
+
+
+### Build System
+
+* **deps-dev:** bump @types/node ([#1578](https://github.com/jentic/jentic-one/issues/1578)) ([5799d8f](https://github.com/jentic/jentic-one/commit/5799d8f285e6895f479a5de2f48d1b7811d9de42))
+* **deps-dev:** bump @types/node in /ui in the types group ([#1514](https://github.com/jentic/jentic-one/issues/1514)) ([ea097aa](https://github.com/jentic/jentic-one/commit/ea097aa0a0fbb91a14d43fdc39a382dc3cd85265))
+* **deps-dev:** bump handlebars from 4.7.9 to 4.7.10 in /ui ([#1586](https://github.com/jentic/jentic-one/issues/1586)) ([a7a0f95](https://github.com/jentic/jentic-one/commit/a7a0f9595c3df3b2b7b2e6f3ae66c09d92297a20))
+* **deps-dev:** bump prettier from 3.9.8 to 3.9.9 in /ui ([#1515](https://github.com/jentic/jentic-one/issues/1515)) ([967392d](https://github.com/jentic/jentic-one/commit/967392d8dbaf07a668b03cf8dac5afdda45eecc8))
+* **deps-dev:** bump sharp from 0.35.4 to 0.35.5 in /ui ([#1585](https://github.com/jentic/jentic-one/issues/1585)) ([9eb8861](https://github.com/jentic/jentic-one/commit/9eb8861c2127fa4d3baaba59261f15e0dae48146))
+* **deps-dev:** bump source-map-js from 1.2.1 to 1.2.2 in /ui ([#1587](https://github.com/jentic/jentic-one/issues/1587)) ([e36dabb](https://github.com/jentic/jentic-one/commit/e36dabb801054bbd3c61d4bc743f1f5584759592))
+* **deps-dev:** bump the vite group across 1 directory with 6 updates ([#1576](https://github.com/jentic/jentic-one/issues/1576)) ([2782cb0](https://github.com/jentic/jentic-one/commit/2782cb0f719431e065d94074201bbdc7b0b2a97b))
+* **deps-dev:** bump the vite group in /ui with 5 updates ([#1511](https://github.com/jentic/jentic-one/issues/1511)) ([9cd0966](https://github.com/jentic/jentic-one/commit/9cd0966d513300d49cb46c3bd46db77d7f68f32e))
+* **deps-dev:** bump typescript-eslint ([#1512](https://github.com/jentic/jentic-one/issues/1512)) ([f7f8e05](https://github.com/jentic/jentic-one/commit/f7f8e05ed0b637a49fe57b93e4ad233cdd997670))
+* **deps-dev:** bump typescript-eslint ([#1577](https://github.com/jentic/jentic-one/issues/1577)) ([be92fc0](https://github.com/jentic/jentic-one/commit/be92fc080401c81db4697c68c1e9f9dcb1c8c390))
+* **deps:** bump fastapi from 0.141.1 to 0.142.0 in the python group ([#1516](https://github.com/jentic/jentic-one/issues/1516)) ([ba0e7b4](https://github.com/jentic/jentic-one/commit/ba0e7b4f49e3f4da18416ada695dd3b8a0213af8))
+* **deps:** bump mako from 1.3.12 to 1.4.2 ([#1588](https://github.com/jentic/jentic-one/issues/1588)) ([d5125be](https://github.com/jentic/jentic-one/commit/d5125be56c0475aa5d52d1279901cd952ebeb3ef))
+* **deps:** bump pyjwt from 2.14.0 to 2.15.0 ([#1502](https://github.com/jentic/jentic-one/issues/1502)) ([e6327df](https://github.com/jentic/jentic-one/commit/e6327df3230e31af1dff6174d604b844a4cc54e8))
+
 ## [0.41.1](https://github.com/jentic/jentic-one/compare/v0.41.0...v0.41.1) (2026-10-07)
 
 Hotfix release cut from v0.41.0 (not main). It fixes the admin scope sweep
