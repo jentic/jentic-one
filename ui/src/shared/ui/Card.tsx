@@ -31,7 +31,7 @@ export function Card({
 		<div
 			data-selected={selected || undefined}
 			className={cn(
-				'bg-surface-1 overflow-hidden rounded-lg [--field-bg:var(--surface-field)]',
+				'bg-surface-1 overflow-hidden rounded-lg [outline:1px_solid_hsl(var(--card-edge))] [outline-offset:-1px] [--field-bg:var(--surface-field)]',
 				outlined && 'border-border/60 border',
 				hoverable && 'card-hover cursor-pointer',
 				selected && 'shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
