@@ -46,11 +46,11 @@ function baseUrlOf(info: { project: { use: { baseURL?: string } } }): string {
 	return url;
 }
 
-/** Open an agent's access sidebar from its (single) API tile. */
+/** Open an agent's access sidebar from its (single) API row. */
 async function openOnlyTile(page: Page, agentId: string): Promise<void> {
 	await page.goto(`/app/agents?agent=${agentId}`);
 	await page
-		.getByRole('button', { name: /open access details/ })
+		.getByRole('button', { name: /^Manage access for / })
 		.first()
 		.click();
 	await expect(page.getByRole('button', { name: /^Unbind/ }).first()).toBeVisible();
@@ -164,16 +164,16 @@ test('the API grid degrades behind a status strip when GET /apis fails, and reco
 	await page.goto(`/app/agents?agent=${agent.clientId}`);
 	const strip = page.getByTestId('agent-apis-degraded');
 	await expect(strip).toBeVisible();
-	await expect(strip).toHaveText(/showing without their API details/);
-	// The tile is still drawn from the binding itself, and the grid is not
+	await expect(strip).toHaveText(/showing without their details/);
+	// The row is still drawn from the binding itself, and the list is not
 	// replaced by the error card.
-	await expect(page.getByRole('button', { name: /open access details/ })).toHaveCount(1);
+	await expect(page.getByRole('button', { name: /^Manage access for / })).toHaveCount(1);
 	await expect(page.getByText(/Couldn.t load the credential details/)).toHaveCount(0);
 
 	await page.unroute((url) => url.pathname === '/apis');
 	await strip.getByRole('button', { name: 'Try again' }).click();
 	await expect(strip).toHaveCount(0);
-	await expect(page.getByRole('button', { name: /open access details/ })).toHaveCount(1);
+	await expect(page.getByRole('button', { name: /^Manage access for / })).toHaveCount(1);
 });
 
 test('a viewer without apis:read gets the grid and sends no GET /apis', async ({
@@ -204,7 +204,7 @@ test('a viewer without apis:read gets the grid and sends no GET /apis', async ({
 		if (new URL(req.url()).pathname === '/apis') apisReads.push(req.url());
 	});
 	await memberPage.goto(`/app/agents?agent=${agent.clientId}`);
-	await expect(memberPage.getByRole('button', { name: /open access details/ })).toHaveCount(1);
+	await expect(memberPage.getByRole('button', { name: /^Manage access for / })).toHaveCount(1);
 	// A 403 is a standing fact, not a failure: no strip, no dead "Try again".
 	await expect(memberPage.getByTestId('agent-apis-degraded')).toHaveCount(0);
 	await expect(memberPage.getByText(/Couldn.t load the credential/)).toHaveCount(0);
@@ -324,7 +324,7 @@ test('a right-to-left name carrying a direction override is isolated from the co
 	await page.goto(`/app/agents?agent=${agent.clientId}`);
 	const heading = page.getByRole('heading', { name: /can reach nothing yet/ });
 	await expect(heading).toBeVisible();
-	const isolate = heading.locator('bdi[dir="auto"]');
+	const isolate = heading.locator('[dir="auto"]');
 	await expect(isolate).toHaveText(name);
 	expect(await isolate.evaluate((el) => getComputedStyle(el).unicodeBidi)).toBe('isolate');
 	// The product copy sits OUTSIDE the isolate, as its own run.
@@ -429,7 +429,11 @@ test.describe('credential access through the broker', () => {
 			name: new RegExp(`${credentialName}.*accessed by .${agent.name}`),
 		});
 		await expect(row).toBeVisible();
-		await row.click();
+		// The row's agent name sits above its stretched overlay (and does the same
+		// thing when clicked), so the overlay's centre is covered: activate the row
+		// as a keyboard user does.
+		await row.focus();
+		await page.keyboard.press('Enter');
 		await expect(page).toHaveURL(/\/app\/agents\?credentials=1/);
 		await expect(page.getByTestId('sheet-primitive')).toBeVisible();
 	});
