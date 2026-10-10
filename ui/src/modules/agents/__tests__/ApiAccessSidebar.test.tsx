@@ -679,7 +679,9 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		// And the surface tells the same story: selecting the other agent
 		// shows the honest empty state, not a ghost Slack tile.
 		await user.click(screen.getByRole('tab', { name: /legacy-scraper/ }));
-		expect(await screen.findByText('legacy-scraper can reach nothing yet')).toBeInTheDocument();
+		expect(
+			await screen.findByRole('heading', { name: 'legacy-scraper can reach nothing yet' }),
+		).toBeInTheDocument();
 		expect(screen.queryByText('Slack bot token')).not.toBeInTheDocument();
 	});
 
@@ -953,7 +955,10 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 					last_name: 'Er',
 					active: true,
 					// A member: manages agents and credentials, but is not an org admin.
-					permissions: ['agents:read', 'agents:write', 'credentials:write'],
+					// `apis:read` included because `GET /apis` requires it and the page
+					// sends that read only to a viewer who holds it (#1543) — without it a tile
+					// falls back to its vendor host and never reads "Slack".
+					permissions: ['agents:read', 'agents:write', 'apis:read', 'credentials:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,
@@ -1016,5 +1021,59 @@ describe('ApiAccessSidebar — a credential shared with the viewer', () => {
 		expect(
 			inDialog.getByRole('button', { name: 'Delete credential GitHub PAT org-wide' }),
 		).toBeInTheDocument();
+	});
+
+	/**
+	 * Pins #1543 item 2: the case `GET /credentials` cannot answer at all.
+	 *
+	 * `GET /credentials` is OWNER-SCOPED for a non-admin, so another user's
+	 * credential bound to this agent is simply ABSENT from the list — the tile is
+	 * composed from the binding alone and carries no `credentialCreatedBy` key
+	 * (not a null one: `apiTiles` spreads the field only when a credential row
+	 * was found). Ownership is therefore UNKNOWN, and unknown must read as "not
+	 * yours": the previous `!== undefined` guard inverted exactly this case into
+	 * "editable", drew Edit and Delete, and both 404ed — Edit on a sheet with
+	 * nothing to edit.
+	 */
+	it('withholds Edit and Delete when the credential is not in the viewer’s list at all', async () => {
+		// The viewer's own list holds GitHub only. Slack's binding survives, so the
+		// tile still renders — with no credential row behind it.
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+		]);
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+
+		expect(inDialog.queryByRole('button', { name: /Edit credential/ })).not.toBeInTheDocument();
+		expect(
+			inDialog.queryByRole('button', { name: /Delete credential .* org-wide/ }),
+		).not.toBeInTheDocument();
+		// Unbinding is the agent's own business and stays — the binding is readable.
+		expect(
+			inDialog.getByRole('button', { name: /^Unbind .* from support-agent$/ }),
+		).toBeInTheDocument();
+	});
+
+	/**
+	 * Pins #1543 item 7. U+202E (RIGHT-TO-LEFT OVERRIDE) has no terminator: its
+	 * effect runs to the end of the enclosing bidi paragraph, so a name holding
+	 * one reverses the product copy BESIDE it. The name must therefore resolve as
+	 * its own isolated directional run.
+	 */
+	it('isolates a direction override inside a credential name from the copy beside it', async () => {
+		renderAuthed();
+		await screen.findByText('1 access rule');
+		const inDialog = within(await openSidebar('Slack'));
+		const label = await inDialog.findByText('Slack bot token');
+		// The name's own element resolves it as a self-contained run, so an
+		// override inside it cannot reach the "Bearer token · bound …" line below.
+		expect(getComputedStyle(label).unicodeBidi).toBe('isolate');
 	});
 });

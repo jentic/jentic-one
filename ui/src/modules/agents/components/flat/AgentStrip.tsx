@@ -232,8 +232,10 @@ export function AgentStrip({
 						TAB_STATUS_QUIETING[agent.status],
 					)}
 				/>
-				{/* Struck through when the name will not serve and won't change on its own. */}
-				<span className={cn(isSettled && 'line-through decoration-from-font')}>
+				{/* Struck through when the name will not serve and won't change on its own.
+				    `dir="auto"` isolates the operator-chosen name so an override inside
+				    it cannot reverse the count beside it (#1543). */}
+				<span dir="auto" className={cn(isSettled && 'line-through decoration-from-font')}>
 					{agent.name}
 				</span>
 				{isPending && <span className="sr-only">(awaiting approval)</span>}

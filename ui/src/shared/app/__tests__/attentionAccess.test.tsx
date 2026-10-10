@@ -202,6 +202,55 @@ describe('Notifications — sources follow read permissions', () => {
 	});
 });
 
+/**
+ * Pins #1543 item 4. "Finish setup" sends the reader into the OAuth sign-in,
+ * which WRITES the resulting tokens onto the credential — so it needs
+ * `credentials:write`. Offering it to a reader produced an error on click; the
+ * row itself still belongs in the list, as the standing fact it is, for whoever
+ * can act on it.
+ */
+describe('Notifications — "Finish setup" follows credentials:write', () => {
+	/** An OAuth credential whose sign-in was never completed. */
+	const unfinishedOauth = {
+		credential_id: 'cred_oauth_1',
+		name: 'Slack OAuth',
+		type: 'oauth2',
+		provider: 'static',
+		api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+		details: { grant_type: 'authorization_code', connected: false },
+		is_active: true,
+		created_by: 'usr_viewer_1',
+		created_at: '2026-01-01T00:00:00Z',
+		updated_at: null,
+	};
+
+	it.each([
+		['with credentials:write', ['credentials:read', 'credentials:write'], true],
+		['an org:admin', ['org:admin'], true],
+		['read-only', ['credentials:read'], false],
+	] as const)('%s: %s', async (_label, permissions, canFinish) => {
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
+			http.get('/credentials', () =>
+				HttpResponse.json({ data: [unfinishedOauth], has_more: false, next_cursor: null }),
+			),
+			http.get('/agents', () => HttpResponse.json(emptyPage)),
+			http.get('/events', () => HttpResponse.json(emptyPage)),
+			http.get('/events/stream', () => new HttpResponse(null, { status: 503 })),
+		);
+		renderMenu();
+
+		const dialog = await openMenu();
+		// The row is there either way — it is a fact about the workspace.
+		const row = (await within(dialog).findByText(/Slack OAuth sign-in isn't finished/)).closest(
+			'li',
+		) as HTMLElement;
+		const finish = within(row).queryByRole('link', { name: 'Finish setup' });
+		if (canFinish) expect(finish).toBeInTheDocument();
+		else expect(finish).toBeNull();
+	});
+});
+
 describe('Notifications — connect requests go to approvers', () => {
 	const openRequest = {
 		session_id: 'cs_waiting',

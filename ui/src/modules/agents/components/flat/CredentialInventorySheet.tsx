@@ -22,7 +22,12 @@ import {
 	toast,
 } from '@/shared/ui';
 import { useEagerCursorDrain } from '@/shared/hooks';
-import { useOptionalCurrentUser } from '@/shared/auth';
+import {
+	AGENTS_READ,
+	CREDENTIALS_WRITE,
+	useCanAccess,
+	useOptionalCurrentUser,
+} from '@/shared/auth';
 import {
 	useAgents,
 	useAgentsCredentialBindings,
@@ -122,8 +127,11 @@ export function CredentialInventorySheet({
 
 	// Which credentials the fleet uses, by inverting every agent's binding list — the
 	// same reads the agents surface already made. Archived agents are outside the
-	// join: archiving sweeps their bindings. Gated on `open`.
-	const fleet = useAgents({ status: 'all', enabled: open });
+	// join: archiving sweeps their bindings. Gated on `open`, and on `agents:read`:
+	// a `credentials:read` holder without it would otherwise fire a roster read the
+	// server refuses, and a 403 there reads as "nothing is bound" (#1543).
+	const canReadAgents = useCanAccess(AGENTS_READ);
+	const fleet = useAgents({ status: 'all', enabled: open && canReadAgents });
 	const {
 		fetchNextPage,
 		hasNextPage,
@@ -132,7 +140,7 @@ export function CredentialInventorySheet({
 		isPending: fleetPending,
 	} = fleet;
 	useEagerCursorDrain({
-		hasNextPage: open && hasNextPage,
+		hasNextPage: open && canReadAgents && hasNextPage,
 		isFetchingNextPage,
 		isError: fleetError,
 		fetchNextPage,
@@ -144,12 +152,15 @@ export function CredentialInventorySheet({
 				.map((a) => a.id),
 		[fleet.data],
 	);
-	const bindingsByAgent = useAgentsCredentialBindings(open ? fleetAgentIds : []);
+	const bindingsByAgent = useAgentsCredentialBindings(open && canReadAgents ? fleetAgentIds : []);
 	const refreshFleetBindings = useRefreshFleetCredentialBindings();
 
 	// Credential id → how many agents hold it. `null` = cannot be proved, which is
 	// NOT "nothing is bound": a partial fleet makes a bound credential look unbound.
+	// A viewer who may not read the roster can never prove it, so it stays `null`
+	// without a read ever going out.
 	const agentsPerCredential = useMemo(() => {
+		if (!canReadAgents) return null;
 		if (fleetPending || hasNextPage || fleetError) return null;
 		if (fleetAgentIds.some((id) => !bindingsByAgent.has(id))) return null;
 		const counts = new Map<string, number>();
@@ -161,11 +172,13 @@ export function CredentialInventorySheet({
 			}
 		}
 		return counts;
-	}, [fleetPending, hasNextPage, fleetError, fleetAgentIds, bindingsByAgent]);
+	}, [canReadAgents, fleetPending, hasNextPage, fleetError, fleetAgentIds, bindingsByAgent]);
 	const unboundUnknown = bindingFilter === 'unbound' && agentsPerCredential == null;
 	// The roster drain is the one phase provably still in flight, so anything past it
-	// omits the figure rather than pulsing a skeleton forever.
-	const fleetJoinLoading = fleetPending || hasNextPage || isFetchingNextPage;
+	// omits the figure rather than pulsing a skeleton forever. A roster the viewer
+	// may not read is never in flight: without this the cards' usage figures pulse
+	// a skeleton forever, waiting on a request that is never made.
+	const fleetJoinLoading = canReadAgents && (fleetPending || hasNextPage || isFetchingNextPage);
 
 	const credentials = credentialsSource.items;
 
@@ -178,12 +191,20 @@ export function CredentialInventorySheet({
 	const bindingFilterOptions = useMemo(
 		() => [
 			{ value: 'any' as BindingFilter, label: 'Any agent' },
-			{
-				value: 'unbound' as BindingFilter,
-				label: unboundCount == null ? 'Unbound' : `Unbound (${unboundCount})`,
-			},
+			// Unbound is an assertion over every agent's bindings. A viewer who may
+			// not read the roster can never get that answer, so the filter is not
+			// offered at all rather than offered and then withheld behind a dead
+			// "Try again".
+			...(canReadAgents
+				? [
+						{
+							value: 'unbound' as BindingFilter,
+							label: unboundCount == null ? 'Unbound' : `Unbound (${unboundCount})`,
+						},
+					]
+				: []),
 		],
-		[unboundCount],
+		[canReadAgents, unboundCount],
 	);
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -226,10 +247,13 @@ export function CredentialInventorySheet({
 	);
 
 	// The list includes credentials shared with the viewer; only the owner or an
-	// admin can change those, so their cards offer no edit or delete.
+	// admin can change those, so their cards offer no edit or delete. Everything
+	// that writes a credential — Connect, Add credential, Edit, Delete — also
+	// needs `credentials:write`, so a reader's cards carry none of them.
+	const canWriteCredentials = useCanAccess(CREDENTIALS_WRITE);
 	const readOnlyFor = useCallback(
-		(cred: Credential) => !credentialEditableBy(cred, viewer),
-		[viewer],
+		(cred: Credential) => !canWriteCredentials || !credentialEditableBy(cred, viewer),
+		[canWriteCredentials, viewer],
 	);
 
 	// The nested sheets each have a document-level Escape handler firing on the same
@@ -285,10 +309,12 @@ export function CredentialInventorySheet({
 							</p>
 						</div>
 						<div className="flex shrink-0 items-center gap-2">
-							<Button size="sm" onClick={(): void => setCreateOpen(true)}>
-								<Plus className="h-4 w-4" />
-								Add credential
-							</Button>
+							{canWriteCredentials && (
+								<Button size="sm" onClick={(): void => setCreateOpen(true)}>
+									<Plus className="h-4 w-4" />
+									Add credential
+								</Button>
+							)}
 							{/* The help the retired Credentials page carried. It takes `⌘ /`
 							    over from the Agents page while the sheet is open. */}
 							<PageHelp
@@ -387,11 +413,21 @@ export function CredentialInventorySheet({
 								credentials={filtered}
 								isLoading={credentialsSource.isPending}
 								error={credentialsSource.error}
-								onAdd={(): void => setCreateOpen(true)}
+								onAdd={
+									canWriteCredentials
+										? (): void => setCreateOpen(true)
+										: undefined
+								}
 								onEdit={openEdit}
 								onDelete={setDeleteTarget}
-								onConnect={(cred): void =>
-									void connectExisting(cred.credential_id, cred.name)
+								// Connect runs the provider sign-in and writes the
+								// resulting tokens: without `credentials:write` the
+								// server refuses it, so the button isn't offered.
+								onConnect={
+									canWriteCredentials
+										? (cred): void =>
+												void connectExisting(cred.credential_id, cred.name)
+										: undefined
 								}
 								// A drawer is not a page: three columns inside it are
 								// what clip a credential's name mid-word.

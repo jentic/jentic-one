@@ -26,6 +26,7 @@ import type {
 import { toast } from '@/shared/ui';
 import { apiRefDisplayName } from '@/shared/lib';
 import { useEagerCursorDrain, type DrainedList } from '@/shared/hooks/useEagerCursorDrain';
+import { APIS_READ, useCanAccess, usePermissionsKnown } from '@/shared/auth/useCanAccess';
 import {
 	fetchPublicSpec,
 	getApi,
@@ -179,10 +180,22 @@ export function useApis(params: { vendor?: string | null } = {}): UseQueryResult
  * join against the registry rather than list it. `complete` is true only when
  * every page loaded; until then a join may not assert registry-derived states,
  * or an imported API past page 1 lands in the "not imported" fallback tile.
+ *
+ * `GET /apis` needs `apis:read`, which not every member holds. Without it the
+ * list is not requested at all and comes back `forbidden` with no rows and no
+ * error: a 403 is a standing fact about the viewer, not a failure to retry, and
+ * a surface that joined against it must degrade rather than show a dead
+ * "Try again" (#1543).
  */
 export function useAllApis(): DrainedList<ApiResponse> {
+	const canRead = useCanAccess(APIS_READ);
+	const permissionsKnown = usePermissionsKnown();
+	// `false` while `/users/me` is in flight, so "not allowed" is only asserted
+	// once the permissions are actually known.
+	const forbidden = permissionsKnown && !canRead;
 	const query = useInfiniteQuery({
 		queryKey: apiPickerKeys.apisAll(),
+		enabled: canRead,
 		queryFn: ({ pageParam }): Promise<ApiListResponse> => listApis({ cursor: pageParam }),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
@@ -199,9 +212,13 @@ export function useAllApis(): DrainedList<ApiResponse> {
 
 	return {
 		items,
-		isPending: query.isPending,
+		// A forbidden list is answered, not pending — nothing is in flight.
+		isPending: !forbidden && query.isPending,
 		error: query.error,
-		complete: query.isSuccess && !query.hasNextPage,
+		// There is nothing more to load for a caller who may not read the list, so
+		// its (empty) answer is whole: a join gated on `complete` still resolves.
+		complete: forbidden || (query.isSuccess && !query.hasNextPage),
+		forbidden,
 		retry,
 		refresh,
 		isFetching: query.isFetching,

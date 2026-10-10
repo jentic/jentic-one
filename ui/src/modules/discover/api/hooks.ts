@@ -107,7 +107,13 @@ export interface UseDiscoverCatalogResult {
 	entities: DiscoveryEntity[];
 	/** Whole-manifest size (stable while scrolling — no status-row flicker). */
 	catalogTotal: number;
-	/** How many of the whole manifest are imported locally. */
+	/**
+	 * How many PUBLIC CATALOG entries are matched to a local spec url. NOT the
+	 * size of the workspace: a locally-imported or pasted spec has no
+	 * `source_url` to match, so it is absent from this figure. The header's "N
+	 * in your workspace" reads the workspace digest (`GET /apis`) instead — see
+	 * `DiscoverStatusRow`.
+	 */
 	registeredCount: number;
 	/** How many imported entries have an upstream update available. */
 	outdatedCount: number;

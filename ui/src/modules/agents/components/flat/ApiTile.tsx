@@ -192,6 +192,9 @@ export function ApiTile({
 				aria-controls={expanded ? sidebarId : undefined}
 				onClick={onOpen}
 			>
+				{/* A visually hidden accessible name: nothing is RENDERED here, so
+				    there is no bidi run to isolate — and a `<bdi>` would split the
+				    one string an AT reads out. */}
 				<span className="sr-only">{tile.title} — open access details</span>
 			</button>
 			<div className="grid grid-cols-[36px_minmax(0,1fr)] items-start gap-3">
@@ -203,6 +206,10 @@ export function ApiTile({
 				<div className="min-w-0">
 					<div className="flex min-w-0 items-center gap-1.5">
 						<h3
+							// `dir="auto"` isolates the API's chosen display name: a
+							// direction override inside it is resolved within this
+							// heading and cannot reverse the tile's own copy (#1543).
+							dir="auto"
 							className={cn(
 								'font-heading mt-px truncate text-[14.5px] leading-[1.3] font-semibold',
 								idle ? 'text-foreground-idle' : 'text-foreground-name',
@@ -225,7 +232,10 @@ export function ApiTile({
 					</div>
 					{/* Reserved whether or not the registry proves an identity pair,
 					    so an API without one doesn't sit shorter than its neighbours. */}
-					<p className="text-foreground-sub mt-0.5 h-[1.125rem] truncate text-[12.5px] leading-[1.4]">
+					<p
+						dir="auto"
+						className="text-foreground-sub mt-0.5 h-[1.125rem] truncate text-[12.5px] leading-[1.4]"
+					>
 						{identity}
 					</p>
 					<p
@@ -276,6 +286,7 @@ export function ApiTile({
 												Credential<span className="sr-only">: </span>
 											</span>
 											<span
+												dir="auto"
 												className="text-foreground-lighter min-w-0 truncate font-semibold"
 												data-testid="tile-credential-label"
 											>

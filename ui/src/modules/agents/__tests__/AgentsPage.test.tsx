@@ -688,8 +688,13 @@ describe('AgentsPage — flat agents surface', () => {
 				seedOrphan('agnt_disabled_1');
 				renderPage('/?agent=agnt_disabled_1', { withAuth: true });
 
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
-					await screen.findByText('legacy-scraper can reach nothing yet'),
+					await screen.findByRole('heading', {
+						name: 'legacy-scraper can reach nothing yet',
+					}),
 				).toBeInTheDocument();
 				await waitFor(() =>
 					expect(stripFigure('credentials')).toHaveTextContent('0 credentials'),
@@ -730,8 +735,13 @@ describe('AgentsPage — flat agents surface', () => {
 
 				// The empty state only shows once the credentials list has drained.
 				// Nothing is served, so there are no tiles, but both bindings are counted.
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
-					await screen.findByText('legacy-scraper can reach nothing yet'),
+					await screen.findByRole('heading', {
+						name: 'legacy-scraper can reach nothing yet',
+					}),
 				).toBeInTheDocument();
 				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 				expect(purges).toEqual([]);
@@ -739,7 +749,12 @@ describe('AgentsPage — flat agents surface', () => {
 		});
 
 		describe('seen by a non-admin (whose credentials list is only their own)', () => {
-			beforeEach(() => seedViewer(['agents:read', 'agents:write', 'credentials:read']));
+			beforeEach(() =>
+				// `apis:read` included because `GET /apis` requires it and the page no
+				// longer sends that read without it (#1543); this spec is about an
+				// orphaned binding, not about an API-blind viewer.
+				seedViewer(['agents:read', 'agents:write', 'apis:read', 'credentials:read']),
+			);
 
 			it('is neither hidden nor purged — missing from their list is not proof', async () => {
 				const purges = recordPurges();
@@ -770,8 +785,13 @@ describe('AgentsPage — flat agents surface', () => {
 
 				// The empty state only shows once the credentials list has drained.
 				// Nothing is served, so there are no tiles, but both bindings are counted.
+				// By ROLE + NAME, not a flat text node: the agent's name is bidi-isolated
+				// inside the heading (#1543), so it is its own element. The accessible
+				// name is still the whole sentence.
 				expect(
-					await screen.findByText('legacy-scraper can reach nothing yet'),
+					await screen.findByRole('heading', {
+						name: 'legacy-scraper can reach nothing yet',
+					}),
 				).toBeInTheDocument();
 				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
 				expect(purges).toEqual([]);
@@ -902,12 +922,51 @@ describe('AgentsPage — flat agents surface', () => {
 
 	// --- Empty state / non-active treatment ---------------------------------
 
+	/**
+	 * Pins #1543 item 7, with the exact name from the report.
+	 *
+	 * U+202E (RIGHT-TO-LEFT OVERRIDE) has no terminator: once opened, its effect
+	 * runs to the end of the enclosing BIDI PARAGRAPH, not to the end of the
+	 * string that contained it. The empty state puts the agent's name and the
+	 * words "can reach nothing yet" in one heading, so an agent named
+	 * `invoice\u202ebot` reversed the product copy after it — the reader saw the
+	 * sentence backwards.
+	 *
+	 * The fix must be ISOLATION, not sanitisation: the name keeps every character
+	 * it was given (an RTL name must not be mutilated, and the next control
+	 * character Unicode adds must not need a new denylist), while the element
+	 * carrying it resolves it as a self-contained directional run that cannot
+	 * reorder its siblings.
+	 */
+	it('keeps a direction override inside an agent name from reversing the copy beside it', async () => {
+		const HOSTILE = 'invoice\u202ebot';
+		clearAgentsStore();
+		seedExtraAgents([{ id: 'agnt_hostile_1', name: HOSTILE, status: 'active' }]);
+		// A lone active agent with no APIs would resume the first-run landing;
+		// this spec is about the fleet's empty state, so dismiss that suggestion.
+		dismissFirstRun('agnt_hostile_1');
+		renderPage('/?agent=agnt_hostile_1');
+
+		// The whole sentence is still the heading's accessible name…
+		const heading = await screen.findByRole('heading', {
+			name: `${HOSTILE} can reach nothing yet`,
+		});
+		// …the name survives intact, character for character — nothing stripped…
+		const name = within(heading).getByText(HOSTILE);
+		expect(name.textContent).toBe(HOSTILE);
+		// …and it is its own bidi run, so the override dies at the element edge
+		// instead of running on through " can reach nothing yet".
+		expect(getComputedStyle(name).unicodeBidi).toBe('isolate');
+	});
+
 	it('shows the can-reach-nothing empty state and opens the Add-APIs tray', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_disabled_1');
 		await screen.findAllByText('inbox-triage-bot');
 
-		expect(await screen.findByText('legacy-scraper can reach nothing yet')).toBeInTheDocument();
+		expect(
+			await screen.findByRole('heading', { name: 'legacy-scraper can reach nothing yet' }),
+		).toBeInTheDocument();
 		// Disabled stops traffic, not editing — Add APIs stays live.
 		const add = screen.getByRole('button', { name: 'Add APIs' });
 		expect(add).toBeEnabled();

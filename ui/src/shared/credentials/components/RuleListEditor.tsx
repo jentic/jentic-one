@@ -29,7 +29,11 @@ import {
 	examplePathPrefix,
 	nextPathCompletion,
 } from '@/shared/credentials/lib/path-completion';
-import { ruleValidityIssue } from '@/shared/credentials/lib/rule-matcher';
+import {
+	hasTemplatePlaceholder,
+	ruleValidityIssue,
+	type RuleValidityIssue,
+} from '@/shared/credentials/lib/rule-matcher';
 import { ruleAppliesToTemplate } from '@/shared/credentials/lib/template-matcher';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
 
@@ -41,6 +45,22 @@ const EMPTY_PATHS: readonly string[] = [];
 // small — a longer list dominates the dialog and forces the user to
 // scan rather than skim.
 const MAX_PATH_SUGGESTIONS = 5;
+
+/**
+ * Why a rule can never match, in the operator's words — one message per
+ * {@link RuleValidityIssue}, shared by the row's "never matches" tooltip and
+ * the form's inline warning so both surfaces explain a rule identically.
+ */
+const RULE_ISSUE_WARNING: Record<RuleValidityIssue, string> = {
+	'invalid-regex':
+		"This regex pattern isn't valid — the rule will never match. Edit the path or delete the rule.",
+	'empty-regex':
+		'Empty regex — the rule will never match. Add a pattern (e.g. `.*` for match-any) or delete the rule.',
+	'unsafe-regex':
+		'This pattern can backtrack catastrophically and is rejected on save — simplify the nested repetition.',
+	'placeholder-in-regex':
+		'In regex mode, {…} matches those characters literally — so this rule matches no real request. Switch to prefix or exact to treat each {…} as a single path segment.',
+};
 
 /**
  * Top-level list editor. Renders:
@@ -266,6 +286,19 @@ export function DefaultRulePreviewRow({ rule }: { rule: PermissionRule }) {
 // ---------------------------------------------------------------------------
 
 /**
+ * The ``(mode)`` qualifier shown after a rule's path. ``regex`` is the
+ * backend default and normally stays implicit, but a path that names
+ * op-template placeholders reads completely differently under ``regex``
+ * (they match literally) — so the mode is spelled out whenever it is the
+ * reason the rule can't match.
+ */
+function modeSuffix(rule: PermissionRule, issue: RuleValidityIssue | null): string {
+	if (issue === 'placeholder-in-regex') return ' (regex)';
+	if (rule.match_mode && rule.match_mode !== 'regex') return ` (${rule.match_mode})`;
+	return '';
+}
+
+/**
  * One row in the rules editor. Read-only view of the rule + edit +
  * delete + up/down controls. When the rule's regex is malformed (or
  * empty), a warning badge is shown inline — otherwise the rule fails
@@ -300,12 +333,7 @@ function RulePreviewRow({
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
 	const validityIssue = ruleValidityIssue(rule);
-	const warningLabel =
-		validityIssue === 'invalid-regex'
-			? "This regex pattern isn't valid — the rule will never match. Edit the path or delete the rule."
-			: validityIssue === 'empty-regex'
-				? 'Empty regex — the rule will never match. Add a pattern (e.g. `.*` for match-any) or delete the rule.'
-				: null;
+	const warningLabel = validityIssue ? RULE_ISSUE_WARNING[validityIssue] : null;
 	// Only report once ops have finished loading — otherwise we'd flash
 	// "no operations affected" while the import is still pending.
 	// Suppressed when a stronger validity warning is already active.
@@ -342,9 +370,7 @@ function RulePreviewRow({
 					</span>
 					<span className="text-foreground-sub min-w-0 truncate font-mono text-[11px]">
 						{rule.path ?? '/'}
-						{rule.match_mode && rule.match_mode !== 'regex'
-							? ` (${rule.match_mode})`
-							: ''}
+						{modeSuffix(rule, validityIssue)}
 					</span>
 				</div>
 				{warningLabel && (
@@ -579,6 +605,12 @@ function RuleFormBody({
 	const pathPlaceholder =
 		draft.matchMode === 'prefix' ? examplePathPrefix(paths) : examplePath(paths);
 
+	// A path authored against the op templates the field suggests, left in
+	// ``regex`` mode, matches the braces literally and so grants nothing. The
+	// draft says so while it is still being edited, with the mode switch as the
+	// remedy — the same verdict ``ruleValidityIssue`` gives the saved row.
+	const placeholderInRegex = ruleValidityIssue(ruleFromDraft(draft)) === 'placeholder-in-regex';
+
 	// Focus the first field when the form opens: the verb that opened it
 	// unmounts, and focus must not drop to <body>.
 	const effectGroupRef = useRef<HTMLDivElement>(null);
@@ -605,7 +637,13 @@ function RuleFormBody({
 	}, [filteredSuggestions]);
 
 	const commitSuggestion = (path: string): void => {
-		onChange({ ...draft, path });
+		// Picking a suggestion means "this operation". The suggestions are op
+		// TEMPLATES, so committing one under ``regex`` would author a rule whose
+		// ``{…}`` segments match literally and grant nothing — take the mode to
+		// ``exact`` (the narrowest reading of the pick) along with the path.
+		const matchMode =
+			draft.matchMode === 'regex' && hasTemplatePlaceholder(path) ? 'exact' : draft.matchMode;
+		onChange({ ...draft, path, matchMode });
 		setSuggestOpen(false);
 	};
 
@@ -808,6 +846,42 @@ function RuleFormBody({
 					</Select>
 				</div>
 			</div>
+
+			{/* A guaranteed-dead rule, caught while the draft is still open: the
+			    remedy is the control, not an instruction to go find it. Warning,
+			    not an error — a path of literal braces is legal, just never what
+			    the author of an op template path means. */}
+			{placeholderInRegex && (
+				<p
+					role="status"
+					data-testid="rule-placeholder-in-regex"
+					className="text-foreground-sub col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-relaxed"
+				>
+					<span className="flex items-start gap-1.5">
+						<AlertTriangle
+							className="text-caution mt-0.5 h-3.5 w-3.5 shrink-0"
+							aria-hidden="true"
+						/>
+						<span>
+							In <span className="font-mono">regex</span> mode{' '}
+							<span className="font-mono">{'{…}'}</span> matches those characters
+							literally, so this rule matches no real request.
+						</span>
+					</span>
+					{(['prefix', 'exact'] as const).map((mode) => (
+						<Button
+							key={mode}
+							type="button"
+							variant="ghost"
+							size="xs"
+							onClick={(): void => onChange({ ...draft, matchMode: mode })}
+							className="text-foreground h-auto px-1.5 py-0.5 font-mono text-[11px] underline"
+						>
+							Use {mode}
+						</Button>
+					))}
+				</p>
+			)}
 
 			{/* Operations/comment carried from an agent-requested rule are not
 			    editable here, but they stay visible during the edit so the

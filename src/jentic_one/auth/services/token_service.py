@@ -626,10 +626,14 @@ class TokenService:
                     return None
 
             parent_actor_id: str | None = None
+            actor_name = ""
             if at.actor_type == ActorType.AGENT:
                 # One lookup serves both parent resolution and the status check.
                 agent = await AgentRepository.get_by_id(session, at.actor_id)
                 parent_actor_id = agent.owner_id if agent is not None else None
+                # The row is already in hand — carry its display name so audit
+                # summaries can name the agent instead of its ksuid (#1543).
+                actor_name = agent.name or "" if agent is not None else ""
                 actor_active = agent is not None and agent.status == ActorStatus.ACTIVE
             else:
                 actor_active = await _actor_is_active(session, at.actor_id, at.actor_type)
@@ -651,6 +655,7 @@ class TokenService:
         active = at.revoked_at is None and at.expires_at > now and actor_active
         return Identity(
             sub=at.actor_id,
+            actor_name=actor_name,
             actor_type=ActorType(at.actor_type),
             # Cross the OAuth2→internal boundary at the named seam: the resolved
             # token scopes become the identity's permissions. Identity today,

@@ -17,7 +17,12 @@ import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { makeMockCredential, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import { patchMockApi } from '@/modules/workspace/mocks/handlers';
-import { resetAgentsStore, seedCredentialBindings } from '@/modules/agents/mocks/handlers';
+import {
+	resetAgentsStore,
+	seedCredentialBindings,
+	seedPermissionRuleSets,
+} from '@/modules/agents/mocks/handlers';
+import { agentsKeysForTest } from '@/modules/agents/api/hooks';
 
 const PATH = '/library/workspace/:vendor/:name/:version';
 
@@ -626,6 +631,106 @@ describe('ApiDetailPage', () => {
 				expect(screen.queryByTestId('hub-access-add-credential')).not.toBeInTheDocument();
 				expect(screen.queryByTestId('hub-access-bind-agent')).not.toBeInTheDocument();
 				expect(screen.getByTestId('hub-access-give-agent-access')).toBeVisible();
+			});
+		});
+
+		/**
+		 * Pins #1543 item 1.
+		 *
+		 * A binding's rules come from EITHER its attached shared rule set or its
+		 * own inline list, and the broker evaluates the SET whenever one is
+		 * attached — the inline rules then decide nothing. `GET
+		 * /credentials/{cid}/agents` reports the attachment as `rule_set_id`, and
+		 * the hub must carry it through and read whatever the broker reads: a chip
+		 * computed from the dormant inline list says "Blocked" over a set that
+		 * allows every call.
+		 */
+		describe('a binding governed by a shared rule set', () => {
+			const RULE_SET = 'prs_allow_all';
+
+			beforeEach(() => {
+				resetAgentsStore();
+				// Inline: nothing allowed (default-deny). Set: everything allowed.
+				// Only one of the two can be right, which is the point of the spec.
+				seedPermissionRuleSets([
+					{
+						rule_set_id: RULE_SET,
+						name: 'Allow everything',
+						rules: [{ effect: 'allow', match_mode: 'regex', methods: [], path: '.*' }],
+					},
+				]);
+				seedCredentialBindings([
+					{
+						agent_id: 'agnt_active_1',
+						credential_id: 'cred_stripe_live',
+						name: 'Stripe live',
+						rule_set_id: RULE_SET,
+						permissions: [],
+						serves: [{ api_vendor: 'stripe', api_name: null, api_version: null }],
+					},
+				]);
+			});
+
+			// The extra binding and rule set are this block's only; the next
+			// describe's agent chips must not inherit them.
+			afterEach(() => resetAgentsStore());
+
+			it('reads the SET, not the dormant inline rules — so it is not called Blocked', async () => {
+				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+				const access = await screen.findByTestId('hub-access');
+				const agent = await within(access).findByRole('link', { name: /support-agent/ });
+
+				// Settle first: "checking…" is the honest state until the rules land,
+				// and asserting before that would pass for the wrong reason.
+				await waitFor(() =>
+					expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull(),
+				);
+				expect(within(agent).queryByTestId('hub-access-agent-blocked')).toBeNull();
+			});
+
+			it("caches the set beside, not inside, the agents module's rule-set slice", async () => {
+				// The agents module stores its MAPPED rule-set entity at
+				// `agentsKeys.ruleSet(id)`; this read fetches the wire response. If the
+				// two shared one key, opening the Agents page after this hub would read
+				// a wire object as the entity.
+				const { queryClient } = renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+				const access = await screen.findByTestId('hub-access');
+				const agent = await within(access).findByRole('link', { name: /support-agent/ });
+				await waitFor(() =>
+					expect(within(agent).queryByTestId('hub-access-agent-checking')).toBeNull(),
+				);
+				expect(
+					queryClient.getQueryData(agentsKeysForTest.ruleSet(RULE_SET)),
+				).toBeUndefined();
+			});
+
+			it('still reads Blocked when the governing set itself allows nothing', async () => {
+				// The other half of the rule: deferring to the set must not mean
+				// always reading "open". Here the set denies and the INLINE list is
+				// the permissive one — the chip must follow the set.
+				resetAgentsStore();
+				seedPermissionRuleSets([
+					{ rule_set_id: RULE_SET, name: 'Allow nothing', rules: [] },
+				]);
+				seedCredentialBindings([
+					{
+						agent_id: 'agnt_active_1',
+						credential_id: 'cred_stripe_live',
+						name: 'Stripe live',
+						rule_set_id: RULE_SET,
+						permissions: [
+							{ effect: 'allow', match_mode: 'regex', methods: [], path: '.*' },
+						],
+						serves: [{ api_vendor: 'stripe', api_name: null, api_version: null }],
+					},
+				]);
+				renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+				const access = await screen.findByTestId('hub-access');
+				const agent = await within(access).findByRole('link', { name: /support-agent/ });
+
+				expect(
+					await within(agent).findByTestId('hub-access-agent-blocked'),
+				).toBeInTheDocument();
 			});
 		});
 

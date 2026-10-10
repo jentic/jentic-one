@@ -170,10 +170,7 @@ class OAuthRevocationService:
                 actor_id=rt.actor_id,
                 origin=None,
                 audit_reason="oauth grant revoked: client revoked its refresh token (RFC 7009)",
-                summary=(
-                    f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
-                    f"revoked because the client revoked its refresh token"
-                ),
+                revocation_cause="the client revoked its refresh token",
                 event_reason=RFC7009_CLIENT_REVOCATION_REASON,
             )
         else:
