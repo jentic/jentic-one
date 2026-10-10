@@ -32,11 +32,13 @@ _DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-en
 # match, failing the request before it reaches the upstream.
 _INBOUND_FRAMING_HEADERS: frozenset[str] = frozenset({"content-length"})
 
-# Request headers a queued or held execution keeps for its later run. An async
-# job's payload sits in the admin DB (a held one for its whole approval
-# window), so it stores only headers that describe the body and the response
-# the caller wants — never the caller's own credentials or arbitrary headers.
-# The run re-injects upstream credentials itself.
+# Request headers an async (``Prefer: respond-async``) or held execution keeps
+# for its worker run. The job payload sits in the admin DB (a held one for its
+# whole approval window), so this is an explicit
+# allow-list of headers that describe the body, the response the caller wants,
+# and the API version a vendor requires — never the caller's credentials,
+# cookies, hop-by-hop or broker headers. The run re-injects upstream
+# credentials itself.
 REPLAY_HEADERS: frozenset[str] = frozenset(
     {
         "accept",
@@ -48,39 +50,16 @@ REPLAY_HEADERS: frozenset[str] = frozenset(
         "if-modified-since",
         "if-none-match",
         "if-unmodified-since",
+        # Vendor API version headers, several of them required on every call.
+        "anthropic-version",
+        "api-version",
+        "intercom-version",
+        "notion-version",
+        "stripe-version",
+        "x-api-version",
+        "x-github-api-version",
     }
 )
-
-# API version request headers. Many vendors refuse a call without one
-# (``Notion-Version``, ``Stripe-Version``, ``X-GitHub-Api-Version``,
-# ``Anthropic-Version``), and the version chooses the body and response
-# schema, so a queued or held run must send it as the caller did. A header
-# replays when its name is one or more hyphen-separated alphanumeric labels
-# ending in ``-version`` (``api-version``, ``x-api-version`` and every
-# ``<vendor>-version`` included); a bare ``version`` and anything in the
-# ``jentic-``/``x-jentic-`` namespace do not. These names carry no
-# credentials, and :func:`is_replay_header` excludes the hop-by-hop,
-# broker-consumed and spoofable sets regardless.
-_REPLAY_VERSION_HEADER_RE = re.compile(r"^(?:[a-z0-9]+-)+version$")
-_JENTIC_HEADER_PREFIXES: tuple[str, ...] = ("jentic-", "x-jentic-")
-
-
-def is_replay_header(name: str) -> bool:
-    """Whether a queued or held execution keeps the inbound header ``name``.
-
-    True for :data:`REPLAY_HEADERS` and API version headers (see
-    ``_REPLAY_VERSION_HEADER_RE``); never for hop-by-hop, broker-consumed,
-    spoofable or ``Jentic-*`` headers.
-    """
-    key = name.lower()
-    if (
-        key in HOP_BY_HOP_HEADERS
-        or key in BROKER_CONSUMED_HEADERS
-        or key in SPOOFABLE_HEADERS
-        or key.startswith(_JENTIC_HEADER_PREFIXES)
-    ):
-        return False
-    return key in REPLAY_HEADERS or _REPLAY_VERSION_HEADER_RE.fullmatch(key) is not None
 
 
 def reconstruct_upstream_url(scope: Mapping[str, Any]) -> str:
@@ -128,6 +107,35 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
     }
     out.update(injected)
     return out
+
+
+# API version request headers beyond the named ones above. Many vendors refuse
+# a call without one, and the version chooses the body and response schema, so
+# a queued or held run must send it as the caller did. A header replays when its name
+# is one or more hyphen-separated alphanumeric labels ending in ``-version``
+# (every ``<vendor>-version``); a bare ``version`` and anything in the
+# ``jentic-``/``x-jentic-`` namespace do not. :func:`is_replay_header` excludes
+# the hop-by-hop, broker-consumed and spoofable sets regardless.
+_REPLAY_VERSION_HEADER_RE = re.compile(r"^(?:[a-z0-9]+-)+version$")
+_JENTIC_HEADER_PREFIXES: tuple[str, ...] = ("jentic-", "x-jentic-")
+
+
+def is_replay_header(name: str) -> bool:
+    """Whether a queued or held execution keeps the inbound header ``name``.
+
+    True for :data:`REPLAY_HEADERS` and API version headers (see
+    ``_REPLAY_VERSION_HEADER_RE``); never for hop-by-hop, broker-consumed,
+    spoofable or ``Jentic-*`` headers.
+    """
+    key = name.lower()
+    if (
+        key in HOP_BY_HOP_HEADERS
+        or key in BROKER_CONSUMED_HEADERS
+        or key in SPOOFABLE_HEADERS
+        or key.startswith(_JENTIC_HEADER_PREFIXES)
+    ):
+        return False
+    return key in REPLAY_HEADERS or _REPLAY_VERSION_HEADER_RE.fullmatch(key) is not None
 
 
 def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:

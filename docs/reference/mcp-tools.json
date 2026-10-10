@@ -225,9 +225,33 @@
     {
       "name": "request_connection",
       "title": "Start connecting a vendor credential",
-      "description": "Start a connect session for a verified vendor when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Example: {\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}. Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection in their browser and confirm the scopes; you cannot open the URL or approve it yourself. Once they confirm, call whoami to see the new credential binding, then retry the blocked call. This tool only STARTS the flow and never polls it. Optionally pass requested_scopes (vendor scope names; write scopes are flagged for the approver), requested_permission_rules (the binding rules you need; the approver reviews them) and a reason the approver will see. If several shared OAuth apps serve the vendor, the error lists them: ask your human user which one to use (choosing it is their call, not yours) and retry with its oauth_app_registration_id. Only vendors in the deployment's connect registry work; for any other API, ask your operator to connect a credential in the dashboard. Binding an EXISTING credential and scope grants stay operator actions.",
+      "description": "Start a connect session when whoami shows no credential binding serving the API you need — the self-service leg of credential provisioning. Name a verified vendor ({\"vendor\": \"github\", \"reason\": \"read open PRs to summarise them\"}) or, for any other registry API, the API itself ({\"api\": {\"vendor\": …, \"name\": …, \"version\": …}}, from inspect_operation or a denial's parameters.connect.api). Returns {session_id, approval_url, resolved_flow}: relay the approval_url to your human operator — they approve the connection (or enter the API key) in their browser; you cannot open the URL or approve it yourself. This tool only STARTS the flow and never polls it. When a human must enter the credential (resolved_flow manual_* or awaiting_app) it can take hours: end your turn and retry execute later. Otherwise, once they confirm, call whoami to see the new credential binding, then retry the blocked call. Optionally pass auth_type (with api, when the spec declares several schemes), requested_scopes (vendor scope names; write scopes are flagged for the approver), requested_permission_rules (the binding rules you need; the approver reviews them) and a reason the approver will see. If several shared OAuth apps serve the vendor, the error lists them: ask your human user which one to use (choosing it is their call, not yours) and retry with its oauth_app_registration_id. If the deployment does not take API connect requests, the error says so: report the gap to your operator once. After a rejection, do not ask again — tell your user. Binding an EXISTING credential and scope grants stay operator actions.",
       "input_schema": {
         "properties": {
+          "api": {
+            "description": "Registry API to connect a credential for, as the api.vendor/name/version inspect_operation reports (a \"vendor/name/version\" string also works) — for any API, not just registry vendors. A denial's agent_directive.parameters.connect.api fits as-is. Its spec decides the credential; a human enters it.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "vendor": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "vendor",
+              "name",
+              "version"
+            ],
+            "type": "object"
+          },
+          "auth_type": {
+            "description": "With api only: the declared scheme name or kind to use (api_key, bearer, basic, oauth2). Needed only when the spec declares several — the error then lists them.",
+            "type": "string"
+          },
           "oauth_app_registration_id": {
             "description": "registration_id of the shared OAuth app to connect through (optional; \"registration_id\" is an accepted alias). Only needed when several shared apps serve the vendor: the error then lists them, and your human user picks one — never choose it yourself.",
             "type": "string"
@@ -286,13 +310,10 @@
             "type": "array"
           },
           "vendor": {
-            "description": "Vendor registry key, e.g. \"github\" (required). Only vendors in this deployment's connect registry work.",
+            "description": "Vendor registry key, e.g. \"github\". Only vendors in this deployment's connect registry work. Pass exactly one of vendor or api.",
             "type": "string"
           }
         },
-        "required": [
-          "vendor"
-        ],
         "type": "object"
       },
       "annotations": {}

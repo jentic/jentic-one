@@ -773,7 +773,11 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
         payload=_payload(
             method="POST",
             body_b64="eyJhIjoxfQ==",
-            headers={"content-type": "application/json", "authorization": "Bearer agent"},
+            headers={
+                "content-type": "application/json",
+                "stripe-version": "2024-06-20",
+                "authorization": "Bearer agent",
+            },
         ),
         created_by="usr_test",
         actor_type="user",
@@ -782,6 +786,7 @@ async def test_handler_replays_payload_headers_under_injected_credentials() -> N
     req = executor.last_request
     assert req is not None
     assert req.headers["content-type"] == "application/json"
+    assert req.headers["stripe-version"] == "2024-06-20"
     assert req.body == b'{"a":1}'
     assert req.headers["Authorization"] == "Bearer tok"
     assert "authorization" not in req.headers

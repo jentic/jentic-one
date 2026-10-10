@@ -1622,11 +1622,21 @@
         {
           "name": "connect",
           "path": "jentic connect",
-          "use": "connect \u003cvendor\u003e",
-          "short": "Start connecting a credential for a registry vendor (a human approves it)",
-          "long": "connect starts a connect session for a verified vendor from the deployment's\nvendor registry (e.g. `jentic connect github`) and prints the approval_url.\nRelay that URL to your human operator: they approve the connection and its\nscopes in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout.\nWhen several shared OAuth apps serve the vendor, the error lists them\n(details.candidates): ask your user which one to use and re-run with\n--registration \u003cregistration_id\u003e. Choosing the app is your user's call.",
+          "use": "connect [\u003cvendor\u003e] [--api \u003cvendor/name/version\u003e]",
+          "short": "Start connecting a credential for a vendor or a registry API (a human approves it)",
+          "long": "connect starts a connect session and prints the approval_url. Name a verified\nvendor from the deployment's vendor registry (e.g. `jentic connect github`), or\nany registry API with --api \u003cvendor/name/version\u003e (where the deployment takes\nAPI connect requests): its spec decides the credential — pass --auth-type when\nit declares several schemes — and --rules proposes the permission rules you need.\nRelay the URL to your human operator: they approve the connection (or enter the\nAPI key) in the browser — this command never completes an approval by itself.\nOnce they confirm, check your new binding with `jentic whoami` and retry the\ncall that was blocked. --wait polls the session until it connects or ends\n(rejected, expired, or cancelled), printing the approval_url and heartbeats\non stderr and a single JSON result on stdout. A session a human finishes by\nentering a credential can take hours: --wait returns at once for it unless\n--timeout is set — relay the URL, end your turn, and retry later.\nWhen several shared OAuth apps serve the vendor, the error lists them\n(details.candidates): ask your user which one to use and re-run with\n--registration \u003cregistration_id\u003e. Choosing the app is your user's call.",
           "group_title": "APIs",
           "flags": [
+            {
+              "name": "api",
+              "type": "string",
+              "usage": "registry API to connect a credential for, as vendor/name/version (instead of a vendor key)"
+            },
+            {
+              "name": "auth-type",
+              "type": "string",
+              "usage": "with --api: the declared scheme name or kind to use (api_key, bearer, basic, oauth2) when the spec declares several"
+            },
             {
               "name": "context",
               "type": "string",
@@ -1646,6 +1656,11 @@
               "name": "registration",
               "type": "string",
               "usage": "registration_id of the shared OAuth app to connect through, when several serve the vendor (your user picks it)"
+            },
+            {
+              "name": "rules",
+              "type": "string",
+              "usage": "permission rules you ask for on the binding, as a JSON list (the approver reviews them; a denial's suggested_rules fit as-is)"
             },
             {
               "name": "scopes",

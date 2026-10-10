@@ -26,6 +26,8 @@ from jentic_one.broker.core.exceptions import (
     ErrorOrigin,
     InvalidCredentialNameError,
     ambiguous_credential_binding_directive,
+    api_connect_hint,
+    api_connect_parameters,
     connect_parameters,
     suggested_permission_rules,
 )
@@ -458,8 +460,11 @@ class CredentialService:
         the provisioning leg is agent-initiable — the directive carries a
         runnable ``parameters.suggested_command`` (``jentic connect <key>``,
         the connect key, never the API identity), the structured
-        ``parameters.connect`` and the prose teaches the relay loop. Otherwise
-        the ask stays with the operator (same pattern as the 403
+        ``parameters.connect`` and the prose teaches the relay loop. With no
+        such target but ``control.connect.manual_flows_enabled`` on, the API
+        itself is the target (``jentic connect --api …`` and
+        ``parameters.connect.api``). Otherwise the ask stays with the
+        operator (same pattern as the 403
         ``no_credential_binding`` directive); approval stays human either way.
         ``parameters.vendor`` is the API's vendor axis, not a connect key.
         """
@@ -473,6 +478,17 @@ class CredentialService:
             **connect_parameters(None if provisioning_url else connect, suggested_rules),
         }
         connect_command = connect.cli_command() if connect is not None else None
+        # Off every connect target, the API itself is the connect target when
+        # the deployment takes API connect requests (the control gate).
+        connect_api = (
+            connect is None
+            and self._ctx.config.control.connect.manual_flows_enabled
+            and bool(api.vendor and api.name and api.version)
+        )
+        if connect_api and not provisioning_url:
+            params.update(
+                api_connect_parameters(vendor=api.vendor, name=api.name, version=api.version)
+            )
 
         if provisioning_url:
             params["provisioning_url"] = provisioning_url
@@ -489,6 +505,14 @@ class CredentialService:
                 "request_connection tool) and relay the approval_url to your human "
                 "operator — they approve it in the browser; you cannot. Once they "
                 "confirm, verify the new binding with whoami and retry."
+            )
+        elif connect_api:
+            hint = api_connect_hint(vendor=api.vendor, name=api.name, version=api.version)
+            instruction = (
+                f"No credential is connected for '{api.vendor}'. Start the request "
+                f"yourself: {hint}, and relay the approval_url to your human operator — "
+                "a human enters the credential in the browser, which can take a while, so "
+                "end your turn and retry later."
             )
         else:
             instruction = (

@@ -355,6 +355,7 @@ def _call_env(
         request_state=params.request_state if params is not None else None,
         protocol_version=sctx.protocol_version,
         catalog_auto_importer=state.get("mcp_catalog_auto_importer"),
+        security_schemes_lookup=state.get("mcp_security_schemes_lookup"),
     )
 
 
@@ -655,10 +656,14 @@ class McpMount:
         state["mcp_credential"] = credential
         state["mcp_base_url"] = deployment_base_url(self.ctx.config, request)
         state["mcp_session_id"] = valid_session_id_or_none(request.headers.get(SESSION_ID_HEADER))
-        # The connect route's seam (control/web/deps.py): request_connection
-        # threads the same process-level importer into ConnectSessionService.
+        # The connect route's seams (control/web/deps.py): request_connection
+        # threads the same process-level importer and registry lookup (for
+        # registry-API targets) into ConnectSessionService.
         state["mcp_catalog_auto_importer"] = getattr(
             self.parent_app.state, "catalog_auto_importer", None
+        )
+        state["mcp_security_schemes_lookup"] = getattr(
+            self.parent_app.state, "security_schemes_lookup", None
         )
 
     async def _buffered_body(self, receive: Receive) -> bytes | None:

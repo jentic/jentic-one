@@ -79,15 +79,21 @@ def test_payload_carries_no_toolkit_and_keeps_server_variables() -> None:
 
 
 def test_payload_keeps_only_the_replay_headers() -> None:
-    """Content-Type and friends ride along for the run; the caller's credentials,
-    broker steering headers and arbitrary headers never reach the stored payload."""
+    """Content-Type, version headers and friends ride along for the run; the
+    caller's credentials, broker steering headers and arbitrary headers never
+    reach the stored payload."""
     inbound = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "If-Match": '"v1"',
+        "Notion-Version": "2022-06-28",
+        "X-GitHub-Api-Version": "2022-11-28",
         "Authorization": "Bearer agent-token",
+        "Proxy-Authorization": "Basic abc",
         "Prefer": "respond-async",
         "Cookie": "sid=1",
+        "Connection": "keep-alive",
+        "Jentic-Credential-Id": "cred_1",
         "X-Custom": "1",
         "Content-Length": "9",
     }
@@ -103,6 +109,8 @@ def test_payload_keeps_only_the_replay_headers() -> None:
         "content-type": "application/json",
         "accept": "application/json",
         "if-match": '"v1"',
+        "notion-version": "2022-06-28",
+        "x-github-api-version": "2022-11-28",
     }
 
 
@@ -125,6 +133,14 @@ def test_replay_keeps_api_version_headers_vendors_require() -> None:
     }
 
     assert replay_headers(inbound) == {key.lower(): value for key, value in inbound.items()}
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Notion-Version", "Stripe-Version", "X-GitHub-Api-Version", "Box-Version", "x-acme-version"],
+)
+def test_any_vendor_version_header_replays(name: str) -> None:
+    assert is_replay_header(name)
 
 
 @pytest.mark.parametrize(
