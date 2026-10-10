@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { use } from 'react';
 import { page } from 'vitest/browser';
-import { useLocation } from 'react-router';
+import { Link, Route, Routes, useLocation } from 'react-router';
 import {
 	renderWithProviders,
 	screen,
@@ -293,6 +294,62 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() =>
 			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2'),
 		);
+	});
+
+	it('a fallback write-back landing mid-navigation does not undo the navigation', async () => {
+		// React Router commits a navigation as a transition, so the Agents page
+		// stays mounted on its old location until the destination has rendered.
+		// A roster that resolves in that window must not write `?agent=` — it
+		// would resolve against `/agents` and replace the operator's navigation.
+		let releaseRoster!: () => void;
+		const rosterHeld = new Promise<void>((resolve) => (releaseRoster = resolve));
+		worker.use(
+			http.get('/agents', async () => {
+				await rosterHeld;
+				// Nothing returned: the default roster handler answers.
+			}),
+		);
+		let releaseLibrary!: () => void;
+		const libraryHeld = new Promise<void>((resolve) => (releaseLibrary = resolve));
+		function HeldLibrary() {
+			use(libraryHeld);
+			return <h1>Library</h1>;
+		}
+		function PathProbe() {
+			const { pathname, search } = useLocation();
+			return <div data-testid="location-path">{pathname + search}</div>;
+		}
+		const user = userEvent.setup();
+		renderWithProviders(
+			<>
+				<Routes>
+					<Route
+						path="/agents"
+						element={
+							<>
+								<Link to="/library">Go to Library</Link>
+								<AgentsPage />
+							</>
+						}
+					/>
+					<Route path="/library" element={<HeldLibrary />} />
+				</Routes>
+				<PathProbe />
+			</>,
+			{ route: '/agents' },
+		);
+
+		// Leave while the roster is still loading; the destination suspends, so
+		// the transition stays pending and the Agents page stays on screen.
+		await user.click(screen.getByRole('link', { name: 'Go to Library' }));
+		releaseRoster();
+		// The roster lands in the page being left (its strip renders there).
+		await screen.findAllByText('inbox-triage-bot');
+		expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/agents$/);
+
+		releaseLibrary();
+		await screen.findByRole('heading', { name: 'Library' });
+		expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/library$/);
 	});
 
 	it('selecting a pill switches the surface in place and writes ?agent=', async () => {
