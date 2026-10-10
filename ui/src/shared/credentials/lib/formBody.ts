@@ -18,6 +18,7 @@ import {
 	type RawSchemes,
 } from '@/shared/credentials/lib/schemes';
 import { slugifyApiField } from '@/shared/lib/apiSlug';
+import { catalogApiNameSeed } from '@/shared/credentials/lib/apiIdentity';
 import type { CredentialFormState } from '@/shared/credentials/components/CredentialTypeFields';
 
 function apiRef(state: CredentialFormState): APIReferenceRequest {
@@ -340,9 +341,10 @@ export function validateUpdate(
  *
  * A catalog pick's `name` is the whole `api_id` (`github.com/api.github.com`).
  * `POST /credentials` rejects a `/` in `api.name` as a spec path, so a catalog
- * pick seeds the slug its import registers (`github-com-api-github-com`); the
- * verbatim id travels as `catalog_api_id`. A bare id (`slack.com`) slugs the
- * same way server-side. A workspace (`local`) pick keeps its registered name.
+ * pick seeds the slug its import registers (`api-github-com`, see
+ * `catalogApiNameSeed`); the verbatim id travels as `catalog_api_id`, and the
+ * server swaps in the registered name when that API is already imported. A
+ * workspace (`local`) pick keeps its registered name.
  *
  * `nameDirty` guards the credential name: when the user hasn't manually edited
  * it we always refresh it to the newly-picked API's label (so switching APIs
@@ -356,7 +358,8 @@ export function seedFormFromSelectedApi(
 	return {
 		...state,
 		apiVendor: api.vendor,
-		apiName: api.source === 'catalog' ? slugifyApiField(api.name) : api.name,
+		apiName:
+			api.source === 'catalog' ? slugifyApiField(catalogApiNameSeed(api.name)) : api.name,
 		apiVersion: '',
 		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
