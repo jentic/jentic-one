@@ -34,7 +34,10 @@ const BROKER = process.env.ASK_E2E_BROKER_URL ?? '';
 const UPSTREAM = process.env.ASK_E2E_UPSTREAM_URL ?? '';
 const TTL_S = Number(process.env.APPROVAL_TTL_S ?? '60');
 
-test.skip(!BROKER || !UPSTREAM, 'needs the ask-tier stack (ASK_E2E_BROKER_URL, ASK_E2E_UPSTREAM_URL)');
+test.skip(
+	!BROKER || !UPSTREAM,
+	'needs the ask-tier stack (ASK_E2E_BROKER_URL, ASK_E2E_UPSTREAM_URL)',
+);
 test.describe.configure({ mode: 'serial' });
 
 const API = { vendor: 'ask-e2e-ui', name: 'ask-tier-e2e', version: '1.0.0' };
@@ -83,7 +86,9 @@ async function importAskApi(request: APIRequestContext): Promise<void> {
 	const jobId = (await res.json()).job_id as string;
 	const job = await waitJob(request, jobId, ['completed', 'failed'], 120_000);
 	expect(job.status, JSON.stringify(job)).toBe('completed');
-	const result = await (await request.get(`/jobs/${jobId}/result`, { headers: authHeaders() })).json();
+	const result = await (
+		await request.get(`/jobs/${jobId}/result`, { headers: authHeaders() })
+	).json();
 	const revision = result.revisions[0];
 	// The spec imports under the vendor given and its own title-derived name.
 	const at = `/apis/${revision.api.vendor}/${revision.api.name}/${revision.api.version}`;
@@ -209,7 +214,9 @@ test('a held call shows in the inbox, the badge and Waiting for you, and approvi
 	await expectSignalsShown(page, agent.name);
 
 	// The Waiting for you row deep-links to the review page.
-	await signals(page, agent.name).waitingRow.getByRole('link', { name: /^Review/ }).click();
+	await signals(page, agent.name)
+		.waitingRow.getByRole('link', { name: /^Review/ })
+		.click();
 	await expect(page).toHaveURL(new RegExp(`${held.reviewPath}$`));
 	await page.getByLabel('Reason (optional)').fill('fine by me');
 	await page.getByRole('button', { name: 'Approve and run' }).click();
@@ -293,15 +300,27 @@ test('a viewer who cannot decide the held call sees none of the signals', async 
 		const token = (await redeemed.json()).access_token as string;
 
 		const context = await browser.newContext({ storageState: undefined });
-		await context.addInitScript(
-			([key, value]) => window.localStorage.setItem(key, value),
-			[TOKEN_STORAGE_KEY, token] as const,
-		);
+		await context.addInitScript(([key, value]) => window.localStorage.setItem(key, value), [
+			TOKEN_STORAGE_KEY,
+			token,
+		] as const);
 		const viewer = await context.newPage();
+		// Give the sources their first read before asserting the absence: the
+		// agents list always, the approvals list only for a viewer who may decide
+		// (the live event stream never lets the network go idle).
+		const firstReads = [
+			viewer.waitForResponse((r) => new URL(r.url()).pathname === '/agents' && r.ok()),
+		];
+		if (permissions.includes('jobs:write')) {
+			firstReads.push(
+				viewer.waitForResponse(
+					(r) => new URL(r.url()).pathname === '/executions/approvals',
+				),
+			);
+		}
 		await viewer.goto('/app/agents');
 		await expect(viewer.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
-		// Give every source its first read before asserting the absence.
-		await viewer.waitForLoadState('networkidle');
+		await Promise.all(firstReads);
 		const s = signals(viewer, agent.name);
 		await expect(s.waiting).toHaveCount(0);
 		await expect(s.navBadge).toHaveCount(0);

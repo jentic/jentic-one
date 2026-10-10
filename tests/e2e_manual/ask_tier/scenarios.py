@@ -16,8 +16,8 @@ database is touched only to read state, to fast-forward an approval's
 claim-token minter, so a member cannot otherwise own a self-registered agent).
 
 Each scenario prints PASS / FAIL, plus GAP lines for behaviour that is out of
-the current phase's scope (2B UI inbox, 2C CLI held exit code, 2D fresh-rule
-re-authorisation). The results land in ``$E2E_DIR/results.json``.
+the current phase's scope (2D fresh-rule re-authorisation). The results land
+in ``$E2E_DIR/results.json``.
 """
 
 from __future__ import annotations
@@ -730,7 +730,7 @@ def s12_mcp_lanes(w: World, o: Outcome) -> None:
 
 
 def s13_cli_held_exit(w: World, o: Outcome) -> None:
-    """Record what `jentic execute` does with a held call (the exit-3 / --wait fix is 2C)."""
+    """`jentic execute` on a held call: exit 3, `--wait`, and `jentic jobs wait`."""
     rc, out, _ = cli_execute(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=130")
     expect(out.get("status") == 202, "held envelope printed", out)
     if rc == 0:
@@ -759,7 +759,7 @@ def s14_inbox(w: World, o: Outcome) -> None:
     w.admin.decide(aid, "deny", "inbox check")
     after = len(w.admin.approvals(state="pending"))
     expect(after == before - 1, "the pending list (badge source) drops it", [before, after])
-    o.gap("2B: approvals are not an attention-inbox source and have no pending badge in the UI yet")
+    o.note("the UI side (inbox, badge, Waiting for you) is ui/e2e/docker/ask-tier-inbox.spec.ts")
 
 
 def _migrate(w: World, code: str) -> None:
@@ -880,7 +880,7 @@ def s16_connect_session_interplay(w: World, o: Outcome) -> None:
         "connect credential injected",
         call,
     )
-    o.gap("2B: the attention inbox does not yet show the approval beside the connect request")
+    o.note("the UI side of the inbox is ui/e2e/docker/ask-tier-inbox.spec.ts")
 
 
 SCENARIOS: dict[str, Callable[[World, Outcome], None]] = {
