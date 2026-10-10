@@ -205,12 +205,32 @@ export function evaluateRules(
 	rules: readonly PermissionRule[],
 	req: { method: string; path: string; operation_id: string | null },
 ): boolean {
-	for (const raw of rules) {
-		const compiled = compileRule(raw);
+	return explainRules(rules, req).allowed;
+}
+
+/** {@link evaluateRules}' verdict plus which rule decided it — the shape of the
+ * broker's `permissions:test` answer (`matched` / `rule_index`). */
+export interface RuleVerdict {
+	allowed: boolean;
+	/** False = nothing matched, so the default deny decided. */
+	matched: boolean;
+	/** Index into `rules` of the deciding rule; null when nothing matched. */
+	ruleIndex: number | null;
+}
+
+/** Evaluate like {@link evaluateRules}, and say which rule decided. */
+export function explainRules(
+	rules: readonly PermissionRule[],
+	req: { method: string; path: string; operation_id: string | null },
+): RuleVerdict {
+	for (let i = 0; i < rules.length; i += 1) {
+		const compiled = compileRule(rules[i]!);
 		if (isConditionLess(compiled) && compiled.effect === 'allow') continue;
-		if (ruleMatches(compiled, req)) return compiled.effect === 'allow';
+		if (ruleMatches(compiled, req)) {
+			return { allowed: compiled.effect === 'allow', matched: true, ruleIndex: i };
+		}
 	}
-	return false;
+	return { allowed: false, matched: false, ruleIndex: null };
 }
 
 /**

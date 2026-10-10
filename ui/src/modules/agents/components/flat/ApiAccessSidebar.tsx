@@ -21,6 +21,8 @@ import {
 	VendorIcon,
 	toast,
 	ConfirmDialog,
+	TruncateWithTooltip,
+	Tooltip,
 	type DangerZoneAction,
 } from '@/shared/ui';
 import { vendorIconPropsFor } from '@/shared/lib';
@@ -61,6 +63,8 @@ import {
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import { deriveTileStatus } from '@/modules/agents/lib/tileStatus';
 import { TileStatusChip } from '@/modules/agents/components/flat/TileStatusMarker';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
+import { clipName } from '@/modules/agents/lib/agentName';
 
 /** The sheet's scrolling body, with a bottom fade shown only while content
  * continues below it — the panel's most consequential section is its last. The
@@ -320,7 +324,7 @@ export function ApiAccessSidebar({
 							{
 								key: 'unbind',
 								title: 'Unbind from this agent',
-								description: `The binding and its rules are deleted for ${isolateText(agent.name)} only — the credential survives for every other agent.`,
+								description: `The binding and its rules are deleted for ${isolateText(clipName(agent.name))} only — the credential survives for every other agent.`,
 								buttonLabel: 'Unbind from this agent',
 								ariaLabel: `Unbind ${shown.credentialName} from ${agent.name}`,
 								emphasis: 'outline' as const,
@@ -366,9 +370,9 @@ export function ApiAccessSidebar({
 										<h2
 											id={headingId}
 											dir="auto"
-											className="font-heading text-foreground-name truncate text-base font-semibold"
+											className="font-heading text-foreground-name min-w-0 text-base font-semibold"
 										>
-											{shown.title}
+											<TruncateWithTooltip>{shown.title}</TruncateWithTooltip>
 										</h2>
 										<TileStatusChip status={status} className="shrink-0" />
 									</div>
@@ -389,29 +393,41 @@ export function ApiAccessSidebar({
 							    survive, resume restores access), so it sits with the status line. */}
 							<div className="flex shrink-0 items-center gap-1.5">
 								{!canManageBinding ? null : shown.suspended ? (
-									<Button
-										size="sm"
-										variant="secondary"
-										loading={resume.isPending}
-										onClick={() => credentialId && resume.mutate(credentialId)}
-										aria-label={`Resume binding for ${shown.credentialName}`}
-										title="Resume this binding — rules survived; access is restored."
+									<Tooltip
+										content="Resume this binding — rules survived; access is restored."
+										interactiveChild
+										placement="bottom"
 									>
-										<PlayCircle className="h-4 w-4" /> Resume
-									</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											loading={resume.isPending}
+											onClick={() =>
+												credentialId && resume.mutate(credentialId)
+											}
+											aria-label={`Resume binding for ${shown.credentialName}`}
+										>
+											<PlayCircle className="h-4 w-4" /> Resume
+										</Button>
+									</Tooltip>
 								) : (
-									<Button
-										size="sm"
-										variant="secondary"
-										loading={suspendPending}
-										onClick={() =>
-											credentialId && unbind.mutate({ credentialId })
-										}
-										aria-label={`Suspend binding for ${shown.credentialName}`}
-										title="Pause this binding — reversible; rules survive and resume restores access."
+									<Tooltip
+										content="Pause this binding — reversible; rules survive and resume restores access."
+										interactiveChild
+										placement="bottom"
 									>
-										<PauseCircle className="h-4 w-4" /> Pause
-									</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											loading={suspendPending}
+											onClick={() =>
+												credentialId && unbind.mutate({ credentialId })
+											}
+											aria-label={`Suspend binding for ${shown.credentialName}`}
+										>
+											<PauseCircle className="h-4 w-4" /> Pause
+										</Button>
+									</Tooltip>
 								)}
 								<Button
 									variant="ghost"
@@ -469,9 +485,9 @@ export function ApiAccessSidebar({
 										</p>
 										<p className="text-muted-foreground text-xs">
 											{shown.authLabel ?? 'Credential'} · bound{' '}
-											<span title={formatTimestamp(shown.boundAt)}>
-												{timeAgo(shown.boundAt)}
-											</span>
+											<Tooltip content={formatTimestamp(shown.boundAt)}>
+												<span>{timeAgo(shown.boundAt)}</span>
+											</Tooltip>
 											{/* The credential's last update when one happened, else
 											    its creation. Omitted when the org row is unreachable. */}
 											{credentialAge && <> · {credentialAge}</>}
@@ -541,8 +557,8 @@ export function ApiAccessSidebar({
 									<span>
 										This credential also serves{' '}
 										<strong>{siblingApiTitles.join(', ')}</strong> for{' '}
-										{agent.name}. The rules below are shared — changing them
-										changes access to{' '}
+										<AgentNameText name={agent.name} />. The rules below are
+										shared — changing them changes access to{' '}
 										{siblingApiTitles.length === 1 ? 'that API' : 'those APIs'}{' '}
 										too.
 									</span>
@@ -661,24 +677,20 @@ export function ApiAccessSidebar({
 			{unbindOpen && shown && (
 				<ConfirmDialog
 					open
-					// No isolation on the title: a bidi paragraph ends at the heading's
-					// block boundary and the name is its LAST token, so an override
-					// inside it has no neighbouring copy left to reorder. Isolating
-					// here would only push U+2068/U+2069 into the dialog's accessible
-					// name for no gain.
-					title={`Unbind from ${agent.name}`}
+					title={
+						<>
+							Unbind from <AgentNameText name={agent.name} className="max-w-[32ch]" />
+						</>
+					}
 					body={
 						<>
 							Permanently unbind{' '}
 							<strong>
 								<UserText>{shown.credentialName}</UserText>
 							</strong>{' '}
-							from{' '}
-							<strong>
-								<UserText>{agent.name}</UserText>
-							</strong>
-							? The binding and its rules are deleted — the credential survives for
-							every other agent.
+							from <AgentNameText name={agent.name} className="font-semibold" />? The
+							binding and its rules are deleted — the credential survives for every
+							other agent.
 						</>
 					}
 					confirmLabel="Unbind"

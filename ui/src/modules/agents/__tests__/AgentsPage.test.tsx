@@ -4,6 +4,7 @@ import { use } from 'react';
 import { page } from 'vitest/browser';
 import { Link, Route, Routes, useLocation } from 'react-router';
 import {
+	act,
 	renderWithProviders,
 	screen,
 	waitFor,
@@ -243,12 +244,17 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(tabs[0]).toHaveTextContent(/release-notes-bot|inbox-triage-bot/);
 		expect(tabs[1]).toHaveTextContent(/release-notes-bot|inbox-triage-bot/);
 
-		// Keyboard traversal crosses the divider seamlessly: the last pending
-		// pill's ArrowRight lands on the first healthy pill.
+		// Keyboard traversal crosses the divider seamlessly: from the pinned
+		// selection, the last pending pill's ArrowRight lands on the first
+		// healthy pill, and Enter switches to it.
 		await user.click(stripTab('inbox-triage-bot'));
 		await user.keyboard('{ArrowRight}');
-		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
+		expect(stripTab('release-notes-bot')).toHaveFocus();
+		await user.keyboard('{ArrowRight}');
 		expect(stripTab('support-agent')).toHaveFocus();
+		await user.keyboard('{Enter}');
+		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
+		await waitFor(() => expect(stripTab('support-agent')).toHaveFocus());
 
 		// A filter that excludes every pending agent collapses the group.
 		await user.keyboard('/');
@@ -376,7 +382,7 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.getByText('Suspended · not serving')).toBeInTheDocument();
 	});
 
-	it('labels the credential in the footer, on one line with the rules summary', async () => {
+	it('labels the credential on the row, and keeps every row the same height at rest', async () => {
 		renderPage('/?agent=agnt_active_1');
 
 		const tileOf = (title: string) =>
@@ -387,41 +393,17 @@ describe('AgentsPage — flat agents surface', () => {
 		const githubTile = tileOf('GitHub');
 
 		// Visible: key icon, a muted "Credential" label, the name. Heard:
-		// "Credential: <name>", with the details as its description.
+		// "Credential: <name>".
 		const credential = within(githubTile).getByTestId('tile-credential');
 		expect(credential.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
 		expect(credential).toHaveTextContent(/^Credential: GitHub PAT$/);
-		expect(within(githubTile).getByTestId('tile-credential-label')).toHaveTextContent(
-			/^GitHub PAT$/,
+		expect(await within(githubTile).findByTestId('tile-rules-summary')).toHaveTextContent(
+			/^No rules — all calls blocked$/,
 		);
-		const trigger = credential.parentElement as HTMLElement;
-		expect(trigger).toHaveAttribute('tabindex', '0');
-		expect(
-			document.getElementById(trigger.getAttribute('aria-describedby') ?? ''),
-		).toHaveTextContent('Name: GitHub PAT');
-
-		// One footer line: the credential, the separator, then the rules summary.
-		const slot = within(githubTile).getByTestId('tile-detail-slot');
-		const rulesText = await within(githubTile).findByTestId('tile-rules-summary');
-		expect(rulesText).toHaveTextContent(/^No rules — all calls blocked$/);
-		expect(slot).toContainElement(credential);
-		expect(slot.textContent?.indexOf('·')).toBeGreaterThan(
-			slot.textContent?.indexOf('GitHub PAT') ?? Infinity,
-		);
-		const credentialBox = credential.getBoundingClientRect();
-		const rulesBox = rulesText.getBoundingClientRect();
-		expect(Math.abs(credentialBox.top - rulesBox.top)).toBeLessThan(credentialBox.height);
-		expect(rulesBox.left).toBeGreaterThan(credentialBox.right);
-
-		// The header is unchanged: title and identity only, no chip for one credential.
 		expect(within(githubTile).queryByTestId('tile-accounts-badge')).toBeNull();
-		expect(
-			within(githubTile).getByRole('heading', { name: 'GitHub' }).parentElement,
-		).not.toContainElement(credential);
-
-		// Every tile still stands the same height: what the suspension means
-		// rides beside its chip rather than on a row the others reserve empty.
 		expect(within(githubTile).getByText('Suspended · not serving')).toBeInTheDocument();
+
+		// At rest every row stands the same height; facts load on reveal.
 		const heights = screen
 			.getAllByTestId('api-tile')
 			.map((tile) => Math.round(tile.getBoundingClientRect().height));
@@ -436,22 +418,24 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(await screen.findByText('Slack')).toBeInTheDocument();
 	});
 
-	it('moves the selection with the arrow keys (selection follows focus)', async () => {
+	it('moves focus with the arrow keys and switches on Enter (manual activation)', async () => {
 		const user = userEvent.setup();
 		renderPage('/?agent=agnt_active_1');
 		await screen.findAllByText('inbox-triage-bot');
 
+		// The selection is pinned first; the rail follows, decisions first.
 		stripTab('support-agent').focus();
 		await user.keyboard('{ArrowRight}');
-
-		// Strip order is decisions-first then the working fleet, so the next
-		// pill after the active agent is the disabled one.
-		expect(stripTab('legacy-scraper')).toHaveAttribute('aria-selected', 'true');
-		expect(stripTab('legacy-scraper')).toHaveFocus();
-		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_disabled_1');
-
-		await user.keyboard('{ArrowLeft}');
+		expect(stripTab('release-notes-bot')).toHaveFocus();
+		// Focus alone does not switch: the card stays on the selection.
 		expect(stripTab('support-agent')).toHaveAttribute('aria-selected', 'true');
+
+		await user.keyboard('{End}');
+		expect(stripTab('spammy-bot')).toHaveFocus();
+		await user.keyboard('{ArrowLeft}{Enter}');
+		expect(stripTab('legacy-scraper')).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_disabled_1');
+		await waitFor(() => expect(stripTab('legacy-scraper')).toHaveFocus());
 	});
 
 	it('focuses the strip filter with / and narrows the pills', async () => {
@@ -528,8 +512,8 @@ describe('AgentsPage — flat agents surface', () => {
 		renderPage();
 		await screen.findAllByText('inbox-triage-bot');
 
-		const tablist = screen.getByRole('tablist', { name: 'Agents' });
-		expect(getComputedStyle(tablist).overflowX).toBe('auto');
+		expect(screen.getByRole('tablist', { name: 'Agents' })).toBeInTheDocument();
+		expect(getComputedStyle(screen.getByTestId('strip-scroller')).overflowX).toBe('auto');
 		// Pills never truncate mid-word — they keep their full label.
 		expect(stripTab('inbox-triage-bot')).toHaveTextContent('inbox-triage-bot');
 	});
@@ -584,28 +568,59 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(stripFigure('operations')).toBeInTheDocument();
 	});
 
+	it("the strip claims an agent's Blocked figure only while its card has read it", async () => {
+		const user = userEvent.setup();
+		// A rule-less, live binding: Blocked.
+		seedCredentialBindings([
+			{
+				agent_id: 'agnt_disabled_1',
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
+			},
+		]);
+		renderPage('/?agent=agnt_disabled_1');
+		await screen.findByText('Slack');
+		const hoverCard = async (name: string) => {
+			act(() => stripTab(name).focus());
+			return within(await screen.findByRole('tooltip')).getByTestId('agent-hover-card');
+		};
+		// Selected, its rules read: the hover card counts the Blocked credential.
+		await waitFor(async () => {
+			act(() => (document.activeElement as HTMLElement | null)?.blur());
+			expect(await hoverCard('legacy-scraper')).toHaveTextContent(/Blocked\s*1/);
+		});
+		act(() => (document.activeElement as HTMLElement | null)?.blur());
+		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+		// Switch away: the old figure goes with the card that read it.
+		await user.click(stripTab('support-agent'));
+		await screen.findByText('GitHub');
+		const card = await hoverCard('legacy-scraper');
+		expect(card).not.toHaveTextContent(/Blocked/);
+	});
+
 	// --- Stat strip: vitals + access stats -----------------------------------
 
 	it('merges the vitals with the access stats in one quiet meta line', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
-		// Access clauses — the same tileStats math the grid draws from: 2 usable tiles,
+		// Access figures — the same tileStats math the rows draw from: 2 APIs,
 		// 181 ops (the suspended binding's 912 excluded), 2 bound credentials.
-		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2 configured'));
-		// Held on a skeleton until every tile's rules are read.
-		await waitFor(() => expect(stripFigure('operations')).toHaveTextContent('181 operations'));
-		expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
+		await waitFor(() => expect(stripFigure('apis')).toHaveTextContent('2'));
+		// Held on a skeleton until every row's rules are read.
+		await waitFor(() => expect(stripFigure('operations')).toHaveTextContent('181'));
+		expect(stripFigure('credentials')).toHaveTextContent('2');
 
 		// Monitor clauses — the per-actor sources (7-day usage rollup
 		// + newest execution), rendered from the mocked rollups.
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('1,204'));
-		expect(stripFigure('executions')).toHaveTextContent('7d');
+		expect(stripFigure('executions')).toHaveTextContent('Calls · 7d');
 		expect(stripFigure('success-rate')).toHaveTextContent('99%');
 		expect(stripFigure('last-activity')).toHaveTextContent('2m');
 
-		// The line is the only stats surface, so each clause renders once.
-		expect(screen.getAllByTestId('stat-configured')).toHaveLength(1);
+		// The KPI row is the only stats surface, so each figure renders once.
+		expect(screen.getAllByTestId('stat-apis')).toHaveLength(1);
 		expect(screen.getAllByTestId('stat-operations')).toHaveLength(1);
 	});
 
@@ -660,7 +675,7 @@ describe('AgentsPage — flat agents surface', () => {
 
 				// Two live credentials; the dead link unlocks nothing and isn't one.
 				await waitFor(() =>
-					expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+					expect(stripFigure('credentials-value')).toHaveTextContent(/^2$/),
 				);
 				expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
 				expect(screen.queryByTestId('orphan-binding-tile')).not.toBeInTheDocument();
@@ -683,6 +698,38 @@ describe('AgentsPage — flat agents surface', () => {
 				);
 			});
 
+			it('the strip hover card counts the same live credentials as the card, for any agent', async () => {
+				recordPurges();
+				seedOrphan('agnt_active_1');
+				// A non-selected agent with one live binding and one orphan.
+				seedCredentialBindings([
+					{
+						agent_id: 'agnt_disabled_1',
+						credential_id: 'cred_slack_1',
+						name: 'Slack bot token',
+						serves: [{ api_vendor: 'slack.com', api_name: null, api_version: null }],
+					},
+					{ agent_id: 'agnt_disabled_1', credential_id: 'cred_deleted_8', serves: [] },
+				]);
+				renderPage('/?agent=agnt_active_1', { withAuth: true });
+				await screen.findByText('Slack');
+				await waitFor(() =>
+					expect(stripFigure('credentials-value')).toHaveTextContent(/^2$/),
+				);
+				const hoverCard = async (name: string) => {
+					act(() => stripTab(name).focus());
+					return within(await screen.findByRole('tooltip')).getByTestId(
+						'agent-hover-card',
+					);
+				};
+				// The selected agent: the card's 2, not 3 with the orphan.
+				expect(await hoverCard('support-agent')).toHaveTextContent(/Credentials\s*2/);
+				act(() => (document.activeElement as HTMLElement | null)?.blur());
+				await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+				// Another agent: its orphan is left out on the same proof.
+				expect(await hoverCard('legacy-scraper')).toHaveTextContent(/Credentials\s*1/);
+			});
+
 			it('leaves an agent whose only binding is an orphan on the empty state', async () => {
 				recordPurges();
 				seedOrphan('agnt_disabled_1');
@@ -697,7 +744,7 @@ describe('AgentsPage — flat agents surface', () => {
 					}),
 				).toBeInTheDocument();
 				await waitFor(() =>
-					expect(stripFigure('credentials')).toHaveTextContent('0 credentials'),
+					expect(screen.getByTestId('stat-credentials-value')).toHaveTextContent(/^0$/),
 				);
 				expect(screen.queryByTestId('api-tile')).not.toBeInTheDocument();
 			});
@@ -714,7 +761,7 @@ describe('AgentsPage — flat agents surface', () => {
 				renderPage('/?agent=agnt_active_1', { withAuth: true });
 				await screen.findByText('Slack');
 				await waitFor(() =>
-					expect(stripFigure('credentials')).toHaveTextContent('2 credentials'),
+					expect(stripFigure('credentials-value')).toHaveTextContent(/^2$/),
 				);
 				expect(purges).toEqual(['cred_deleted_9?purge=true']);
 				// Silent either way: no toast, no error on the grid.
@@ -743,7 +790,7 @@ describe('AgentsPage — flat agents surface', () => {
 						name: 'legacy-scraper can reach nothing yet',
 					}),
 				).toBeInTheDocument();
-				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
+				expect(stripFigure('credentials-value')).toHaveTextContent(/^2$/);
 				expect(purges).toEqual([]);
 			});
 		});
@@ -764,7 +811,7 @@ describe('AgentsPage — flat agents surface', () => {
 					await screen.findByText('Slack');
 					// Counted like any binding; it serves nothing, so it draws no tile.
 					await waitFor(() =>
-						expect(stripFigure('credentials')).toHaveTextContent('3 credentials'),
+						expect(stripFigure('credentials-value')).toHaveTextContent(/^3$/),
 					);
 				});
 				expect(screen.getAllByTestId('api-tile')).toHaveLength(2);
@@ -793,7 +840,7 @@ describe('AgentsPage — flat agents surface', () => {
 						name: 'legacy-scraper can reach nothing yet',
 					}),
 				).toBeInTheDocument();
-				expect(stripFigure('credentials')).toHaveTextContent('2 credentials');
+				expect(stripFigure('credentials-value')).toHaveTextContent(/^2$/);
 				expect(purges).toEqual([]);
 			});
 		});
@@ -804,40 +851,143 @@ describe('AgentsPage — flat agents surface', () => {
 			seedOrphan('agnt_active_1');
 			renderPage('/?agent=agnt_active_1');
 			await screen.findByText('Slack');
-			await waitFor(() =>
-				expect(stripFigure('credentials')).toHaveTextContent('3 credentials'),
-			);
+			await waitFor(() => expect(stripFigure('credentials-value')).toHaveTextContent(/^3$/));
 			expect(purges).toEqual([]);
 		});
 	});
 
-	it('states the panel identity once: APIs band + aria-label, no header h2', async () => {
+	it("the card's name opens the strip's agent picker and switches from it", async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const card = screen.getByTestId('agent-card');
+		const name = within(within(card).getByRole('heading', { level: 2 })).getByRole('button', {
+			name: /^support-agent — switch agent \((⌘|Ctrl )K\)$/,
+		});
+		expect(name).toHaveAttribute('aria-haspopup', 'dialog');
+		await user.click(name);
+		const picker = await screen.findByRole('dialog', { name: 'Switch agent' });
+		const field = within(picker).getByRole('combobox', { name: 'Find an agent' });
+		await waitFor(() => expect(field).toHaveFocus());
+		await user.keyboard('{Escape}');
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Switch agent' })).toBeNull(),
+		);
+		await waitFor(() => expect(name).toHaveFocus());
+
+		await user.click(name);
+		const again = await screen.findByRole('dialog', { name: 'Switch agent' });
+		const input = within(again).getByRole('combobox');
+		await waitFor(() => expect(input).toHaveFocus());
+		await user.type(input, 'release-notes');
+		await user.keyboard('{Enter}');
+		await waitFor(() =>
+			expect(screen.getByTestId('location-search')).toHaveTextContent('agent=agnt_pending_2'),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByRole('button', { name: /^release-notes-bot — switch agent/ }),
+			).toHaveFocus(),
+		);
+	});
+
+	it("pins the card at the strip's measured height, header row included", async () => {
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const strip = screen.getByTestId('agent-strip');
+		const card = screen.getByTestId('agent-card');
+		await waitFor(() =>
+			expect(parseFloat(card.style.top)).toBeCloseTo(strip.getBoundingClientRect().height, 2),
+		);
+		// The header row counts: the pin line sits below it, not under the rail alone.
+		expect(parseFloat(card.style.top)).toBeGreaterThan(
+			screen.getByTestId('strip-rail').getBoundingClientRect().height +
+				screen.getByTestId('strip-header').getBoundingClientRect().height,
+		);
+	});
+
+	it('states the agent once — on its card — and names it on the "can call" list', async () => {
 		renderPage('/?agent=agnt_active_1');
 		await screen.findByText('Slack');
 
-		// The section still names the agent in the a11y tree…
-		const panel = screen.getByRole('region', { name: 'APIs for support-agent' });
-		// …while its VISIBLE heading is just the surface and its count: the selected
-		// tab already states the name.
-		expect(await within(panel).findByRole('heading', { name: 'APIs 2' })).toBeInTheDocument();
-		expect(
-			within(panel).queryByRole('heading', { name: 'support-agent' }),
-		).not.toBeInTheDocument();
-		// …and no status badge duplicates the pill's dot.
-		expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
-		// …and no jump-off to another agent page: the dock's sheets carry the rest.
+		const panel = screen.getByRole('tabpanel', { name: /support-agent/ });
+		// The card carries the name as its one heading, with its status beside it…
+		const card = within(panel).getByTestId('agent-card');
+		expect(within(card).getByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
+		const chip = within(card).getByTestId('agent-status-chip');
+		expect(chip).toHaveTextContent('Active');
+		expect(chip).toHaveAttribute('data-status', 'active');
+		// …and the list below names whose APIs these are, with no repeat heading:
+		// the KPI row already counts them.
+		const canCall = await within(panel).findByRole('region', {
+			name: 'APIs support-agent can call',
+		});
+		expect(within(canCall).getAllByTestId('api-tile')).toHaveLength(2);
+		expect(within(panel).queryByRole('heading', { name: /can call/ })).toBeNull();
+		// No jump-off to another agent page: the dock's sheets carry the rest.
 		for (const link of within(panel).queryAllByRole('link')) {
 			expect(link.getAttribute('href')).not.toMatch(/\/agents\//);
 		}
 	});
 
-	it('renders em-dashes when the monitor has no data and zeros without bindings', async () => {
-		// A pending agent: no bindings (honest zeros) and no usage rollup, so success
-		// rate and last activity read as em-dashes.
-		renderPage('/?agent=agnt_pending_1');
-		await screen.findAllByText('inbox-triage-bot');
+	it("holds the card's frame still through a switch, so the notch never shows a seam", async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+		const restingTop = screen.getByTestId('agent-card-head').getBoundingClientRect().top;
 
-		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('0'));
+		await user.click(stripTab('inbox-triage-bot'));
+		// Sampled on every frame until the new card is in: its frame (surface and
+		// top border, where the notch lands) is never moved or faded — only its
+		// content fades in, and only the list below rises.
+		const seen: { top: number; opacity: number }[] = [];
+		await waitFor(
+			async () => {
+				await new Promise((r) => requestAnimationFrame(() => r(null)));
+				const head = screen.getByTestId('agent-card-head');
+				let opacity = 1;
+				for (let el: Element | null = head; el; el = el.parentElement) {
+					opacity *= Number(getComputedStyle(el).opacity);
+				}
+				seen.push({ top: head.getBoundingClientRect().top, opacity });
+				expect(head.closest('[role="tabpanel"]')).toHaveAttribute(
+					'aria-labelledby',
+					stripTab('inbox-triage-bot').id,
+				);
+				expect(getComputedStyle(screen.getByTestId('agent-card-content')).opacity).toBe(
+					'1',
+				);
+			},
+			{ timeout: 3000 },
+		);
+		expect(seen.length).toBeGreaterThan(0);
+		for (const frame of seen) {
+			expect(frame.top).toBeCloseTo(restingTop, 1);
+			expect(frame.opacity).toBe(1);
+		}
+	});
+
+	it('wires the selected strip tab to the agent panel', async () => {
+		renderPage('/?agent=agnt_active_1');
+		await screen.findByText('Slack');
+
+		const tab = screen.getByRole('tab', { selected: true });
+		const panel = screen.getByRole('tabpanel');
+		expect(tab).toHaveAttribute('aria-controls', panel.id);
+		expect(panel).toHaveAttribute('aria-labelledby', tab.id);
+		// The other tabs control nothing on screen: the one panel is the selection's.
+		for (const other of screen.getAllByRole('tab', { selected: false })) {
+			expect(other).not.toHaveAttribute('aria-controls');
+		}
+	});
+
+	it('renders em-dashes when the monitor has no data and zeros without bindings', async () => {
+		// A rejected agent: no bindings (honest zeros) and no usage rollup, so success
+		// rate and last activity read as em-dashes.
+		renderPage('/?agent=agnt_rejected_1');
+		await screen.findAllByText('spammy-bot');
+
+		await waitFor(() => expect(stripFigure('apis')).toHaveTextContent('0'));
 		expect(stripFigure('operations')).toHaveTextContent('0');
 		expect(stripFigure('credentials')).toHaveTextContent('0');
 		await waitFor(() => expect(stripFigure('executions')).toHaveTextContent('0'));
@@ -860,7 +1010,7 @@ describe('AgentsPage — flat agents surface', () => {
 		// The execution feed resolves on its own request, so the last-activity
 		// clause settles independently of the rollup above it.
 		await waitFor(() => expect(stripFigure('last-activity')).toHaveTextContent('—'));
-		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('0'));
+		await waitFor(() => expect(stripFigure('apis')).toHaveTextContent('0'));
 		expect(stripFigure('credentials')).toHaveTextContent('0');
 	});
 
@@ -873,7 +1023,7 @@ describe('AgentsPage — flat agents surface', () => {
 		await screen.findByText('Slack');
 
 		// The access figures still render from the bindings join…
-		await waitFor(() => expect(stripFigure('configured')).toHaveTextContent('2'));
+		await waitFor(() => expect(stripFigure('apis')).toHaveTextContent('2'));
 		// …but the gated monitor figures are omitted entirely (no em-dash
 		// pretending the data exists, no error surface).
 		expect(screen.queryByTestId('stat-executions')).not.toBeInTheDocument();
@@ -900,9 +1050,9 @@ describe('AgentsPage — flat agents surface', () => {
 
 		// The description starts at one line, so the grid's position is not decided by
 		// how much the operator typed. Scoped: the Settings sheet holds the same text.
-		const line = within(
-			screen.getByRole('region', { name: 'APIs for support-agent' }),
-		).getByText(long);
+		const line = within(screen.getByRole('tabpanel', { name: /support-agent/ })).getByText(
+			long,
+		);
 		const lineHeight = parseFloat(getComputedStyle(line).lineHeight);
 		expect(line.getBoundingClientRect().height).toBeLessThan(lineHeight * 2);
 
@@ -974,7 +1124,21 @@ describe('AgentsPage — flat agents surface', () => {
 		// Step 1 of the flow: pick the APIs. The credential comes after, in the
 		// queue, which is why the tray says so up front.
 		expect(await screen.findByRole('dialog', { name: 'Add APIs' })).toBeInTheDocument();
-		expect(screen.getByText(/Each API gets a credential in this flow/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/Each API gets a credential and its access rules in this flow/),
+		).toBeInTheDocument();
+	});
+
+	it("the card's Add API opens the same flow, and is the card's only action", async () => {
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_active_1');
+		const card = await screen.findByTestId('agent-card');
+		const addApi = await within(card).findByRole('button', { name: 'Add API' });
+		expect(addApi).toBeEnabled();
+		// No "Add access rules" lead: blocked rows open their own rules editor.
+		expect(within(card).queryByRole('button', { name: /access rules/i })).toBeNull();
+		await user.click(addApi);
+		expect(await screen.findByRole('dialog', { name: 'Add APIs' })).toBeInTheDocument();
 	});
 
 	it('says disabled on the surface itself — no banner — and re-enables from the dock', async () => {
@@ -1008,10 +1172,13 @@ describe('AgentsPage — flat agents surface', () => {
 		// would state the opposite of what is true — and active still serves.
 		expect(struck('inbox-triage-bot')).toBe('none');
 		expect(struck('support-agent')).toBe('none');
-		// Every state carries exactly one glyph, active included, so all five
-		// labels start at the same left edge.
+		// Every tab leads with the agent's avatar and carries exactly one
+		// lifecycle glyph, active included: the shape tells the five apart.
 		const glyphs = (name: string) => stripTab(name).querySelectorAll('svg').length;
 		for (const name of ['legacy-scraper', 'inbox-triage-bot', 'support-agent', 'spammy-bot']) {
+			expect(
+				within(stripTab(name)).getByRole('img', { name: `Agent ${name}` }),
+			).toBeInTheDocument();
 			expect(glyphs(name)).toBe(1);
 		}
 	});
@@ -1079,7 +1246,11 @@ describe('AgentsPage — flat agents surface', () => {
 			await screen.findByText(/Not serving traffic\. Approve it to let it authenticate\./),
 		).toBeInTheDocument();
 		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeDisabled();
-		expect(screen.getByText('Approve this agent before giving it APIs.')).toBeInTheDocument();
+		// Named beside the tree's button, and as the card button's Tooltip.
+		expect(screen.getAllByText('Approve this agent before giving it APIs.')).toHaveLength(2);
+		expect(screen.getByTestId('card-add-api').parentElement).toHaveAccessibleDescription(
+			'Approve this agent before giving it APIs.',
+		);
 		// The empty grid names the state's own blocker: telling a pending agent's
 		// operator that the bind is what's missing points them at the wrong fix.
 		expect(
@@ -1851,7 +2022,11 @@ describe('AgentsPage — flat agents surface', () => {
 		);
 		const tray = await screen.findByRole('dialog', { name: 'Add APIs' });
 		expect(
-			within(tray).getByText(/Pick what chained-agent should be able to call/),
+			within(tray).getByText(
+				(_, el) =>
+					el?.tagName === 'P' &&
+					/^Pick what chained-agent should be able to call/.test(el.textContent ?? ''),
+			),
 		).toBeVisible();
 	});
 
@@ -1870,7 +2045,9 @@ describe('AgentsPage — flat agents surface', () => {
 		await waitFor(() =>
 			expect(stripTab('identity-only')).toHaveAttribute('aria-selected', 'true'),
 		);
-		expect(await screen.findByRole('button', { name: 'Add APIs' })).toBeEnabled();
+		// The card swaps to the new agent a beat after its tab lands
+		// (`CARD_HANDOFF_MS`); until then the previous agent's button is shown.
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add APIs' })).toBeEnabled());
 		expect(screen.queryByRole('dialog', { name: 'Add APIs' })).not.toBeInTheDocument();
 	});
 });
@@ -1904,6 +2081,17 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		return within(tray).findByRole('checkbox', { name: new RegExp(name) });
 	}
 
+	/** On the queue's access step: pick a preset and add the API. */
+	async function addWithAccess(
+		user: ReturnType<typeof userEvent.setup>,
+		label: string,
+		preset: RegExp = /Read-only/,
+	): Promise<void> {
+		const step = await screen.findByTestId('queue-access-step');
+		await user.click(within(step).getByRole('radio', { name: preset }));
+		await user.click(within(step).getByRole('button', { name: `Add ${label}` }));
+	}
+
 	function queueRows(): string[] {
 		return screen
 			.queryAllByTestId('queue-progress-row')
@@ -1928,6 +2116,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		// Stripe: its one existing credential is confirmed and bound.
 		expect(await screen.findByText('Set up 3 APIs')).toBeInTheDocument();
 		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		await addWithAccess(user, 'Stripe');
 		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
 
 		await user.click(screen.getByRole('button', { name: 'Back to APIs' }));
@@ -1956,6 +2145,58 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		);
 		expect(screen.getByText('1 of 3 done')).toBeInTheDocument();
 		await waitFor(() => expect(screen.getByTestId('queue-active-pane')).toHaveFocus());
+	});
+
+	it('Done lands on rows that already read their access — none stale Blocked', async () => {
+		// Serving, with no bindings: the row's status is down to its rules alone.
+		seedExtraAgents([{ id: 'agnt_fresh_1', name: 'fresh-bot', status: 'active' }]);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_fresh_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		await user.click(await trayRow('Stripe'));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		await addWithAccess(user, 'Stripe');
+		await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
+		await user.click(screen.getByRole('button', { name: 'Done' }));
+
+		// No waiting: the queue only reported Added once the binding and its rules
+		// had landed AND the rows had re-read them.
+		const tile = screen.getByTestId('api-tile');
+		expect(within(tile).getByTestId('tile-status-chip')).toHaveAttribute(
+			'data-status',
+			'ready',
+		);
+		expect(within(tile).queryByTestId('tile-status-blocked')).toBeNull();
+	});
+
+	it('an API set up later lands Blocked — truthfully', async () => {
+		seedExtraAgents([{ id: 'agnt_fresh_1', name: 'fresh-bot', status: 'active' }]);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_fresh_1');
+		await user.click(await screen.findByRole('button', { name: 'Add APIs' }));
+		await user.click(await trayRow('Stripe'));
+		const tray = screen.getByRole('dialog', { name: 'Add APIs' });
+		await waitFor(() =>
+			expect(within(tray).getByRole('button', { name: 'Continue' })).toBeEnabled(),
+		);
+		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
+		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		const step = await screen.findByTestId('queue-access-step');
+		await user.click(within(step).getByRole('button', { name: 'Set up later' }));
+		await user.click(within(step).getByRole('button', { name: 'Add without rules' }));
+		await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
+		await user.click(screen.getByRole('button', { name: 'Done' }));
+
+		const tile = screen.getByTestId('api-tile');
+		expect(within(tile).getByTestId('tile-status-chip')).toHaveAttribute(
+			'data-status',
+			'blocked-no-rules',
+		);
 	});
 
 	it('closing the tray mid-edit closes the flow and the batch waits, unedited', async () => {
@@ -1991,6 +2232,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 		);
 		await user.click(within(tray).getByRole('button', { name: 'Continue' }));
 		await user.click(await screen.findByRole('button', { name: 'Use this credential' }));
+		await addWithAccess(user, 'Stripe');
 		await waitFor(() => expect(queueRows()[0]).toBe('Stripe:added'));
 		await user.click(screen.getByRole('button', { name: 'Close for now' }));
 		expect(
@@ -2067,6 +2309,7 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(within(pane).getByRole('radio', { name: /Stripe sandbox/ })).toBeChecked();
 
 			await user.click(within(pane).getByRole('button', { name: 'Use this credential' }));
+			await addWithAccess(user, 'Stripe');
 			await waitFor(() => expect(queueRows()).toEqual(['Stripe:added']));
 			await user.click(screen.getByRole('button', { name: 'Done' }));
 			await waitFor(
@@ -2092,10 +2335,10 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 			expect(badges).toHaveLength(2);
 			expect(badges[0]).toHaveTextContent('2 credentials');
 			expect(badges[0]).not.toHaveTextContent(/account/i);
-			// One API however many credentials: the heading and the stat line count
-			// it once, and the strip still counts its two credentials.
-			expect(screen.getByRole('heading', { name: 'APIs 1' })).toBeInTheDocument();
-			expect(screen.getByTestId('stat-configured')).toHaveTextContent('1 configured');
+			// One API however many credentials: the stat line counts it once, and
+			// the strip still counts its two credentials.
+			expect(screen.getByTestId('stat-apis-value')).toHaveTextContent(/^1$/);
+			expect(screen.getByTestId('stat-credentials-value')).toHaveTextContent(/^2$/);
 
 			// Keyboard: the badge's trigger is focusable and described by the tooltip.
 			const trigger = badges[0].parentElement as HTMLElement;
@@ -2109,7 +2352,14 @@ describe('AgentsPage — Add APIs: Back from the setup queue to the tray', () =>
 
 			// The binding's sidebar explains the choice at more length in one quiet line,
 			// beside the full id and the header that names this credential — both copyable.
-			await user.click(screen.getAllByRole('button', { name: 'Manage Stripe access' })[0]);
+			// The row's Manage access opens its sheet (the row and chevron only pin it).
+			await user.click(
+				within(
+					screen
+						.getAllByRole('button', { name: 'Stripe details' })[0]!
+						.closest('[data-testid="api-tile"]') as HTMLElement,
+				).getByTestId('row-manage-access'),
+			);
 			expect(await screen.findByTestId('multi-account-note')).toHaveTextContent(
 				"This agent has 2 credentials for Stripe. A narrower one (for example, pinned to a version) is used automatically; otherwise each call must name one with the Jentic-Credential-Id header — copy this credential's ID or header below — or it is refused and lists the options. These rules apply only when this credential is the one chosen.",
 			);
@@ -2278,6 +2528,66 @@ describe('AgentsPage — the header follows the zero-agents landing', () => {
 			expect(rect.left).toBeGreaterThanOrEqual(0);
 			expect(rect.right).toBeLessThanOrEqual(390);
 		}
+	});
+});
+
+describe('AgentsPage — long agent names', () => {
+	const LONG_NAME =
+		'my-agent-36 can reach nothing yet This agent has an identity and can authenticate, but my-agent-36 can reach nothing yet This agent has an identity and can authenticate, but no credential is bound';
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		window.localStorage.clear();
+		resetAgentsStore();
+	});
+
+	/** Is the element's single line cut off? */
+	const cut = (el: HTMLElement) => el.scrollWidth > el.clientWidth;
+
+	it('cuts a long name to one line everywhere it shows, with the full name on hover', async () => {
+		const user = userEvent.setup();
+		seedExtraAgents([{ id: 'agnt_long', name: LONG_NAME, status: 'active' }]);
+		renderPage('/?agent=agnt_long');
+
+		const card = await screen.findByTestId('agent-card');
+		const title = within(card).getByRole('heading', { level: 2 });
+		const titleText = within(title).getByText(LONG_NAME);
+		await waitFor(() => expect(cut(titleText)).toBe(true));
+		expect(title.getBoundingClientRect().height).toBeLessThan(40);
+		// The full name, only because it was cut.
+		await user.hover(titleText);
+		expect(await screen.findByRole('tooltip')).toHaveTextContent(LONG_NAME);
+		await user.unhover(titleText);
+
+		// The tab keeps its budget; the strip never runs the page's width.
+		const tab = document.querySelector<HTMLElement>('[role="tab"][data-agent-id="agnt_long"]')!;
+		expect(tab.getBoundingClientRect().width).toBeLessThan(300);
+
+		// The empty state names it once, cut.
+		const empty = await screen.findByTestId('can-call-empty');
+		expect(within(empty).getAllByText(LONG_NAME)).toHaveLength(1);
+		expect(within(empty).getByRole('heading')).toHaveTextContent(/can reach nothing yet$/);
+	});
+
+	it('shows my-first-agent whole, with no tooltip for its name', async () => {
+		const user = userEvent.setup();
+		seedExtraAgents([{ id: 'agnt_first', name: 'my-first-agent', status: 'active' }]);
+		renderPage('/?agent=agnt_first');
+
+		const card = await screen.findByTestId('agent-card');
+		const titleText = within(within(card).getByRole('heading', { level: 2 })).getByText(
+			'my-first-agent',
+		);
+		expect(cut(titleText)).toBe(false);
+		expect(titleText).not.toHaveAttribute('tabindex');
+		await user.hover(titleText);
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+		const tab = document.querySelector<HTMLElement>(
+			'[role="tab"][data-agent-id="agnt_first"]',
+		)!;
+		expect(cut(within(tab).getByText('my-first-agent'))).toBe(false);
 	});
 });
 

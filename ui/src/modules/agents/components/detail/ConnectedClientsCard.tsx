@@ -45,6 +45,7 @@ import {
 	AgentsApiError,
 	type OAuthGrantEntity,
 } from '@/modules/agents/api';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 type StatusFilter = 'active' | 'revoked' | 'all';
 
@@ -243,8 +244,9 @@ export function ConnectedClientsCard({
 				>
 					<p className="text-muted-foreground">
 						<strong>{clientLabel(revokeTarget)}</strong> will immediately lose access to{' '}
-						<strong>{agentName}</strong>: every token issued under this grant is
-						revoked. The client must go through consent again to reconnect.
+						<AgentNameText name={agentName} className="font-semibold" />: every token
+						issued under this grant is revoked. The client must go through consent again
+						to reconnect.
 					</p>
 				</Dialog>
 			)}

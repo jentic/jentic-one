@@ -46,6 +46,8 @@ export interface ApiTileModel {
 	suspendedReason: string | null;
 	/** OAuth sign-in not completed. Drives the dashed treatment. */
 	awaitingConsent: boolean;
+	/** The registry has an upstream spec update this API hasn't adopted. */
+	updateAvailable: boolean;
 }
 
 /** Human labels for the credential auth types shown on a tile. */
@@ -205,6 +207,7 @@ export function composeApiTiles(
 				apiName: served.name ?? null,
 				version: null,
 				operationCount: null,
+				updateAvailable: false,
 			});
 			continue;
 		}
@@ -225,6 +228,7 @@ export function composeApiTiles(
 			apiName: api.api.name,
 			version: api.api.version,
 			operationCount: api.operation_count,
+			updateAvailable: api.update_available ?? false,
 		});
 	}
 
@@ -301,7 +305,8 @@ export function distinctApiCount(tiles: ApiTileModel[]): number {
 }
 
 /** Stat-summary math for the grid's side column. Counts are per API — one
- * drawn once per credential counts once — except `needsSetup`. */
+ * drawn once per credential counts once — except `needsSetup` and
+ * `blockedBindings`, which are per credential. */
 export interface ApiTileStats {
 	/** APIs with at least one credential past its sign-in. */
 	configured: number;
@@ -313,8 +318,15 @@ export interface ApiTileStats {
 	operationsAtLeast: boolean;
 	/** Some tile's rules are still being read, so the reachable figure may change. */
 	operationsChecking: boolean;
-	/** Tiles whose rules let no call through (`Blocked`) — 0 when rules are unknown. */
-	blocked: number;
+	/** Bindings (credentials) whose rules let no call through (`Blocked`) — 0
+	 * when rules are unknown. Rules live on the binding, so a binding drawn on
+	 * several rows (a vendor-wide one) counts once: this sits beside the
+	 * credential count, never the API count. */
+	blockedBindings: number;
+	/** APIs every one of whose rows is Blocked — the only per-API blocked fact.
+	 * An API with one credential through (or paused, or awaiting sign-in) is
+	 * not fully blocked. */
+	fullyBlockedApis: number;
 }
 
 export function tileStats(
@@ -332,22 +344,28 @@ export function tileStats(
 	// Per API: the largest count its reachable tiles prove (its credentials reach
 	// the same operations), or null while none of them proves one.
 	const operationsByApi = new Map<string, number | null>();
-	let blocked = 0;
+	const blockedBindings = new Set<string>();
+	// Per API: its rows, and how many of them are Blocked.
+	const rowsByApi = new Map<string, { rows: number; blocked: number }>();
 	let checking = false;
 	// Deduped: several tiles can share one sign-in.
 	const awaiting = new Set<string>();
 	for (const tile of tiles) {
+		const apiKey = tileApiKey(tile);
+		const apiRows = rowsByApi.get(apiKey) ?? { rows: 0, blocked: 0 };
+		apiRows.rows += 1;
+		rowsByApi.set(apiKey, apiRows);
 		if (tile.awaitingConsent) {
 			awaiting.add(tile.credentialId);
 			continue;
 		}
-		const apiKey = tileApiKey(tile);
 		configured.add(apiKey);
 		// A pause is a deliberate exclusion, not a missing fact.
 		if (tile.suspended) continue;
 		const rules = rulesFor?.(tile);
 		if (rulesBlock(ruleSummaryOf(rules))) {
-			blocked += 1;
+			blockedBindings.add(tile.bindingId);
+			apiRows.blocked += 1;
 			continue;
 		}
 		const rulesUnknown = rulesFor != null && typeof rules !== 'object';
@@ -373,7 +391,10 @@ export function tileStats(
 		operations: withheld && !counted ? null : operations,
 		operationsAtLeast: withheld && counted,
 		operationsChecking: checking,
-		blocked,
+		blockedBindings: blockedBindings.size,
+		fullyBlockedApis: [...rowsByApi.values()].filter(
+			(a) => a.blocked > 0 && a.blocked === a.rows,
+		).length,
 	};
 }
 

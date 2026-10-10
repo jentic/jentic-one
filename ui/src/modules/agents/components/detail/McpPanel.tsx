@@ -31,6 +31,7 @@ import {
 	ErrorAlert,
 	LoadingState,
 	type Column,
+	Tooltip,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
@@ -43,6 +44,7 @@ import {
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 import { registerCommand, shellArg } from '@/modules/agents/lib/registerCommand';
 import { useRegisterTarget } from '@/modules/agents/lib/useRegisterTarget';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 /**
  * The streamable-HTTP variant renders only when the instance reports
@@ -125,7 +127,8 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 	return (
 		<DetailSection title="Connect via MCP" icon={<Terminal className="h-4 w-4" />}>
 			<p className="text-muted-foreground text-sm">
-				Wire an MCP client to this instance as <strong>{agentName}</strong>. Prerequisites:{' '}
+				Wire an MCP client to this instance as{' '}
+				<AgentNameText name={agentName} className="font-semibold" />. Prerequisites:{' '}
 				<code className="font-mono text-xs">jentic</code> CLI installed +{' '}
 				<code className="font-mono text-xs">{registerSnippet}</code> on the{' '}
 				<strong>agent machine</strong> — or{' '}
@@ -209,9 +212,9 @@ function McpConfigCard({ agentName }: { agentName: string }) {
 
 function timeCell(value: string) {
 	return (
-		<span className="text-muted-foreground text-xs" title={formatTimestamp(value)}>
-			{timeAgo(value)}
-		</span>
+		<Tooltip content={formatTimestamp(value)}>
+			<span className="text-muted-foreground text-xs">{timeAgo(value)}</span>
+		</Tooltip>
 	);
 }
 
@@ -267,12 +270,11 @@ export function McpSessionsCard({ agentId }: { agentId: string }) {
 				// "Last active" = the newest MCP-origin execution — request-level
 				// recency, the only liveness signal the server honestly has.
 				lastActivity.data ? (
-					<span
-						className="text-muted-foreground text-xs"
-						title={formatTimestamp(lastActivity.data)}
-					>
-						Last active {timeAgo(lastActivity.data)}
-					</span>
+					<Tooltip content={formatTimestamp(lastActivity.data)}>
+						<span className="text-muted-foreground text-xs">
+							Last active {timeAgo(lastActivity.data)}
+						</span>
+					</Tooltip>
 				) : undefined
 			}
 			bodyClassName="px-0 py-0"

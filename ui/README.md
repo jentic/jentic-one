@@ -74,8 +74,18 @@ forbids `vi.spyOn` on module exports — drive behaviour through MSW instead.
 Run the SPA backendless against mocks (no backend on :8000):
 
 ```bash
-VITE_ENABLE_MSW=1 npm run dev
+VITE_ENABLE_MSW=1 npm run dev   # default fixtures (what the mocked e2e suite sees)
+npm run dev:mock                # the same, plus the hand-review dev seed
 ```
+
+Mocked-dev flags (DEV builds only; none reach production):
+
+| Flag                         | Where                           | Effect                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_ENABLE_MSW=1`          | env                             | Start the MSW worker: the SPA runs against mock data.                                                                                                                                                     |
+| `VITE_MSW_DEV_SEED=1`        | env (set by `npm run dev:mock`) | Layer the hand-review fixtures (a busy fleet agent with real "Can call" data) over the defaults. Off by default, so `npm run e2e` — which boots the same MSW dev server — sees the default fixtures only. |
+| `VITE_MSW_SCENARIO=review`   | env                             | Layer the review scenario (`src/mocks/scenarios/review.ts`).                                                                                                                                              |
+| `agents.devBigFleet` = `'1'` | `localStorage` (then reload)    | With the dev seed on, add a fleet large enough to page and scroll the agent strip.                                                                                                                        |
 
 First time (or after a Chromium bump): `npx playwright install chromium`.
 

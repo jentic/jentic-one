@@ -83,9 +83,14 @@ function renderPage(route = '/?agent=agnt_active_1') {
 	);
 }
 
-/** The stretched overlay button that makes the whole tile clickable. */
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The row's Manage access button — its one way into the access sheet (the
+ * row and its chevron only pin it open). */
 function tileOpener(title: string): HTMLElement {
-	return screen.getByRole('button', { name: `${title} — open access details` });
+	return screen.getByRole('button', {
+		name: new RegExp(`^Manage access for ${escapeRe(title)}( \\(|$)`),
+	});
 }
 
 /** The sidebar dialog, named by the clicked tile's API title. */
@@ -171,6 +176,70 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(
 			inDialog.getByRole('button', { name: 'Delete credential Slack bot token org-wide' }),
 		).toBeInTheDocument();
+	});
+
+	it('lists the credential details: scope, auth, bound (exact time on hover), added, id', async () => {
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+				updated_at: null,
+			}),
+			makeMockCredential({
+				credential_id: 'cred_github_1',
+				name: 'GitHub PAT',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'github.com', name: 'default', version: '1.0.0' },
+				created_at: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+				updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+			}),
+		]);
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+
+		const dialog = await openSidebar('Slack');
+		// Scope: the API's host and auth, for this agent.
+		expect(dialog).toHaveTextContent('slack.com · Bearer token — access for support-agent');
+		const section = within(within(dialog).getByRole('region', { name: 'Credential' }));
+		const facts = section.getByText(/^Bearer token · bound/);
+		// Auth, when it was bound (its exact time is the age's description),
+		// and the credential's age (created: "added").
+		expect(facts).toHaveTextContent(/^Bearer token · bound 30m/);
+		expect(facts).toHaveTextContent(/· added 3d ·/);
+		// The full id.
+		expect(section.getByTestId('credential-id-row')).toHaveTextContent('IDcred_slack_1');
+		// The bound age's exact time rides on its tooltip.
+		const bound = within(facts).getByText('30m');
+		await user.hover(bound);
+		const exact = /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s?[AP]M$/;
+		await waitFor(() =>
+			expect(
+				screen.getAllByRole('tooltip').some((t) => exact.test(t.textContent ?? '')),
+			).toBe(true),
+		);
+	});
+
+	it('says when the credential was last updated, in place of when it was added', async () => {
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_slack_1',
+				name: 'Slack bot token',
+				type: CredentialType.BEARER_TOKEN,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_at: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+				updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+			}),
+		]);
+		renderPage();
+		await screen.findByText('1 access rule');
+		const dialog = await openSidebar('Slack');
+		const facts = within(dialog).getByText(/^Bearer token · bound/);
+		expect(facts).toHaveTextContent(/· updated 2h ·/);
+		expect(facts).not.toHaveTextContent(/added/);
 	});
 
 	it('keeps "Allow all operations" in the new rules editor, as a pending catch-all', async () => {

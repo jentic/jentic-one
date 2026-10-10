@@ -57,6 +57,41 @@ function firstPathSegment(path: string): string {
 	return `/${nextSlash === -1 ? rest : rest.slice(0, nextSlash)}`;
 }
 
+/**
+ * How many of an API's operations a binding's rules let through (`allow` or
+ * `partial`, as the preview's group counts read), over the operation list —
+ * the same client-side matcher the preview runs.
+ *
+ * - `undefined` while the first read is in flight, or while `rules` is unknown.
+ * - `null` when there is nothing to judge: the reference names no single
+ *   version, or a read has finished without an operation list (the import
+ *   isn't available yet — the hook keeps polling, and the count arrives with
+ *   it — or the read failed).
+ */
+export function useAllowedOperationCount(
+	api: OpsApiReference | null,
+	rules: readonly PermissionRule[] | undefined,
+	opts: { enabled?: boolean } = {},
+): { allowed: number; total: number } | null | undefined {
+	const ready = !!api && !!api.name && !!api.version;
+	const ops = useVendorOperations(api ?? undefined, { enabled: (opts.enabled ?? true) && ready });
+	const unavailable = ops.isError || (ops.isFetched && ops.data === null);
+	return useMemo(() => {
+		if (!ready || unavailable) return null;
+		if (ops.data == null || rules === undefined) return undefined;
+		const items = ops.data.data;
+		const allowed = items.filter(
+			(op) =>
+				classifyOpCoverage(rules, {
+					method: op.method,
+					path: op.path,
+					operation_id: op.operation_id,
+				}).verdict !== 'deny',
+		).length;
+		return { allowed, total: items.length };
+	}, [ready, unavailable, ops.data, rules]);
+}
+
 export function OperationImpactPreview({
 	api,
 	rules,

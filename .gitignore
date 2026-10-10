@@ -82,8 +82,9 @@ deploy/helm/**/Chart.lock
 # dev credentials — must never be committed).
 PROMPT.md
 
-# Claude Code local settings (developer-specific hooks/overrides).
+# Claude Code local settings (developer-specific hooks/overrides, launch configs).
 .claude/settings.local.json
+.claude/launch.json
 
 # Jentic skill artifacts written into the repo when someone runs
 # `jentic bootstrap` / `jentic skill init` from inside the source tree (project

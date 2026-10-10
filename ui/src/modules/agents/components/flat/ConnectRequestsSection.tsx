@@ -12,7 +12,7 @@
  * `useCanApproveConnectRequests`) makes no request.
  */
 import { useMemo } from 'react';
-import { AppLink } from '@/shared/ui';
+import { AppLink, Tooltip, UserText } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
 import { useActorDirectory } from '@/shared/hooks';
 import { formatTimestamp } from '@/shared/lib/utils';
@@ -55,13 +55,13 @@ export function ConnectRequestsSection() {
 								aria-hidden="true"
 							/>
 							<p className="min-w-0 flex-1 basis-52 text-sm">
-								<span className="font-heading font-semibold">{name}</span>{' '}
+								<UserText className="font-heading font-semibold">{name}</UserText>{' '}
 								<span className="text-muted-foreground">
 									wants to connect {summariseConnectTargets(group.sessions)}
 									{' · '}
-									<span title={`Asked ${formatTimestamp(group.since)}`}>
+									<Tooltip content={`Asked ${formatTimestamp(group.since)}`}>
 										{waitingLabel(group.since)}
-									</span>
+									</Tooltip>
 								</span>
 							</p>
 							<span className="flex flex-wrap items-center gap-2">

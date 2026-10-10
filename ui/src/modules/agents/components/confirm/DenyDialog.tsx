@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Dialog, Label, Textarea } from '@/shared/ui';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 interface DenyDialogProps {
 	open: boolean;
@@ -45,7 +46,15 @@ export function DenyDialog({ open, subjectName, onConfirm, onClose, pending }: D
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title={subjectName ? `Deny ${subjectName}` : 'Deny'}
+			title={
+				subjectName ? (
+					<>
+						Deny <AgentNameText name={subjectName} className="max-w-[32ch]" />
+					</>
+				) : (
+					'Deny'
+				)
+			}
 			size="md"
 			footer={
 				<>

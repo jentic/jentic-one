@@ -51,6 +51,7 @@ import {
 	fetchActorUsageDetail,
 	fetchCredentialUsageTotals,
 	fetchActorExecutions,
+	fetchActorApiUsage,
 	fetchInstanceIdentity,
 	fetchLatestMcpActivity,
 	fetchMcpSessions,
@@ -62,6 +63,7 @@ import {
 	type ActorUsageDetail,
 	type CredentialUsageTotals,
 	type ActorExecutionEntity,
+	type ActorApiUsage,
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
@@ -83,6 +85,7 @@ import { sharedQueryKeys } from '@/shared/api';
 import { credentialKeys } from '@/shared/credentials/api';
 import { usePendingAgentsCount } from '@/shared/hooks';
 import { agentToEntity } from '@/modules/agents/api/types';
+import { clipName } from '@/modules/agents/lib/agentName';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so the persistent nav
@@ -419,6 +422,29 @@ export function useInvalidateCredentialBindingSurfaces(agentId: string | null) {
 }
 
 /**
+ * Read one binding's rules into the cache before its tile exists. A binding
+ * made elsewhere (the Add-APIs queue) has no observer on its rules yet, so the
+ * surfaces' refetch can't cover it — the tile would mount reading "Checking".
+ * Resolves once the rules are cached; a failed read is left to the tile.
+ */
+export function usePrimeBindingPermissions(agentId: string | null) {
+	const qc = useQueryClient();
+	return useCallback(
+		async (credentialId: string): Promise<void> => {
+			if (!agentId) return;
+			await qc
+				.fetchQuery({
+					queryKey: agentsKeys.bindingPermissions(agentId, credentialId),
+					queryFn: () => listAgentBindingPermissions(agentId, credentialId),
+					staleTime: 0,
+				})
+				.catch(() => undefined);
+		},
+		[agentId, qc],
+	);
+}
+
+/**
  * Bind a credential to this agent with the wizard's chosen initial grant.
  * `rules: null` is the deliberate "start blocked" mode. `silent` suppresses the
  * toasts for callers that bind several credentials and report each themselves.
@@ -706,7 +732,7 @@ export function useApproveAgent() {
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent approved',
-				description: `${agent.name} is now active.`,
+				description: `${clipName(agent.name)} is now active.`,
 				variant: 'success',
 			});
 		},
@@ -727,7 +753,7 @@ export function useDenyAgent() {
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent denied',
-				description: `${agent.name} was rejected.`,
+				description: `${clipName(agent.name)} was rejected.`,
 				variant: 'success',
 			});
 		},
@@ -827,7 +853,7 @@ export function useCreateAgent() {
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.attentionRoot });
 			toast({
 				title: 'Agent created',
-				description: `${agent.name} created successfully.`,
+				description: `${clipName(agent.name)} created successfully.`,
 				variant: 'success',
 			});
 		},
@@ -858,7 +884,7 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 			toast({
 				title: 'Agent updated',
-				description: `${agent.name} saved.`,
+				description: `${clipName(agent.name)} saved.`,
 				variant: 'success',
 			});
 		},
@@ -987,6 +1013,70 @@ export function useActorExecutions(actorId: string | null) {
 	return useQuery<{ items: ActorExecutionEntity[]; hasMore: boolean } | null>({
 		queryKey: ['agents-usage', 'executions', actorId],
 		queryFn: () => fetchActorExecutions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * One actor's calls to each of `apiIds` (`vendor/name`) over the trailing 7
+ * days, per credential — the "Can call" rows' figures. Keyed by API id: the
+ * usage once read, `null` for a caller without `org:admin`, a 403 or a failed
+ * read, absent while loading. Same `agents-usage` root and stale time as
+ * {@link useActorUsageDetail}, so a row and the card's KPIs refresh together.
+ */
+export function useActorApiUsage(
+	actorId: string | null,
+	apiIds: string[],
+): ReadonlyMap<string, ActorApiUsage | null> {
+	const allowed = useCanAccess(ORG_ADMIN);
+	const combine = useCallback(
+		(results: { data?: ActorApiUsage | null; isError: boolean }[]) => {
+			const map = new Map<string, ActorApiUsage | null>();
+			// useQueries returns results in the same order as the queries it was
+			// given, so index i pairs with apiIds[i]. A duplicate id just maps to
+			// the same key with the same (identical-query) data — harmless.
+			results.forEach((result, index) => {
+				const apiId = apiIds[index];
+				if (apiId == null) return;
+				// A failed read claims nothing, the same as a gated one.
+				if (result.data !== undefined) map.set(apiId, result.data);
+				else if (result.isError) map.set(apiId, null);
+			});
+			return map;
+		},
+		[apiIds],
+	);
+	return useQueries({
+		queries: apiIds.map((apiId) => ({
+			queryKey: ['agents-usage', 'api', actorId, apiId, { allowed }],
+			queryFn: () => (allowed ? fetchActorApiUsage(actorId as string, apiId) : null),
+			enabled: actorId != null,
+			staleTime: 30 * 1000,
+			retry: false,
+		})),
+		combine,
+	});
+}
+
+/** The page size the "Can call" rows read: the endpoint's ceiling. */
+const RECENT_CALLS_LIMIT = 100;
+
+/**
+ * The actor's calls over the trailing 7 days, newest first — each "Can call"
+ * row's newest calls. `null` on 403.
+ *
+ * One page (the endpoint's 100-row ceiling), filtered per row; a
+ * row that sees none of its calls in the newest 100 shows none.
+ */
+export function useActorRecentCalls(actorId: string | null) {
+	return useQuery<{ items: ActorExecutionEntity[]; hasMore: boolean } | null>({
+		queryKey: ['agents-usage', 'recent-calls', actorId],
+		queryFn: () => {
+			const from = new Date(Date.now() - 7 * 86_400_000).toISOString();
+			return fetchActorExecutions(actorId as string, RECENT_CALLS_LIMIT, from);
+		},
 		enabled: actorId != null,
 		staleTime: 30 * 1000,
 		retry: false,

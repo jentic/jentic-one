@@ -102,7 +102,10 @@ test('the Activity sheet feeds per-agent executions and deep-links to Monitor', 
 }) => {
 	await openSelectedAgent(page);
 
-	await expect(page.getByTestId('stat-executions')).toHaveText('1,204 calls in 7d');
+	// The KPI strip's calls figure: its label above, the figure below.
+	const calls = page.getByTestId('stat-executions');
+	await expect(calls).toContainText('Calls · 7d');
+	await expect(calls).toContainText('1,204');
 
 	await page.getByTestId('agent-dock').getByRole('button', { name: 'Activity' }).click();
 	const sheet = page.getByRole('dialog', { name: 'Activity' });

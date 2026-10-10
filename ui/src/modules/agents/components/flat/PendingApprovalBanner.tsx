@@ -14,11 +14,12 @@
  */
 import { useEffect, useId, useReducer, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ActorStatusBadge, Button } from '@/shared/ui';
+import { ActorStatusBadge, Button, Tooltip } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
 import { ACTION_LABEL, ACTION_VARIANT, type AgentEntity } from '@/modules/agents/api';
 import { ApprovalGrantNote } from '@/modules/agents/components/ApprovalGrantNote';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 
 interface PendingApprovalBannerProps {
 	/** Pending rows in backend order (`created_at DESC` — newest first),
@@ -133,15 +134,17 @@ export function PendingApprovalBanner({
 							data-testid="pending-approval-line"
 							className="focus-visible:ring-ring min-w-0 flex-1 basis-52 rounded-sm text-sm outline-none focus-visible:ring-2"
 						>
-							<span className="font-heading font-semibold">{longest.name}</span>{' '}
+							<AgentNameText
+								name={longest.name}
+								className="font-heading font-semibold"
+							/>{' '}
 							<ActorStatusBadge status="pending" className="mx-0.5 align-middle" />{' '}
-							<span
-								className="text-muted-foreground"
-								title={`Registered ${formatTimestamp(longest.createdAt)}`}
-							>
-								{waitingLabel(longest.createdAt)} for approval
-								{moreWaiting && <> · {moreWaiting}</>}
-							</span>
+							<Tooltip content={`Registered ${formatTimestamp(longest.createdAt)}`}>
+								<span className="text-muted-foreground">
+									{waitingLabel(longest.createdAt)} for approval
+									{moreWaiting && <> · {moreWaiting}</>}
+								</span>
+							</Tooltip>
 							<ApprovalGrantNote
 								key={longest.id}
 								agentId={longest.id}

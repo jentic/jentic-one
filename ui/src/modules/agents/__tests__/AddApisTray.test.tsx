@@ -161,7 +161,7 @@ describe('AddApisTray — multi-select picks and the preflight tally', () => {
 		await row(/Stripe/);
 		// The flow is longer than a skip-based one; saying so before the first
 		// pick is what keeps it honest.
-		expect(screen.getByText(/nothing is set up later/)).toBeInTheDocument();
+		expect(screen.getByText(/the credential can't be set up later/)).toBeInTheDocument();
 	});
 
 	it('rows toggle instead of committing, and each pick shows what it costs', async () => {
