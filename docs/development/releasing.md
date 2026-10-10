@@ -220,6 +220,151 @@ steps are what stands between you and Phase 6b.
 **Rollback after Phase 6b** is two steps, not one — see the Phase 6b
 section below.
 
+## Upgrading to 0.42.0
+
+0.42.0 carries the permissions rename, so the upgrade needs a window. Take the
+pre-upgrade snapshot of every database first
+([the contract](../operations/upgrades.md#the-contract)).
+
+- **Schedule a maintenance window (#1399).** From the moment the admin
+  migration `e3f4a5b6c7d8` runs until the last old pod is replaced, old app
+  and broker pods fail authentication, execution and every grant change:
+  schedule a window, or scale the app and broker to zero before the migration
+  and back up after it. The HTTP API, audit, CLI and Go SDK renames are in
+  [Upgrading to the permissions-rename release](#upgrading-to-the-permissions-rename-release).
+- **Upgrade every CLI with the server.** An older CLI fails silently against
+  0.42.0 (see the permissions-rename section). Go importers of
+  `github.com/jentic/jentic-one/cli` also get these breaking changes in the
+  generated control client:
+  - `ConfirmSessionRequest` is gone. The `:confirm` body is
+    `ConfirmConnectSessionJSONBody`, a `oneOf` union of
+    `OAuthConfirmSessionRequest`, `ApiKeyConfirmSessionRequest`,
+    `BearerConfirmSessionRequest`, `BasicConfirmSessionRequest`,
+    `OwnOAuthClientConfirmSessionRequest`,
+    `ExistingCredentialConfirmSessionRequest` and
+    `ReauthorizeConfirmSessionRequest`, built with the `From…` / `As…`
+    helpers. The `200` response stays untyped.
+  - `IntegrationsConnectRequest.Vendor` is a `*string` (exactly one of
+    `vendor` or the new `api`), and `PollToken` in
+    `GetConnectSessionParams`, `PollConnectSessionStatusParams`,
+    `CancelConnectSessionParams` and `ConfirmConnectSessionParams` is a
+    `*string`.
+  - `EventAcknowledgeRequest`, the `AcknowledgeEvent` operation and the
+    `Acknowledged*` fields of `EventResponse` are removed.
+- **The agent detail page is removed (#1475).** `/app/agents/<id>` redirects
+  to `/app/agents?agent=<id>`, which opens that agent on the Agents page. Any
+  other query parameter, `?tab=` included, is dropped, so a bookmark or
+  runbook link to a tab lands on the agent, not the tab.
+- **Event acknowledgement is removed (#1400).** `PATCH /events/{event_id}` is
+  gone, event responses drop `acknowledged`, `acknowledged_at` and
+  `acknowledged_by`, and `GET /events` drops its `acknowledged` filter. An
+  unknown query parameter is ignored, so a client still sending
+  `acknowledged=false` gets every matching event; filter on `requires_action`
+  instead. The CLI has no command for it, so only Go importers notice. The
+  admin migration `d2e3f4a5b6c7` drops the four acknowledgement columns; its
+  downgrade re-adds them with every event unacknowledged.
+- **Connect sessions (#1561, #1562, #1565, #1566, #1567, #1568, #1569,
+  #1574).**
+  - **Approval links carry no poll token.** `approval_url` is
+    `<auth base URL>/app/agents?approve=<session id>`. The target agent's
+    owner (holding `credentials:write` and `agents:write`) or an `org:admin`
+    reviews, confirms, rejects or cancels it signed in; any other caller gets
+    `403`. The poll token stays with the agent, and an older link that still
+    carries `poll_token` keeps working for its holder. A confirmed credential
+    is attributed (`created_by`) to the approver.
+  - **`provisioning_url` only for an open session.** The broker's `403
+    no_credential_binding` and `424 credential_not_provisioned` carry
+    `provisioning_url` only when the denied agent already has an open
+    (`created`, `awaiting_app` or `polling`) connect session for the API; it
+    is that session's approval link, and the directive then drops
+    `suggested_command`. With no open session there is no
+    `provisioning_url`.
+  - **`broker.account_linking_base_url` is retired.** A leftover value (or
+    `JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL`) is ignored with one
+    `config_retired_setting_ignored` WARNING per process; boot does not fail.
+    Remove it.
+  - **Registry-API connects are off by default.**
+    `control.connect.manual_flows_enabled` (default `false`) lets an agent
+    start a connect for a registry API (`jentic connect --api`, MCP
+    `request_connection` with `api`) that a human approves by entering the
+    credential or bringing an OAuth app. While it is off, `:connect` refuses
+    an API target with `manual_flows_disabled`. **Turn it on only after every
+    control replica runs 0.42.0.** While it is on,
+    `control.connect.manual_flows_ttl_hours` (default `72`) bounds those
+    sessions and `max_open_sessions_per_agent` (`10`) /
+    `max_open_sessions_per_owner` (`50`) cap open sessions (`429
+    too_many_open_sessions`).
+  - **Rejections and repeats (always on).** `POST
+    /connect-sessions/{session_id}:reject` ends a session as rejected; the
+    same agent's next `:connect` for that target gets `429 recently_rejected`
+    for `control.connect.rejection_cooldown_hours` (default `24`, `0` turns
+    it off). An agent asking again for the same OAuth vendor, app and scopes
+    gets its open session back with a fresh poll token, so the earlier
+    token's poll answers `403`.
+  - **Outcomes.** Every ended session leaves a row in the new control table
+    `connect_session_outcomes` (kept 30 days), and `/status` answers from it
+    once the session row is gone. `connect_sessions.target_kind` is `vendor`
+    or `api`; existing rows are `vendor`.
+  - **Vendor-connect credentials take the API's registered identity
+    (#1574).** A vendor connect stamps the credential with the `(vendor,
+    name)` the registry gives the API, so executes through it match instead
+    of failing with `credential_identity_mismatch`.
+- **Access logs mask query-string values (#1572).** uvicorn's access line
+  keeps the method, path, parameter names and status, and replaces every
+  query value with `***REDACTED***`. Log queries that matched on query values
+  need another key.
+- **Pinning a draft that moves server hosts needs an operator (#1573).** A
+  `Jentic-Revision` pin to the caller's own draft whose server hosts differ
+  from the API's live hosts (or move to plaintext `http`), on an API with
+  bound credentials, is held like a promote: when that draft serves the
+  request, a caller without `credentials:write` gets `403
+  host_change_requires_operator`. An operator holding `credentials:write`
+  promotes or pins it.
+- **Reads and verbs are scoped to the caller (#1507, #1508, #1518, #1522,
+  #1525, #1528, #1532, #1534).** Without `org:admin`, a caller sees only its
+  own and its agents' executions and events (both already in 0.41.1);
+  updates or deletes only notes it can see; lists only the bound agents it can
+  see on `GET /credentials/{id}/agents` and its binding-permission reads
+  (unless it created the credential); approves or denies only the agents it
+  owns (an ownerless agent needs `org:admin`); and gets `404` for agents it
+  cannot see on `GET /agents/{id}/oauth-grants`. An out-of-scope id answers
+  `404`, as if it did not exist. A shared permission rule set is
+  attachable only by its creator or an `org:admin`, unless it is curated
+  (anyone else gets `403 rule_set_attach_denied`); existing attachments
+  stay and are reported (see
+  [Cross-owner rule set attachments](../operations/upgrades.md#cross-owner-rule-set-attachments)).
+  Integrations that relied on seeing other users' data need `org:admin`.
+- **Migrations.** None is irreversible in schema, but some `down` bodies do
+  not restore data; roll back by restoring the snapshot.
+  - Admin: `0679072d60eb` adds nullable `operation_path` and
+    `operation_method` to `execution_records` (no backfill, #1381);
+    `e3f4a5b6c7d8` renames `actor_scope_grants` to
+    `actor_permission_grants` (#1399); `d2e3f4a5b6c7` drops the event
+    acknowledgement columns and rebuilds `ix_events_requires_action` on
+    `requires_action` alone (#1400).
+  - Control: `g4d5e6f7a8b9` adds `permission_rule_sets.curated` (#1528);
+    `aa1b2c3d4e5f` adds the shared OAuth app registration tables,
+    `credentials.oauth_app_registration_id` and
+    `connect_sessions.pkce_code_verifier` (#1435); `bb2c3d4e5f6a` adds the
+    connect-session target kinds, the open-API dedupe index and
+    `connect_session_outcomes` (#1566), and its downgrade deletes `api`
+    target sessions and the pending credentials of live ones;
+    `cc3d4e5f6a7b` adds `vendor_key`, `dedupe_key`, the OAuth dedupe index
+    and the outcome `credential_id` (#1567). Before creating the index it
+    expires every older open duplicate still in `created` (an `expired`
+    outcome is written and its pending credential deleted); one already in
+    `polling` keeps running to its 30-minute TTL.
+  - Registry: no new revision. `c2d3e4f5a6b7` leaves the `vector` extension
+    in place (#1519), so an install that has not run it yet keeps pgvector
+    and its dependents.
+  - The repeatable `rule_sets_mark_curated` upgrade step runs on every full
+    upgrade and marks the rule sets an `org:admin` or a system job created
+    as curated (#1536). `migrations.run --check` reports a step that has not
+    run as `OVERALL pending` (exit `3`), and `jenticctl start` refuses to
+    start until it has.
+
+The enterprise image follows separately.
+
 ## Upgrading to 0.41.0
 
 **Use 0.41.1 instead of 0.41.0 on PostgreSQL.** In 0.41.0 the admin scope
