@@ -251,6 +251,11 @@ pre-upgrade snapshot of every database first
     `*string`.
   - `EventAcknowledgeRequest`, the `AcknowledgeEvent` operation and the
     `Acknowledged*` fields of `EventResponse` are removed.
+- **The UI opens in a light theme (#1564).** Light is the default for new and
+  existing users alike (the OS appearance is not consulted); **Dark theme** in
+  the user menu switches back, remembered per browser (`localStorage` key
+  `jentic-one.theme`). Screenshots and runbooks showing the dark UI no longer
+  match the first view.
 - **The agent detail page is removed (#1475).** `/app/agents/<id>` redirects
   to `/app/agents?agent=<id>`, which opens that agent on the Agents page. Any
   other query parameter, `?tab=` included, is dropped, so a bookmark or
