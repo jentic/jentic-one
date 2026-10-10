@@ -120,6 +120,21 @@ def test_payload_omits_headers_when_none_are_kept() -> None:
     assert "headers" not in payload
 
 
+def test_replay_keeps_api_version_headers_vendors_require() -> None:
+    """A queued or held run sends the API version the caller chose: vendor
+    version headers and the generic ``*-version`` forms replay."""
+    inbound = {
+        "Notion-Version": "2022-06-28",
+        "Stripe-Version": "2024-06-20",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Anthropic-Version": "2023-06-01",
+        "Api-Version": "7.1",
+        "X-Api-Version": "2",
+    }
+
+    assert replay_headers(inbound) == {key.lower(): value for key, value in inbound.items()}
+
+
 @pytest.mark.parametrize(
     "name",
     ["Notion-Version", "Stripe-Version", "X-GitHub-Api-Version", "Box-Version", "x-acme-version"],
@@ -131,15 +146,24 @@ def test_any_vendor_version_header_replays(name: str) -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "Authorization",
-        "Cookie",
-        "Proxy-Authorization",
-        "Connection",
         "Version",
-        "Jentic-Api-Version",
+        "Jentic-Version",
         "X-Jentic-Version",
+        "Jentic-Revision",
+        "Authorization",
+        "Proxy-Authorization",
+        "Cookie",
         "X-Api-Key",
+        "Connection",
+        "Upgrade",
+        "Host",
+        "X-Forwarded-For",
+        "Versioning",
+        "X-Version-Token",
+        "-version",
+        "x--version",
     ],
 )
-def test_credentials_hop_by_hop_and_jentic_headers_never_replay(name: str) -> None:
-    assert not is_replay_header(name)
+def test_replay_never_keeps_credentials_hop_by_hop_or_jentic_headers(name: str) -> None:
+    assert is_replay_header(name) is False
+    assert replay_headers({name: "1"}) == {}

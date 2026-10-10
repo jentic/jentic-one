@@ -481,6 +481,19 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Execution Approvals",
+        "description": (
+            "Human-approval gate for held broker executions. When a permission rule carries "
+            "`effect: require-approval`, the broker enqueues the job in a `held` state and "
+            "files an `ExecutionApproval` row. A reviewer — the invoking agent's owner or any "
+            "`org:admin` — calls `POST /executions/approvals/{id}:decide` to approve or deny.\n\n"
+            "Approve flips the held job to `queued` so the worker picks it up; deny marks it "
+            "`failed` with a permission-denied result body. Unreviewed approvals expire "
+            "automatically after the configured TTL. The invoking agent (or any `AGENT` actor) "
+            "may never decide; decisions are always human-authenticated."
+        ),
+    },
+    {
         "name": "Events",
         "description": (
             "Curated, severity-tagged event stream surfaced to dashboards and operators. Each "
@@ -717,6 +730,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Actors",
             "Permissions",
             "Executions",
+            "Execution Approvals",
             "Jobs",
             "Events",
             "Audit",
@@ -912,6 +926,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/lookup"), "Lookup"),
     (re.compile(r"^/notes"), "Notes"),
     (re.compile(r"^/monitoring"), "Monitoring"),
+    (re.compile(r"^/executions/approvals"), "Execution Approvals"),
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),

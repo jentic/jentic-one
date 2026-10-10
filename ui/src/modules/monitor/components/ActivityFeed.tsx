@@ -34,6 +34,7 @@ import {
 	adaptEvent,
 	formatStreamDayLabel,
 	formatStreamTime,
+	isApprovalRequestEvent,
 	isFailureSeverity,
 	isRetiredEventType,
 	primaryDestinationFor,
@@ -425,6 +426,9 @@ export function ActivityFeed() {
 
 /** The record an event opens in the pane — or null when it navigates instead. */
 function recordFor(ev: StreamEvent): LogDetail | null {
+	// A held call's execution record (and its trace's calls) exist only once it
+	// runs; the row opens the approval's review page instead.
+	if (isApprovalRequestEvent(ev)) return null;
 	const { trace_id: traceId, execution_id: executionId, job_id: jobId } = ev.tokens;
 	if (ev.kind === 'execution' && hasTrace(traceId)) return { kind: 'trace', id: traceId };
 	if (ev.kind === 'execution' && executionId) return { kind: 'execution', id: executionId };

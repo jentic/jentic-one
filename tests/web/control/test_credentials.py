@@ -537,6 +537,34 @@ def test_agent_permissions_lifecycle(
     ]
 
 
+def test_agent_permissions_require_approval_rules(
+    cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
+) -> None:
+    """``require-approval`` round-trips, must carry a condition, and the dry-run
+    reports it as matched but not allowed (the broker holds such calls)."""
+    credential_id, (agent_id, _) = bound_agents
+    base = f"/credentials/{credential_id}/agents/{agent_id}/permissions"
+
+    resp = cred_writer_client.put(base, json=[{"effect": "require-approval"}])
+    assert resp.status_code == 422
+
+    resp = cred_writer_client.put(
+        base,
+        json=[
+            {"effect": "require-approval", "methods": ["POST"], "path": "/v1/.*"},
+            {"effect": "allow", "methods": ["GET"], "path": "/v1/.*"},
+        ],
+    )
+    assert resp.status_code == 200, resp.text
+    assert [r["effect"] for r in resp.json()["data"]] == ["require-approval", "allow"]
+
+    got = cred_writer_client.post(f"{base}:test", json={"method": "POST", "path": "/v1/x"}).json()
+    assert got["allowed"] is False
+    assert got["matched"] is True
+    assert got["effect"] == "require-approval"
+    assert got["rule_index"] == 0
+
+
 def test_agent_permissions_test_endpoint(
     cred_writer_client: TestClient, bound_agents: tuple[str, list[str]]
 ) -> None:

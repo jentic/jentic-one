@@ -2,6 +2,49 @@
 	"_readme": "Parity fixture consumed by both the Python matcher (tests/unit/shared/test_rule_matcher_parity.py) and the TS matcher (ui/src/shared/credentials/lib/__tests__/rule-matcher.test.ts). The TS side reads the vendored copy at ui/src/shared/credentials/lib/__tests__/ — the UI Docker build copies only ui/, so the test may not import across the module boundary. The Python parity test enforces byte-identity between the two copies, so edit tests/fixtures/rule-matcher-parity.json and copy it over the vendored file. Do NOT edit either file to make a broken side pass — fix the divergence at the source. New cases: add here and update both test files' snapshot expectations.",
 	"cases": [
 		{
+			"name": "require-approval match does not run the call outright",
+			"rules": [
+				{
+					"effect": "require-approval",
+					"methods": ["POST"],
+					"path": "/repos",
+					"match_mode": "prefix"
+				},
+				{
+					"effect": "allow",
+					"methods": ["POST"],
+					"path": "/",
+					"match_mode": "prefix"
+				}
+			],
+			"request": {
+				"method": "POST",
+				"path": "/repos/x",
+				"operation_id": null
+			},
+			"allowed": false
+		},
+		{
+			"name": "condition-less require-approval is skipped",
+			"rules": [
+				{
+					"effect": "require-approval"
+				},
+				{
+					"effect": "allow",
+					"methods": ["GET"],
+					"path": "/",
+					"match_mode": "prefix"
+				}
+			],
+			"request": {
+				"method": "GET",
+				"path": "/repos/x",
+				"operation_id": null
+			},
+			"allowed": true
+		},
+		{
 			"name": "empty rules → default deny",
 			"rules": [],
 			"request": {

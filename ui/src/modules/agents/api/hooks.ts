@@ -262,6 +262,8 @@ export function useRefreshFleetCredentialBindings(): () => void {
 export interface BindingRuleSummary {
 	total: number;
 	allow: number;
+	/** Ask (`require-approval`) rules: their calls run once a reviewer approves. */
+	ask: number;
 	deny: number;
 	/** Set when a shared rule set governs the binding: the counts are the set's
 	 * rules, and the binding's inline rules are dormant. */
@@ -275,6 +277,7 @@ export function summarizeBindingRules(rules: readonly BindingPermissionRule[]): 
 	return {
 		total: operator.length,
 		allow: operator.filter((rule) => String(rule.effect) === 'allow').length,
+		ask: operator.filter((rule) => String(rule.effect) === 'require-approval').length,
 		deny: operator.filter((rule) => String(rule.effect) === 'deny').length,
 	};
 }

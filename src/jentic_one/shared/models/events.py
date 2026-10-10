@@ -143,6 +143,23 @@ class EventType:
     # transaction. Internal-only, like OAUTH_GRANT_CREATED.
     OAUTH_GRANT_REVOKED = "oauth_grant.revoked"
 
+    # Emitted by the broker hold path when an execute request matches a
+    # require-approval rule and the job is parked with HELD status.
+    # requires_action=True — a reviewer must approve or deny.
+    EXECUTION_APPROVAL_REQUESTED = "execution.approval_requested"
+
+    # Emitted by the admin decide path when a reviewer approves or denies a
+    # held execution. Settles the matching approval_requested prompt.
+    EXECUTION_APPROVAL_DECIDED = "execution.approval_decided"
+
+    # Emitted by the admin withdraw path when the agent that filed a hold
+    # abandons it. Settles the matching approval_requested prompt.
+    EXECUTION_APPROVAL_WITHDRAWN = "execution.approval_withdrawn"
+
+    # Emitted by the worker's expiry sweep when a hold's approval window lapses
+    # undecided and its job fails. Settles the matching approval_requested prompt.
+    EXECUTION_APPROVAL_EXPIRED = "execution.approval_expired"
+
     ALL: frozenset[str] = frozenset(
         {
             IMPORT_COMPLETED,
@@ -185,6 +202,10 @@ class EventType:
             OAUTH_CLIENT_DENIED,
             OAUTH_GRANT_CREATED,
             OAUTH_GRANT_REVOKED,
+            EXECUTION_APPROVAL_REQUESTED,
+            EXECUTION_APPROVAL_DECIDED,
+            EXECUTION_APPROVAL_WITHDRAWN,
+            EXECUTION_APPROVAL_EXPIRED,
         }
     )
 
@@ -419,8 +440,12 @@ EVENT_TYPE_SEVERITIES: dict[str, frozenset[EventSeverity]] = {
     EventType.OAUTH_CLIENT_DENIED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_CREATED: frozenset({EventSeverity.INFO}),
     EventType.OAUTH_GRANT_REVOKED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_DECIDED: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_WITHDRAWN: frozenset({EventSeverity.INFO}),
+    EventType.EXECUTION_APPROVAL_EXPIRED: frozenset({EventSeverity.INFO}),
     EventType.CONNECT_SESSION_CREATED: frozenset({EventSeverity.INFO}),
     # --- WARNING: needs attention soon; nothing has failed yet ------------
+    EventType.EXECUTION_APPROVAL_REQUESTED: frozenset({EventSeverity.WARNING}),
     EventType.UPSTREAM_CIRCUIT_OPEN: frozenset({EventSeverity.WARNING}),
     EventType.UNAUTHORIZED_ACCESS_ATTEMPT: frozenset({EventSeverity.WARNING}),
     EventType.CREDENTIAL_BINDING_UNSERVED: frozenset({EventSeverity.WARNING}),

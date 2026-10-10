@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -30,6 +31,21 @@ func (e HealthResponseStatus) Valid() bool {
 	case Pass:
 		return true
 	case Warn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HeldExecutionResponseStatus.
+const (
+	Held HeldExecutionResponseStatus = "held"
+)
+
+// Valid indicates whether the value is a known member of the HeldExecutionResponseStatus enum.
+func (e HeldExecutionResponseStatus) Valid() bool {
+	switch e {
+	case Held:
 		return true
 	default:
 		return false
@@ -109,6 +125,61 @@ type HealthResponse struct {
 //
 // Examples: pass
 type HealthResponseStatus string
+
+// HeldExecutionResponse Returned as the `202` body when the call matches a permission rule
+// with `effect: require-approval`. The call has not run: it waits as
+// a `held` job until a reviewer (the agent's owner or an `org:admin`)
+// approves or denies it on `approval.review_url`, or the approval
+// expires. Poll `_links.self` until the job is terminal — `completed`
+// (it ran), `failed` (denied, expired, or the run failed; the result is
+// the problem body) or `cancelled` (withdrawn by the calling agent).
+// To abandon the call, `POST` to `_links.withdraw`
+// (`/executions/approvals/{approval.id}:withdraw`); `POST
+// /jobs/{id}:cancel` refuses a held job. Never re-send the call: an
+// identical call while one is pending joins the same job.
+type HeldExecutionResponse struct {
+	UnderscoreLinks struct {
+		// Self Control-plane job record to poll.
+		//
+		// Examples: https://control.your-instance.example/jobs/job_abc123
+		Self string `json:"self"`
+
+		// Withdraw `POST` here to withdraw the approval and cancel the held job
+		// (only the agent that made the call may). The call never runs.
+		//
+		//
+		// Examples: https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
+		Withdraw string `json:"withdraw"`
+	} `json:"_links"`
+
+	// AgentDirective What the calling agent should do next.
+	AgentDirective string `json:"agent_directive"`
+	Approval       struct {
+		// ExpiresAt When the approval expires undecided and the job fails.
+		ExpiresAt time.Time `json:"expires_at"`
+
+		// Id Approval id.
+		//
+		// Examples: exap_abc123
+		Id string `json:"id"`
+
+		// ReviewUrl Review page; the reviewer signs in to decide. Carries no credential.
+		//
+		// Examples: https://your-instance.example/app/agents/approvals/exap_abc123
+		ReviewUrl string `json:"review_url"`
+	} `json:"approval"`
+
+	// JobId The held job. Matches the `job_id` reported by the control plane.
+	//
+	// Examples: job_abc123
+	JobId string `json:"job_id"`
+
+	// Status Always `held`.
+	Status HeldExecutionResponseStatus `json:"status"`
+}
+
+// HeldExecutionResponseStatus Always `held`.
+type HeldExecutionResponseStatus string
 
 // ReadinessResponse Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the
 // instance is below the saturation threshold; `status: unready` (HTTP
@@ -309,14 +380,10 @@ type Default struct {
 	Type *string `json:"type,omitempty"`
 }
 
-// ExecuteAsync Returned as the `202` body on async executions. The Broker
-// does not expose a polling surface of its own; `_links.self`
-// is an absolute URL into the platform's control plane, where
-// the queued work surfaces as a `kind: execution` job. Poll
-// that URL for status, and follow its `_links.result` to
-// collect the upstream response body once `status` is
-// `completed`.
-type ExecuteAsync = AsyncQueuedResponse
+// ExecuteAsync defines model for ExecuteAsync.
+type ExecuteAsync struct {
+	union json.RawMessage
+}
 
 // Forbidden Jentic Problem Details error schema (RFC 9457)
 type Forbidden struct {
@@ -1062,6 +1129,68 @@ type ExecutePutParams struct {
 	// upstream. The same header name is also emitted on responses to
 	// attribute the credential used.
 	JenticCredentialId *JenticCredentialId `json:"Jentic-Credential-Id,omitempty"`
+}
+
+// AsAsyncQueuedResponse returns the union data inside the ExecuteAsync as a AsyncQueuedResponse
+func (t ExecuteAsync) AsAsyncQueuedResponse() (AsyncQueuedResponse, error) {
+	var body AsyncQueuedResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAsyncQueuedResponse overwrites any union data inside the ExecuteAsync as the provided AsyncQueuedResponse
+func (t *ExecuteAsync) FromAsyncQueuedResponse(v AsyncQueuedResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAsyncQueuedResponse performs a merge with any union data inside the ExecuteAsync, using the provided AsyncQueuedResponse
+func (t *ExecuteAsync) MergeAsyncQueuedResponse(v AsyncQueuedResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsHeldExecutionResponse returns the union data inside the ExecuteAsync as a HeldExecutionResponse
+func (t ExecuteAsync) AsHeldExecutionResponse() (HeldExecutionResponse, error) {
+	var body HeldExecutionResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromHeldExecutionResponse overwrites any union data inside the ExecuteAsync as the provided HeldExecutionResponse
+func (t *ExecuteAsync) FromHeldExecutionResponse(v HeldExecutionResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeHeldExecutionResponse performs a merge with any union data inside the ExecuteAsync, using the provided HeldExecutionResponse
+func (t *ExecuteAsync) MergeHeldExecutionResponse(v HeldExecutionResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ExecuteAsync) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ExecuteAsync) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
 }
 
 // RequestEditorFn is the function signature for the RequestEditor callback function

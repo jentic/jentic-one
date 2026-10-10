@@ -191,6 +191,23 @@
         "content": {
           "application/json": {
             "examples": {
+              "held": {
+                "summary": "Call held for human approval by a require-approval rule.",
+                "value": {
+                  "_links": {
+                    "self": "https://control.your-instance.example/jobs/job_abc123",
+                    "withdraw": "https://control.your-instance.example/executions/approvals/exap_abc123:withdraw"
+                  },
+                  "agent_directive": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with job_id and wait_seconds: 30. If it is still held, tell the user it is waiting for approval and end your turn again. Do not re-send the call.",
+                  "approval": {
+                    "expires_at": "2026-10-06T12:00:00Z",
+                    "id": "exap_abc123",
+                    "review_url": "https://your-instance.example/app/agents/approvals/exap_abc123"
+                  },
+                  "job_id": "job_abc123",
+                  "status": "held"
+                }
+              },
               "queued": {
                 "summary": "Freshly queued async execution.",
                 "value": {
@@ -202,11 +219,18 @@
               }
             },
             "schema": {
-              "$ref": "#/components/schemas/AsyncQueuedResponse"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AsyncQueuedResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/HeldExecutionResponse"
+                }
+              ]
             }
           }
         },
-        "description": "Execution queued. Follow `_links.self` to the control plane\nto poll the job and collect the upstream response body once\n`status` is `completed`. The body is delivered once and then\nevicted from the platform's pickup buffer.\n",
+        "description": "Execution queued — or held for human approval when a\n`require-approval` permission rule matched (`status: held`; see\n`HeldExecutionResponse`). Follow `_links.self` to the control plane\nto poll the job and collect the upstream response body once\n`status` is `completed`. The body is delivered once and then\nevicted from the platform's pickup buffer.\n",
         "headers": {
           "Idempotent-Replayed": {
             "description": "Present and `true` when this `202` is a replay of a\npreviously-queued job under the same `Idempotency-Key`.\nThe `job_id` will match the original.\n",
@@ -529,6 +553,92 @@
         ],
         "summary": "Service health probe response.",
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HeldExecutionResponse": {
+        "description": "Returned as the `202` body when the call matches a permission rule\nwith `effect: require-approval`. The call has not run: it waits as\na `held` job until a reviewer (the agent's owner or an `org:admin`)\napproves or denies it on `approval.review_url`, or the approval\nexpires. Poll `_links.self` until the job is terminal — `completed`\n(it ran), `failed` (denied, expired, or the run failed; the result is\nthe problem body) or `cancelled` (withdrawn by the calling agent).\nTo abandon the call, `POST` to `_links.withdraw`\n(`/executions/approvals/{approval.id}:withdraw`); `POST\n/jobs/{id}:cancel` refuses a held job. Never re-send the call: an\nidentical call while one is pending joins the same job.\n",
+        "properties": {
+          "_links": {
+            "properties": {
+              "self": {
+                "description": "Control-plane job record to poll.",
+                "examples": [
+                  "https://control.your-instance.example/jobs/job_abc123"
+                ],
+                "type": "string"
+              },
+              "withdraw": {
+                "description": "`POST` here to withdraw the approval and cancel the held job\n(only the agent that made the call may). The call never runs.\n",
+                "examples": [
+                  "https://control.your-instance.example/executions/approvals/exap_abc123:withdraw"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "self",
+              "withdraw"
+            ],
+            "type": "object"
+          },
+          "agent_directive": {
+            "description": "What the calling agent should do next.",
+            "type": "string"
+          },
+          "approval": {
+            "properties": {
+              "expires_at": {
+                "description": "When the approval expires undecided and the job fails.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "description": "Approval id.",
+                "examples": [
+                  "exap_abc123"
+                ],
+                "type": "string"
+              },
+              "review_url": {
+                "description": "Review page; the reviewer signs in to decide. Carries no credential.",
+                "examples": [
+                  "https://your-instance.example/app/agents/approvals/exap_abc123"
+                ],
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "review_url",
+              "expires_at"
+            ],
+            "type": "object"
+          },
+          "job_id": {
+            "description": "The held job. Matches the `job_id` reported by the control plane.",
+            "examples": [
+              "job_abc123"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Always `held`.",
+            "enum": [
+              "held"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "approval",
+          "agent_directive",
+          "_links"
+        ],
+        "summary": "Handle returned when a permission rule holds the call for human approval.",
+        "title": "HeldExecutionResponse",
         "type": "object"
       },
       "ReadinessResponse": {

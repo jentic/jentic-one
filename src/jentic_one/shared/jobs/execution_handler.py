@@ -27,6 +27,7 @@ protocols satisfied by broker-side implementations injected at worker startup.
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -35,6 +36,7 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
+from jentic_one.shared.crypto.encryption import EncryptionService
 from jentic_one.shared.events import (
     MAX_EVENT_SUMMARY_FIELD_LEN,
     emit_event,
@@ -43,6 +45,7 @@ from jentic_one.shared.events import (
 )
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
+from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
 from jentic_one.shared.jobs.protocols import (
     CredentialInjector,
@@ -62,6 +65,18 @@ from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
+#: Result problem of a held payload this worker has no keyset to decrypt.
+_HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM: dict[str, Any] = {
+    "type": "approval_hold_unavailable",
+    "title": "Held execution could not run",
+    "status": 503,
+    "detail": (
+        "The worker has no credentials encryption keyset to read this held execution; "
+        "it was not run"
+    ),
+    "error_origin": "broker",
+}
+
 # The resolved-identity dataclass needs an ``active`` flag; the worker only
 # injects after the job passed the run-time ``ExecutionAuthorizer`` re-check
 # (which includes the actor-still-active check), so it is always True here.
@@ -80,6 +95,7 @@ class ExecutionHandler:
         egress: Any | None = None,
         security_config: SecurityConfig | None = None,
         execution_authorizer: ExecutionAuthorizer | None = None,
+        encryption: EncryptionService | None = None,
     ) -> None:
         if credential_injector is not None and execution_authorizer is None:
             # Fail closed at wiring time: injecting credentials for a queued
@@ -92,6 +108,7 @@ class ExecutionHandler:
         self._credential_injector = credential_injector
         self._egress = egress
         self._security_config = security_config or SecurityConfig()
+        self._encryption = encryption
 
     async def execute(
         self,
@@ -107,6 +124,23 @@ class ExecutionHandler:
             raise ValueError("created_by and actor_type are required for execution jobs")
         if payload is None:
             payload = {}
+
+        # Held-job payloads are encrypted at rest with the platform key; decrypt
+        # before reading any field.
+        if ENCRYPTED_PAYLOAD_KEY in payload:
+            if self._encryption is None:
+                # Fail closed with a result the agent can read, never a run.
+                logger.error("held_payload_undecryptable", job_id=job_id)
+                return JobResultPayload(
+                    body={
+                        "execution_id": f"exec_{job_id}",
+                        "status": ExecutionStatus.FAILED,
+                        "http_status": 503,
+                        "duration_ms": 0,
+                        "problem": _HELD_PAYLOAD_UNDECRYPTABLE_PROBLEM,
+                    }
+                )
+            payload = json.loads(self._encryption.decrypt(str(payload[ENCRYPTED_PAYLOAD_KEY])))
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")
@@ -153,6 +187,7 @@ class ExecutionHandler:
                     credential_id=payload.get("credential_id"),
                     server_variables=server_variables,
                     server_variables_unresolved=server_variables_unresolved,
+                    job_id=job_id,
                 )
             )
             if not verdict.allowed:

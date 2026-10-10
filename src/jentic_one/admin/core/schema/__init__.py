@@ -10,6 +10,7 @@ from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.instance_identity import InstanceIdentity
@@ -36,6 +37,7 @@ __all__ = [
     "AuditEntry",
     "AuthorizationCode",
     "Event",
+    "ExecutionApproval",
     "ExecutionRecord",
     "ExternalIdentity",
     "InstanceIdentity",

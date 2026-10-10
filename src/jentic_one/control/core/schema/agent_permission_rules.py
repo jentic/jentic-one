@@ -48,7 +48,8 @@ class AgentPermissionRule(AuditableMixin, ControlBase):
     credential_id: Mapped[str] = mapped_column(
         String(30), ForeignKey("credentials.id", ondelete="CASCADE"), nullable=False
     )
-    effect: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Sized for the longest effect, "require-approval" (16 chars).
+    effect: Mapped[str] = mapped_column(String(16), nullable=False)
     methods: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
     path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     # ``MATCH`` is a reserved word in SQLite and a Python soft keyword; use

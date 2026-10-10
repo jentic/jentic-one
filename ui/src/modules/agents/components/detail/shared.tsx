@@ -42,13 +42,18 @@ interface RuleConditions {
 	operations?: string[] | null;
 }
 
+/** An effect neither shape knows reads as allow. */
+function toEditorEffect(effect: string): EditorRule['effect'] {
+	return effect === 'deny' || effect === 'require-approval' ? effect : 'allow';
+}
+
 /** One rule in the shared display shape `ruleSummary` reads.
  * Regex is the default; only non-default modes change how the path reads, so
  * they alone survive into the display shape. */
 export function toDisplayRule(rule: RuleConditions): DisplayRule {
 	const mode = String(rule.match_mode ?? 'regex');
 	return {
-		effect: String(rule.effect) === 'deny' ? 'deny' : 'allow',
+		effect: toEditorEffect(String(rule.effect)),
 		methods: rule.methods ?? null,
 		path: rule.path ?? null,
 		match_mode: mode === 'prefix' || mode === 'exact' ? mode : null,
@@ -71,7 +76,7 @@ export function toDisplayRules(rules: BindingPermissionRule[] | null | undefined
 export function toEditorRule(rule: RuleConditions): EditorRule {
 	const mode = rule.match_mode;
 	return {
-		effect: String(rule.effect) === 'deny' ? 'deny' : 'allow',
+		effect: toEditorEffect(String(rule.effect)),
 		methods: rule.methods ?? null,
 		path: rule.path ?? null,
 		match_mode: mode === 'prefix' || mode === 'exact' || mode === 'regex' ? mode : undefined,

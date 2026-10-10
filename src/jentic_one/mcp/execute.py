@@ -621,6 +621,22 @@ def _cap_headers(headers: dict[str, str], budget: int) -> tuple[dict[str, str], 
     return capped, True
 
 
+def held_envelope(status: int, parsed_body: Any) -> dict[str, Any] | None:
+    """The broker's held (202) envelope, or ``None`` for any other response.
+
+    A held envelope is a 202 whose body carries ``status: "held"`` plus the
+    ``job_id`` to poll and the ``approval`` (id, review_url, expires_at).
+    """
+    if status != 202 or not isinstance(parsed_body, dict):
+        return None
+    if parsed_body.get("status") != "held" or not isinstance(parsed_body.get("job_id"), str):
+        return None
+    approval = parsed_body.get("approval")
+    if not isinstance(approval, dict) or not isinstance(approval.get("review_url"), str):
+        return None
+    return parsed_body
+
+
 def execute_result_payload(
     status: int, headers: httpx.Headers, body: bytes, execution_id: str
 ) -> dict[str, Any]:

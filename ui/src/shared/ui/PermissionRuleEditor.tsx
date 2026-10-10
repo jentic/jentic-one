@@ -34,10 +34,11 @@ export type PermissionRuleInput = PermissionRuleSchema;
 
 /**
  * Rule effect values, as plain string literals matching the backend enum
- * (`allow` / `deny`). Defined here so views/editors don't import the generated
- * enum *value* (which the layering ESLint rule forbids outside `api/client.ts`).
+ * (`allow` / `deny` / `require-approval`). Defined here so views/editors
+ * don't import the generated enum *value* (which the layering ESLint rule
+ * forbids outside `api/client.ts`).
  */
-const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
+export const PERMISSION_EFFECTS = ['allow', 'deny', 'require-approval'] as const;
 export type PermissionEffect = (typeof PERMISSION_EFFECTS)[number];
 
 /**
@@ -65,14 +66,14 @@ const ALLOW_ALL_PATH = '.*';
 const REGEX_MATCH_MODE = 'regex' as NonNullable<PermissionRuleInput['match_mode']>;
 
 /**
- * True when a rule would be rejected by the backend: an `allow` that constrains
- * nothing (no methods, path, or operations) matches every request, so the API
- * refuses it (422). The editor surfaces this inline and blocks save rather than
- * letting the user submit a guaranteed error.
+ * True when a rule would be rejected by the backend: an `allow` or
+ * `require-approval` that constrains nothing (no methods, path, or operations)
+ * matches every request, so the API refuses it (422). The editor surfaces this
+ * inline and blocks save rather than letting the user submit a guaranteed error.
  */
 export function isEmptyAllowRule(rule: PermissionRuleInput): boolean {
 	return (
-		rule.effect === 'allow' &&
+		(rule.effect === 'allow' || rule.effect === 'require-approval') &&
 		!(rule.methods?.length || (rule.path && rule.path.trim()) || rule.operations?.length)
 	);
 }
@@ -226,7 +227,7 @@ export function PermissionRuleEditor({
 							>
 								#{index + 1}
 							</span>
-							<span className="w-[5.5rem] shrink-0">
+							<span className="w-[9.5rem] shrink-0">
 								<Select
 									aria-label="Effect"
 									value={rule.effect}
@@ -239,7 +240,11 @@ export function PermissionRuleEditor({
 								>
 									{PERMISSION_EFFECTS.map((effect: PermissionEffect) => (
 										<option key={effect} value={effect}>
-											{effect === 'allow' ? 'Allow' : 'Deny'}
+											{effect === 'allow'
+												? 'Allow'
+												: effect === 'require-approval'
+													? 'Ask'
+													: 'Deny'}
 										</option>
 									))}
 								</Select>
@@ -344,25 +349,31 @@ export function PermissionRuleEditor({
 								<span className="flex items-start gap-1.5">
 									<AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
 									<span>
-										An Allow rule must constrain at least one method, path, or
-										operation.
+										{rule.effect === 'require-approval'
+											? 'An Ask rule'
+											: 'An Allow rule'}{' '}
+										must constrain at least one method, path, or operation.
 									</span>
 								</span>
 								{/* The fix, not the instruction for it. It sets the mode as well as the
-								    path: `.*` grants everything only under `regex`. */}
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={() =>
-										update(index, {
-											path: ALLOW_ALL_PATH,
-											match_mode: REGEX_MATCH_MODE,
-										})
-									}
-									className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
-								>
-									Use <code className="font-mono">.*</code> to allow everything
-								</Button>
+								    path: `.*` grants everything only under `regex`. Offered for allow
+								    only — holding every call for review is what the guard prevents. */}
+								{rule.effect !== 'require-approval' && (
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={() =>
+											update(index, {
+												path: ALLOW_ALL_PATH,
+												match_mode: REGEX_MATCH_MODE,
+											})
+										}
+										className="text-danger hover:text-danger h-auto px-1.5 py-0.5 underline"
+									>
+										Use <code className="font-mono">.*</code> to allow
+										everything
+									</Button>
+								)}
 							</div>
 						)}
 					</div>

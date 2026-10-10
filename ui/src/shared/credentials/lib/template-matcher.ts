@@ -28,7 +28,7 @@
 
 import RandExp from 'randexp';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { evaluateRules } from '@/shared/credentials/lib/rule-matcher';
+import { evaluateRuleEffect, type RuleOutcome } from '@/shared/credentials/lib/rule-matcher';
 
 /**
  * Convert an OpenAPI-style path template to a JS RegExp that matches any
@@ -528,10 +528,10 @@ export function evaluateTemplateOp(
 	op: { method: string; path: string; operation_id: string | null },
 ): TemplateEvaluation {
 	for (const rule of rules) {
-		// Skip condition-less allow rules (backend rejects saving them,
-		// but paranoid mirror of the enforce-time matcher).
+		// Skip condition-less allow / require-approval rules (backend rejects
+		// saving them, but paranoid mirror of the enforce-time matcher).
 		if (
-			rule.effect === 'allow' &&
+			rule.effect !== 'deny' &&
 			!(rule.methods && rule.methods.length > 0) &&
 			(rule.path == null || rule.path === '') &&
 			!(rule.operations && rule.operations.length > 0)
@@ -559,18 +559,22 @@ export function evaluateTemplateOp(
 // ---------------------------------------------------------------------------
 
 /**
- * Verdict for an op given the current rule set. ``partial`` means some
- * concrete instances of the op template are allowed and others denied
- * — the ops preview surfaces that state so the user isn't misled into
- * thinking a rule affects the whole op when it only covers a slice.
+ * Verdict for an op given the current rule set. ``require-approval`` means
+ * every concrete instance of the op template is held for a reviewer.
+ * ``partial`` means the instances split across outcomes (some allowed,
+ * some held, some denied) — the ops preview surfaces that state so the
+ * user isn't misled into thinking a rule affects the whole op when it
+ * only covers a slice.
  */
-export type OpCoverageVerdict = 'allow' | 'deny' | 'partial';
+export type OpCoverageVerdict = 'allow' | 'require-approval' | 'deny' | 'partial';
 
 export interface OpCoverage {
 	verdict: OpCoverageVerdict;
-	// Up to a few concrete allowed sample paths (empty for ``deny``).
+	// Up to a few concrete allowed sample paths (``partial`` only).
 	allowedSamples: readonly string[];
-	// Up to a few concrete denied sample paths (empty for ``allow``).
+	// Up to a few concrete sample paths held for approval (``partial`` only).
+	approvalSamples: readonly string[];
+	// Up to a few concrete denied sample paths (``partial`` only).
 	deniedSamples: readonly string[];
 }
 
@@ -642,15 +646,16 @@ export function sampleTemplatePaths(
 
 /**
  * Classify how the rule set covers an op template. Runs enforce-time
- * evaluation (``evaluateRules``, now placeholder-aware) over a set of
+ * evaluation (``evaluateRuleEffect``, placeholder-aware) over a set of
  * concrete samples drawn from the template. Bucket:
  *
  * * ``allow`` — every sample is allowed. Op is fully covered.
+ * * ``require-approval`` — every sample is held for a reviewer.
  * * ``deny`` — every sample is denied. Op has no path in.
- * * ``partial`` — some allowed, some denied. Op has a narrow allow
- *   surface — user sees "e.g. X allowed / e.g. Y denied" on expand.
+ * * ``partial`` — the samples split across outcomes. User sees one
+ *   "e.g." path per outcome on expand.
  *
- * Sample count is bounded, so ``allow``/``deny`` are best-effort
+ * Sample count is bounded, so the uniform verdicts are best-effort
  * (a pathological rule set could sneak an outlier past the samples).
  * In practice the biased sampler in ``sampleTemplatePaths`` hits any
  * literal a rule references, so realistic policy patterns classify
@@ -662,27 +667,31 @@ export function classifyOpCoverage(
 	maxExamples: number = 2,
 ): OpCoverage {
 	const samples = sampleTemplatePaths(op.path, rules);
-	const allowedSamples: string[] = [];
-	const deniedSamples: string[] = [];
+	const byOutcome: Record<RuleOutcome, string[]> = {
+		allow: [],
+		'require-approval': [],
+		deny: [],
+	};
+	const outcomes = new Set<RuleOutcome>();
 	for (const sample of samples) {
-		const allowed = evaluateRules(rules, {
+		const outcome = evaluateRuleEffect(rules, {
 			method: op.method,
 			path: sample,
 			operation_id: op.operation_id,
 		});
-		if (allowed) {
-			if (allowedSamples.length < maxExamples) allowedSamples.push(sample);
-		} else {
-			if (deniedSamples.length < maxExamples) deniedSamples.push(sample);
-		}
+		outcomes.add(outcome);
+		if (byOutcome[outcome].length < maxExamples) byOutcome[outcome].push(sample);
 	}
-	if (allowedSamples.length > 0 && deniedSamples.length === 0) {
-		return { verdict: 'allow', allowedSamples: [], deniedSamples: [] };
+	if (outcomes.size === 1) {
+		const [only] = outcomes;
+		return { verdict: only, allowedSamples: [], approvalSamples: [], deniedSamples: [] };
 	}
-	if (deniedSamples.length > 0 && allowedSamples.length === 0) {
-		return { verdict: 'deny', allowedSamples: [], deniedSamples: [] };
-	}
-	return { verdict: 'partial', allowedSamples, deniedSamples };
+	return {
+		verdict: 'partial',
+		allowedSamples: byOutcome.allow,
+		approvalSamples: byOutcome['require-approval'],
+		deniedSamples: byOutcome.deny,
+	};
 }
 
 /** Fill the template's placeholders past the given prefix with generic sample values. */

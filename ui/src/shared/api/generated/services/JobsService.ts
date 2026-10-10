@@ -79,7 +79,10 @@ export class JobsService {
     }
     /**
      * Get Job Result
-     * Get the result of a completed job — polymorphic by kind.
+     * Get the result of a completed job, or the problem body of a failed execution.
+     *
+     * Polymorphic by kind. A held execution that was denied or expired is
+     * ``failed`` with a permission-denied problem as its result.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -106,7 +109,10 @@ export class JobsService {
     }
     /**
      * Cancel Job
-     * Cancel an active job.
+     * Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+     *
+     * A held execution answers ``409``: it awaits its approval and settles only through
+     * it (a reviewer's decision, the filing agent's withdrawal, or expiry).
      * @returns JobResponse Successful Response
      * @throws ApiError
      */
@@ -125,6 +131,8 @@ export class JobsService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
+                409: `Conflict`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

@@ -308,7 +308,7 @@ function AccessCard({ api }: { api: WorkspaceApi }) {
 		: null;
 
 	// Whether each bound agent can actually call anything: a binding with no
-	// allow rule is default-deny, so it reads Blocked, not just "bound".
+	// allow or Ask rule is default-deny, so it reads Blocked, not just "bound".
 	const bindingPairs = useMemo(
 		() =>
 			(agentAccess?.bindings ?? []).map((b) => ({

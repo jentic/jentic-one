@@ -553,7 +553,7 @@ def test_resolved_identity_is_stamped_origin_mcp(monkeypatch: pytest.MonkeyPatch
         raise AssertionError("stop here")
 
     with make_client() as client:
-        monkeypatch.setattr("jentic_one.mcp.app.dispatch_tool_call", spy_dispatch)
+        monkeypatch.setattr("jentic_one.mcp.app.dispatch_mcp_tool_call", spy_dispatch)
         client.post(
             "/mcp",
             json=_rpc("tools/call", {"name": "whoami", "arguments": {}}),
@@ -578,7 +578,7 @@ def test_call_env_carries_the_app_state_catalog_auto_importer(
     with make_client() as client:
         if installed:
             cast(FastAPI, client.app).state.catalog_auto_importer = importer
-        monkeypatch.setattr("jentic_one.mcp.app.dispatch_tool_call", spy_dispatch)
+        monkeypatch.setattr("jentic_one.mcp.app.dispatch_mcp_tool_call", spy_dispatch)
         client.post(
             "/mcp",
             json=_rpc("tools/call", {"name": "request_connection", "arguments": {}}),

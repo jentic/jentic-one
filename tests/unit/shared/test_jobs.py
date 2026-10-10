@@ -14,6 +14,7 @@ from jentic_one.shared.models.jobs import JobKind, JobStatus
         (JobStatus.FAILED, "failed"),
         (JobStatus.CANCELLED, "cancelled"),
         (JobStatus.DEAD_LETTER, "dead_letter"),
+        (JobStatus.HELD, "held"),
     ],
 )
 def test_job_status_member_value(member: JobStatus, expected: str) -> None:
@@ -22,7 +23,7 @@ def test_job_status_member_value(member: JobStatus, expected: str) -> None:
 
 
 def test_job_status_member_count() -> None:
-    assert len(JobStatus) == 6
+    assert len(JobStatus) == 7
 
 
 @pytest.mark.parametrize(

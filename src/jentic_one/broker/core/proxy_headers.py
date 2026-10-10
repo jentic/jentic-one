@@ -32,8 +32,9 @@ _DECODED_BODY_HEADERS: frozenset[str] = frozenset({"content-length", "content-en
 # match, failing the request before it reaches the upstream.
 _INBOUND_FRAMING_HEADERS: frozenset[str] = frozenset({"content-length"})
 
-# Request headers an async (``Prefer: respond-async``) execution keeps for its
-# worker run. The job payload sits in the admin DB, so this is an explicit
+# Request headers an async (``Prefer: respond-async``) or held execution keeps
+# for its worker run. The job payload sits in the admin DB (a held one for its
+# whole approval window), so this is an explicit
 # allow-list of headers that describe the body, the response the caller wants,
 # and the API version a vendor requires — never the caller's credentials,
 # cookies, hop-by-hop or broker headers. The run re-injects upstream
@@ -110,7 +111,7 @@ def forward_headers(inbound: Mapping[str, str], injected: Mapping[str, str]) -> 
 
 # API version request headers beyond the named ones above. Many vendors refuse
 # a call without one, and the version chooses the body and response schema, so
-# a queued run must send it as the caller did. A header replays when its name
+# a queued or held run must send it as the caller did. A header replays when its name
 # is one or more hyphen-separated alphanumeric labels ending in ``-version``
 # (every ``<vendor>-version``); a bare ``version`` and anything in the
 # ``jentic-``/``x-jentic-`` namespace do not. :func:`is_replay_header` excludes
@@ -120,7 +121,7 @@ _JENTIC_HEADER_PREFIXES: tuple[str, ...] = ("jentic-", "x-jentic-")
 
 
 def is_replay_header(name: str) -> bool:
-    """Whether a queued execution keeps the inbound header ``name``.
+    """Whether a queued or held execution keeps the inbound header ``name``.
 
     True for :data:`REPLAY_HEADERS` and API version headers (see
     ``_REPLAY_VERSION_HEADER_RE``); never for hop-by-hop, broker-consumed,
@@ -140,9 +141,9 @@ def is_replay_header(name: str) -> bool:
 def replay_headers(inbound: Mapping[str, str]) -> dict[str, str]:
     """The inbound headers :func:`is_replay_header` keeps, keyed lower-case.
 
-    What an async execution's job payload keeps so its run sends the body as
-    the caller described it (``Content-Type`` above all) and at the API
-    version the caller chose.
+    What an async or held execution's job payload keeps so its run sends the
+    body as the caller described it (``Content-Type`` above all) and at the
+    API version the caller chose.
     """
     return {key.lower(): value for key, value in inbound.items() if is_replay_header(key)}
 

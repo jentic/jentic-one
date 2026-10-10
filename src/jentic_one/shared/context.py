@@ -82,6 +82,16 @@ class Context:
         return getattr(self, f"_{name}_db") is not None
 
     @property
+    def has_encryption_keyset(self) -> bool:
+        """Whether a credentials encryption keyset is configured.
+
+        The one predicate for "can this process encrypt": the broker files a
+        held execution only when it is true, and the worker decrypts held
+        payloads with :attr:`encryption` under the same condition.
+        """
+        return bool(self._config.credentials.encryption.entries)
+
+    @property
     def encryption(self) -> EncryptionService:
         """Lazily-constructed encryption service.
 

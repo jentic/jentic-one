@@ -414,6 +414,16 @@ AWS Marketplace license gate for the Marketplace-listed deployment. Powers the e
 | `entitlement.license_dimensions` | list of string | — | `JENTIC__ENTITLEMENT__LICENSE_DIMENSIONS` |  |
 | `entitlement.endpoint` | string \| null | `null` | `JENTIC__ENTITLEMENT__ENDPOINT` |  |
 
+## `execution_approvals`
+
+Require-approval holds: held execution jobs awaiting a human reviewer. An execute call matching a permission rule with `effect="require-approval"` is enqueued as a `held` job with a `pending` approval; a reviewer (the agent's owner or an `org:admin`) approves or denies it, or it expires.
+
+| Key | Type | Default | Env var | Description |
+| --- | ---- | ------- | ------- | ----------- |
+| `execution_approvals.ttl_seconds` | integer (> 0) | `86400` | `JENTIC__EXECUTION_APPROVALS__TTL_SECONDS` | Seconds a pending approval lives before the expiry sweep marks it `expired` and fails its held job with a permission-denied result. Defaults to 24 hours. |
+| `execution_approvals.max_pending_per_agent` | integer (>= 1) | `10` | `JENTIC__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT` | Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the `approval_pending_limit_reached` problem type. |
+| `execution_approvals.result_retention_seconds` | integer (> 0) | `86400` | `JENTIC__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS` | Seconds the result of an approved execution stays readable via `GET /jobs/{id}/result` before the result sweep removes it. Defaults to 24 hours. |
+
 ## `apps`
 
 | Key | Type | Default | Env var | Description |

@@ -8,6 +8,8 @@ import { Navigate, useLocation, useParams } from 'react-router';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app';
 import { toast } from '@/shared/ui';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
+import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
+import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
 
 /**
  * `/app/agents/service-accounts/:id` (the retired service-account detail page —
@@ -74,8 +76,12 @@ export const agentsRoutes: RouteObject[] = [
 	{ path: 'agents', element: <AgentsPage /> },
 	{ path: 'access-requests', element: <RetiredAccessRequestsRedirect /> },
 	{ path: 'credentials', element: <RetiredCredentialsRedirect /> },
-	// Declared before `agents/:agentId` so the `service-accounts` segment is
-	// never captured as an `agentId`.
+	// Declared before `agents/:agentId` so the `service-accounts` and
+	// `approvals` segments are never captured as an `agentId`.
 	{ path: 'agents/service-accounts/*', element: <RetiredServiceAccountRedirect /> },
+	// Execution approvals: the held calls waiting on the agents' owners, and one
+	// approval's review page (a held call's `review_url`).
+	{ path: 'agents/approvals', element: <ApprovalsPage /> },
+	{ path: 'agents/approvals/:id', element: <ApprovalDetailPage /> },
 	{ path: 'agents/:agentId', element: <AgentPathRedirect /> },
 ];

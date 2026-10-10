@@ -2387,6 +2387,96 @@
       "authenticated": true,
       "group": "Agent-facing (typically an agent)",
       "implied_permissions": {
+        "jobs:read": []
+      },
+      "method": "GET",
+      "operation_id": "listExecutionApprovals",
+      "path": "/executions/approvals",
+      "public": false,
+      "required_permissions": [
+        "jobs:read"
+      ],
+      "summary": "List execution approvals",
+      "surface": "executions",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "jobs:read": []
+      },
+      "method": "GET",
+      "operation_id": "getExecutionApproval",
+      "path": "/executions/approvals/{approval_id}",
+      "public": false,
+      "required_permissions": [
+        "jobs:read"
+      ],
+      "summary": "Get an execution approval",
+      "surface": "executions",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "jobs:write": [
+          "jobs:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "decideExecutionApproval",
+      "path": "/executions/approvals/{approval_id}:decide",
+      "public": false,
+      "required_permissions": [
+        "jobs:write"
+      ],
+      "summary": "Approve or deny an execution approval",
+      "surface": "executions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
+        "jobs:read": []
+      },
+      "method": "POST",
+      "operation_id": "withdrawExecutionApproval",
+      "path": "/executions/approvals/{approval_id}:withdraw",
+      "public": false,
+      "required_permissions": [
+        "jobs:read"
+      ],
+      "summary": "Withdraw a held execution",
+      "surface": "executions",
+      "typical_caller": "agent"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Agent-facing (typically an agent)",
+      "implied_permissions": {
         "executions:read": []
       },
       "method": "GET",
@@ -4903,5 +4993,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 181
+  "total": 185
 }

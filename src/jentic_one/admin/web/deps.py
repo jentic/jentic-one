@@ -9,6 +9,7 @@ from jentic_one.admin.services.audit_service import AuditService
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.event_service import EventService
 from jentic_one.admin.services.event_stream_service import EventStreamService
+from jentic_one.admin.services.execution_approval_service import ExecutionApprovalService
 from jentic_one.admin.services.execution_service import ExecutionService
 from jentic_one.admin.services.health_service import HealthService
 from jentic_one.admin.services.invite_service import InviteService
@@ -58,6 +59,12 @@ def get_invite_service(ctx: Context = Depends(get_ctx)) -> InviteService:
 
 def get_execution_service(ctx: Context = Depends(get_ctx)) -> ExecutionService:
     return ExecutionService(ctx)
+
+
+def get_execution_approval_service(
+    ctx: Context = Depends(get_ctx),
+) -> ExecutionApprovalService:
+    return ExecutionApprovalService(ctx)
 
 
 def get_job_service(ctx: Context = Depends(get_ctx)) -> JobService:

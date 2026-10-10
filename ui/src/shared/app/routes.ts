@@ -49,6 +49,7 @@ export const ROUTES = {
 	agents: '/agents',
 	monitor: '/monitor',
 	docs: '/docs',
+	approvals: '/agents/approvals',
 } as const;
 
 /**
@@ -97,6 +98,11 @@ export const ROUTE_PATHS = {
 	 * any caller that wants to show one. `/agents/:agentId` redirects here.
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
+	/**
+	 * One execution approval's review page, a subsection of Agents. The broker
+	 * builds the same path into a held call's `review_url`.
+	 */
+	approval: (approvalId: string) => `${ROUTES.approvals}/${encodeURIComponent(approvalId)}`,
 	/**
 	 * An agent's connect request opened for approval — the address the backend
 	 * mints as the session's `approval_url` (`?approve=<sid>`, no poll token:

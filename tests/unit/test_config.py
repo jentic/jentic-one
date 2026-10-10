@@ -30,6 +30,7 @@ from jentic_one.shared.config import (
     EncryptionConfig,
     EncryptionKey,
     EntitlementConfig,
+    ExecutionApprovalsConfig,
     RuntimeConfig,
     SigningKeyConfig,
     TelemetryConfig,
@@ -38,6 +39,7 @@ from jentic_one.shared.config import (
     _deep_merge,
     _env_overrides,
     bind_origin,
+    broker_links_root_on_broker,
     check_public_url_consistency,
     connect_approval_url,
     effective_auth_base_url,
@@ -335,6 +337,56 @@ def test_non_positive_session_lifetimes_rejected(field: str):
         pytest.raises(ValidationError, match=field),
     ):
         AdminAuthConfig.model_validate({field: 0})
+
+
+def test_execution_approvals_defaults(tmp_path: Path):
+    """A minimal config gets the 24 h TTL, a pending cap of 10, and 24 h retention."""
+    minimal = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        }
+    }
+    path = tmp_path / "minimal.yaml"
+    path.write_text(yaml.dump(minimal))
+    cfg = load_config(path).execution_approvals
+    assert cfg.ttl_seconds == 86_400
+    assert cfg.max_pending_per_agent == 10
+    assert cfg.result_retention_seconds == 86_400
+
+
+def test_execution_approvals_yaml_and_env_override(tmp_path: Path):
+    """The section is top-level: YAML sets it and ``JENTIC__EXECUTION_APPROVALS__*`` wins."""
+    doc = {
+        "databases": {
+            "registry": {"name": "reg"},
+            "admin": {"name": "admin"},
+            "control": {"name": "ctrl"},
+        },
+        "execution_approvals": {"ttl_seconds": 600, "max_pending_per_agent": 3},
+    }
+    path = tmp_path / "ea.yaml"
+    path.write_text(yaml.dump(doc))
+    assert load_config(path).execution_approvals.ttl_seconds == 600
+    env = {
+        "JENTIC__EXECUTION_APPROVALS__TTL_SECONDS": "120",
+        "JENTIC__EXECUTION_APPROVALS__MAX_PENDING_PER_AGENT": "5",
+        "JENTIC__EXECUTION_APPROVALS__RESULT_RETENTION_SECONDS": "3600",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        cfg = load_config(path).execution_approvals
+    assert cfg.ttl_seconds == 120
+    assert cfg.max_pending_per_agent == 5
+    assert cfg.result_retention_seconds == 3600
+
+
+@pytest.mark.parametrize(
+    "field", ["ttl_seconds", "max_pending_per_agent", "result_retention_seconds"]
+)
+def test_execution_approvals_non_positive_rejected(field: str):
+    with pytest.raises(ValidationError, match=field):
+        ExecutionApprovalsConfig.model_validate({field: 0})
 
 
 def test_catalog_jitter_ratio_default():
@@ -1358,6 +1410,15 @@ def test_effective_auth_base_url_precedence(tmp_path: Path):
     # both unset ≡ empty (today's behaviour)
     config = _load(tmp_path, {})
     assert effective_auth_base_url(config) == ""
+
+
+def test_broker_links_root_on_broker_only_for_an_unpinned_standalone_broker(tmp_path: Path):
+    standalone = {"apps": ["broker"]}
+    assert broker_links_root_on_broker(_load(tmp_path, standalone)) is True
+    pinned = {**standalone, "broker": {"jobs_api_base_url": "https://jentic.example.com"}}
+    assert broker_links_root_on_broker(_load(tmp_path, pinned)) is False
+    assert broker_links_root_on_broker(_load(tmp_path, {"apps": ["broker", "admin"]})) is False
+    assert broker_links_root_on_broker(_load(tmp_path, {})) is False
 
 
 def test_check_public_url_consistency(tmp_path: Path):

@@ -1981,6 +1981,43 @@ class EntitlementConfig(BaseModel):
         return self
 
 
+class ExecutionApprovalsConfig(BaseModel):
+    """Require-approval holds: held execution jobs awaiting a human reviewer.
+
+    An execute call matching a permission rule with ``effect="require-approval"``
+    is enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the
+    agent's owner or an ``org:admin``) approves or denies it, or it expires.
+    """
+
+    ttl_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        description=(
+            "Seconds a pending approval lives before the expiry sweep marks it "
+            "``expired`` and fails its held job with a permission-denied result. "
+            "Defaults to 24 hours."
+        ),
+    )
+    max_pending_per_agent: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Maximum pending approvals per agent. An execute call that would file "
+            "another hold beyond this is denied with the "
+            "``approval_pending_limit_reached`` problem type."
+        ),
+    )
+    result_retention_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        description=(
+            "Seconds the result of an approved execution stays readable via "
+            "``GET /jobs/{id}/result`` before the result sweep removes it. "
+            "Defaults to 24 hours."
+        ),
+    )
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -2010,6 +2047,7 @@ class AppConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
+    execution_approvals: ExecutionApprovalsConfig = Field(default_factory=ExecutionApprovalsConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
@@ -2069,6 +2107,22 @@ def has_spa_platform_client(config: AppConfig) -> bool:
     SPA login then fails until an https ``server.public_base_url`` is set.
     """
     return any(pc.client_id == _SPA_CLIENT_ID for pc in config.auth.platform_clients)
+
+
+def broker_links_root_on_broker(config: AppConfig) -> bool:
+    """Whether a standalone broker would root its admin-side links on itself.
+
+    ``True`` when this process serves the broker without the admin app and
+    ``broker.jobs_api_base_url`` is unset: a held call's ``review_url`` and the
+    ``_links`` of held and async executions then fall back to the broker's own
+    request origin, where the review page, ``/jobs`` and
+    ``/executions/approvals`` are not served.
+    """
+    return (
+        "broker" in config.apps
+        and "admin" not in config.apps
+        and not config.broker.jobs_api_base_url
+    )
 
 
 def bind_origin(config: AppConfig) -> str:

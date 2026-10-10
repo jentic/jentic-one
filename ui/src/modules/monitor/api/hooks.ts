@@ -56,8 +56,10 @@ export const monitorKeys = {
 	executions: (params: ListExecutionsParams) =>
 		[...monitorKeys.all, 'executions', params] as const,
 	execution: (id: string) => [...monitorKeys.all, 'execution', id] as const,
-	jobs: (params: ListJobsParams) => [...monitorKeys.all, 'jobs', params] as const,
-	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
+	// The job slices derive from shared roots so a settled approval (another
+	// module, or the live stream) refreshes a held job in place.
+	jobs: (params: ListJobsParams) => [...sharedQueryKeys.monitorJobsRoot, params] as const,
+	job: (id: string) => [...sharedQueryKeys.monitorJobRoot, id] as const,
 	// Derives from the shared cross-module root, so a cross-module
 	// invalidation of that root reaches every events list here too.
 	events: (params: ListEventsParams) => [...sharedQueryKeys.monitorEventsRoot, params] as const,

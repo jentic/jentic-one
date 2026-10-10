@@ -19,6 +19,8 @@ Connect agents:
   local-agent sandbox.
 - [Serve MCP over HTTP](mcp-http-endpoint.md) — the optional hosted `/mcp`
   endpoint.
+- [Executions requiring approval](executions-requiring-approval.md) — Ask
+  rules: holding an agent's call until a human approves or denies it.
 
 Operate the catalog:
 

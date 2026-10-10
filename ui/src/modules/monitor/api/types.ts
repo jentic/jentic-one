@@ -61,15 +61,24 @@ export function toExecutionStatus(wire: string): ExecutionStatusUi {
 
 /**
  * Job lifecycle, in UI vocabulary. Mirrors the backend `JobStatus` StrEnum:
- * queued → running → {completed | failed | cancelled | dead_letter}. `unknown`
- * is the safe fallback for any value the server adds later.
+ * queued → running → {completed | failed | cancelled | dead_letter}, plus
+ * `held` (waiting outside the queue; a held execution awaits approval).
+ * `unknown` is the safe fallback for any value the server adds later.
  */
 export type JobStatusUi =
-	'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'dead_letter' | 'unknown';
+	| 'queued'
+	| 'running'
+	| 'held'
+	| 'completed'
+	| 'failed'
+	| 'cancelled'
+	| 'dead_letter'
+	| 'unknown';
 
 const JOB_STATUS_MAP: Record<string, JobStatusUi> = {
 	queued: 'queued',
 	running: 'running',
+	held: 'held',
 	completed: 'completed',
 	failed: 'failed',
 	cancelled: 'cancelled',
@@ -89,4 +98,13 @@ export function isTerminalJobStatus(status: JobStatusUi): boolean {
 		status === 'cancelled' ||
 		status === 'dead_letter'
 	);
+}
+
+/**
+ * Whether the jobs surface can cancel a job: `queued`, `running`, or `held` of
+ * any kind but `execution`. A held execution settles only through its approval.
+ */
+export function isCancellableJob(status: JobStatusUi, kind: string): boolean {
+	if (status === 'held') return kind !== 'execution';
+	return status === 'queued' || status === 'running';
 }

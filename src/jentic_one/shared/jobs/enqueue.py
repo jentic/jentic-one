@@ -21,16 +21,20 @@ async def enqueue_job(
     parent_job_id: str | None = None,
     execution_id: str | None = None,
     payload: dict[str, Any] | None = None,
+    status: JobStatus = JobStatus.QUEUED,
 ) -> str:
     """Create a new queued job and return its ID.
 
     ``created_by`` is the subject (``identity.sub``) that triggered the job and
     ``actor_type`` its kind; both are persisted on the job row so the deferred
     worker can attribute the audit entry to a real actor.
+
+    ``status`` defaults to QUEUED. The hold path passes HELD so the worker skips
+    the job until the approval surface flips it back to QUEUED.
     """
     job: Any = Job(
         kind=kind,
-        status=JobStatus.QUEUED,
+        status=status,
         parent_job_id=parent_job_id,
         execution_id=execution_id,
         payload=dict(payload or {}),

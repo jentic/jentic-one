@@ -114,7 +114,7 @@ let oauthGrants: OAuthGrantRow[] = [];
 
 /** One permission rule as stored/returned (PermissionRuleReadSchema shape). */
 type BindingRule = {
-	effect: 'allow' | 'deny';
+	effect: 'allow' | 'deny' | 'require-approval';
 	match_mode?: 'regex' | 'prefix' | 'exact';
 	methods?: string[] | null;
 	operations?: string[] | null;
@@ -1433,9 +1433,9 @@ export const agentsHandlers = [
 				!rule.methods?.length &&
 				!(typeof rule.path === 'string' && rule.path.trim()) &&
 				!rule.operations?.length;
-			if (rule.effect === 'allow' && conditionless) {
+			if (rule.effect !== 'deny' && conditionless) {
 				return HttpResponse.json(
-					{ detail: 'A condition-less allow rule is not permitted.' },
+					{ detail: `A condition-less ${rule.effect} rule is not permitted.` },
 					{ status: 422 },
 				);
 			}

@@ -89,4 +89,22 @@ export const sharedQueryKeys = {
 	 * an `oauth_grant.*` event arrives.
 	 */
 	oauthGrantsRoot: ['oauth-grants'] as const,
+	/**
+	 * The execution-approvals root (the Approvals list and detail slices,
+	 * `GET /executions/approvals`). Owned by the Agents module (its
+	 * `approvalsKeys` derive from this), but a hold is decided, withdrawn or
+	 * expires out-of-band (another reviewer, the agent, the expiry sweep), so
+	 * the shared agent-stream provider invalidates this root when an
+	 * `execution.approval_*` event arrives.
+	 */
+	approvalsRoot: ['approvals'] as const,
+	/**
+	 * The Monitor job slices (`GET /jobs` lists and one job). Owned by the
+	 * Monitor module (`monitorKeys.jobs` / `monitorKeys.job` derive from
+	 * these), but a held job moves on when its approval settles, which the
+	 * agent-stream provider learns from an `execution.approval_*` event and
+	 * the Agents module from its own decision.
+	 */
+	monitorJobsRoot: ['monitor', 'jobs'] as const,
+	monitorJobRoot: ['monitor', 'job'] as const,
 };

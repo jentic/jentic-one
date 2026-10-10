@@ -6,6 +6,7 @@ import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/m
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 import { settingsHandlers } from '@/modules/settings/mocks/handlers';
+import { approvalsHandlers } from '@/modules/agents/mocks/approvalsHandlers';
 import { oauthAppRegistrationsHandlers } from '@/shared/credentials/oauth-app-registrations/mocks/handlers';
 
 /**
@@ -197,6 +198,7 @@ export const handlers = [
 	// Settings owns the admin OAuth-client registry (/admin/oauth-clients),
 	// including the DCR approval queue.
 	...settingsHandlers,
+	...approvalsHandlers,
 	// Monitor owns the full observability surface (/executions, /jobs, /events
 	// + SSE, /audit). Several of these paths are ALSO mocked by the agents
 	// module and the ambient Activity rail for their own widgets; those

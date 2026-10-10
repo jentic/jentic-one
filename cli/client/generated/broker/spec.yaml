@@ -774,6 +774,76 @@ components:
               description: Absolute URL of the control-plane job record. Poll this for status and result links.
               examples:
                 - https://control.your-instance.example/jobs/job_abc123
+    HeldExecutionResponse:
+      type: object
+      title: HeldExecutionResponse
+      summary: Handle returned when a permission rule holds the call for human approval.
+      description: |
+        Returned as the `202` body when the call matches a permission rule
+        with `effect: require-approval`. The call has not run: it waits as
+        a `held` job until a reviewer (the agent's owner or an `org:admin`)
+        approves or denies it on `approval.review_url`, or the approval
+        expires. Poll `_links.self` until the job is terminal — `completed`
+        (it ran), `failed` (denied, expired, or the run failed; the result is
+        the problem body) or `cancelled` (withdrawn by the calling agent).
+        To abandon the call, `POST` to `_links.withdraw`
+        (`/executions/approvals/{approval.id}:withdraw`); `POST
+        /jobs/{id}:cancel` refuses a held job. Never re-send the call: an
+        identical call while one is pending joins the same job.
+      required:
+        - job_id
+        - status
+        - approval
+        - agent_directive
+        - _links
+      properties:
+        job_id:
+          type: string
+          description: The held job. Matches the `job_id` reported by the control plane.
+          examples:
+            - job_abc123
+        status:
+          type: string
+          enum: [held]
+          description: Always `held`.
+        approval:
+          type: object
+          required: [id, review_url, expires_at]
+          properties:
+            id:
+              type: string
+              description: Approval id.
+              examples:
+                - exap_abc123
+            review_url:
+              type: string
+              format: uri
+              description: Review page; the reviewer signs in to decide. Carries no credential.
+              examples:
+                - https://your-instance.example/app/agents/approvals/exap_abc123
+            expires_at:
+              type: string
+              format: date-time
+              description: When the approval expires undecided and the job fails.
+        agent_directive:
+          type: string
+          description: What the calling agent should do next.
+        _links:
+          type: object
+          required: [self, withdraw]
+          properties:
+            self:
+              type: string
+              description: Control-plane job record to poll.
+              examples:
+                - https://control.your-instance.example/jobs/job_abc123
+            withdraw:
+              type: string
+              description: |
+                `POST` here to withdraw the approval and cancel the held job
+                (only the agent that made the call may). The call never runs.
+              examples:
+                - https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
     HealthResponse:
       type: object
       title: HealthResponse
@@ -905,7 +975,9 @@ components:
                 explicit: false
     ExecuteAsync:
       description: |
-        Execution queued. Follow `_links.self` to the control plane
+        Execution queued — or held for human approval when a
+        `require-approval` permission rule matched (`status: held`; see
+        `HeldExecutionResponse`). Follow `_links.self` to the control plane
         to poll the job and collect the upstream response body once
         `status` is `completed`. The body is delivered once and then
         evicted from the platform's pickup buffer.
@@ -945,7 +1017,9 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AsyncQueuedResponse"
+            oneOf:
+              - $ref: "#/components/schemas/AsyncQueuedResponse"
+              - $ref: "#/components/schemas/HeldExecutionResponse"
           examples:
             queued:
               summary: Freshly queued async execution.
@@ -953,6 +1027,24 @@ components:
                 job_id: job_abc123
                 _links:
                   self: https://control.your-instance.example/jobs/job_abc123
+            held:
+              summary: Call held for human approval by a require-approval rule.
+              value:
+                job_id: job_abc123
+                status: held
+                approval:
+                  id: exap_abc123
+                  review_url: https://your-instance.example/app/agents/approvals/exap_abc123
+                  expires_at: "2026-10-06T12:00:00Z"
+                agent_directive: >-
+                  This call needs human approval. Most important: show the user the review_url,
+                  since they cannot approve it without that link, and end your turn so they see it.
+                  Do not call get_execution_result until the user replies; then call it once with
+                  job_id and wait_seconds: 30. If it is still held, tell the user it is waiting for
+                  approval and end your turn again. Do not re-send the call.
+                _links:
+                  self: https://control.your-instance.example/jobs/job_abc123
+                  withdraw: https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

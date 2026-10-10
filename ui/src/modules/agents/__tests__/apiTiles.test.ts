@@ -342,7 +342,7 @@ describe('tileStats / agentSetupGapCount', () => {
 		}
 		// Beside a Ready tile, the figure is only a floor.
 		const rules = new Map<string, BindingRulesState>([
-			['cred_a', { total: 1, allow: 1, deny: 0 }],
+			['cred_a', { total: 1, allow: 1, ask: 0, deny: 0 }],
 			['cred_b', 'error'],
 		]);
 		expect(tileStats(tiles, (t) => rules.get(t.credentialId))).toMatchObject({
@@ -371,8 +371,8 @@ describe('tileStats / agentSetupGapCount', () => {
 		];
 		const tiles = composeApiTiles(bindings, credentials, apis);
 		const rules = new Map([
-			['cred_a', { total: 1, allow: 1, deny: 0 }],
-			['cred_b', { total: 0, allow: 0, deny: 0 }],
+			['cred_a', { total: 1, allow: 1, ask: 0, deny: 0 }],
+			['cred_b', { total: 0, allow: 0, ask: 0, deny: 0 }],
 		]);
 		expect(tileStats(tiles, (t) => rules.get(t.credentialId))).toEqual({
 			configured: 2,

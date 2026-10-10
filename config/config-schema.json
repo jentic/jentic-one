@@ -808,6 +808,34 @@
       "title": "EntitlementConfig",
       "type": "object"
     },
+    "ExecutionApprovalsConfig": {
+      "description": "Require-approval holds: held execution jobs awaiting a human reviewer.\n\nAn execute call matching a permission rule with ``effect=\"require-approval\"``\nis enqueued as a ``held`` job with a ``pending`` approval; a reviewer (the\nagent's owner or an ``org:admin``) approves or denies it, or it expires.",
+      "properties": {
+        "max_pending_per_agent": {
+          "default": 10,
+          "description": "Maximum pending approvals per agent. An execute call that would file another hold beyond this is denied with the ``approval_pending_limit_reached`` problem type.",
+          "minimum": 1,
+          "title": "Max Pending Per Agent",
+          "type": "integer"
+        },
+        "result_retention_seconds": {
+          "default": 86400,
+          "description": "Seconds the result of an approved execution stays readable via ``GET /jobs/{id}/result`` before the result sweep removes it. Defaults to 24 hours.",
+          "exclusiveMinimum": 0,
+          "title": "Result Retention Seconds",
+          "type": "integer"
+        },
+        "ttl_seconds": {
+          "default": 86400,
+          "description": "Seconds a pending approval lives before the expiry sweep marks it ``expired`` and fails its held job with a permission-denied result. Defaults to 24 hours.",
+          "exclusiveMinimum": 0,
+          "title": "Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "ExecutionApprovalsConfig",
+      "type": "object"
+    },
     "IdempotencyConfig": {
       "description": "``Idempotency-Key`` replay store.\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are future work.",
       "properties": {
@@ -1983,6 +2011,9 @@
     },
     "entitlement": {
       "$ref": "#/$defs/EntitlementConfig"
+    },
+    "execution_approvals": {
+      "$ref": "#/$defs/ExecutionApprovalsConfig"
     },
     "ingest": {
       "$ref": "#/$defs/IngestConfig"

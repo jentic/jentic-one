@@ -8,6 +8,7 @@ import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { useDismissable } from '@/shared/ui/Menu';
 import { usePendingAgentsCount } from '@/shared/hooks';
+import { usePendingApprovalsCount } from '@/shared/approvals';
 import { cn } from '@/shared/lib/utils';
 
 const BOTTOM_NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
@@ -16,18 +17,25 @@ const BOTTOM_NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35
 const TILE_LIMIT = 5;
 
 /**
- * Pending-agents count badge for the Agents tile — a persistent "N waiting"
- * signal so a newly-registered agent awaiting approval is visible on mobile
- * too (#652).
+ * Pending count badge for the Agents tile — a persistent "N waiting" signal so
+ * a newly-registered agent awaiting approval (#652), or a held call awaiting
+ * the viewer's decision, is visible on mobile too. The tile has room for one
+ * badge, so it sums the two.
  */
 function TilePendingAgentsBadge() {
-	const { count, atLeast } = usePendingAgentsCount();
+	const agents = usePendingAgentsCount();
+	const approvals = usePendingApprovalsCount();
+	const count = agents.count + approvals.count;
 	if (count <= 0) return null;
-	const label = atLeast ? `${count}+` : `${count}`;
+	const label = agents.atLeast || approvals.atLeast ? `${count}+` : `${count}`;
 	return (
 		<span
 			className="bg-warning text-background absolute top-1.5 right-1/2 z-20 inline-flex h-4 min-w-4 translate-x-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums"
-			aria-label={`${label} agents awaiting approval`}
+			aria-label={
+				approvals.count === 0
+					? `${label} agents awaiting approval`
+					: `${label} waiting for you`
+			}
 		>
 			{label}
 		</span>

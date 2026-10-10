@@ -17,6 +17,8 @@ from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     AgentDirective,
     AmbiguousMatchError,
+    ApprovalHoldUnavailableError,
+    ApprovalPendingLimitError,
     BrokerError,
     CircuitOpenError,
     CredentialIdentityMismatchError,
@@ -48,6 +50,8 @@ from jentic_one.broker.core.exceptions import (
 # Domain exception → HTTP status error map.
 STATUS_BY_ERROR: dict[type[BrokerError], int] = {
     ActionDeniedError: 403,
+    ApprovalPendingLimitError: 403,
+    ApprovalHoldUnavailableError: 503,
     CredentialIdentityMismatchError: 403,
     OperationNotFoundError: 404,
     AmbiguousMatchError: 409,

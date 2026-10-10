@@ -28,10 +28,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **181**._
+_Total endpoints: **185**._
 
 
-## Agent-facing (typically an agent) (32)
+## Agent-facing (typically an agent) (35)
 
 
 ### `apis`
@@ -82,6 +82,9 @@ _Total endpoints: **181**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/executions` | `executions:read` | agent | List Executions |
+| GET | `/executions/approvals` | `jobs:read` | agent | List execution approvals |
+| GET | `/executions/approvals/{approval_id}` | `jobs:read` | agent | Get an execution approval |
+| POST | `/executions/approvals/{approval_id}:withdraw` | `jobs:read` | agent | Withdraw a held execution |
 | GET | `/executions/{execution_id}` | `executions:read` | agent | Get Execution |
 
 ### `inspect`
@@ -215,7 +218,7 @@ _Total endpoints: **181**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (73)
+## Any authenticated actor (74)
 
 
 ### `actors`
@@ -293,6 +296,12 @@ _Total endpoints: **181**._
 | DELETE | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Detach rule set from binding |
 | PUT | `/credentials/{credential_id}/agents/{agent_id}/rule-set` | `credentials:write` | any | Attach rule set to binding |
 | POST | `/credentials/{credential_id}/connect` | `credentials:write` | any | Begin OAuth connect flow |
+
+### `executions`
+
+| Method | Path | Permission(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| POST | `/executions/approvals/{approval_id}:decide` | `jobs:write` | any | Approve or deny an execution approval |
 
 ### `governed-hosts`
 

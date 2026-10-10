@@ -5,7 +5,12 @@ import {
 } from '@/modules/agents/lib/tileStatus';
 
 const live = { suspended: false, agentServing: true, awaitingConsent: false };
-const rules = (allow: number, deny: number) => ({ total: allow + deny, allow, deny });
+const rules = (allow: number, deny: number, ask = 0) => ({
+	total: allow + deny + ask,
+	allow,
+	ask,
+	deny,
+});
 
 describe('deriveTileStatus', () => {
 	it('is Ready only with at least one allow rule on a live, serving binding', () => {
@@ -22,6 +27,11 @@ describe('deriveTileStatus', () => {
 
 	it('says Blocked · all denied when every rule denies', () => {
 		expect(deriveTileStatus({ ...live, rules: rules(0, 2) })).toBe('blocked-all-denied');
+	});
+
+	it('is Ready, not Blocked, when an Ask rule lets calls through for review', () => {
+		expect(deriveTileStatus({ ...live, rules: rules(0, 0, 1) })).toBe('ready');
+		expect(deriveTileStatus({ ...live, rules: rules(0, 2, 1) })).toBe('ready');
 	});
 
 	it('never claims Ready over rules it has not read', () => {

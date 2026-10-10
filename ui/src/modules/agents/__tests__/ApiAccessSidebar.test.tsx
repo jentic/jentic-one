@@ -303,6 +303,33 @@ describe('ApiAccessSidebar — the API tile access panel', () => {
 		expect(verdict).toHaveTextContent('matched rule #1');
 	});
 
+	it('the tester reports a require-approval match as needing approval, not denied', async () => {
+		worker.use(
+			http.post('/credentials/:cid/agents/:aid/permissions\\:test', () =>
+				HttpResponse.json({
+					allowed: false,
+					matched: true,
+					effect: 'require-approval',
+					rule_index: 0,
+					is_system: false,
+					credential_id: 'cred_slack_1',
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('1 access rule');
+
+		const inDialog = within(await openSidebar('Slack'));
+		await user.selectOptions(inDialog.getByLabelText('HTTP method'), 'POST');
+		await user.type(inDialog.getByLabelText('Request path'), '/chat.postMessage');
+		await user.click(inDialog.getByRole('button', { name: 'Test' }));
+
+		const verdict = await inDialog.findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent('Ask');
+		expect(verdict).not.toHaveTextContent('Denied');
+	});
+
 	it('opens from the keyboard and restores focus to the tile on close', async () => {
 		const user = userEvent.setup();
 		renderPage();

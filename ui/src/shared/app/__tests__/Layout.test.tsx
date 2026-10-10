@@ -9,6 +9,7 @@ import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
 import { useReportRightDock } from '@/shared/ui/rightEdge';
 import { clearAllToasts, toast } from '@/shared/ui/toastStore';
+import { resetApprovalsStore } from '@/modules/agents/mocks/approvalsHandlers';
 
 /**
  * The Layout renders behind the AuthGuard, so it always has a user. These
@@ -63,6 +64,22 @@ describe('app shell / navbar', () => {
 		const bottom = await screen.findByRole('link', { name: /Monitor/ });
 		expect(bottom).toBeVisible();
 		expect(screen.queryByRole('button', { name: 'More navigation items' })).toBeNull();
+		await page.viewport(1440, 900);
+	});
+
+	it('badges the Agents tab with the held calls awaiting the viewer', async () => {
+		// The default mock store holds one pending approval.
+		resetApprovalsStore();
+		await page.viewport(1440, 900);
+		renderShell();
+		expect(await screen.findByLabelText('1 call awaiting your approval')).toBeVisible();
+	});
+
+	it('folds held calls into the Agents tile badge on a phone', async () => {
+		resetApprovalsStore();
+		await page.viewport(375, 812);
+		renderShell();
+		expect(await screen.findByLabelText(/^\d+\+? waiting for you$/)).toBeVisible();
 		await page.viewport(1440, 900);
 	});
 

@@ -11,7 +11,7 @@
  */
 export type PermissionRuleSchema = {
     /**
-     * Whether this rule allows or denies the matched request.
+     * Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
      */
     effect: PermissionRuleSchema.effect;
     /**
@@ -33,11 +33,12 @@ export type PermissionRuleSchema = {
 };
 export namespace PermissionRuleSchema {
     /**
-     * Whether this rule allows or denies the matched request.
+     * Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.
      */
     export enum effect {
         ALLOW = 'allow',
         DENY = 'deny',
+        REQUIRE_APPROVAL = 'require-approval',
     }
     /**
      * How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.

@@ -106,6 +106,9 @@ class QueuedExecutionRequest:
     # Discovery could not determine those values at enqueue time — a credential
     # scoped by ``server_variables`` is then not selected (fail closed).
     server_variables_unresolved: bool = False
+    # The job id — used by the authorizer to look up an approved execution_approvals
+    # row when re-evaluating a rule that carries require-approval effect.
+    job_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

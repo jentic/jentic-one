@@ -23,30 +23,37 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
 
 def _job_response(view: JobView, request: Request) -> JobResponse:
     """Project a JobView to a JobResponse."""
-    result_link = (
-        build_link(request, f"/jobs/{view.id}/result")
-        if view.status == JobStatus.COMPLETED
-        else None
+    has_result = view.status == JobStatus.COMPLETED or (
+        view.status == JobStatus.FAILED and view.kind == JobKind.EXECUTION
     )
+    result_link = build_link(request, f"/jobs/{view.id}/result") if has_result else None
     execution_link = (
         build_link(request, f"/executions/{view.execution_id}") if view.execution_id else None
+    )
+    approval_link = (
+        build_link(request, f"/executions/approvals/{view.approval_id}")
+        if view.approval_id
+        else None
     )
     links = JobLinksResponse(
         self_link=build_link(request, f"/jobs/{view.id}"),
         result=result_link,
         execution=execution_link,
+        approval=approval_link,
     )
     return JobResponse(
         job_id=view.id,
         kind=view.kind,
         status=view.status,
         execution_id=view.execution_id,
+        approval_id=view.approval_id,
         error=view.error,
         created_at=view.created_at,
         updated_at=view.updated_at,
@@ -98,20 +105,28 @@ async def get_job_result(
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
-    """Get the result of a completed job — polymorphic by kind."""
+    """Get the result of a completed job, or the problem body of a failed execution.
+
+    Polymorphic by kind. A held execution that was denied or expired is
+    ``failed`` with a permission-denied problem as its result.
+    """
     view = await result_svc.get(job_id, identity=identity)
     if view.kind == JobKind.EXECUTION and view.content_type:
         return Response(content=view.raw_body, media_type=view.content_type)
     return JSONResponse(content=view.body)
 
 
-@router.post("/jobs/{job_id}:cancel")
+@router.post("/jobs/{job_id}:cancel", responses=with_responses(not_found(), conflict()))
 async def cancel_job(
     request: Request,
     job_id: str,
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
-    """Cancel an active job."""
+    """Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+
+    A held execution answers ``409``: it awaits its approval and settles only through
+    it (a reviewer's decision, the filing agent's withdrawal, or expiry).
+    """
     view = await job_svc.cancel(job_id, identity=identity)
     return _job_response(view, request)

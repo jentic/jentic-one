@@ -35,7 +35,7 @@ import structlog
 from sqlalchemy import text
 
 from jentic_one.broker.core.singleflight import SingleFlight
-from jentic_one.shared.broker.protocols import RuleEvaluation
+from jentic_one.shared.broker.protocols import RuleEvaluation, RuleVerdict
 from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 
@@ -53,6 +53,9 @@ class PermissionRule:
     methods: frozenset[str] | None
     path: PathMatcher | None
     operations: tuple[str, ...] | None
+    # The rule row's primary key — populated from the query so the hold path can
+    # record which rule triggered a ``require-approval`` verdict.
+    rule_id: str | None = None
 
 
 def _coerce_json_list(value: object) -> list[str] | None:
@@ -103,6 +106,43 @@ def _rule_matches(
     return True
 
 
+# Effects a rule may only carry when it constrains methods, path, or operations.
+_CONDITION_REQUIRED_EFFECTS = frozenset({"allow", "require-approval"})
+
+
+def _match_rule(
+    rules: list[PermissionRule],
+    *,
+    method: str,
+    path: str,
+    operation_id: str | None,
+    binding: str | None = None,
+) -> PermissionRule | None:
+    """Return the first rule that matches the request, or None if none match.
+
+    Condition-less ``allow`` and ``require-approval`` rules are skipped as
+    misconfigurations: one would grant blanket access, the other would hold
+    every call for review. A condition-less ``deny`` keeps its legitimate
+    match-all catch-all behaviour.
+    """
+    for rule in rules:
+        # Defense-in-depth: the API schema rejects both shapes, so one reaching
+        # the broker is a misconfiguration — skip it rather than honour it.
+        effect = rule.effect.lower()
+        if _is_condition_less(rule) and effect in _CONDITION_REQUIRED_EFFECTS:
+            _logger.warning(
+                "Ignoring misconfigured condition-less 'allow' or 'require-approval' "
+                "permission rule "
+                "(matches all requests); skipping to next rule",
+                effect=effect,
+                binding=binding,
+            )
+            continue
+        if _rule_matches(rule, method=method, path=path, operation_id=operation_id):
+            return rule
+    return None
+
+
 def evaluate_rules(
     rules: list[PermissionRule],
     *,
@@ -117,27 +157,17 @@ def evaluate_rules(
     ``rule_set:<id>`` — identifiers only, never secret material) so a
     misconfiguration warning names what to fix.
     """
-    for rule in rules:
-        # Defense-in-depth: a condition-less `allow` is an unrestricted grant
-        # (matches everything) and should have been rejected at the API schema.
-        # If one reaches the broker it is a misconfiguration — skip it rather
-        # than honour blanket access. A condition-less `deny` keeps its
-        # legitimate match-all catch-all behaviour.
-        if _is_condition_less(rule) and rule.effect.lower() == "allow":
-            _logger.warning(
-                "Ignoring misconfigured condition-less 'allow' permission rule "
-                "(matches all requests); skipping to next rule",
-                binding=binding,
-            )
-            continue
-        if _rule_matches(rule, method=method, path=path, operation_id=operation_id):
-            return rule.effect.lower() == "allow"
-    return False
+    matched = _match_rule(
+        rules, method=method, path=path, operation_id=operation_id, binding=binding
+    )
+    return matched is not None and matched.effect.lower() == "allow"
 
 
 # Inline per-binding rules. No credential/vendor join — the binding is the key.
+# ``id`` is selected so the hold path can record which rule triggered the hold
+# as ``matched_rule_id`` on the ``execution_approvals`` row.
 _BINDING_RULES_QUERY = text(
-    "SELECT effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode "
     "FROM agent_permission_rules "
     "WHERE agent_id = :agent_id AND credential_id = :credential_id "
     "ORDER BY sequence ASC"
@@ -146,7 +176,7 @@ _BINDING_RULES_QUERY = text(
 # Shared rule-set rules — evaluated *instead of* the inline rows when the
 # binding carries a rule_set_id (the attach API enforces this precedence).
 _RULE_SET_RULES_QUERY = text(
-    "SELECT effect, methods, path, operations, match_mode "
+    "SELECT id, effect, methods, path, operations, match_mode "
     "FROM permission_rule_set_rules "
     "WHERE rule_set_id = :rule_set_id "
     "ORDER BY sequence ASC"
@@ -227,26 +257,40 @@ class AgentRuleEvaluator:
     ) -> RuleEvaluation:
         """Evaluate the binding's (or its rule set's) rules for the request.
 
-        Returns a :class:`RuleEvaluation` — ``allowed`` plus the rule count so
-        the router can distinguish "no rules configured for this binding"
-        (rules_loaded == 0) from "loaded but nothing matched" in the deny
-        problem detail (#578 twin).
+        Returns a :class:`RuleEvaluation` carrying the tri-state verdict plus
+        the rule count (so the router can distinguish "no rules configured for
+        this binding" (rules_loaded == 0) from "loaded but nothing matched" in
+        the deny problem detail — #578 twin) and the matched rule id for the
+        hold path.
         """
         rules = await self._get_rules(
             agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
         )
         if not rules:
-            return RuleEvaluation(allowed=False, rules_loaded=0)
-        allowed = evaluate_rules(
+            return RuleEvaluation(verdict=RuleVerdict.DENY, rules_loaded=0)
+        label = _binding_label(
+            agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
+        )
+        matched = _match_rule(
             rules,
             method=method,
             path=path,
             operation_id=operation_id,
-            binding=_binding_label(
-                agent_id=agent_id, credential_id=credential_id, rule_set_id=rule_set_id
-            ),
+            binding=label,
         )
-        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules))
+        if matched is None:
+            verdict = RuleVerdict.DENY
+        elif matched.effect.lower() == "allow":
+            verdict = RuleVerdict.ALLOW
+        elif matched.effect.lower() == "require-approval":
+            verdict = RuleVerdict.REQUIRE_APPROVAL
+        else:
+            verdict = RuleVerdict.DENY
+        return RuleEvaluation(
+            verdict=verdict,
+            rules_loaded=len(rules),
+            matched_rule_id=matched.rule_id if matched is not None else None,
+        )
 
     async def _get_rules(
         self, *, agent_id: str, credential_id: str, rule_set_id: str | None
@@ -289,12 +333,14 @@ class AgentRuleEvaluator:
         )
         async with self._control_db.session() as session:
             rows = (await session.execute(query, params)).all()
+        # Row columns: id(0), effect(1), methods(2), path(3), operations(4), match_mode(5)
         return [
             PermissionRule(
-                effect=row[0],
-                methods=_normalize_methods(_coerce_json_list(row[1])),
-                path=_compile_path(row[2], str(row[4] or "regex"), binding=binding_label),
-                operations=(tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None),
+                rule_id=str(row[0]) if row[0] is not None else None,
+                effect=row[1],
+                methods=_normalize_methods(_coerce_json_list(row[2])),
+                path=_compile_path(row[3], str(row[5] or "regex"), binding=binding_label),
+                operations=(tuple(ops) if (ops := _coerce_json_list(row[4])) is not None else None),
             )
             for row in rows
         ]

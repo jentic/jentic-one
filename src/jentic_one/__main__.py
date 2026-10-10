@@ -26,6 +26,7 @@ from jentic_one.control.services.toolkit_export import ToolkitExportError, Toolk
 from jentic_one.control.services.toolkit_flattening import Finding, ToolkitFlatteningService
 from jentic_one.shared.config import (
     AppConfig,
+    broker_links_root_on_broker,
     check_public_url_consistency,
     has_spa_platform_client,
     load_config,
@@ -189,6 +190,21 @@ def _serve() -> None:
                 "links/callbacks built from it may be unreachable. Set "
                 "server.public_base_url to the deployment's public origin, or "
                 "align this field with it."
+            ),
+        )
+
+    # A standalone broker answers held and async calls with links into the
+    # admin app (review page, /jobs, approvals). Unpinned, they follow the
+    # broker's own origin and lead nowhere. Name the fix.
+    if broker_links_root_on_broker(config):
+        logger.warning(
+            "broker_jobs_api_base_url_unset",
+            detail=(
+                "this broker runs without the admin app and broker.jobs_api_base_url "
+                "is unset, so a held call's review_url and the _links of held and "
+                "async executions point at the broker, which does not serve them. Set "
+                "broker.jobs_api_base_url (JENTIC__BROKER__JOBS_API_BASE_URL) to the "
+                "admin API and web UI origin."
             ),
         )
 

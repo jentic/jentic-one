@@ -124,13 +124,17 @@ class JobRepository:
         *,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> Job | None:
-        """Cancel a job if active (queued or running).
+        """Cancel a job if active (queued, running or held).
 
-        Returns None if already terminal or not matched by ``filters``.
+        Returns None if already terminal or not matched by ``filters``. Callers
+        refuse held executions (which await approval) before calling this.
         """
         stmt = (
             update(Job)
-            .where(Job.id == job_id, Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+            .where(
+                Job.id == job_id,
+                Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.HELD]),
+            )
             .values(status=JobStatus.CANCELLED)
             .returning(Job)
         )
@@ -142,6 +146,24 @@ class JobRepository:
         if row is not None:
             await session.flush()
         return row
+
+    @staticmethod
+    async def transition(
+        session: AsyncSession,
+        job_id: str,
+        *,
+        from_status: JobStatus,
+        to_status: JobStatus,
+    ) -> bool:
+        """Move a job ``from_status`` → ``to_status``; False when it is in another status."""
+        stmt = (
+            update(Job)
+            .where(Job.id == job_id, Job.status == from_status)
+            .values(status=to_status, visible_at=None)
+            .returning(Job.id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
     @staticmethod
     async def get_child_job_ids(session: AsyncSession, parent_job_id: str) -> list[str]:

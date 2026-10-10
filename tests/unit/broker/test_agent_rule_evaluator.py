@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from jentic_one.broker.repos.agent_rule_evaluator import AgentRuleEvaluator
-from jentic_one.shared.broker.protocols import AgentRuleEvaluatorProtocol
+from jentic_one.shared.broker.protocols import AgentRuleEvaluatorProtocol, RuleVerdict
 
 
 class _AsyncCtx:
@@ -58,12 +58,14 @@ async def test_empty_rules_denies_with_zero_loaded() -> None:
         operation_id=None,
     )
     assert result.allowed is False
+    assert result.verdict == RuleVerdict.DENY
     assert result.rules_loaded == 0
+    assert result.matched_rule_id is None
 
 
 @pytest.mark.asyncio
 async def test_matching_allow_rule_allows() -> None:
-    mock_db, _ = _mock_db([("allow", '["GET"]', ".*", None, "regex")])
+    mock_db, _ = _mock_db([("apr_test", "allow", '["GET"]', ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     result = await evaluator.evaluate(
         agent_id="agt_1",
@@ -74,13 +76,15 @@ async def test_matching_allow_rule_allows() -> None:
         operation_id=None,
     )
     assert result.allowed is True
+    assert result.verdict == RuleVerdict.ALLOW
     assert result.rules_loaded == 1
+    assert result.matched_rule_id == "apr_test"
 
 
 @pytest.mark.asyncio
 async def test_loaded_but_unmatched_denies_with_count() -> None:
     """Rules loaded but nothing matched → deny with rules_loaded > 0 (#578 twin)."""
-    mock_db, _ = _mock_db([("allow", '["GET"]', ".*", None, "regex")])
+    mock_db, _ = _mock_db([("apr_test", "allow", '["GET"]', ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     result = await evaluator.evaluate(
         agent_id="agt_1",
@@ -91,13 +95,36 @@ async def test_loaded_but_unmatched_denies_with_count() -> None:
         operation_id=None,
     )
     assert result.allowed is False
+    assert result.verdict == RuleVerdict.DENY
     assert result.rules_loaded == 1
+    assert result.matched_rule_id is None
+
+
+@pytest.mark.asyncio
+async def test_require_approval_rule_returns_verdict() -> None:
+    """A matching require-approval rule yields REQUIRE_APPROVAL verdict, allowed=False."""
+    mock_db, _ = _mock_db([("apr_hold", "require-approval", '["DELETE"]', ".*", None, "regex")])
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="DELETE",
+        path="/v1/things",
+        operation_id=None,
+    )
+    assert result.verdict == RuleVerdict.REQUIRE_APPROVAL
+    # A held call is not allowed outright: callers that read only ``allowed``
+    # never run it.
+    assert result.allowed is False
+    assert result.rules_loaded == 1
+    assert result.matched_rule_id == "apr_hold"
 
 
 @pytest.mark.asyncio
 async def test_inline_rules_query_keyed_on_binding() -> None:
     """Without a rule set, the binding query runs with agent+credential params."""
-    mock_db, mock_session = _mock_db([("allow", None, ".*", None, "regex")])
+    mock_db, mock_session = _mock_db([("apr_test", "allow", None, ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     await evaluator.evaluate(
         agent_id="agt_1",
@@ -114,7 +141,7 @@ async def test_inline_rules_query_keyed_on_binding() -> None:
 @pytest.mark.asyncio
 async def test_rule_set_query_replaces_inline_rules() -> None:
     """A binding with a rule_set_id evaluates the shared set, not the inline rows."""
-    mock_db, mock_session = _mock_db([("allow", None, ".*", None, "regex")])
+    mock_db, mock_session = _mock_db([("apr_test", "allow", None, ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     result = await evaluator.evaluate(
         agent_id="agt_1",
@@ -132,7 +159,7 @@ async def test_rule_set_query_replaces_inline_rules() -> None:
 @pytest.mark.asyncio
 async def test_cached_second_call_same_binding() -> None:
     """Second evaluate for the same binding is served from cache."""
-    mock_db, mock_session = _mock_db([("allow", None, ".*", None, "regex")])
+    mock_db, mock_session = _mock_db([("apr_test", "allow", None, ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     for method in ("GET", "POST"):
         await evaluator.evaluate(
@@ -149,7 +176,7 @@ async def test_cached_second_call_same_binding() -> None:
 @pytest.mark.asyncio
 async def test_distinct_bindings_cached_separately() -> None:
     """Different (agent, credential) bindings never share a cache entry."""
-    mock_db, mock_session = _mock_db([("allow", None, ".*", None, "regex")])
+    mock_db, mock_session = _mock_db([("apr_test", "allow", None, ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     for cred in ("cred_1", "cred_2"):
         await evaluator.evaluate(
@@ -166,7 +193,7 @@ async def test_distinct_bindings_cached_separately() -> None:
 @pytest.mark.asyncio
 async def test_rule_set_cached_across_bindings() -> None:
     """A shared rule set attached to N bindings is fetched once, not N times."""
-    mock_db, mock_session = _mock_db([("allow", None, ".*", None, "regex")])
+    mock_db, mock_session = _mock_db([("apr_test", "allow", None, ".*", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     for agent, cred in (("agt_1", "cred_1"), ("agt_2", "cred_2")):
         await evaluator.evaluate(
@@ -183,7 +210,7 @@ async def test_rule_set_cached_across_bindings() -> None:
 @pytest.mark.asyncio
 async def test_condition_less_allow_skipped() -> None:
     """Defense-in-depth carries over: a condition-less allow is never honoured."""
-    mock_db, _ = _mock_db([("allow", None, None, None, "regex")])
+    mock_db, _ = _mock_db([("apr_test", "allow", None, None, None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     result = await evaluator.evaluate(
         agent_id="agt_1",
@@ -198,9 +225,48 @@ async def test_condition_less_allow_skipped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_condition_less_require_approval_skipped() -> None:
+    """A condition-less require-approval is skipped; evaluation falls through to the next rule."""
+    mock_db, _ = _mock_db(
+        [
+            ("apr_hold_all", "require-approval", None, None, None, "regex"),
+            ("apr_get", "allow", '["GET"]', None, None, "regex"),
+        ]
+    )
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="GET",
+        path="/x",
+        operation_id=None,
+    )
+    assert result.verdict is RuleVerdict.ALLOW
+    assert result.matched_rule_id == "apr_get"
+
+
+@pytest.mark.asyncio
+async def test_condition_less_deny_still_matches_all() -> None:
+    """A condition-less deny stays the legitimate catch-all."""
+    mock_db, _ = _mock_db([("apr_deny_all", "deny", None, None, None, "regex")])
+    evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    result = await evaluator.evaluate(
+        agent_id="agt_1",
+        credential_id="cred_1",
+        rule_set_id=None,
+        method="POST",
+        path="/x",
+        operation_id=None,
+    )
+    assert result.verdict is RuleVerdict.DENY
+    assert result.matched_rule_id == "apr_deny_all"
+
+
+@pytest.mark.asyncio
 async def test_invalid_stored_path_is_fail_closed() -> None:
     """An unparseable stored pattern never matches (#751 carries over)."""
-    mock_db, _ = _mock_db([("allow", None, "([unclosed", None, "regex")])
+    mock_db, _ = _mock_db([("apr_test", "allow", None, "([unclosed", None, "regex")])
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     result = await evaluator.evaluate(
         agent_id="agt_1",
@@ -225,7 +291,7 @@ async def test_coerces_sqlite_json_string_methods() -> None:
     match. Feed the SQLite wire form and assert the method still matches.
     """
     mock_db, _ = _mock_db(
-        [("allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null", "regex")]
+        [("apr_test", "allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null", "regex")]
     )
     evaluator = AgentRuleEvaluator(mock_db, cache_ttl_seconds=300.0)
     allowed = await evaluator.evaluate(

@@ -29,6 +29,7 @@ export const EXECUTION_LABEL: Record<ExecutionStatusUi, string> = {
 export const JOB_TONE: Record<JobStatusUi, LogTone> = {
 	queued: 'running',
 	running: 'running',
+	held: 'warn',
 	completed: 'ok',
 	failed: 'fail',
 	cancelled: 'warn',
@@ -39,6 +40,7 @@ export const JOB_TONE: Record<JobStatusUi, LogTone> = {
 export const JOB_LABEL: Record<JobStatusUi, string> = {
 	queued: 'Queued',
 	running: 'Running',
+	held: 'Held',
 	completed: 'Completed',
 	failed: 'Failed',
 	cancelled: 'Cancelled',
@@ -50,6 +52,7 @@ export const JOB_LABEL: Record<JobStatusUi, string> = {
 const JOB_PHRASE: Record<JobStatusUi, string> = {
 	queued: 'queued',
 	running: 'running',
+	held: 'held',
 	completed: 'completed',
 	failed: 'failed',
 	cancelled: 'cancelled',

@@ -34,8 +34,10 @@ from jentic_one.shared.auth.permission_catalog import BROKER_EXECUTE_PERMISSION
 from jentic_one.shared.broker.protocols import (
     AgentRuleEvaluatorProtocol,
     CredentialDeriverProtocol,
+    RuleVerdict,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import approval_required_problem, get_approved_by_job_id
 from jentic_one.shared.jobs.protocols import QueuedExecutionRequest, QueuedExecutionVerdict
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
@@ -93,6 +95,7 @@ class QueuedExecutionAuthorizer:
         self._actor_status = actor_status
         self._credential_deriver = credential_deriver
         self._agent_rule_evaluator = agent_rule_evaluator
+        self._admin_db = ctx.admin_db
 
     async def authorize(self, request: QueuedExecutionRequest) -> QueuedExecutionVerdict:
         """Allow (with the current injection boundary) or deny (with a problem body)."""
@@ -173,6 +176,38 @@ class QueuedExecutionAuthorizer:
                 actor_type=request.actor_type,
             )
             return QueuedExecutionVerdict(allowed=False, problem=broker_error_problem(exc))
+
+        if authorization.verdict == RuleVerdict.REQUIRE_APPROVAL:
+            # A require-approval verdict at run time passes only for the job a
+            # reviewer approved; the worker never files a second hold.
+            approved = False
+            if request.job_id:
+                async with self._admin_db.session() as session:
+                    row = await get_approved_by_job_id(session, request.job_id)
+                    approved = row is not None
+            if not approved:
+                logger.info(
+                    "queued_execution_denied",
+                    reason="require_approval_no_approved_row",
+                    job_id=request.job_id,
+                    actor_id=request.actor_id,
+                    actor_type=request.actor_type,
+                )
+                return QueuedExecutionVerdict(
+                    allowed=False, problem=approval_required_problem(instance)
+                )
+            logger.info(
+                "queued_execution_approved_by_row",
+                job_id=request.job_id,
+                actor_id=request.actor_id,
+                actor_type=request.actor_type,
+            )
+            cred = authorization.selected_credential.credential_id
+            return QueuedExecutionVerdict(
+                allowed=True,
+                allowed_credential_ids=tuple(authorization.allowed_credential_ids),
+                credential_id=cred,
+            )
 
         return QueuedExecutionVerdict(
             allowed=True,

@@ -1,0 +1,291 @@
+"""Integration tests for the broker's require-approval hold path (``_handle_hold``).
+
+Drives the route's hold branch with a real Context and admin DB: the 202 held
+envelope, the encrypted held payload, the identical-retry join, the pending
+cap denial, and the ``execution.approval_requested`` event.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncGenerator
+from typing import Any
+
+import pytest
+from sqlalchemy import delete, select
+from starlette.requests import Request
+
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.execution_approvals import ExecutionApproval
+from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.broker.core.exceptions import ApprovalPendingLimitError
+from jentic_one.broker.core.problem import broker_error_problem, status_for_broker_error
+from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.services.credentials.resolver import ResolvedCredential
+from jentic_one.broker.services.execution.authorization import ExecutionAuthorization
+from jentic_one.broker.web.routers.execute import _handle_hold
+from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import RuleVerdict
+from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import ENCRYPTED_PAYLOAD_KEY, HELD_AGENT_DIRECTIVE
+from jentic_one.shared.models import (
+    ActorType,
+    CredentialType,
+    JobStatus,
+    StoredCredentialType,
+)
+from jentic_one.shared.models.events import EventType
+
+pytestmark = pytest.mark.integration
+
+_AGENT = Identity(sub="agnt_holdpath", actor_type=ActorType.AGENT, permissions=[])
+_URL = "https://api.example.com/v1/charges"
+_BODY = b'{"amount": 500}'
+
+
+@pytest.fixture()
+async def clean(integration_context: Context) -> AsyncGenerator[None, None]:
+    async def _truncate() -> None:
+        async with integration_context.admin_db.transaction() as session:
+            await session.execute(delete(Job))
+            await session.execute(delete(Event).where(Event.type.like("execution.approval_%")))
+
+    await _truncate()
+    yield
+    await _truncate()
+
+
+def _request(body: bytes) -> Request:
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "scheme": "http",
+        "server": ("broker.local", 8080),
+        "path": "/api.example.com/v1/charges",
+        "raw_path": b"/api.example.com/v1/charges",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"notion-version", b"2022-06-28"),
+            (b"host", b"broker.local:8080"),
+            (b"authorization", b"Bearer agent-token"),
+        ],
+    }
+    return Request(scope, receive)
+
+
+def _ctx_req(query: str = "") -> ExecuteRequestContext:
+    return ExecuteRequestContext(
+        upstream_url=f"{_URL}?{query}" if query else _URL,
+        method="POST",
+        trace_id="b" * 32,
+        api_vendor="api.example.com",
+        api_name="payments",
+        api_version="1",
+    )
+
+
+def _authorization() -> ExecutionAuthorization:
+    credential = ResolvedCredential(
+        credential_id="cred_holdpath",
+        name="payments-key",
+        wire_type=CredentialType.API_KEY,
+        stored_type=StoredCredentialType.API_KEY,
+        provider="api.example.com",
+    )
+    return ExecutionAuthorization(
+        allowed_credential_ids=["cred_holdpath"],
+        selected_credential=credential,
+        verdict=RuleVerdict.REQUIRE_APPROVAL,
+        matched_rule_id="apr_holdpath",
+    )
+
+
+async def _hold(ctx: Context, body: bytes = _BODY, query: str = "") -> dict[str, Any]:
+    response = await _handle_hold(_request(body), _ctx_req(query), ctx, _AGENT, _authorization())
+    assert response.status_code == 202
+    assert response.headers["Preference-Applied"] == "respond-async"
+    return dict(json.loads(bytes(response.body)))
+
+
+async def test_hold_answers_the_held_envelope_and_stores_an_encrypted_payload(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    envelope = await _hold(ctx)
+
+    assert set(envelope) == {"job_id", "status", "approval", "agent_directive", "_links"}
+    assert envelope["status"] == "held"
+    assert envelope["agent_directive"] == HELD_AGENT_DIRECTIVE
+    assert envelope["_links"]["self"].endswith(f"/jobs/{envelope['job_id']}")
+    approval = envelope["approval"]
+    assert set(envelope["_links"]) == {"self", "withdraw"}
+    assert envelope["_links"]["withdraw"].endswith(
+        f"/executions/approvals/{approval['id']}:withdraw"
+    )
+    assert set(approval) == {"id", "review_url", "expires_at"}
+    assert approval["review_url"].endswith(f"/app/agents/approvals/{approval['id']}")
+
+    async with ctx.admin_db.session() as session:
+        job = await session.get(Job, envelope["job_id"])
+        row = await session.get(ExecutionApproval, approval["id"])
+        events = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert job is not None and row is not None
+    assert job.status == JobStatus.HELD
+    payload = job.payload or {}
+    assert set(payload) == {ENCRYPTED_PAYLOAD_KEY}
+    assert b"amount" not in json.dumps(payload).encode()
+    decrypted = json.loads(ctx.encryption.decrypt(payload[ENCRYPTED_PAYLOAD_KEY]))
+    assert decrypted["method"] == "POST"
+    assert decrypted["credential_id"] == "cred_holdpath"
+    # Only the replay allow-list is kept: the run sends the body as described
+    # at the API version the caller chose, and the agent's own bearer token
+    # never sits in the admin DB.
+    assert decrypted["headers"] == {
+        "content-type": "application/json",
+        "notion-version": "2022-06-28",
+    }
+    assert row.matched_rule_id == "apr_holdpath"
+    assert row.path == "/v1/charges"
+
+    (event,) = events
+    assert event.requires_action is True
+    assert event.data["review_url"] == approval["review_url"]
+    assert event.data["method"] == "POST"
+    assert event.data["path"] == "/v1/charges"
+    assert "body" not in json.dumps(event.data)
+    assert "amount" not in json.dumps(event.data)
+
+
+async def test_held_links_root_on_the_admin_api_origin(
+    integration_context: Context, clean: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``broker.jobs_api_base_url`` set (a standalone broker), the review
+    link and both ``_links`` point at the admin API + UI origin, never the
+    broker's own request origin."""
+    ctx = integration_context
+    broker = ctx.config.broker.model_copy(update={"jobs_api_base_url": "http://ui.local:8000"})
+    monkeypatch.setattr(ctx, "_config", ctx.config.model_copy(update={"broker": broker}))
+    envelope = await _hold(ctx)
+
+    approval_id = envelope["approval"]["id"]
+    assert (
+        envelope["approval"]["review_url"]
+        == f"http://ui.local:8000/app/agents/approvals/{approval_id}"
+    )
+    assert envelope["_links"] == {
+        "self": f"http://ui.local:8000/jobs/{envelope['job_id']}",
+        "withdraw": f"http://ui.local:8000/executions/approvals/{approval_id}:withdraw",
+    }
+    async with ctx.admin_db.session() as session:
+        (event,) = (
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert event.data["review_url"] == envelope["approval"]["review_url"]
+    assert "broker.local" not in json.dumps(envelope)
+
+
+async def test_identical_retry_joins_without_a_second_event(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx)
+    again = await _hold(ctx)
+    assert again["job_id"] == first["job_id"]
+    assert again["approval"]["id"] == first["approval"]["id"]
+    async with ctx.admin_db.session() as session:
+        count = len(
+            (
+                await session.execute(
+                    select(Event).where(Event.type == EventType.EXECUTION_APPROVAL_REQUESTED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert count == 1
+
+
+async def test_pending_cap_is_a_distinct_403_denial(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    ctx.config.execution_approvals.max_pending_per_agent = 1
+    try:
+        await _hold(ctx, b'{"n": 1}')
+        with pytest.raises(ApprovalPendingLimitError) as exc:
+            await _hold(ctx, b'{"n": 2}')
+    finally:
+        ctx.config.execution_approvals.max_pending_per_agent = 10
+    problem = broker_error_problem(exc.value)
+    assert status_for_broker_error(exc.value) == 403
+    assert problem["type"] == "approval_pending_limit_reached"
+    assert problem["agent_directive"]["strategy"] == "prompt_human"
+    async with ctx.admin_db.session() as session:
+        jobs = (await session.execute(select(Job))).scalars().all()
+    assert len(jobs) == 1
+
+
+async def test_identical_retry_at_the_pending_cap_joins_its_hold(
+    integration_context: Context, clean: None
+) -> None:
+    """The join runs before the cap: retrying a call that is already held
+    returns its hold even when the agent has no pending slot left."""
+    ctx = integration_context
+    ctx.config.execution_approvals.max_pending_per_agent = 1
+    try:
+        first = await _hold(ctx, b'{"n": 1}')
+        again = await _hold(ctx, b'{"n": 1}')
+        with pytest.raises(ApprovalPendingLimitError):
+            await _hold(ctx, b'{"n": 2}')
+    finally:
+        ctx.config.execution_approvals.max_pending_per_agent = 10
+    assert again["job_id"] == first["job_id"]
+    assert again["approval"]["id"] == first["approval"]["id"]
+    async with ctx.admin_db.session() as session:
+        jobs = (await session.execute(select(Job))).scalars().all()
+    assert len(jobs) == 1
+
+
+async def test_a_different_query_or_body_files_a_new_hold(
+    integration_context: Context, clean: None
+) -> None:
+    ctx = integration_context
+    first = await _hold(ctx, query="a=1&b=2")
+    reordered = await _hold(ctx, query="b=2&a=1")
+    other_query = await _hold(ctx, query="a=1&b=3")
+    no_query = await _hold(ctx)
+    other_body = await _hold(ctx, body=b'{"amount": 501}', query="a=1&b=2")
+
+    assert reordered["approval"]["id"] == first["approval"]["id"]
+    ids = {
+        first["approval"]["id"],
+        other_query["approval"]["id"],
+        no_query["approval"]["id"],
+        other_body["approval"]["id"],
+    }
+    assert len(ids) == 4

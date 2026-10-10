@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { toExecutionStatus, toJobStatus, isTerminalJobStatus } from '@/modules/monitor/api/types';
+import {
+	toExecutionStatus,
+	toJobStatus,
+	isCancellableJob,
+	isTerminalJobStatus,
+} from '@/modules/monitor/api/types';
 
 describe('monitor status mappers', () => {
 	describe('toExecutionStatus', () => {
@@ -54,6 +59,23 @@ describe('monitor status mappers', () => {
 			expect(isTerminalJobStatus('queued')).toBe(false);
 			expect(isTerminalJobStatus('running')).toBe(false);
 			expect(isTerminalJobStatus('unknown')).toBe(false);
+		});
+	});
+
+	describe('isCancellableJob', () => {
+		it('offers cancel for queued and running jobs of any kind', () => {
+			expect(isCancellableJob('queued', 'execution')).toBe(true);
+			expect(isCancellableJob('running', 'import')).toBe(true);
+		});
+
+		it('offers cancel for a held job unless it is an execution', () => {
+			expect(isCancellableJob(toJobStatus('held'), 'import')).toBe(true);
+			expect(isCancellableJob(toJobStatus('held'), 'execution')).toBe(false);
+		});
+
+		it('never offers cancel for a terminal job', () => {
+			expect(isCancellableJob('completed', 'import')).toBe(false);
+			expect(isCancellableJob('cancelled', 'execution')).toBe(false);
 		});
 	});
 });

@@ -1410,6 +1410,15 @@
         "title": "ApiUpdateRequest",
         "type": "object"
       },
+      "ApprovalDecision": {
+        "description": "A reviewer's decision on a pending approval.",
+        "enum": [
+          "approve",
+          "deny"
+        ],
+        "title": "ApprovalDecision",
+        "type": "string"
+      },
       "AuditListResponse": {
         "description": "Paginated list of audit entries.",
         "properties": {
@@ -1656,6 +1665,7 @@
           "provider_config",
           "oauth_client",
           "oauth_grant",
+          "execution_approval",
           "oauth_app_registration"
         ],
         "title": "AuditTargetType",
@@ -3425,6 +3435,40 @@
         "title": "DailyExecutionBucket",
         "type": "object"
       },
+      "DecideRequest": {
+        "additionalProperties": false,
+        "description": "Approve or deny a pending execution approval.",
+        "examples": [
+          {
+            "decision": "deny",
+            "reason": "Not this account"
+          }
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecision",
+            "description": "`approve` releases the call; `deny` fails it."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional reason, recorded with the decision.",
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "DecideRequest",
+        "type": "object"
+      },
       "DenyRequest": {
         "description": "Request body for denying an agent.",
         "properties": {
@@ -3830,6 +3874,475 @@
           "critical"
         ],
         "title": "EventSeverity",
+        "type": "string"
+      },
+      "ExecutionApprovalDetailResponse": {
+        "description": "An approval with the agent context and the held request a reviewer decides on.",
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/ExecutionApprovalLinksResponse"
+          },
+          "agent_id": {
+            "description": "The agent whose call was held.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Display name of the agent.",
+            "title": "Agent Name"
+          },
+          "agent_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's owner; null for an ownerless agent (admin-only).",
+            "title": "Agent Owner Id"
+          },
+          "api_name": {
+            "description": "Name of the API called.",
+            "title": "Api Name",
+            "type": "string"
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "description": "Version of the API called.",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the call was held.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "The credential selected when the call was held.",
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it left `pending`.",
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer who decided it.",
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer's reason.",
+            "title": "Decision Reason"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution record written once the approved job ran.",
+            "title": "Execution Id"
+          },
+          "expires_at": {
+            "description": "When a pending approval expires undecided.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Approval id (`exap_…`).",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "description": "The held execution job.",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "matched_rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The require-approval permission rule that held the call.",
+            "title": "Matched Rule Id"
+          },
+          "method": {
+            "description": "HTTP method of the held call.",
+            "title": "Method",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved OpenAPI operation id.",
+            "title": "Operation Id"
+          },
+          "path": {
+            "description": "Upstream path of the held call.",
+            "title": "Path",
+            "type": "string"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HeldRequestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The held call."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "description": "Approval state."
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trace id of the held call.",
+            "title": "Trace Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last change.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "agent_id",
+          "credential_id",
+          "api_vendor",
+          "api_name",
+          "api_version",
+          "method",
+          "path",
+          "state",
+          "expires_at",
+          "created_at",
+          "_links"
+        ],
+        "title": "ExecutionApprovalDetailResponse",
+        "type": "object"
+      },
+      "ExecutionApprovalLinksResponse": {
+        "description": "HAL-style links for an execution approval.",
+        "properties": {
+          "job": {
+            "description": "The held execution job to poll for the outcome.",
+            "title": "Job",
+            "type": "string"
+          },
+          "self": {
+            "description": "This approval.",
+            "title": "Self",
+            "type": "string"
+          }
+        },
+        "required": [
+          "self",
+          "job"
+        ],
+        "title": "ExecutionApprovalLinksResponse",
+        "type": "object"
+      },
+      "ExecutionApprovalListResponse": {
+        "description": "A page of execution approvals.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionApprovalResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "title": "ExecutionApprovalListResponse",
+        "type": "object"
+      },
+      "ExecutionApprovalResponse": {
+        "description": "A held execution waiting on (or settled by) a human decision.",
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/ExecutionApprovalLinksResponse"
+          },
+          "agent_id": {
+            "description": "The agent whose call was held.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "api_name": {
+            "description": "Name of the API called.",
+            "title": "Api Name",
+            "type": "string"
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "description": "Version of the API called.",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the call was held.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "The credential selected when the call was held.",
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it left `pending`.",
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer who decided it.",
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer's reason.",
+            "title": "Decision Reason"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution record written once the approved job ran.",
+            "title": "Execution Id"
+          },
+          "expires_at": {
+            "description": "When a pending approval expires undecided.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Approval id (`exap_…`).",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "description": "The held execution job.",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "matched_rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The require-approval permission rule that held the call.",
+            "title": "Matched Rule Id"
+          },
+          "method": {
+            "description": "HTTP method of the held call.",
+            "title": "Method",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved OpenAPI operation id.",
+            "title": "Operation Id"
+          },
+          "path": {
+            "description": "Upstream path of the held call.",
+            "title": "Path",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "description": "Approval state."
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trace id of the held call.",
+            "title": "Trace Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last change.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "agent_id",
+          "credential_id",
+          "api_vendor",
+          "api_name",
+          "api_version",
+          "method",
+          "path",
+          "state",
+          "expires_at",
+          "created_at",
+          "_links"
+        ],
+        "title": "ExecutionApprovalResponse",
+        "type": "object"
+      },
+      "ExecutionApprovalState": {
+        "description": "Lifecycle of an execution approval; every state but ``pending`` is terminal.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "expired",
+          "withdrawn"
+        ],
+        "title": "ExecutionApprovalState",
         "type": "string"
       },
       "ExecutionListResponse": {
@@ -4240,6 +4753,45 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HeldRequestResponse": {
+        "description": "The held call exactly as it runs if approved (credentials are injected at run time).",
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Request body, if any.",
+            "title": "Body"
+          },
+          "body_truncated": {
+            "default": false,
+            "description": "True when `body` is cut short for display.",
+            "title": "Body Truncated",
+            "type": "boolean"
+          },
+          "method": {
+            "description": "HTTP method.",
+            "title": "Method",
+            "type": "string"
+          },
+          "url": {
+            "description": "Upstream URL including the query string.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "url"
+        ],
+        "title": "HeldRequestResponse",
+        "type": "object"
+      },
       "InstanceIdentityResponse": {
         "description": "Self-describing identity of the backend serving this request.\n\nA client can compare ``backend``/``canonical_base_url``/``host`` against where\nit *thinks* it is pointed to confirm it is talking to the intended backend\n(e.g. a local install vs. a remote one) before diagnosing \"missing\" data.",
         "properties": {
@@ -4511,6 +5063,17 @@
       "JobLinksResponse": {
         "description": "Hypermedia links for a job.",
         "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval"
+          },
           "execution": {
             "anyOf": [
               {
@@ -4582,6 +5145,18 @@
         "properties": {
           "_links": {
             "$ref": "#/components/schemas/JobLinksResponse"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The execution approval a require-approval hold filed for this job.",
+            "title": "Approval Id"
           },
           "created_at": {
             "format": "date-time",
@@ -7731,7 +8306,8 @@
           "effect": {
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "require-approval"
             ],
             "title": "Effect",
             "type": "string"
@@ -7797,10 +8373,11 @@
         "description": "Permission rule for an agent↔credential binding.\n\nRules are evaluated first-match-wins. If no rule matches, the request is\ndenied (default-deny). A binding with zero rules therefore blocks all\noperations — users must explicitly add at least one allow rule.",
         "properties": {
           "effect": {
-            "description": "Whether this rule allows or denies the matched request.",
+            "description": "Whether this rule allows the matched request, denies it, or holds it for human approval before the broker executes it.",
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "require-approval"
             ],
             "title": "Effect",
             "type": "string"
@@ -27689,6 +28266,736 @@
         ]
       }
     },
+    "/executions/approvals": {
+      "get": {
+        "description": "List the approvals the caller may review, newest first.\n\n``org:admin`` sees every approval; a user sees approvals for agents they\nown; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or\n``agent_id``.",
+        "operationId": "listExecutionApprovals",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ExecutionApprovalState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionApprovalListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List execution approvals",
+        "tags": [
+          "Execution Approvals"
+        ]
+      }
+    },
+    "/executions/approvals/{approval_id}": {
+      "get": {
+        "description": "One approval with its agent, owner, matched rule and the held request body.\n\nAn approval outside the caller's reviewer visibility answers ``404``.",
+        "operationId": "getExecutionApproval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionApprovalDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an execution approval",
+        "tags": [
+          "Execution Approvals"
+        ]
+      }
+    },
+    "/executions/approvals/{approval_id}:decide": {
+      "post": {
+        "description": "Decide a pending approval — the agent's owner or an ``org:admin`` only.\n\n``approve`` releases the held job to the worker, which re-authorizes and\nruns it once; ``deny`` fails the job with a permission-denied result. The\nfirst decision wins: deciding an approval that is no longer pending (or\nhas expired) answers ``409``. An agent caller is always refused (``403``),\nwhatever its scopes.",
+        "operationId": "decideExecutionApproval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Approve or deny an execution approval",
+        "tags": [
+          "Execution Approvals"
+        ]
+      }
+    },
+    "/executions/approvals/{approval_id}:withdraw": {
+      "post": {
+        "description": "Abandon a held execution — the identity that filed the hold only.\n\nThe approval becomes ``withdrawn`` and its held job ``cancelled``; the call\nnever runs and no result is written. Any other caller gets ``404``, as if\nthe approval did not exist; an approval that is no longer pending (decided,\nexpired or already withdrawn) answers ``409``. It acts only on held\nexecutions: owners and admins use ``:decide`` with ``deny`` instead.",
+        "operationId": "withdrawExecutionApproval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionApprovalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Withdraw a held execution",
+        "tags": [
+          "Execution Approvals"
+        ]
+      }
+    },
     "/executions/{execution_id}": {
       "get": {
         "description": "Get an execution record by ID.",
@@ -28832,7 +30139,7 @@
     },
     "/jobs/{job_id}/result": {
       "get": {
-        "description": "Get the result of a completed job — polymorphic by kind.",
+        "description": "Get the result of a completed job, or the problem body of a failed execution.\n\nPolymorphic by kind. A held execution that was denied or expired is\n``failed`` with a permission-denied problem as its result.",
         "operationId": "getJobResult",
         "parameters": [
           {
@@ -28976,7 +30283,7 @@
     },
     "/jobs/{job_id}:cancel": {
       "post": {
-        "description": "Cancel an active job.",
+        "description": "Cancel a queued, running or held job; an already-terminal job is returned unchanged.\n\nA held execution answers ``409``: it awaits its approval and settles only through\nit (a reviewer's decision, the filing agent's withdrawal, or expiry).",
         "operationId": "cancelJob",
         "parameters": [
           {
@@ -29050,6 +30357,40 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {
@@ -37947,6 +39288,10 @@
       "name": "Jobs"
     },
     {
+      "description": "Human-approval gate for held broker executions. When a permission rule carries `effect: require-approval`, the broker enqueues the job in a `held` state and files an `ExecutionApproval` row. A reviewer — the invoking agent's owner or any `org:admin` — calls `POST /executions/approvals/{id}:decide` to approve or deny.\n\nApprove flips the held job to `queued` so the worker picks it up; deny marks it `failed` with a permission-denied result body. Unreviewed approvals expire automatically after the configured TTL. The invoking agent (or any `AGENT` actor) may never decide; decisions are always human-authenticated.",
+      "name": "Execution Approvals"
+    },
+    {
       "description": "Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter. An event is visible only to the actor it names (`actor_id`), to the subject it is about (for example the owner of the credential or the agent concerned), to the human owner of either when that is an agent, and to `org:admin`; system events with no subject are visible only to `org:admin`. To any other caller an event is indistinguishable from a missing one (`404`).",
       "name": "Events"
     },
@@ -38042,6 +39387,7 @@
         "Actors",
         "Permissions",
         "Executions",
+        "Execution Approvals",
         "Jobs",
         "Events",
         "Audit",

@@ -62,7 +62,8 @@ type BlockedStatus = 'blocked-no-rules' | 'blocked-all-denied';
 export function rulesBlock(rules: BindingRuleSummary | undefined): BlockedStatus | null {
 	if (!rules) return null;
 	if (rules.total === 0) return 'blocked-no-rules';
-	if (rules.allow === 0) return 'blocked-all-denied';
+	// An Ask rule still lets its calls through, once a reviewer approves.
+	if (rules.allow + rules.ask === 0) return 'blocked-all-denied';
 	return null;
 }
 

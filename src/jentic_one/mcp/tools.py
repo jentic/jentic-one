@@ -29,8 +29,9 @@ import json
 import time
 import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import mcp.types as mcp_types
 import structlog
@@ -38,7 +39,7 @@ from jentic.problem_details import Forbidden, Unauthorized
 from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
-from jentic_one.admin.services.errors import JobNotFoundError
+from jentic_one.admin.services.errors import JobNotCompletedError, JobNotFoundError
 from jentic_one.admin.services.job_result_service import JobResultService
 from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.jobs import JobView
@@ -72,6 +73,7 @@ from jentic_one.control.services.vendors.service import (
 )
 from jentic_one.control.web.routers.integrations import _CONNECT_BURST, _CONNECT_RPM
 from jentic_one.control.web.schemas.permission_rules import PermissionRuleSchema
+from jentic_one.mcp import approvals
 from jentic_one.mcp import execute as ex
 from jentic_one.mcp.envelopes import (
     CODE_BROKER_DENIED,
@@ -111,6 +113,7 @@ from jentic_one.shared.catalog.protocols import (
     SecuritySchemesLookupProtocol,
 )
 from jentic_one.shared.context import Context
+from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
 from jentic_one.shared.redaction import redact_value
@@ -135,6 +138,16 @@ class CallEnv:
     base_url: str
     #: sanitized ``X-Jentic-Session-Id`` when the inbound request carried one.
     session_id: str | None
+    #: this request's declared ``_meta`` client capabilities (per request —
+    #: there is no session to remember them).
+    client_capabilities: dict[str, Any] = field(default_factory=dict)
+    #: this request's ``_meta`` clientInfo, for logging only.
+    client_name: str | None = None
+    client_version: str | None = None
+    #: the ``requestState`` a multi-round-trip retry echoes back, if any.
+    request_state: str | None = None
+    #: the protocol version this request was served under (``None`` when unknown).
+    protocol_version: str | None = None
     #: the process-level catalog auto-importer the HTTP connect route threads
     #: into ``ConnectSessionService`` (``app.state.catalog_auto_importer``);
     #: ``None`` when this process does not serve the registry.
@@ -146,7 +159,9 @@ class CallEnv:
     security_schemes_lookup: SecuritySchemesLookupProtocol | None = None
 
 
-Handler = Callable[[CallEnv, dict[str, Any]], Awaitable[mcp_types.CallToolResult]]
+ToolCallResult = mcp_types.CallToolResult | mcp_types.InputRequiredResult
+
+Handler = Callable[[CallEnv, dict[str, Any]], Awaitable[ToolCallResult]]
 
 
 def invalid_params(message: str) -> MCPError:
@@ -641,6 +656,11 @@ _JOB_COMPLETED = "completed"
 #: the job kind the catalog import loop rides (``JobKind.IMPORT``).
 _JOB_KIND_IMPORT = "import"
 
+#: execution jobs that end ``failed`` may carry their problem body as the
+#: result (a denied or expired held execution).
+_JOB_KIND_EXECUTION = "execution"
+_JOB_FAILED = "failed"
+
 
 def validate_api_id(api_id: str) -> None:
     """Syntactic guard on the catalog entry id (Go: ``validateAPIID``).
@@ -993,17 +1013,17 @@ _EXECUTE_PARAMS = [
 ]
 
 
-async def handle_execute(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
+async def handle_execute(env: CallEnv, arguments: dict[str, Any]) -> ToolCallResult:
     return await _execute_tool(env, arguments, read_only_variant=False)
 
 
-async def handle_execute_read(env: CallEnv, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
+async def handle_execute_read(env: CallEnv, arguments: dict[str, Any]) -> ToolCallResult:
     return await _execute_tool(env, arguments, read_only_variant=True)
 
 
 async def _execute_tool(
     env: CallEnv, arguments: dict[str, Any], *, read_only_variant: bool
-) -> mcp_types.CallToolResult:
+) -> ToolCallResult:
     """The shared execute/execute_read handler (Go: ``executeTool``).
 
     Resolve → build → send → classify, with the broker leg proxied
@@ -1014,6 +1034,10 @@ async def _execute_tool(
     and never re-sends.
     """
     tool_name = "execute_read" if read_only_variant else "execute"
+    if env.request_state is not None:
+        # A multi-round-trip retry of a held call: never re-send it — read the
+        # job the sealed state names.
+        return await _resume_held(env, env.request_state)
     args = normalize_tool_args(arguments, _EXECUTE_PARAMS)
     target = args.get("operation_id", "")
     if not target:
@@ -1101,8 +1125,63 @@ async def _execute_tool(
         raise denial
     if (resolve_failure := ex.classify_broker_error(status, response_headers, raw)) is not None:
         raise resolve_failure
-    return tool_result(
-        env.ctx, ex.execute_result_payload(status, response_headers, raw, execution_id)
+    payload = ex.execute_result_payload(status, response_headers, raw, execution_id)
+    held = ex.held_envelope(status, payload.get("body"))
+    if held is not None:
+        return await _answer_held(env, held, payload, method, urlsplit(upstream).path or "/")
+    return tool_result(env.ctx, payload)
+
+
+async def _answer_held(
+    env: CallEnv, envelope: dict[str, Any], payload: dict[str, Any], method: str, path: str
+) -> ToolCallResult:
+    """Shape a held (202) call for this client: URL elicitation, else the held result at once."""
+    door = approvals.front_door(env.client_capabilities, env.protocol_version)
+    _log_front_door(env, door, envelope)
+    if door == approvals.FRONT_DOOR_URL_ELICITATION:
+        state = approvals.seal_request_state(
+            env.ctx.encryption, envelope=envelope, agent_id=env.identity.sub
+        )
+        return approvals.url_elicitation_result(
+            review_url=envelope["approval"]["review_url"],
+            message=approvals.review_message(method, path),
+            request_state=state,
+        )
+    return tool_result(env.ctx, payload)
+
+
+async def _resume_held(env: CallEnv, token: str) -> ToolCallResult:
+    """A URL-elicitation retry: the job's result if terminal, else short wait then held result.
+
+    The elicitation response the client sends back is consent to open the
+    review page only — it never decides the approval.
+    """
+    state = approvals.open_request_state(env.ctx.encryption, token, agent_id=env.identity.sub)
+    if state is None:
+        raise invalid_params("Invalid or expired requestState")
+    _log_front_door(env, "url_elicitation_retry", {"job_id": state["job_id"]})
+    terminal = await approvals.short_wait(_poller(env), state["job_id"])
+    if terminal is not None:
+        return tool_result(env.ctx, terminal)
+    envelope = approvals.envelope_from_state(state, HELD_AGENT_DIRECTIVE)
+    return tool_result(env.ctx, approvals.held_result_payload(envelope))
+
+
+def _poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:
+    async def poll(job_id: str) -> dict[str, Any]:
+        return await job_poll_payload(env, job_id)
+
+    return poll
+
+
+def _log_front_door(env: CallEnv, door: str, envelope: dict[str, Any]) -> None:
+    logger.info(
+        "mcp_held_execution_front_door",
+        front_door=door,
+        job_id=envelope.get("job_id"),
+        client_name=env.client_name,
+        client_version=env.client_version,
+        actor_id=env.identity.sub,
     )
 
 
@@ -1123,13 +1202,24 @@ def _header_kvs(obj: dict[str, Any] | None) -> list[tuple[str, str]]:
 
 # ── get_execution_result ──────────────────────────────────────────────────────
 
-_GET_EXECUTION_RESULT_PARAMS = [ParamSpec("job_id", "string", ("id", "job"))]
+_GET_EXECUTION_RESULT_PARAMS = [
+    ParamSpec("job_id", "string", ("id", "job")),
+    ParamSpec("wait_seconds", "int"),
+]
+
+#: Cap on get_execution_result's ``wait_seconds`` (Go: ``maxPollWaitSeconds``).
+MAX_POLL_WAIT_SECONDS = 30
 
 
 async def handle_get_execution_result(
     env: CallEnv, arguments: dict[str, Any]
 ) -> mcp_types.CallToolResult:
-    """GET /jobs/{id} (+ /result) in-process (Go: ``handleGetExecutionResult``)."""
+    """GET /jobs/{id} (+ /result) in-process (Go: ``handleGetExecutionResult``).
+
+    ``wait_seconds`` absent or zero polls once and answers at once; otherwise
+    the job is re-polled until terminal or the wait (capped at
+    ``MAX_POLL_WAIT_SECONDS``) lapses.
+    """
     args = normalize_tool_args(arguments, _GET_EXECUTION_RESULT_PARAMS)
     job_id = args.get("job_id", "")
     if not job_id:
@@ -1137,6 +1227,30 @@ async def handle_get_execution_result(
             'get_execution_result requires "job_id" (aliases: "id", "job"): the job id '
             "from a held (202) execute response"
         )
+    wait = min(max(int(args.get("wait_seconds", 0)), 0), MAX_POLL_WAIT_SECONDS)
+    return tool_result(env.ctx, await _poll_job_until_terminal(env, job_id, float(wait)))
+
+
+async def _poll_job_until_terminal(env: CallEnv, job_id: str, wait: float) -> dict[str, Any]:
+    """Poll the job, re-polling until terminal or ``wait`` lapses; zero polls once."""
+    deadline = time.monotonic() + wait
+    while True:
+        payload = await job_poll_payload(env, job_id)
+        if payload.get("status") in approvals.TERMINAL_JOB_STATUSES:
+            return payload
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return payload
+        await asyncio.sleep(min(approvals.SHORT_WAIT_POLL_SECONDS, remaining))
+
+
+async def job_poll_payload(env: CallEnv, job_id: str) -> dict[str, Any]:
+    """The poll payload for one job (Go: ``handleGetExecutionResult`` body).
+
+    ``{job_id, kind, status, error?, execution_id?, result?}`` — the result
+    rides once the job is terminal with one (``completed``, or a ``failed``
+    held execution whose result is its permission-denied problem).
+    """
     require_permissions(env.identity, ["jobs:read"])
     _require_db(env.ctx, "admin", "job polling")
 
@@ -1167,7 +1281,7 @@ async def handle_get_execution_result(
         # job that failed once with the duplicate message and succeeded on a
         # later attempt carries the stale fragment — its completed result is
         # always more honest than its residual error.
-        return tool_result(env.ctx, _already_imported_payload(job.id))
+        return _already_imported_payload(job.id)
 
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -1179,9 +1293,11 @@ async def handle_get_execution_result(
         payload["error"] = job.error
     if job.execution_id:
         payload["execution_id"] = job.execution_id
-    if job.status == _JOB_COMPLETED:
+    if job.status == _JOB_COMPLETED or (
+        job.status == _JOB_FAILED and job.kind == _JOB_KIND_EXECUTION
+    ):
         await _attach_job_result(env, job_id, payload)
-    return tool_result(env.ctx, payload)
+    return payload
 
 
 async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any]) -> None:
@@ -1192,6 +1308,9 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
     """
     try:
         view = await JobResultService(env.ctx).get(job_id, identity=env.identity)
+    except JobNotCompletedError:
+        # A failed job without a recorded problem body has no result to attach.
+        return
     except Exception as exc:
         payload["result_error"] = f"the job completed but its result could not be fetched: {exc}"
         return
@@ -1711,6 +1830,21 @@ HANDLERS: dict[str, Handler] = {
 async def dispatch_tool_call(
     env: CallEnv, name: str, arguments: dict[str, Any] | None
 ) -> mcp_types.CallToolResult:
+    """Route one tools/call whose caller declared no input-required support.
+
+    Only a held execute for a client declaring ``elicitation.url`` answers
+    with an input-required result, and ``env`` carries the capabilities, so a
+    caller passing none always gets a plain tool result.
+    """
+    result = await dispatch_mcp_tool_call(env, name, arguments)
+    if not isinstance(result, mcp_types.CallToolResult):
+        raise MCPError(mcp_types.INTERNAL_ERROR, "tool answered with input required")
+    return result
+
+
+async def dispatch_mcp_tool_call(
+    env: CallEnv, name: str, arguments: dict[str, Any] | None
+) -> ToolCallResult:
     """Route one authenticated tools/call to its handler.
 
     ``ToolError`` renders as the coded ``isError`` result (diagnosable

@@ -7,7 +7,7 @@ from jentic_one.shared.db.errors import (
     DatabaseUnavailableError,
 )
 from jentic_one.shared.db.session import DatabaseSession, get_database_url
-from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.db.utils import db_now, utcnow
 
 __all__ = [
     "AdminBase",
@@ -17,6 +17,7 @@ __all__ = [
     "DatabaseSession",
     "DatabaseUnavailableError",
     "RegistryBase",
+    "db_now",
     "get_database_url",
     "utcnow",
 ]

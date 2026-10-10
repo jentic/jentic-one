@@ -552,6 +552,9 @@ type ConfigSchemaJson struct {
 	// Entitlement corresponds to the JSON schema field "entitlement".
 	Entitlement *EntitlementConfig `json:"entitlement,omitempty,omitzero" yaml:"entitlement,omitempty" mapstructure:"entitlement,omitempty"`
 
+	// ExecutionApprovals corresponds to the JSON schema field "execution_approvals".
+	ExecutionApprovals *ExecutionApprovalsConfig `json:"execution_approvals,omitempty,omitzero" yaml:"execution_approvals,omitempty" mapstructure:"execution_approvals,omitempty"`
+
 	// Ingest corresponds to the JSON schema field "ingest".
 	Ingest *IngestConfig `json:"ingest,omitempty,omitzero" yaml:"ingest,omitempty" mapstructure:"ingest,omitempty"`
 
@@ -1178,6 +1181,59 @@ func (j *EntitlementConfig) UnmarshalJSON(value []byte) error {
 		plain.Region = "us-east-1"
 	}
 	*j = EntitlementConfig(plain)
+	return nil
+}
+
+// Require-approval holds: held execution jobs awaiting a human reviewer.
+//
+// An execute call matching a permission rule with “effect="require-approval"“
+// is enqueued as a “held“ job with a “pending“ approval; a reviewer (the
+// agent's owner or an “org:admin“) approves or denies it, or it expires.
+type ExecutionApprovalsConfig struct {
+	// Maximum pending approvals per agent. An execute call that would file another
+	// hold beyond this is denied with the ``approval_pending_limit_reached`` problem
+	// type.
+	MaxPendingPerAgent int `json:"max_pending_per_agent,omitempty,omitzero" yaml:"max_pending_per_agent,omitempty" mapstructure:"max_pending_per_agent,omitempty"`
+
+	// Seconds the result of an approved execution stays readable via ``GET
+	// /jobs/{id}/result`` before the result sweep removes it. Defaults to 24 hours.
+	ResultRetentionSeconds int `json:"result_retention_seconds,omitempty,omitzero" yaml:"result_retention_seconds,omitempty" mapstructure:"result_retention_seconds,omitempty"`
+
+	// Seconds a pending approval lives before the expiry sweep marks it ``expired``
+	// and fails its held job with a permission-denied result. Defaults to 24 hours.
+	TtlSeconds int `json:"ttl_seconds,omitempty,omitzero" yaml:"ttl_seconds,omitempty" mapstructure:"ttl_seconds,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *ExecutionApprovalsConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	type Plain ExecutionApprovalsConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["max_pending_per_agent"]; !ok || v == nil {
+		plain.MaxPendingPerAgent = 10
+	}
+	if 1 > plain.MaxPendingPerAgent {
+		return fmt.Errorf("field %s: must be >= %v", "max_pending_per_agent", 1)
+	}
+	if v, ok := raw["result_retention_seconds"]; !ok || v == nil {
+		plain.ResultRetentionSeconds = 86400
+	}
+	if 0 >= plain.ResultRetentionSeconds {
+		return fmt.Errorf("field %s: must be > %v", "result_retention_seconds", 0)
+	}
+	if v, ok := raw["ttl_seconds"]; !ok || v == nil {
+		plain.TtlSeconds = 86400
+	}
+	if 0 >= plain.TtlSeconds {
+		return fmt.Errorf("field %s: must be > %v", "ttl_seconds", 0)
+	}
+	*j = ExecutionApprovalsConfig(plain)
 	return nil
 }
 
@@ -2817,83 +2873,31 @@ type VendorIdentityProbeConfig struct {
 
 type VendorIdentityProbeConfigMethod string
 
-type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig
+const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
+const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
 
-const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
-const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
-const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
-
-// A single OAuth scope exposed by the vendor.
-//
-// `classification` drives the review-page UX: read scopes are pre-selected by
-// default; write/admin scopes get a warning flag. `description` is
-// human-facing copy displayed on the review page.
-type VendorScopeConfig struct {
-	// Classification corresponds to the JSON schema field "classification".
-	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
-
-	// Default corresponds to the JSON schema field "default".
-	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
-
-	// Description corresponds to the JSON schema field "description".
-	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
-
-	// Name corresponds to the JSON schema field "name".
-	Name string `json:"name" yaml:"name" mapstructure:"name"`
+var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
+	"GET",
+	"POST",
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return err
-	}
-	if _, ok := raw["name"]; raw != nil && !ok {
-		return fmt.Errorf("field name in VendorScopeConfig: required")
-	}
-	type Plain VendorScopeConfig
-	var plain Plain
-	if err := json.Unmarshal(value, &plain); err != nil {
-		return err
-	}
-	if v, ok := raw["classification"]; !ok || v == nil {
-		plain.Classification = "read"
-	}
-	if v, ok := raw["default"]; !ok || v == nil {
-		plain.Default = false
-	}
-	if v, ok := raw["description"]; !ok || v == nil {
-		plain.Description = ""
-	}
-	*j = VendorScopeConfig(plain)
-	return nil
-}
-
-var enumValues_VendorScopeConfigClassification = []interface{}{
-	"read",
-	"write",
-	"admin",
-}
-
-type VendorScopeConfigClassification string
-
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
 	var v string
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
 	var ok bool
-	for _, expected := range enumValues_VendorScopeConfigClassification {
+	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
 		if reflect.DeepEqual(v, expected) {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
 	}
-	*j = VendorScopeConfigClassification(v)
+	*j = VendorIdentityProbeConfigMethod(v)
 	return nil
 }
 
@@ -2924,15 +2928,90 @@ func (j *VendorIdentityProbeConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-const VendorIdentityProbeConfigMethodPOST VendorIdentityProbeConfigMethod = "POST"
-const VendorIdentityProbeConfigMethodGET VendorIdentityProbeConfigMethod = "GET"
-
-type VendorRegistryConfigEntries map[string]VendorAuthConfig
-
 // Top-level vendor auth registry.
 type VendorRegistryConfig struct {
 	// Entries corresponds to the JSON schema field "entries".
 	Entries VendorRegistryConfigEntries `json:"entries,omitempty,omitzero" yaml:"entries,omitempty" mapstructure:"entries,omitempty"`
+}
+
+type VendorRegistryConfigEntries map[string]VendorAuthConfig
+
+// A single OAuth scope exposed by the vendor.
+//
+// `classification` drives the review-page UX: read scopes are pre-selected by
+// default; write/admin scopes get a warning flag. `description` is
+// human-facing copy displayed on the review page.
+type VendorScopeConfig struct {
+	// Classification corresponds to the JSON schema field "classification".
+	Classification VendorScopeConfigClassification `json:"classification,omitempty,omitzero" yaml:"classification,omitempty" mapstructure:"classification,omitempty"`
+
+	// Default corresponds to the JSON schema field "default".
+	Default bool `json:"default,omitempty,omitzero" yaml:"default,omitempty" mapstructure:"default,omitempty"`
+
+	// Description corresponds to the JSON schema field "description".
+	Description string `json:"description,omitempty,omitzero" yaml:"description,omitempty" mapstructure:"description,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}
+
+type VendorScopeConfigClassification string
+
+const VendorScopeConfigClassificationAdmin VendorScopeConfigClassification = "admin"
+const VendorScopeConfigClassificationRead VendorScopeConfigClassification = "read"
+const VendorScopeConfigClassificationWrite VendorScopeConfigClassification = "write"
+
+var enumValues_VendorScopeConfigClassification = []interface{}{
+	"read",
+	"write",
+	"admin",
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfigClassification) UnmarshalJSON(value []byte) error {
+	var v string
+	if err := json.Unmarshal(value, &v); err != nil {
+		return err
+	}
+	var ok bool
+	for _, expected := range enumValues_VendorScopeConfigClassification {
+		if reflect.DeepEqual(v, expected) {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorScopeConfigClassification, v)
+	}
+	*j = VendorScopeConfigClassification(v)
+	return nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (j *VendorScopeConfig) UnmarshalJSON(value []byte) error {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["name"]; raw != nil && !ok {
+		return fmt.Errorf("field name in VendorScopeConfig: required")
+	}
+	type Plain VendorScopeConfig
+	var plain Plain
+	if err := json.Unmarshal(value, &plain); err != nil {
+		return err
+	}
+	if v, ok := raw["classification"]; !ok || v == nil {
+		plain.Classification = "read"
+	}
+	if v, ok := raw["default"]; !ok || v == nil {
+		plain.Default = false
+	}
+	if v, ok := raw["description"]; !ok || v == nil {
+		plain.Description = ""
+	}
+	*j = VendorScopeConfig(plain)
+	return nil
 }
 
 // Background job-worker durability knobs.
@@ -2990,27 +3069,4 @@ func (j *WorkerConfig) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler.
-func (j *VendorIdentityProbeConfigMethod) UnmarshalJSON(value []byte) error {
-	var v string
-	if err := json.Unmarshal(value, &v); err != nil {
-		return err
-	}
-	var ok bool
-	for _, expected := range enumValues_VendorIdentityProbeConfigMethod {
-		if reflect.DeepEqual(v, expected) {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("invalid value (expected one of %#v): %#v", enumValues_VendorIdentityProbeConfigMethod, v)
-	}
-	*j = VendorIdentityProbeConfigMethod(v)
-	return nil
-}
-
-var enumValues_VendorIdentityProbeConfigMethod = []interface{}{
-	"GET",
-	"POST",
-}
+type VendorAuthConfigIdentityProbe_0 = VendorIdentityProbeConfig

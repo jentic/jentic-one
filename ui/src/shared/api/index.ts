@@ -258,6 +258,15 @@ export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetRespo
 // transport's status text. Append-only, like the rest.
 export { problemDetailText } from '@/shared/api/problem';
 
+// Execution approvals — require-approval held-job review surface.
+export { ExecutionApprovalsService } from '@/shared/api/generated/services/ExecutionApprovalsService';
+export type { ExecutionApprovalResponse } from '@/shared/api/generated/models/ExecutionApprovalResponse';
+export type { ExecutionApprovalListResponse } from '@/shared/api/generated/models/ExecutionApprovalListResponse';
+export type { ExecutionApprovalDetailResponse } from '@/shared/api/generated/models/ExecutionApprovalDetailResponse';
+export type { HeldRequestResponse } from '@/shared/api/generated/models/HeldRequestResponse';
+export { ApprovalDecision } from '@/shared/api/generated/models/ApprovalDecision';
+export { ExecutionApprovalState } from '@/shared/api/generated/models/ExecutionApprovalState';
+export type { DecideRequest } from '@/shared/api/generated/models/DecideRequest';
 // Connect sessions — the open requests an agent is waiting on a human for.
 // Read by the credentials api tier (`listOpenConnectRequests`) for the
 // attention inbox and the Agents page; views use its hooks. Append-only.

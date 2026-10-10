@@ -190,13 +190,21 @@ def _start_worker(
                 execution_authorizer=execution_authorizer,
                 egress=ctx.config.broker.egress,
                 security_config=ctx.config.security,
+                # Same predicate the broker's hold path files under, so a held
+                # payload the broker encrypted is one this worker can decrypt.
+                encryption=ctx.encryption if ctx.has_encryption_keyset else None,
             ),
         )
 
     if not handler_registry.kinds:
         return None
 
-    worker = WorkerLoop(ctx.admin_db, handler_registry, worker_config=ctx.config.worker)
+    worker = WorkerLoop(
+        ctx.admin_db,
+        handler_registry,
+        worker_config=ctx.config.worker,
+        approved_result_retention_seconds=ctx.config.execution_approvals.result_retention_seconds,
+    )
     task = asyncio.create_task(worker.run())
     _logger.info("worker_loop_task_started")
     return worker, task

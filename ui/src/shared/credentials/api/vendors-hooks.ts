@@ -320,9 +320,15 @@ export function useApplyBindingRules() {
 /** Where one binding's access stands, from its saved operator rules. */
 export type BindingAccessState = 'loading' | 'unknown' | 'blocked' | 'open';
 
-/** No operator `allow` rule ⇒ the broker denies every call (default deny). */
+/** No operator `allow` or Ask rule ⇒ the broker denies every call (default
+ * deny). An Ask rule's calls run once a reviewer approves them. */
 function accessFromRules(rules: readonly PermissionRuleReadSchema[]): 'blocked' | 'open' {
-	return rules.some((r) => !r._system && String(r.effect) === 'allow') ? 'open' : 'blocked';
+	return rules.some(
+		(r) =>
+			!r._system && (String(r.effect) === 'allow' || String(r.effect) === 'require-approval'),
+	)
+		? 'open'
+		: 'blocked';
 }
 
 /**

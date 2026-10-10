@@ -20,10 +20,12 @@ import {
 	ListChecks,
 	Pencil,
 	Plus,
+	ShieldCheck,
 	Trash2,
 } from 'lucide-react';
 import { Badge, Button, Input, Label, Select, Tooltip } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
+import { EffectBadge } from '@/shared/credentials/components/EffectBadge';
 import {
 	examplePath,
 	examplePathPrefix,
@@ -296,7 +298,6 @@ function RulePreviewRow({
 	onMoveUp?: () => void;
 	onMoveDown?: () => void;
 }) {
-	const effectVariant = rule.effect === 'allow' ? 'success' : 'danger';
 	const methodsLabel =
 		rule.methods && rule.methods.length > 0 ? rule.methods.join(', ') : 'any method';
 	const validityIssue = ruleValidityIssue(rule);
@@ -334,9 +335,12 @@ function RulePreviewRow({
 					>
 						#{index + 1}
 					</span>
-					<Badge variant={effectVariant} className="shrink-0 rounded-[5px] font-semibold">
-						{rule.effect}
-					</Badge>
+					<EffectBadge
+						effect={rule.effect}
+						className="shrink-0 rounded-[5px] font-semibold"
+					>
+						{EFFECT_LABEL[rule.effect]}
+					</EffectBadge>
 					<span className="text-foreground shrink-0 font-mono text-[11px]">
 						{methodsLabel}
 					</span>
@@ -487,7 +491,7 @@ function swap<T>(items: readonly T[], i: number, j: number): T[] {
  * {@link ruleFromDraft}.
  */
 interface RuleDraft {
-	effect: 'allow' | 'deny';
+	effect: PermissionRule['effect'];
 	methods: Set<string>;
 	path: string;
 	matchMode: 'regex' | 'prefix' | 'exact';
@@ -496,6 +500,27 @@ interface RuleDraft {
 	/** Carried verbatim from the source rule — never edited here. */
 	comment?: string | null;
 }
+
+/** Every effect the editor offers, in the order the effect picker shows them. */
+const RULE_EFFECTS: readonly PermissionRule['effect'][] = ['allow', 'require-approval', 'deny'];
+
+const EFFECT_LABEL: Record<PermissionRule['effect'], string> = {
+	allow: 'allow',
+	'require-approval': 'ask',
+	deny: 'deny',
+};
+
+const EFFECT_SELECTED_CLASS: Record<PermissionRule['effect'], string> = {
+	allow: 'bg-success/15 text-success hover:bg-success/20 hover:text-success',
+	'require-approval': 'bg-warning/15 text-warning hover:bg-warning/20 hover:text-warning',
+	deny: 'bg-danger/15 text-danger hover:bg-danger/20 hover:text-danger',
+};
+
+const EFFECT_ICON: Record<PermissionRule['effect'], typeof Check> = {
+	allow: Check,
+	'require-approval': ShieldCheck,
+	deny: Ban,
+};
 
 const EMPTY_RULE_DRAFT: RuleDraft = {
 	effect: 'allow',
@@ -544,8 +569,8 @@ function validateDraft(draft: RuleDraft): string | null {
 	const hasMethods = draft.methods.size > 0;
 	const hasPath = draft.path.trim().length > 0;
 	const hasOperations = (draft.operations?.length ?? 0) > 0;
-	if (draft.effect === 'allow' && !hasMethods && !hasPath && !hasOperations) {
-		return 'An "allow" rule must constrain at least one of methods or path.';
+	if (draft.effect !== 'deny' && !hasMethods && !hasPath && !hasOperations) {
+		return `A "${EFFECT_LABEL[draft.effect]}" rule must constrain at least one of methods or path.`;
 	}
 	return null;
 }
@@ -653,16 +678,17 @@ function RuleFormBody({
 			<Label id={`${ids}-effect`} className="text-foreground-sub text-xs">
 				Effect
 			</Label>
-			{/* Segmented allow/deny: the chosen side carries colour AND a glyph AND
-			    its word, so the effect never rests on hue alone. */}
+			{/* Segmented effect picker: the chosen effect carries colour AND a glyph
+			    AND its word, so the effect never rests on hue alone. */}
 			<div
 				ref={effectGroupRef}
 				role="group"
 				aria-labelledby={`${ids}-effect`}
 				className="rounded-field inline-flex w-fit gap-0.5 border border-[hsl(var(--control-edge))] p-0.5"
 			>
-				{(['allow', 'deny'] as const).map((e) => {
+				{RULE_EFFECTS.map((e) => {
 					const active = draft.effect === e;
+					const Icon = EFFECT_ICON[e];
 					return (
 						<Button
 							key={e}
@@ -674,20 +700,11 @@ function RuleFormBody({
 							className={cn(
 								// Inner radius = the group's 9px − its 3px inset (border + padding).
 								'min-w-[4.5rem] rounded-[6px] capitalize',
-								active
-									? e === 'allow'
-										? 'bg-success/15 text-success hover:bg-success/20 hover:text-success'
-										: 'bg-danger/15 text-danger hover:bg-danger/20 hover:text-danger'
-									: 'text-foreground-sub',
+								active ? EFFECT_SELECTED_CLASS[e] : 'text-foreground-sub',
 							)}
 						>
-							{active &&
-								(e === 'allow' ? (
-									<Check className="h-3.5 w-3.5" aria-hidden="true" />
-								) : (
-									<Ban className="h-3.5 w-3.5" aria-hidden="true" />
-								))}
-							{e}
+							{active && <Icon className="h-3.5 w-3.5" aria-hidden="true" />}
+							{EFFECT_LABEL[e]}
 						</Button>
 					);
 				})}
