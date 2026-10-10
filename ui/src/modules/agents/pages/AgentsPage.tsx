@@ -22,6 +22,7 @@ import {
 	type KeyboardShortcut,
 } from '@/shared/ui';
 import { useHotkey } from '@/shared/hooks';
+import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
 import { ConnectRequestsSection } from '@/modules/agents/components/flat/ConnectRequestsSection';
@@ -38,6 +39,7 @@ const SHORTCUTS: KeyboardShortcut[] = [
 	{ keys: ['a'], label: 'add API' },
 	{ keys: ['n'], label: 'new agent' },
 	{ keys: ['/'], label: 'search' },
+	{ keys: [commandChordLabel('k')], label: 'switch agent' },
 	{ keys: ['Esc'], label: 'close' },
 ];
 
