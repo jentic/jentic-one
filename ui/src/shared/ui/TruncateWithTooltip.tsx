@@ -120,7 +120,11 @@ export function TruncateWithTooltip({
 			aria-describedby={show ? tooltipId : undefined}
 			onMouseEnter={open}
 			onMouseLeave={close}
-			onFocus={open}
+			// Keyboard focus only: focus a sheet moves here after a click is not
+			// `:focus-visible`, and must not open the bubble over it.
+			onFocus={(e) => {
+				if (e.currentTarget.matches(':focus-visible')) open();
+			}}
 			onBlur={close}
 		>
 			{children}
