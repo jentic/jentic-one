@@ -333,6 +333,7 @@
 	   still reads as calm, not glossy.
 	   ====================================================================== */
 	--elevation-card: none;
+	--card-edge: 0 0% 0% / 0;
 	--elevation-card-hover: 0 6px 20px -8px hsl(192 35% 4% / 0.7);
 	--elevation-pop:
 		0 16px 40px -12px hsl(var(--primary-950) / 0.85),
@@ -451,6 +452,9 @@
 	--destructive: 13 80% 38.5%;
 
 	--elevation-card: 0 1px 2px 0 hsl(192 30% 20% / 0.06);
+	/* A white card on a white sheet has no edge of its own: this hairline,
+	   drawn just inside the card, is what separates the two. */
+	--card-edge: 192 30% 20% / 0.1;
 	--elevation-card-hover:
 		0 6px 20px -6px hsl(192 30% 20% / 0.14), 0 2px 6px -2px hsl(192 30% 20% / 0.08);
 	--elevation-pop:

@@ -269,6 +269,89 @@ for (const theme of THEMES) {
 			await capture(page, theme, 'user-menu');
 		});
 
+		test('agents: every dock panel', async ({ page }) => {
+			await page.goto(`/app/agents?agent=${seed.agent.clientId}`);
+			await expect(page.getByTestId('api-tile').first()).toBeVisible();
+			for (const panel of ['API key', 'Permissions', 'Activity', 'MCP', 'Settings']) {
+				await page.getByRole('button', { name: panel, exact: true }).click();
+				await expect(page.getByTestId('sheet-primitive')).toBeVisible();
+				await capture(page, theme, `agents-dock-${panel.replace(' ', '-').toLowerCase()}`);
+				await page.keyboard.press('Escape');
+				await expect(page.getByTestId('sheet-primitive')).toHaveCount(0);
+			}
+		});
+
+		test('agents: edit credential, the rule editor, archive confirm', async ({ page }) => {
+			await page.goto(`/app/agents?agent=${seed.agent.clientId}`);
+			await page
+				.getByRole('button', { name: /^Manage access for / })
+				.first()
+				.click();
+			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
+			await page.getByRole('button', { name: 'Add rule' }).first().click();
+			await capture(page, theme, 'agents-rule-editor');
+			await page.getByRole('button', { name: 'Edit credential' }).click();
+			await expect(
+				page.getByRole('heading', { name: /Edit credential/i }).first(),
+			).toBeVisible();
+			await capture(page, theme, 'agents-edit-credential');
+			await page.goto(`/app/agents?agent=${seed.agent.clientId}`);
+			await page.getByRole('button', { name: /^Archive / }).click();
+			await expect(page.getByRole('dialog').first()).toBeVisible();
+			await capture(page, theme, 'agents-archive-confirm');
+		});
+
+		test('agents: Add APIs tray and the setup queue', async ({ page }) => {
+			await page.goto(`/app/agents?agent=${seed.connector.clientId}`);
+			await page.getByTestId('card-add-api').click();
+			const tray = page.getByRole('dialog', { name: 'Add APIs' });
+			await expect(tray).toBeVisible();
+			await capture(page, theme, 'agents-add-apis-tray');
+			await tray
+				.getByRole('checkbox', { name: new RegExp(`/${seed.apiName}@1\\.0\\.0`) })
+				.click();
+			await tray.getByRole('button', { name: 'Continue' }).click();
+			await expect(page.getByRole('heading', { name: /^Set up 1 API$/ })).toBeVisible();
+			await capture(page, theme, 'agents-setup-queue');
+			const pick = page.getByRole('radio', { name: /e2e-theme-key-/ });
+			if (await pick.count()) await pick.first().check();
+			await page.getByRole('button', { name: 'Use this credential' }).click();
+			await expect(page.getByTestId('queue-access-step')).toBeVisible();
+			await capture(page, theme, 'agents-setup-queue-access');
+		});
+
+		test('library: API detail sheet and the import dialog', async ({ page }) => {
+			await page.goto('/app/library');
+			await page
+				.getByRole('button', { name: /^Import your own API/ })
+				.first()
+				.click();
+			await expect(page.getByRole('dialog').first()).toBeVisible();
+			await capture(page, theme, 'library-import-dialog');
+			await page.keyboard.press('Escape');
+			await page.goto('/app/library');
+			await page.getByText('abbyy.com', { exact: true }).first().click();
+			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
+			await capture(page, theme, 'library-api-detail');
+		});
+
+		test('activity rail and settings tabs', async ({ page }) => {
+			await page.goto('/app/agents');
+			await page.getByRole('button', { name: /^Show live activity/ }).click();
+			await expect(page.getByRole('complementary', { name: 'Activity' })).toBeVisible();
+			await capture(page, theme, 'activity-rail');
+			await page.goto('/app/settings');
+			await page.getByRole('tab', { name: /Approval queue/ }).click();
+			await capture(page, theme, 'settings-approval-queue');
+			await page.getByRole('tab', { name: /Clients/ }).click();
+			await page
+				.getByRole('button', { name: /^Add client/ })
+				.first()
+				.click();
+			await expect(page.getByRole('dialog').first()).toBeVisible();
+			await capture(page, theme, 'settings-add-client');
+		});
+
 		test('docs', async ({ page }) => {
 			await page.goto('/app/docs');
 			await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
