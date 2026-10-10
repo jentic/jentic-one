@@ -7,7 +7,9 @@ worker generations read during a rolling deploy.
 
 from typing import Any
 
-from jentic_one.broker.core.proxy_headers import replay_headers
+import pytest
+
+from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _async_job_payload
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -116,3 +118,28 @@ def test_payload_omits_headers_when_none_are_kept() -> None:
     payload = _async_job_payload(_ctx(), execution_id="exec_1", origin="api", headers={})
 
     assert "headers" not in payload
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Notion-Version", "Stripe-Version", "X-GitHub-Api-Version", "Box-Version", "x-acme-version"],
+)
+def test_any_vendor_version_header_replays(name: str) -> None:
+    assert is_replay_header(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Authorization",
+        "Cookie",
+        "Proxy-Authorization",
+        "Connection",
+        "Version",
+        "Jentic-Api-Version",
+        "X-Jentic-Version",
+        "X-Api-Key",
+    ],
+)
+def test_credentials_hop_by_hop_and_jentic_headers_never_replay(name: str) -> None:
+    assert not is_replay_header(name)
