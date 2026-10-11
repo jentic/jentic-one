@@ -501,3 +501,52 @@ func TestSetup_V2FreshMachine(t *testing.T) {
 	}
 	assertRegApproved(t, "crawler", "qa")
 }
+
+// TestRegister_DroppedConnectionWhileWaitingKeepsPolling: the server closes the
+// connection on a mid-wait token poll without answering (an idle keep-alive it
+// timed out, as uvicorn does after 5s) — register keeps waiting and succeeds
+// once the operator approves, instead of failing on the EOF.
+func TestRegister_DroppedConnectionWhileWaitingKeepsPolling(t *testing.T) {
+	withXDG(t)
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/register":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending","registration_access_token":"rat_1"}`))
+		case "/oauth/token":
+			switch polls.Add(1) {
+			case 1:
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"agent pending approval"}`))
+			case 2:
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("hijack: %v", err)
+					return
+				}
+				_ = conn.Close()
+			default:
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"acc_live","refresh_token":"ref_live","token_type":"Bearer","expires_in":3600}`))
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "30s")
+	if err != nil {
+		t.Fatalf("register: %v\nout:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Agent approved") {
+		t.Errorf("output missing approval:\n%s", out)
+	}
+	if got := polls.Load(); got < 3 {
+		t.Errorf("token polls = %d, want >= 3 (it must poll past the dropped connection)", got)
+	}
+	assertRegApproved(t, "crawler", "qa")
+}
