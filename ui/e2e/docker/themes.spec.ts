@@ -329,10 +329,15 @@ for (const theme of THEMES) {
 			await expect(page.getByRole('dialog').first()).toBeVisible();
 			await capture(page, theme, 'library-import-dialog');
 			await page.keyboard.press('Escape');
+			// The public catalog is fetched live; without it (an offline CI
+			// runner) there is no catalog row to open.
 			await page.goto('/app/library');
-			await page.getByText('abbyy.com', { exact: true }).first().click();
-			await expect(page.getByTestId('sheet-primitive')).toBeVisible();
-			await capture(page, theme, 'library-api-detail');
+			const firstRow = page.getByTestId('catalog-row').first();
+			if (await firstRow.isVisible({ timeout: 10_000 }).catch(() => false)) {
+				await firstRow.click();
+				await expect(page.getByTestId('sheet-primitive')).toBeVisible();
+				await capture(page, theme, 'library-api-detail');
+			}
 		});
 
 		test('activity rail and settings tabs', async ({ page }) => {
