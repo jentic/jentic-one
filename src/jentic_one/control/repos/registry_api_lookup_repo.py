@@ -21,6 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _IDENTITIES_FOR_VENDOR = text(
     "SELECT DISTINCT name, version FROM apis WHERE vendor = :vendor ORDER BY name, version"
 )
+_IDENTITY_FOR_CATALOG_API_ID = text(
+    "SELECT vendor, name FROM apis WHERE catalog_api_id = :catalog_api_id "
+    "ORDER BY created_at, id LIMIT 1"
+)
 
 
 class RegistryApiLookupRepository:
@@ -38,3 +42,17 @@ class RegistryApiLookupRepository:
         """
         rows = (await session.execute(_IDENTITIES_FOR_VENDOR, {"vendor": vendor})).all()
         return [(row.name, row.version) for row in rows]
+
+    @staticmethod
+    async def identity_for_catalog_api_id(
+        session: AsyncSession, catalog_api_id: str
+    ) -> tuple[str, str] | None:
+        """The ``(vendor, name)`` the local API imported from ``catalog_api_id`` carries.
+
+        The oldest row wins, so the answer is deterministic when several versions
+        share the catalog id; ``None`` when nothing was imported from it.
+        """
+        row = (
+            await session.execute(_IDENTITY_FOR_CATALOG_API_ID, {"catalog_api_id": catalog_api_id})
+        ).first()
+        return (row.vendor, row.name) if row is not None else None
