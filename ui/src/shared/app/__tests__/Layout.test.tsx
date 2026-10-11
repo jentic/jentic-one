@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { page } from 'vitest/browser';
 import {
@@ -14,7 +13,6 @@ import { setTheme } from '@/shared/lib/theme';
 import { setToken } from '@/shared/api';
 import { isNavItemActive, navItems, sortedNavItems } from '@/shared/app/nav';
 import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
-import { useReportRightDock } from '@/shared/ui/rightEdge';
 import { clearAllToasts, toast } from '@/shared/ui/toastStore';
 
 /**
@@ -130,90 +128,32 @@ describe('toast region', () => {
 		return shown.getBoundingClientRect();
 	}
 
-	it('stacks toasts bottom-right, lifted above a page’s floating action dock', async () => {
+	it('stacks toasts bottom-left, lifted above a page’s floating action dock', async () => {
 		await page.viewport(1024, 800);
 		renderShell();
 		await screen.findByRole('navigation', { name: 'Primary' });
 
 		const rect = await showToast();
-		expect(rect.right).toBeCloseTo(window.innerWidth - 16, 0);
+		expect(rect.left).toBeCloseTo(16, 0);
 		expect(window.innerHeight - rect.bottom).toBeGreaterThanOrEqual(64);
 	});
 
-	it('moves toasts beside an open side panel, off its footer actions, and back when it closes', async () => {
+	it('stays bottom-left while a side panel is open, clear of its footer actions', async () => {
 		await page.viewport(1440, 900);
 		// A page that carries the rail (Home and Monitor show the stream in-page).
 		renderShell('/agents');
 		await screen.findByRole('navigation', { name: 'Primary' });
-		const sheet = renderWithProviders(
+		renderWithProviders(
 			<SheetPrimitive open onClose={() => {}} ariaLabel="Panel">
 				<button type="button">Save</button>
 			</SheetPrimitive>,
 		);
 		const panel = await screen.findByRole('dialog', { name: 'Panel' });
 
-		// Measured by width: the panel may still be sliding in, and a transform
-		// moves its box but not the edge it lands on.
-		await expect
-			.poll(async () => (await showToast()).right)
-			.toBeCloseTo(window.innerWidth - panel.offsetWidth - 16, 0);
-
-		sheet.rerender(
-			<SheetPrimitive open={false} onClose={() => {}} ariaLabel="Panel">
-				<button type="button">Save</button>
-			</SheetPrimitive>,
-		);
-		// Back beside the rail, the only thing left on the right edge.
-		const rail = screen.getByRole('complementary', { name: 'Activity' });
-		await expect
-			.poll(async () => (await showToast()).right)
-			.toBeCloseTo(window.innerWidth - rail.offsetWidth - 16, 0);
-	});
-
-	/** A page grid whose last column is docked `rightGap` px in from the right edge. */
-	function DockedPage({ rightGap }: { rightGap: number }) {
-		const gridRef = useRef<HTMLDivElement>(null);
-		useReportRightDock(gridRef, { lastChild: true });
-		return (
-			<div
-				ref={gridRef}
-				style={{ position: 'fixed', top: 60, right: rightGap, display: 'flex' }}
-			>
-				<div style={{ width: 200 }}>Catalog</div>
-				<div data-testid="dock" style={{ width: 384, height: 400 }}>
-					Your workspace
-				</div>
-			</div>
-		);
-	}
-
-	it('sits just left of a page’s docked column, and back beside the rail once it unmounts', async () => {
-		await page.viewport(1440, 900);
-		renderShell('/agents');
-		const rail = await screen.findByRole('complementary', { name: 'Activity' });
-		const dockedPage = renderWithProviders(<DockedPage rightGap={rail.offsetWidth + 16} />);
-		const dock = await screen.findByTestId('dock');
-
-		await expect
-			.poll(async () => (await showToast()).right)
-			.toBeCloseTo(dock.getBoundingClientRect().left - 16, 0);
-
-		dockedPage.unmount();
-		await expect
-			.poll(async () => (await showToast()).right)
-			.toBeCloseTo(window.innerWidth - rail.offsetWidth - 16, 0);
-	});
-
-	it('ignores a docked column below xl, where it stacks under the content', async () => {
-		await page.viewport(1024, 800);
-		renderShell();
-		await screen.findByRole('navigation', { name: 'Primary' });
-		renderWithProviders(<DockedPage rightGap={16} />);
-		await screen.findByTestId('dock');
-
 		const rect = await showToast();
-		expect(rect.right).toBeCloseTo(window.innerWidth - 16, 0);
-		await page.viewport(1440, 900);
+		expect(rect.left).toBeCloseTo(16, 0);
+		// Measured by width: the panel may still be sliding in.
+		expect(rect.right).toBeLessThan(window.innerWidth - panel.offsetWidth);
 	});
 
 	it('drops toasts under the header when a phone-width panel leaves no room beside it', async () => {
