@@ -293,8 +293,10 @@ pre-upgrade snapshot of every database first
     included) lets an agent start a connect for a registry API (`jentic
     connect --api`, MCP `request_connection` with `api`) that a human approves
     by entering the credential or bringing an OAuth app. Set it to `false` to
-    refuse API targets with `manual_flows_disabled`. On a rolling upgrade,
-    an older control replica answers such a `:connect` with `422` until it is
+    refuse API targets with `manual_flows_disabled`. The migration run that
+    upgrades control across it prints one `==> WARNING (connect sessions)`
+    line saying so while the setting is on. On a rolling upgrade, an older
+    control replica answers such a `:connect` with `422` until it is
     replaced. While it is on,
     `control.connect.manual_flows_ttl_hours` (default `72`) bounds those
     sessions and `max_open_sessions_per_agent` (`10`) /
