@@ -10,7 +10,7 @@
  * toast, and the sound on failures — so they live next to the notifications
  * they govern instead of in the activity feed's overflow menu.
  */
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { ArrowLeft, Bell, CheckCircle2, Inbox, Settings2 } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
@@ -20,6 +20,7 @@ import { ROUTES } from '@/shared/app/routes';
 import { useRailPreferences } from '@/shared/app/rail/railPreferences';
 import { AttentionList } from '@/shared/attention/AttentionList';
 import { useAttentionItems } from '@/shared/attention/useAttentionItems';
+import { useNotificationsSeen } from '@/shared/attention/useNotificationsSeen';
 import type { ToastScope } from '@/shared/lib/agentStream';
 import { cn } from '@/shared/lib/utils';
 
@@ -32,6 +33,10 @@ const TOAST_SCOPE_OPTIONS: Array<{ value: ToastScope; label: string; hint: strin
 
 export function NotificationsMenu() {
 	const { items, count, isLoading, failedSources } = useAttentionItems();
+	// The badge counts what this viewer hasn't read; the list keeps every item
+	// still waiting on them, read or not.
+	const itemKeys = useMemo(() => items.map((i) => i.key), [items]);
+	const { isUnread, unreadCount, markAllRead } = useNotificationsSeen(itemKeys);
 	const [open, setOpen] = useState(false);
 	const [view, setView] = useState<'list' | 'settings'>('list');
 	const close = useCallback(() => {
@@ -42,9 +47,8 @@ export function NotificationsMenu() {
 	const panelRef = useViewportClamp<HTMLDivElement>(open);
 	const titleId = useId();
 
-	const urgent = items.some((i) => i.urgency === 3);
-	const label =
-		count > 0 ? `Notifications (${count} need${count === 1 ? 's' : ''} you)` : 'Notifications';
+	const urgent = items.some((i) => i.urgency === 3 && isUnread(i.key));
+	const label = unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications';
 
 	return (
 		<div ref={containerRef} className="relative">
@@ -61,7 +65,7 @@ export function NotificationsMenu() {
 				)}
 			>
 				<Bell className="h-4 w-4" aria-hidden="true" />
-				{count > 0 && (
+				{unreadCount > 0 && (
 					<span
 						className={cn(
 							'ring-background absolute -top-0.5 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold tabular-nums ring-2',
@@ -69,7 +73,7 @@ export function NotificationsMenu() {
 						)}
 						aria-hidden="true"
 					>
-						{count > 99 ? '99+' : count}
+						{unreadCount > 99 ? '99+' : unreadCount}
 					</span>
 				)}
 			</button>
@@ -89,7 +93,7 @@ export function NotificationsMenu() {
 									className="text-foreground flex items-center gap-2 text-sm font-semibold"
 								>
 									Notifications
-									{count > 0 && (
+									{unreadCount > 0 && (
 										<span
 											className={cn(
 												'rounded-full px-1.5 py-0.5 font-mono text-[11px] tabular-nums',
@@ -98,10 +102,20 @@ export function NotificationsMenu() {
 													: 'bg-warning/15 text-warning',
 											)}
 										>
-											{count}
+											{unreadCount}
 										</span>
 									)}
 								</h2>
+								{unreadCount > 0 && (
+									<Button
+										variant="ghost"
+										size="xs"
+										className="ml-auto"
+										onClick={markAllRead}
+									>
+										Mark all as read
+									</Button>
+								)}
 								<Button
 									variant="ghost"
 									size="icon-xs"
@@ -153,6 +167,7 @@ export function NotificationsMenu() {
 										items={items}
 										variant="menu"
 										onNavigate={close}
+										isUnread={isUnread}
 									/>
 								)}
 								{failedSources.length > 0 && (
