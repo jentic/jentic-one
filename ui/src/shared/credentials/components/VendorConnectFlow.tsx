@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
 	ArrowLeft,
@@ -2110,8 +2110,24 @@ function TerminalStep({
 	onRetry?: () => void;
 }) {
 	const success = status === 'connected';
+	// A finished connect closes itself after a short countdown — unless the step
+	// asks for something more (the re-authorize notice), or the operator does
+	// anything in it (pick agents to bind, Stay open), which keeps it open.
+	const [remaining, setRemaining] = useState<number | null>(
+		success && !children ? AUTO_CLOSE_SECONDS : null,
+	);
+	const stay = useCallback((): void => setRemaining(null), []);
+	useEffect(() => {
+		if (remaining == null) return undefined;
+		if (remaining <= 0) {
+			onDone();
+			return undefined;
+		}
+		const tick = setTimeout(() => setRemaining((r) => (r == null ? null : r - 1)), 1000);
+		return () => clearTimeout(tick);
+	}, [remaining, onDone]);
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5" onPointerDown={stay} onKeyDown={stay}>
 			<div className="flex flex-col items-center gap-3 py-4 text-center">
 				{success ? (
 					<CheckCircle2 className="text-success h-10 w-10" />
@@ -2149,6 +2165,20 @@ function TerminalStep({
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
 			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
+				{remaining != null && (
+					<span className="text-muted-foreground mr-auto flex items-center gap-2 text-sm">
+						{/* Announced once; the visible count ticks without re-announcing. */}
+						<span className="sr-only" role="status">
+							{`This closes by itself in ${AUTO_CLOSE_SECONDS} seconds.`}
+						</span>
+						<span aria-hidden="true" data-testid="auto-close-countdown">
+							Closing in {remaining}…
+						</span>
+						<Button type="button" variant="ghost" size="sm" onClick={stay}>
+							Stay open
+						</Button>
+					</span>
+				)}
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again
@@ -2161,6 +2191,9 @@ function TerminalStep({
 		</div>
 	);
 }
+
+/** Seconds a finished connect stays on screen before it closes by itself. */
+const AUTO_CLOSE_SECONDS = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers

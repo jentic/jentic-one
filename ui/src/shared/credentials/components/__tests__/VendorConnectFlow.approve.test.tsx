@@ -230,6 +230,38 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		expect(onDone).toHaveBeenCalled();
 	});
 
+	it('closes a finished connect by itself after a short countdown', async () => {
+		const seeded = seedManualSession();
+		const { onDone } = renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		expect(screen.getByTestId('auto-close-countdown')).toHaveTextContent(/Closing in \d…/);
+		expect(screen.getByRole('status')).toHaveTextContent('closes by itself in 5 seconds');
+		await waitFor(() => expect(onDone).toHaveBeenCalled(), { timeout: 8000 });
+	});
+
+	it('Stay open keeps a finished connect on screen', async () => {
+		const seeded = seedManualSession();
+		const { onDone } = renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Stay open' }));
+		expect(screen.queryByTestId('auto-close-countdown')).not.toBeInTheDocument();
+		await new Promise((resolve) => setTimeout(resolve, 6500));
+		expect(onDone).not.toHaveBeenCalled();
+		expect(screen.getByText('Connected to acme-com')).toBeInTheDocument();
+	});
+
 	it('collects a username and password for a manual_basic session', async () => {
 		const seeded = seedManualSession({
 			resolved_flow: 'manual_basic',
