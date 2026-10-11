@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.db.types import json_variant
+from jentic_one.shared.db.types import UTCDateTime, json_variant
 
 
 class Job(AuditableMixin, AdminBase):
@@ -46,9 +46,7 @@ class Job(AuditableMixin, AdminBase):
     # RUNNING job whose visible_at has passed as claimable again, so a job
     # orphaned by a dead worker/pod is recovered rather than stuck forever.
     # NULL while QUEUED; set on claim, cleared on terminal status.
-    visible_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
+    visible_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
     # How many times this job has been claimed for processing. Incremented on
     # each claim; once it exceeds the retry budget a failing job is dead-lettered
     # instead of requeued.

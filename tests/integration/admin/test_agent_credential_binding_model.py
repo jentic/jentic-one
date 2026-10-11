@@ -53,6 +53,9 @@ async def test_round_trip_and_id_prefix(admin_db: DatabaseSession, clean_binding
         assert loaded.agent_id == agent_id
         assert loaded.credential_id == "cred_test001"
         assert loaded.bound_at is not None
+        # Timezone-aware on every backend (SQLite included): `/me` serialises it,
+        # and an offset-less instant breaks strict clients such as the Go CLI.
+        assert loaded.bound_at.tzinfo is not None
         assert loaded.created_at is not None
         # Rule grouping (Q-04): defaults to inline rules (no shared set)…
         assert loaded.rule_set_id is None
