@@ -288,13 +288,14 @@ pre-upgrade snapshot of every database first
     `JENTIC__BROKER__ACCOUNT_LINKING_BASE_URL`) is ignored with one
     `config_retired_setting_ignored` WARNING per process; boot does not fail.
     Remove it.
-  - **Registry-API connects are off by default.**
-    `control.connect.manual_flows_enabled` (default `false`) lets an agent
-    start a connect for a registry API (`jentic connect --api`, MCP
-    `request_connection` with `api`) that a human approves by entering the
-    credential or bringing an OAuth app. While it is off, `:connect` refuses
-    an API target with `manual_flows_disabled`. **Turn it on only after every
-    control replica runs 0.42.0.** While it is on,
+  - **Agents can ask for a credential for any registry API.**
+    `control.connect.manual_flows_enabled` (default `true`, upgrades
+    included) lets an agent start a connect for a registry API (`jentic
+    connect --api`, MCP `request_connection` with `api`) that a human approves
+    by entering the credential or bringing an OAuth app. Set it to `false` to
+    refuse API targets with `manual_flows_disabled`. On a rolling upgrade,
+    an older control replica answers such a `:connect` with `422` until it is
+    replaced. While it is on,
     `control.connect.manual_flows_ttl_hours` (default `72`) bounds those
     sessions and `max_open_sessions_per_agent` (`10`) /
     `max_open_sessions_per_owner` (`50`) cap open sessions (`429

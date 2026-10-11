@@ -1140,14 +1140,13 @@ class ControlConnectConfig(BaseModel):
     """Agent connect-session settings on the control surface."""
 
     manual_flows_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Allow connect sessions that target a registry API (rather than a "
             "vendor-registry key), where a human enters the credential, or "
-            "brings an OAuth app, when approving them in the dashboard. While "
-            "off, `:connect` refuses API targets with `manual_flows_disabled`. "
-            "Turn it on only after every control replica runs a release that "
-            "understands them."
+            "brings an OAuth app, when approving them in the dashboard. On by "
+            "default; while off, `:connect` refuses API targets with "
+            "`manual_flows_disabled`."
         ),
     )
     manual_flows_ttl_hours: int = Field(
