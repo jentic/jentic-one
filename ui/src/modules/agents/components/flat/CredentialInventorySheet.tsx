@@ -72,20 +72,12 @@ export function CredentialInventorySheet({
 	open,
 	onClose,
 	autoOpenCreate = false,
-	approvalSession,
-	onApprovalClose,
 }: {
 	open: boolean;
 	onClose: () => void;
 	/** Open onto the create wizard — for a caller whose own label promised a new
 	 * credential. */
 	autoOpenCreate?: boolean;
-	/** An agent-initiated connect session to approve: opens the wizard in approve
-	 * mode. `pollToken` is present only when an older link carried one — the
-	 * agent's owner or an org admin approves without it. `onApprovalClose` fires
-	 * when that wizard closes, so the caller can drop the request it carried. */
-	approvalSession?: { sessionId: string; pollToken?: string };
-	onApprovalClose?: () => void;
 }) {
 	const headingId = 'credential-inventory-sheet-title';
 
@@ -109,9 +101,6 @@ export function CredentialInventorySheet({
 		createSignalSpent.current = true;
 		setCreateOpen(true);
 	}, [open, autoOpenCreate]);
-	useEffect(() => {
-		if (open && approvalSession) setCreateOpen(true);
-	}, [open, approvalSession]);
 
 	// Every page, not just the first: the header promises "Every credential in this
 	// workspace", and the Unbound count is taken over the whole inventory.
@@ -461,15 +450,8 @@ export function CredentialInventorySheet({
 			    the host surface's DOM while it is closed. */}
 			{createOpen && (
 				<CreateCredentialFlow
-					// A different approval request is a different wizard: remount
-					// so one session's review state never carries into the next.
-					key={approvalSession?.sessionId ?? 'create'}
 					open
-					onClose={(): void => {
-						setCreateOpen(false);
-						if (approvalSession) onApprovalClose?.();
-					}}
-					approvalSession={approvalSession}
+					onClose={(): void => setCreateOpen(false)}
 					renderPostConnect={({ credentialId, boundAgentId }) => (
 						<PostConnectBindMore
 							credentialId={credentialId}
