@@ -32,7 +32,7 @@ import {
 /** The action band: pinned to the bottom of the scrolling sheet body, so the
  *  decision stays in reach however long the review above it runs. */
 const FOOTER_CLASS =
-	'bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5';
+	'bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5';
 
 const EYEBROW_CLASS = 'text-foreground-faint text-[10.5px] font-bold tracking-[0.08em] uppercase';
 
