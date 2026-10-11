@@ -99,7 +99,9 @@ export function CredentialCard({
 			title={tuple}
 			className={cn(
 				'group relative flex h-full min-w-0 flex-col gap-3 p-4 text-left focus-within:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.45)]',
-				pendingSignIn && 'border-dashed opacity-80',
+				// The dashed outline marks it; fading the card would drop its text
+				// below contrast.
+				pendingSignIn && 'border-dashed',
 			)}
 		>
 			{/* Full-card click target → edit, for pointer users. Hidden from the

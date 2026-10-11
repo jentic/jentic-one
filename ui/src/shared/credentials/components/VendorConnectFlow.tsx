@@ -612,7 +612,7 @@ function VendorSelfConnectFlow({
 
 			{flowError && <ErrorAlert message={flowError} />}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button type="button" variant="ghost" size="sm" onClick={handleCancel}>
 					<ArrowLeft className="h-4 w-4" />
 					Back
@@ -1209,7 +1209,7 @@ function VendorApproveFlow({
 		return (
 			<div className="space-y-4">
 				<ErrorAlert message={approvalLoadError(sessionQuery.error)} />
-				<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
+				<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 					<Button type="button" variant="ghost" size="sm" onClick={onDone}>
 						Close
 					</Button>
@@ -1435,7 +1435,7 @@ function VendorApproveFlow({
 				</p>
 			)}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
 				<div className="flex items-center gap-1">
 					<Button type="button" variant="ghost" size="sm" onClick={handleNotNow}>
 						{canConfirm ? 'Not now' : 'Close'}
@@ -1647,7 +1647,7 @@ function RulesStep({
 
 			{error && <ErrorAlert message={error} />}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-between border-t px-5 py-3.5">
 				<Button
 					type="button"
 					variant="ghost"
@@ -2075,7 +2075,7 @@ function PollingStatusLine({ display, status }: { display: VendorDisplay; status
 
 function CancelBar({ onCancel }: { onCancel: () => void }) {
 	return (
-		<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end border-t px-5 py-3.5">
+		<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end border-t px-5 py-3.5">
 			<Button type="button" variant="ghost" size="sm" onClick={onCancel}>
 				Cancel
 			</Button>
@@ -2162,7 +2162,7 @@ function TerminalStep({
 
 			{success && credentialId && renderPostConnect?.({ credentialId, boundAgentId })}
 
-			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
+			<div className="bg-surface-sheet-foot border-hairline-field sticky -bottom-4 z-10 -mx-5 mt-auto -mb-4 flex items-center justify-end gap-2 border-t px-5 py-3.5">
 				{!success && onRetry && (
 					<Button type="button" variant="secondary" onClick={onRetry}>
 						Try again
