@@ -255,6 +255,10 @@ class ReviewSchemeResponse(BaseModel):
     type: Literal["api_key", "bearer", "basic", "oauth2"]
     location: str | None = None
     field_name: str | None = None
+    # An OAuth scheme's authorize and token URLs, set only when the API's spec is
+    # from the public catalog — offered to an approver bringing their own app.
+    authorization_url: str | None = None
+    token_url: str | None = None
 
 
 class ExistingCredentialResponse(BaseModel):

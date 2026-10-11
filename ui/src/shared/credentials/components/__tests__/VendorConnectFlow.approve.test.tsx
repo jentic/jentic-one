@@ -476,6 +476,47 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 		});
 	});
 
+	it('offers a catalog spec’s endpoints filled in and folded away, editable on Change', async () => {
+		const seeded = seedAwaitingAppSession({
+			scheme: {
+				type: 'oauth2',
+				location: null,
+				field_name: null,
+				authorization_url: 'https://github.com/login/oauth/authorize',
+				token_url: 'https://github.com/login/oauth/access_token',
+			},
+		});
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
+		await user.type(screen.getByLabelText(/^Client secret/), 'shh-client-secret');
+		// Folded away: no URL fields to fill, just where they point.
+		expect(screen.queryByLabelText(/^Authorize URL/)).not.toBeInTheDocument();
+		expect(screen.getByTestId('catalog-oauth-endpoints')).toHaveTextContent('github.com');
+		const submit = screen.getByRole('button', { name: 'Continue to sign-in' });
+		expect(submit).toBeEnabled();
+
+		// Change opens them, filled in and editable.
+		await user.click(screen.getByRole('button', { name: 'Change' }));
+		expect(screen.getByLabelText(/^Authorize URL/)).toHaveValue(
+			'https://github.com/login/oauth/authorize',
+		);
+		expect(screen.getByLabelText(/^Token URL/)).toHaveValue(
+			'https://github.com/login/oauth/access_token',
+		);
+		await user.click(submit);
+
+		expect(await screen.findByText(/Almost there/)).toBeInTheDocument();
+		expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+			kind: 'own_oauth_client',
+			authorize_url: 'https://github.com/login/oauth/authorize',
+			token_url: 'https://github.com/login/oauth/access_token',
+		});
+	});
+
 	it('keeps the own-client form open on own_oauth_client_invalid', async () => {
 		const seeded = seedAwaitingAppSession({
 			confirmProblem: { status: 400, type: 'own_oauth_client_invalid' },

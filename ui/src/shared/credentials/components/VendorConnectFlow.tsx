@@ -1328,6 +1328,14 @@ function VendorApproveFlow({
 					/>
 				}
 				callbackUrl={callbackUrl}
+				catalogEndpoints={
+					session.scheme?.authorization_url && session.scheme.token_url
+						? {
+								authorizeUrl: session.scheme.authorization_url,
+								tokenUrl: session.scheme.token_url,
+							}
+						: null
+				}
 				submitting={confirmMutation.isPending}
 				error={errorFor('own_client')}
 				onBack={(): void => goToPhase('rules')}
@@ -1419,6 +1427,12 @@ function VendorApproveFlow({
 					onToggle={toggleScope}
 					agentRequested={new Set(scopes.filter((s) => s.requested).map((s) => s.name))}
 				/>
+			)}
+			{canConfirm && showScopes && scopes.length > 0 && currentSelection.size === 0 && (
+				<p className="text-muted-foreground text-xs" data-testid="scopes-needed-hint">
+					Pick at least one scope to continue
+					{scopes.some((s) => s.requested) ? '.' : ' — the agent didn’t ask for any.'}
+				</p>
 			)}
 
 			<div className="bg-surface-sheet-foot border-hairline-field -mx-5 -mb-4 flex items-center justify-between gap-2 border-t px-5 py-3.5">
@@ -1865,7 +1879,7 @@ function ScopeRow({
 				<div className="flex items-center gap-2">
 					<code className="text-foreground text-sm font-medium">{scope.name}</code>
 					<ScopeClassificationBadge classification={scope.classification} />
-					{agentRequested && <Badge variant="default">requested</Badge>}
+					{agentRequested && <Badge variant="default">requested by agent</Badge>}
 				</div>
 				{scope.description && (
 					<p className="text-muted-foreground mt-0.5 text-xs">{scope.description}</p>
