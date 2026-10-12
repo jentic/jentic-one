@@ -58,7 +58,8 @@ describe('useScrollSpy', () => {
 		});
 		await waitFor(() => expect(result.current).toBe('s3'));
 
-		// Bottom → top: the direction a narrow observer band loses the highlight on.
+		// Bottom → top: scrolling back up must move the highlight to the section
+		// above the active line.
 		await act(async () => {
 			scrollToSection('s2');
 		});

@@ -9,13 +9,13 @@
  *
  * The toolbar carries status segments with live counts — the Disabled
  * segment surfaces approved-but-disabled clients (#1312), which match
- * neither the default list nor the queue filters. The filter input is the client-side
- * Filter affordance (status-and-filter rule), disabled when there is nothing
- * to narrow.
+ * neither the default list nor the queue filters. The filter input is the
+ * client-side Filter affordance (status-and-filter rule), disabled when
+ * there is nothing to narrow.
  *
- * Hazard fix (#4 in the redesign plan): Reactivate is offered ONLY on
- * approved+inactive rows (`canReactivate`); a denied row's kebab routes to
- * the queue instead, where Approve is the deliberate denied→active recovery.
+ * Reactivate is offered ONLY on approved+inactive rows (`canReactivate`); a
+ * denied row's kebab routes to the queue instead, where Approve is the
+ * deliberate denied→active recovery.
  */
 import { useMemo, useRef, useState } from 'react';
 import { Filter, KeyRound, MoreHorizontal, Plus } from 'lucide-react';
