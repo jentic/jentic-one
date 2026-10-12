@@ -628,7 +628,9 @@ async def _handle(
     # work — only the sync path is idempotent here.
     fp: str | None = None
     if idempotency is not None and idem_key:
-        # The fingerprint's consumer scope is the selected credential.
+        # The fingerprint's consumer scope is the selected credential. The
+        # (method, url, consumer, body) order and slot contents are the replay
+        # identity of stored keys; changing either invalidates in-TTL keys.
         fp = fingerprint(
             method,
             ctx_req.upstream_url,
