@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.42.1](https://github.com/jentic/jentic-one/compare/v0.42.0...v0.42.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **ui:** show who started a job from the job record, not an empty audit lookup ([#1603](https://github.com/jentic/jentic-one/issues/1603)) ([2a16f31](https://github.com/jentic/jentic-one/commit/2a16f318dc70423dc7d2f47d7baa902672107d94))
+
+
+### Build System
+
+* **deps-dev:** bump the testing group across 1 directory with 3 updates ([#1590](https://github.com/jentic/jentic-one/issues/1590)) ([fa8da91](https://github.com/jentic/jentic-one/commit/fa8da91119c4b6b930dc91a8d05a025c9f51b2eb))
+* **deps:** bump framer-motion from 13.4.0 to 14.0.0 in /ui ([#1579](https://github.com/jentic/jentic-one/issues/1579)) ([84bd3eb](https://github.com/jentic/jentic-one/commit/84bd3ebbb33cbef73db1c743e431b831a6faa2a7))
+* **deps:** bump the python group with 16 updates ([#1580](https://github.com/jentic/jentic-one/issues/1580)) ([eb3797e](https://github.com/jentic/jentic-one/commit/eb3797e69815c6d8c7adf2ab977c50150fd05b4b))
+
 ## [0.42.0](https://github.com/jentic/jentic-one/compare/v0.41.0...v0.42.0) (2026-10-11)
 
 
