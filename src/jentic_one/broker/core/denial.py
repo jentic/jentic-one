@@ -37,6 +37,6 @@ class DenialReason(StrEnum):
     exhausted list from a matched ``deny``; both are "not allowed") (403)."""
 
     AMBIGUOUS_PATH = "ambiguous_path"
-    """The request path spells a dot segment with escapes (``%2F..%2F``,
-    ``%2e%2e``) — its meaning depends on the upstream stack, so rules cannot
-    be enforced on it (403)."""
+    """The request path spells a dot segment with escapes or backslashes
+    (``%2F..%2F``, ``%2e%2e``, ``..\\``) — its meaning depends on the upstream
+    stack, so rules cannot be enforced on it (403)."""

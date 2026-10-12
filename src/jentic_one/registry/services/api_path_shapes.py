@@ -42,22 +42,42 @@ def server_base_path(server_url: str, variables: Any) -> BasePath | None:
     specs = {spec.name: spec for spec in server_variable_specs(variables)}
     kind = BasePathKind.STATIC
     out: list[str] = []
+    # (full, partial) regex per atom — one per literal character, one per
+    # variable — for the prefix language below.
+    atoms: list[tuple[str, str]] = []
     for i, part in enumerate(PATH_PARAM_RE.split(path)):
         if i % 2 == 0:
             out.append(re.escape(part))
+            atoms.extend((re.escape(c), "") for c in part)
             continue
         spec = specs.get(part)
         if spec is not None and spec.enum:
             members = list(spec.enum)
             if spec.default is not None and spec.default not in members:
                 members.append(spec.default)
-            out.append("(?:" + "|".join(re.escape(m) for m in members) + ")")
+            full = "(?:" + "|".join(re.escape(m) for m in members) + ")"
+            out.append(full)
+            partials = sorted({m[:n] for m in members for n in range(len(m))})
+            atoms.append((full, "(?:" + "|".join(re.escape(p) for p in partials) + ")"))
             if len(members) > 1 and kind is BasePathKind.STATIC:
                 kind = BasePathKind.ENUM
         else:
             out.append(_SINGLE_SEGMENT)
+            atoms.append((_SINGLE_SEGMENT, "[^/]*"))
             kind = BasePathKind.FREEFORM
-    return BasePath(pattern="".join(out), kind=kind)
+    return BasePath(pattern="".join(out), kind=kind, prefix_pattern=_prefix_language(atoms))
+
+
+def _prefix_language(atoms: Sequence[tuple[str, str]]) -> str:
+    """A regex source full-matching every string prefix of some base instance.
+
+    Built right to left: each atom is either cut short (its partial form ends
+    the string) or present in full and followed by the rest's prefix language.
+    """
+    rest = ""
+    for full, partial in reversed(atoms):
+        rest = f"(?:{partial}|{full}{rest})"
+    return rest
 
 
 def _shape_from_operations(operations: Sequence[Any]) -> ApiPathShape:

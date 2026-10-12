@@ -384,7 +384,8 @@ async def authorize_execution(
     ``shared.permissions.evaluation.rule_request_path``) and ``instance`` the
     RFC 9457 ``instance`` a denial
     carries. ``upstream_url`` is the raw URL the broker will forward: a path
-    that spells a dot segment with escapes is denied (its meaning depends on
+    that spells a dot segment with escapes or a backslash is denied (its
+    meaning depends on
     the upstream stack — see ``shared.url_path.has_ambiguous_traversal``), and
     its normalized full path lets the rules flag one still written with the
     server base path (see :func:`_report_base_path_divergence`; never changes
@@ -435,12 +436,12 @@ async def authorize_execution(
             api=api,
             instance=instance,
             reason=DenialReason.AMBIGUOUS_PATH,
-            summary="Operation denied: the request path spells a dot segment with escapes",
+            summary="Operation denied: the request path spells a dot segment ambiguously",
             detail=(
-                "The request path contains an encoded path separator or dot segment "
-                "(e.g. '%2F..%2F', '%2e%2e') whose meaning depends on the upstream "
-                "server, so binding rules cannot be enforced on it. Send the path "
-                "without encoded traversal."
+                "The request path contains an encoded path separator, a backslash or an "
+                "encoded dot segment (e.g. '%2F..%2F', '..\\', '%2e%2e') whose meaning "
+                "depends on the upstream server, so binding rules cannot be enforced on "
+                "it. Send the path without encoded or backslash traversal."
             ),
         )
     upstream_path = (

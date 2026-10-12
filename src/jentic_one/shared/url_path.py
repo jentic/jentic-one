@@ -14,8 +14,8 @@ separators — ``\\`` is a separator to some upstream stacks) or ``%25`` (so
 forwards the raw URL, where ``%2F`` is data inside one segment; decoding it
 here would let ``/admin%2F..%2Fwidgets`` be rule-checked as ``/widgets`` while
 the upstream receives a path under ``/admin``. A path whose dot segments are
-spelled with escapes is read differently by different upstream stacks;
-:func:`has_ambiguous_traversal` lets enforcement refuse it outright.
+spelled with escapes or backslashes is read differently by different upstream
+stacks; :func:`has_ambiguous_traversal` lets enforcement refuse it outright.
 """
 
 from __future__ import annotations
@@ -74,18 +74,20 @@ def normalize_path(path: str) -> str:
 
 
 def has_ambiguous_traversal(path: str) -> bool:
-    """True if ``path`` has a dot segment spelled with escapes.
+    """True if ``path`` has a dot segment spelled with escapes or backslashes.
 
     ``/a%2F..%2Fb`` and ``/a/%2e%2e/b`` are a traversal to a stack that decodes
     the escape before resolving dot segments and a literal segment to one that
-    does not — no single path can be rule-checked for both readings, so
-    enforcement denies such a request instead of guessing.
+    does not. A literal ``\\`` is the same split: ``/a/..\\b`` is a traversal
+    to a stack that treats ``\\`` as a separator and one segment ``..\\b`` to
+    one that does not. No single path can be rule-checked for both readings,
+    so enforcement denies such a request instead of guessing.
     """
-    if "%" not in path:
+    if "%" not in path and "\\" not in path:
         return False
-    has_encoded_separator = re.search(r"%2[Ff]|%5[Cc]", path) is not None
+    has_ambiguous_separator = re.search(r"%2[Ff]|%5[Cc]|\\", path) is not None
     for segment in _SEPARATOR_RE.split(path):
         decoded = unquote(segment)
-        if decoded in (".", "..") and (has_encoded_separator or segment != decoded):
+        if decoded in (".", "..") and (has_ambiguous_separator or segment != decoded):
             return True
     return False

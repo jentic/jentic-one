@@ -173,7 +173,8 @@ evaluation loop itself is shared
 ([`shared/permissions/evaluation.py`](../../src/jentic_one/shared/permissions/evaluation.py)).
 Normalization never decodes an encoded separator (`%2F`, `%5C`) — the raw URL
 is forwarded, so rules must not see a different segment structure than the
-upstream gets — and a path that spells a dot segment with escapes is denied
+upstream gets — and a path that spells a dot segment with escapes or a
+backslash is denied
 (`ambiguous_path`)
 ([`shared/url_path.py`](../../src/jentic_one/shared/url_path.py)).
 Rules written with the base path baked in can be fixed with

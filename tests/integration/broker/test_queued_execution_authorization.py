@@ -530,6 +530,7 @@ async def test_divergence_warning_is_rate_limited(
         "https://api.acme.com/v1/admin%2F..%2Fpets",
         "https://api.acme.com/v1/admin%5C..%5Cpets",
         "https://api.acme.com/v1/admin/%2e%2e/pets",
+        "https://api.acme.com/v1/admin\\..\\pets",
     ],
 )
 async def test_encoded_traversal_is_denied(

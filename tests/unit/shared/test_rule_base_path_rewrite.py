@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from jentic_one.registry.services.api_path_shapes import server_base_path
@@ -52,6 +54,35 @@ _OWNER_REPO = _shape("https://api.example.com/api/v3", None, "/{owner}/{repo}")
 )
 def test_server_base_path(server_url: str, variables: object, expected: BasePath | None) -> None:
     assert server_base_path(server_url, variables) == expected
+
+
+@pytest.mark.parametrize(
+    ("server_url", "variables", "prefixes", "non_prefixes"),
+    [
+        (
+            "https://h/api/v3",
+            None,
+            ["/", "/a", "/api", "/api/", "/api/v", "/api/v3"],
+            ["/b", "/apx", "/api/v3/x"],
+        ),
+        ("http://{host}/{region}", _REGION, ["/", "/e", "/eu", "/u"], ["/x", "/eux", "/eu/"]),
+        (
+            "https://h/{tenant}/v1",
+            {"tenant": {}},
+            ["/", "/acme", "/acme/", "/acme/v1"],
+            ["/acme/x", "/acme/v1/w"],
+        ),
+    ],
+)
+def test_server_base_prefix_pattern(
+    server_url: str, variables: object, prefixes: list[str], non_prefixes: list[str]
+) -> None:
+    base = server_base_path(server_url, variables)
+    assert base is not None and base.prefix_pattern is not None
+    for p in prefixes:
+        assert re.fullmatch(base.prefix_pattern, p), p
+    for p in non_prefixes:
+        assert not re.fullmatch(base.prefix_pattern, p), p
 
 
 @pytest.mark.parametrize(
@@ -130,6 +161,47 @@ def test_regex_rules_are_reported_not_rewritten() -> None:
 def test_stripped_path_matching_no_operation_is_reported() -> None:
     decision = decide_rewrite("/api/v3/nope", "prefix", [_PETSTORE])
     assert decision.reason is SkipReason.MATCHES_NO_OPERATION
+
+
+@pytest.mark.parametrize(
+    ("path", "shape"),
+    [
+        ("/api", _PETSTORE),
+        ("/api/", _PETSTORE),
+        ("/api/v", _PETSTORE),
+        ("/ap", _PETSTORE),
+        ("/e", _WIDGETS),
+        ("/acme/", _shape("https://h.example.com/{tenant}/v1", {"tenant": {}}, "/widgets")),
+    ],
+)
+def test_prefix_cutting_into_the_base_is_reported(path: str, shape: ApiPathShape) -> None:
+    """``prefix /api`` matched every ``/api/v3/...`` upstream path and matches
+    no spec path: a ``deny`` would silently stop denying."""
+    decision = decide_rewrite(path, "prefix", [shape])
+    assert decision.reason is SkipReason.PREFIX_OF_SERVER_BASE
+
+
+def test_spec_path_that_also_cuts_into_the_base_is_reported() -> None:
+    """``prefix /ap`` fits ``/apps`` as written, but it also covered the whole
+    ``/api/v3`` base on the full upstream path."""
+    shape = _shape("https://h.example.com/api/v3", None, "/apps")
+    decision = decide_rewrite("/ap", "prefix", [shape])
+    assert decision.reason is SkipReason.SPEC_PATH_OR_BASE_QUALIFIED
+
+
+@pytest.mark.parametrize(
+    ("path", "mode", "shape"),
+    [
+        ("/", "prefix", _PETSTORE),  # matches every path on both bases
+        ("/api", "exact", _PETSTORE),  # never matched an upstream path under the base
+        ("/apx", "prefix", _PETSTORE),
+        ("/widgets", "prefix", _FREEFORM),  # free-form bases prove nothing for a fitting rule
+    ],
+)
+def test_prefix_not_cutting_into_the_base_is_left_alone(
+    path: str, mode: str, shape: ApiPathShape
+) -> None:
+    assert decide_rewrite(path, mode, [shape]).outcome is RewriteOutcome.UNCHANGED
 
 
 def test_ambiguous_bases_are_reported() -> None:

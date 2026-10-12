@@ -20,6 +20,9 @@ unambiguous:
 * A rewrite is only proposed when stripping a server base yields a path that
   applies to at least one operation; two bases yielding different paths, or
   APIs (for a shared rule set) that disagree, are reported instead.
+* A ``prefix`` rule that stops part-way through a base (``/api`` for
+  ``/api/v3``) covered every request under it and now covers none; it is
+  reported, never rewritten.
 
 "Applies to an operation" is template-aware, mirroring the UI preview's
 matcher (``ui/src/shared/credentials/lib/template-matcher.ts``): an ``exact``
@@ -31,7 +34,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
@@ -53,11 +56,15 @@ class BasePath:
     """One server's base path: a regex source full-matching it, and its kind.
 
     A server variable becomes its enum alternation (``ENUM``) or a
-    single-segment wildcard (``FREEFORM``).
+    single-segment wildcard (``FREEFORM``). ``prefix_pattern`` full-matches
+    every string prefix of a base instance (``/``, ``/ap``, ``/api/`` for
+    ``/api/v3``): a ``prefix`` rule that is one matched every request under
+    the base on the full upstream path and matches none on the spec path.
     """
 
     pattern: str
     kind: BasePathKind
+    prefix_pattern: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +102,7 @@ class SkipReason(StrEnum):
     RULE_SET_MIXED_APIS = "rule_set_mixed_apis"
     SERVER_VARIABLE_BASE = "server_variable_base"
     SPEC_PATH_OR_BASE_QUALIFIED = "spec_path_or_base_qualified"
+    PREFIX_OF_SERVER_BASE = "prefix_of_server_base"
     # Decided by the service before the shapes are consulted:
     CREDENTIAL_NOT_FOUND = "credential_not_found"
     CREDENTIAL_NOT_API_SCOPED = "credential_not_api_scoped"
@@ -158,6 +166,21 @@ def _applies(path: str, mode: str, shape: ApiPathShape) -> bool:
     return any(path_applies_to_template(path, mode, t) for t in shape.operation_templates)
 
 
+def _cuts_into_base(path: str, mode: str, shape: ApiPathShape, *, concrete_only: bool) -> bool:
+    """True if a ``prefix`` rule stops part-way through a server base (``/api``
+    or ``/ap`` for ``/api/v3``). On the full upstream path it matched every
+    request under that base; on the spec path it matches none of them. ``/``
+    matches every path either way, so it never counts."""
+    if mode != "prefix" or path == "/":
+        return False
+    return any(
+        base.prefix_pattern is not None
+        and not (concrete_only and base.kind is BasePathKind.FREEFORM)
+        and re.fullmatch(base.prefix_pattern, path) is not None
+        for base in shape.base_paths
+    )
+
+
 def _decide_for_shape(path: str, mode: str, shape: ApiPathShape) -> RewriteDecision:
     # Every (stripped path, base kind) a server base yields for this rule.
     stripped: list[tuple[str, BasePathKind]] = []
@@ -170,11 +193,19 @@ def _decide_for_shape(path: str, mode: str, shape: ApiPathShape) -> RewriteDecis
     if _applies(path, mode, shape):
         # Already fits an operation. A free-form base (``/{tenant}``) strips
         # any first segment, so it proves nothing; a concrete base that also
-        # yields a fitting path means the rule might be base-qualified.
-        if any(kind is not BasePathKind.FREEFORM for _, kind in applicable):
+        # yields a fitting path, or that the rule stops part-way through,
+        # means the rule might be base-qualified.
+        if any(kind is not BasePathKind.FREEFORM for _, kind in applicable) or _cuts_into_base(
+            path, mode, shape, concrete_only=True
+        ):
             return RewriteDecision.skipped(SkipReason.SPEC_PATH_OR_BASE_QUALIFIED)
         return RewriteDecision.unchanged()
     if not stripped:
+        # Stopping part-way through a base is never mechanically rewritable:
+        # the rule covered the whole base, and ``/`` would widen it to every
+        # server of the API.
+        if _cuts_into_base(path, mode, shape, concrete_only=False):
+            return RewriteDecision.skipped(SkipReason.PREFIX_OF_SERVER_BASE)
         return RewriteDecision.unchanged()
     if not applicable:
         return RewriteDecision.skipped(SkipReason.MATCHES_NO_OPERATION)

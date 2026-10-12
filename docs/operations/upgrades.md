@@ -178,7 +178,8 @@ A `"category": "conflict"` line means the rule was edited while the job ran
 ### Encoded path traversal is refused
 
 Rule enforcement no longer decodes `%2F` / `%5C`, and a request whose path
-spells a dot segment with escapes (`/admin%2F..%2Fusers`, `/admin/%2e%2e/users`)
+spells a dot segment with escapes or a backslash (`/admin%2F..%2Fusers`,
+`/admin/%2e%2e/users`, `/admin\..\users`)
 is denied with `403 action_denied` (`reason: ambiguous_path`): different
 upstream servers resolve such a path differently, so no rule check on it is
 sound.

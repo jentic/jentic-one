@@ -103,7 +103,7 @@ from jentic_one.shared.permissions.evaluation import (
     normalize_methods,
 )
 from jentic_one.shared.permissions.matching import compile_matcher
-from jentic_one.shared.url_path import normalize_path
+from jentic_one.shared.url_path import has_ambiguous_traversal, normalize_path
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -789,6 +789,18 @@ class CredentialService:
                     session, agent_id, credential_id
                 )
 
+        # The broker refuses a path whose dot segments are spelled ambiguously
+        # (``ambiguous_path``) before any rule runs; the dry-run must not
+        # report such a path as allowed.
+        if has_ambiguous_traversal(path):
+            return PermissionTestResult(
+                allowed=False,
+                matched=False,
+                effect=None,
+                rule_index=None,
+                credential_id=None,
+                is_system=None,
+            )
         compiled = [
             PermissionRule(
                 effect=rule.effect,

@@ -185,6 +185,10 @@ def test_normalize_path_keeps_separators_encoded(raw: str, normalized: str) -> N
         ("/admin%5C..%5Cwidgets", True),
         ("/admin/%2e%2e/widgets", True),
         ("/admin/%2E/widgets", True),
+        # A literal backslash is a separator to some upstream stacks.
+        ("/widgets/..\\admin", True),
+        ("/widgets\\..\\admin", True),
+        ("/widgets/a\\b", False),
         ("/repos/jentic%2Fcore", False),
         ("/widgets/a..b", False),
         ("/a/../b", False),  # plain dot segment — resolved identically everywhere
