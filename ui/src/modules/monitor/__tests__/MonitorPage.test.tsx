@@ -891,9 +891,13 @@ describe('Monitor inter-linking', () => {
 			await user.click(await screen.findByText('job_exec_3'));
 
 			const dialog = await screen.findByRole('dialog');
-			const label = await within(dialog).findByTitle('agent_billing');
-			expect(within(label).getByText('billing-agent', { exact: false })).toBeInTheDocument();
-			expect(within(label).getByText(/^Agent/)).toBeInTheDocument();
+			// The label shows the raw id while /actors/lookup is in flight; wait
+			// for the resolved name rather than reading the first render.
+			await waitFor(() =>
+				expect(within(dialog).getByTitle('agent_billing')).toHaveTextContent(
+					/^Agent\s+billing-agent$/,
+				),
+			);
 			expect(lookedUp.has('agent_billing')).toBe(true);
 			await new Promise((r) => setTimeout(r, 500));
 			expect(calls.audit).toBe(0);
