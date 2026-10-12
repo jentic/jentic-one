@@ -98,9 +98,8 @@ class ExecutionService:
         return ExecutionView(
             id=record.id,
             toolkit_id=record.toolkit_id,
-            # Denormalized onto the record — there is no ``toolkits`` table
-            # to resolve it from. NULL for rows whose toolkit was deleted
-            # before the name was recorded.
+            # Denormalized onto the record by the toolkit-flattening backfill;
+            # see ``ExecutionRecord.toolkit_name`` for when it is NULL.
             toolkit_name=record.toolkit_name,
             trace_id=record.trace_id,
             started_at=record.started_at,

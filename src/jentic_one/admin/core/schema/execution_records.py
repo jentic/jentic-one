@@ -40,17 +40,14 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         default=lambda: generate_ksuid("exec"),
         server_default=func.generate_ksuid("exec"),
     )
-    # Nullable-legacy (theme-5 Phase 2): the toolkit that mediated the execution
-    # on the legacy path. NULL for direct-binding executions — their consumer
-    # attribution is ``credential_id`` — and permanently NULL once toolkits are
-    # retired (Phase 4+). All five toolkit-keyed surfaces (this column, the
-    # idempotency fingerprint, tracestate, repeated-failure keying, lifecycle
-    # events) move to the credential axis together.
+    # The toolkit that mediated a legacy execution. NULL for direct-binding
+    # executions, whose consumer attribution is ``credential_id``.
     toolkit_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    # Denormalized name for ``toolkit_id``: no ``toolkits`` table exists to
-    # resolve it from at read time, so this column is the only source of the
-    # name. NULL for rows whose toolkit was deleted before the name was
-    # recorded, and for all direct-binding executions.
+    # Denormalized name for ``toolkit_id``, populated by the toolkit-flattening
+    # backfill (``control/repos/toolkit_flattening_repo.py``); there is no
+    # ``toolkits`` table to resolve it from at read time. NULL for
+    # direct-binding executions, for rows whose toolkit no longer existed when
+    # the backfill ran, and for legacy rows not yet backfilled.
     toolkit_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
