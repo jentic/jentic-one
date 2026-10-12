@@ -587,8 +587,8 @@ describe('ApiRow controls', () => {
 		expect(manage).not.toHaveAttribute('title');
 		expect(manage).toHaveAttribute('aria-haspopup', 'dialog');
 
-		// The shared tooltip names it.
-		fireEvent.focus(manage);
+		// The shared tooltip names it (on hover; on focus only from the keyboard).
+		await userEvent.setup().hover(manage);
 		expect(await screen.findByRole('tooltip')).toHaveTextContent('Manage access');
 
 		fireEvent.pointerDown(manage, { pointerType: 'mouse' });

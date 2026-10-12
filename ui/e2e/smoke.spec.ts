@@ -43,9 +43,7 @@ test('app loads, login works, shell renders, health resolves, console clean', as
 
 	// The top-bar Notifications bell renders its count once its sources
 	// (pending agents, actionable events — mocked here) resolve.
-	await expect(
-		page.getByRole('button', { name: /^Notifications, \d+ needs? you/ }),
-	).toBeVisible();
+	await expect(page.getByRole('button', { name: /^Notifications, \d+ unread/ })).toBeVisible();
 
 	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });

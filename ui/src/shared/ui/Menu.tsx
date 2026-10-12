@@ -106,7 +106,7 @@ export function MenuPanel({ children, align = 'left', className }: MenuPanelProp
 		<div
 			role="menu"
 			className={cn(
-				'border-border/60 bg-background absolute top-full z-50 mt-1.5 min-w-[180px] rounded-lg border p-1 shadow-lg',
+				'border-border/60 bg-popover absolute top-full z-50 mt-1.5 min-w-[180px] rounded-lg border p-1 shadow-lg',
 				align === 'right' ? 'right-0' : 'left-0',
 				className,
 			)}
@@ -201,7 +201,7 @@ export function AnchoredMenuPanel({
 			role="menu"
 			style={pos}
 			className={cn(
-				'border-border/60 bg-background fixed z-50 min-w-[180px] rounded-lg border p-1 shadow-lg',
+				'border-border/60 bg-popover fixed z-50 min-w-[180px] rounded-lg border p-1 shadow-lg',
 				className,
 			)}
 		>

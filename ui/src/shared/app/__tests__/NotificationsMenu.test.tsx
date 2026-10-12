@@ -125,7 +125,7 @@ afterEach(() => {
 describe('NotificationsMenu', () => {
 	it('badges the bell with the count and names it for assistive tech', async () => {
 		renderMenu();
-		const bell = await screen.findByRole('button', { name: 'Notifications, 2 need you' });
+		const bell = await screen.findByRole('button', { name: 'Notifications, 2 unread' });
 		expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
 		expect(bell).toHaveAttribute('aria-expanded', 'false');
 	});
@@ -163,8 +163,57 @@ describe('NotificationsMenu', () => {
 			expect(within(dialog).queryByText(/inbox-triage-bot is waiting/)).toBeNull(),
 		);
 		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Notifications, 1 unread' })).toBeInTheDocument();
+	});
+
+	it('marks everything read: the badge clears, the rows stay, and it survives a remount', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(2);
+
+		await user.click(within(dialog).getByRole('button', { name: 'Mark all as read' }));
+		expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+		// Still waiting on the viewer, so still listed — just no longer unread.
+		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(0);
+		expect(within(dialog).queryByRole('button', { name: 'Mark all as read' })).toBeNull();
+
+		first.unmount();
+		renderMenu();
+		await screen.findByRole('button', { name: 'Notifications' });
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: /unread/ })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('counts an item that arrives after Mark all as read', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+		await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
+		await screen.findByRole('button', { name: 'Notifications' });
+		first.unmount();
+
+		const later: EventResponse = {
+			...failure,
+			event_id: 'evt_fail_2',
+			summary: 'Execution failed: github.getUser',
+			created_at: new Date().toISOString(),
+		};
+		worker.use(
+			http.get('/events', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('requires_action') !== 'true')
+					return HttpResponse.json(page([]));
+				return HttpResponse.json(page([later, failure]));
+			}),
+		);
+		// A fresh mount refetches; only the new alert is unread.
+		renderMenu();
 		expect(
-			screen.getByRole('button', { name: 'Notifications, 1 needs you' }),
+			await screen.findByRole('button', { name: 'Notifications, 1 unread' }),
 		).toBeInTheDocument();
 	});
 

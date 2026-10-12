@@ -166,7 +166,13 @@ async def test_the_stored_injection_point_is_the_spec_one(env: Context) -> None:
     session_id = created.json()["session_id"]
     async with client(env, OWNER) as owner:
         review = (await owner.get(f"/connect-sessions/{session_id}")).json()
-        assert review["scheme"] == {"type": "api_key", "location": "query", "field_name": "api_key"}
+        assert review["scheme"] == {
+            "type": "api_key",
+            "location": "query",
+            "field_name": "api_key",
+            "authorization_url": None,
+            "token_url": None,
+        }
         ok = await owner.post(
             f"/connect-sessions/{session_id}:confirm",
             json={

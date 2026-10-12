@@ -636,11 +636,11 @@ describe('VendorConnectFlow — approve mode', () => {
 		await waitFor(() =>
 			expect(screen.getByText(/an agent is asking to connect/i)).toBeInTheDocument(),
 		);
-		// The agent-requested scope MUST be surfaced with the "requested"
+		// The agent-requested scope MUST be surfaced with the "requested by agent"
 		// tag so the human notices what the agent added on top of the
 		// vendor defaults.
 		expect(await screen.findByText('repo')).toBeInTheDocument();
-		expect(await screen.findByText('requested')).toBeInTheDocument();
+		expect(await screen.findByText('requested by agent')).toBeInTheDocument();
 		// The agent-supplied ``reason`` is the review page's single piece
 		// of "why" context — a regression that dropped it would strip the
 		// approver of the justification the whole review UX exists for.

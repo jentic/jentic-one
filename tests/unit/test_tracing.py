@@ -47,6 +47,16 @@ _NONE_CONFIG = TracingConfig(exporter="none")
 _OPENAPI_SPEC = Path(__file__).resolve().parents[2] / "openapi" / "broker" / "broker.openapi.yaml"
 
 
+def _attr_text(key: str, value: object) -> str:
+    """Render one span attribute as ``key=value`` for substring assertions.
+
+    OTel attribute values may be ``bytes``; decode them rather than formatting
+    as ``b'...'`` so a leaked secret is still found verbatim.
+    """
+    text = value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+    return f"{key}={text}"
+
+
 @pytest.fixture(autouse=True)
 def _reset_tracer_provider():
     """Reset OTel global tracer provider between tests."""
@@ -212,7 +222,7 @@ async def test_outbound_spans_redact_secrets_and_bodies():
     spans = exporter.get_finished_spans()
     assert spans, "expected at least one outbound span"
     blob = "\n".join(
-        f"{k}={v}" for span in spans for k, v in (span.attributes or {}).items()
+        _attr_text(k, v) for span in spans for k, v in (span.attributes or {}).items()
     ).lower()
     # No secret-bearing header or body content on any span attribute.
     assert "sk_live_secret" not in blob
@@ -241,7 +251,7 @@ async def test_outbound_span_url_masks_query_param_api_key():
     spans = exporter.get_finished_spans()
     assert spans, "expected at least one outbound span"
     attrs = {k: v for span in spans for k, v in (span.attributes or {}).items()}
-    blob = "\n".join(f"{k}={v}" for k, v in attrs.items())
+    blob = "\n".join(_attr_text(k, v) for k, v in attrs.items())
     assert "qk_live_secret" not in blob
     assert "term" not in blob
     url_values = [str(attrs[k]) for k in ("http.url", "url.full") if k in attrs]
@@ -327,12 +337,12 @@ def _exported(provider: TracerProvider, exporter: InMemorySpanExporter) -> list[
 def _span_text(span: ReadableSpan) -> str:
     """Every string an exporter would ship for ``span``, flattened."""
     parts = [span.name, str(span.status.description or "")]
-    parts.extend(f"{k}={v}" for k, v in (span.attributes or {}).items())
+    parts.extend(_attr_text(k, v) for k, v in (span.attributes or {}).items())
     for event in span.events:
         parts.append(event.name)
-        parts.extend(f"{k}={v}" for k, v in (event.attributes or {}).items())
+        parts.extend(_attr_text(k, v) for k, v in (event.attributes or {}).items())
     for link in span.links:
-        parts.extend(f"{k}={v}" for k, v in (link.attributes or {}).items())
+        parts.extend(_attr_text(k, v) for k, v in (link.attributes or {}).items())
     return "\n".join(parts)
 
 

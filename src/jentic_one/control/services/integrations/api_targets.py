@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ from jentic_one.control.services.integrations.errors import (
     UnpinnedServerHostError,
 )
 from jentic_one.shared.catalog import ApiSecurityView, DeclaredSecurityScheme
+from jentic_one.shared.models import RevisionOrigin
 
 #: Declared-scheme kinds a connect session can serve.
 SCHEME_API_KEY = "api_key"
@@ -184,6 +186,59 @@ def oauth_scopes_of(view: ApiSecurityView) -> list[str]:
             if name not in scopes:
                 scopes.append(name)
     return scopes
+
+
+#: Scope-name shapes that grant changes; matched before the read shapes, so a
+#: ``readwrite`` or ``repo:write`` scope is never mistaken for a read.
+_ADMIN_SCOPE = re.compile(r"(^|[^a-z])(admin|owner|superuser)([^a-z]|$)", re.IGNORECASE)
+_WRITE_SCOPE = re.compile(
+    r"(^|[^a-z])(write|create|update|delete|modify|manage|readwrite|rw)([^a-z]|$)",
+    re.IGNORECASE,
+)
+_READ_SCOPE = re.compile(r"(^|[^a-z])(read|readonly|view|list|get)([^a-z]|$)", re.IGNORECASE)
+
+
+def classify_spec_scope(name: str) -> str:
+    """``read`` / ``write`` / ``admin`` for a scope a spec declares, from its name.
+
+    A spec does not classify its scopes, so the name decides: an admin or write
+    shape wins over a read one, a read shape (``…readonly``, ``channels:read``)
+    reads as ``read``, and anything else stays ``write`` so the approver reviews it.
+    """
+    if _ADMIN_SCOPE.search(name):
+        return "admin"
+    if _WRITE_SCOPE.search(name):
+        return "write"
+    if _READ_SCOPE.search(name):
+        return "read"
+    return "write"
+
+
+def oauth_scope_descriptions_of(view: ApiSecurityView) -> dict[str, str]:
+    """The spec's description of each OAuth scope that has one."""
+    out: dict[str, str] = {}
+    for scheme in view.schemes:
+        if scheme_kind(scheme) != SCHEME_OAUTH2:
+            continue
+        for name, description in scheme.oauth_scope_descriptions:
+            out.setdefault(name, description)
+    return out
+
+
+def catalog_oauth_endpoints(view: ApiSecurityView | None) -> tuple[str, str] | None:
+    """The authorize and token URLs to offer an approver bringing their own OAuth app.
+
+    Only for a revision imported from the public catalog: the token URL receives
+    the app's client secret, and a spec an agent or user submitted could point
+    it anywhere. ``None`` when the spec is not from the catalog or declares no
+    authorization-code endpoints.
+    """
+    if view is None or view.provenance.origin != RevisionOrigin.CATALOG:
+        return None
+    for scheme in view.schemes:
+        if scheme_kind(scheme) == SCHEME_OAUTH2 and scheme.authorization_url and scheme.token_url:
+            return scheme.authorization_url, scheme.token_url
+    return None
 
 
 def review_digest(payload: Mapping[str, object]) -> str:

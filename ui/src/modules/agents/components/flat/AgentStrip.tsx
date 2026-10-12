@@ -821,7 +821,7 @@ export function AgentStrip({
 				style={barStyle}
 				// Bleeds to the gutter edges so the backdrop covers the tiles passing under.
 				// The border is transparent until it sticks, so pinning costs no layout shift.
-				className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-hairline group/strip data-[card-pinned=true]:bg-background sticky top-0 z-20 border-b border-transparent pt-2 pb-2.5 backdrop-blur data-[card-pinned=true]:border-transparent! data-[card-pinned=true]:shadow-none! data-[scrolled=true]:shadow-[0_1px_0_0_rgb(0_0_0_/0.04)]"
+				className="-mx-page-gutter px-page-gutter bg-background/85 data-[scrolled=true]:border-hairline group/strip data-[card-pinned=true]:bg-background sticky top-0 z-20 border-b border-transparent pt-2 pb-2.5 backdrop-blur data-[card-pinned=true]:border-transparent! data-[card-pinned=true]:shadow-none! data-[scrolled=true]:shadow-[0_1px_0_0_var(--color-hairline)]"
 			>
 				<StripHeader
 					ref={headerRef}

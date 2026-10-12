@@ -121,7 +121,7 @@ export function Dialog({
 				// `text-foreground` restores the app's text colour: a modal `<dialog>`
 				// sits in the top layer with the UA's `color: CanvasText`, so any text
 				// without its own colour class would otherwise render near-black.
-				'bg-surface-sheet text-foreground shadow-pop rounded-panel border-hairline-field m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-hidden border p-0 [--field-bg:var(--surface-field)] backdrop:bg-[hsl(192_35%_4%/0.55)] backdrop:backdrop-blur-[3px] sm:w-full',
+				'bg-surface-sheet text-foreground shadow-pop rounded-panel border-hairline-field backdrop:bg-scrim m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-hidden border p-0 [--field-bg:var(--surface-field)] backdrop:backdrop-blur-[3px] sm:w-full',
 				'overscroll-contain',
 				// A gentle scale/fade entrance. A closed `<dialog>` is `display: none`,
 				// so the animation replays on every `showModal()`. Under reduced motion
@@ -141,7 +141,7 @@ export function Dialog({
 					<div className="min-w-0 flex-1">
 						<h2
 							id={titleId}
-							className="font-heading text-lg leading-tight font-semibold text-white/92"
+							className="font-heading text-foreground/92 text-lg leading-tight font-semibold"
 						>
 							{title}
 						</h2>

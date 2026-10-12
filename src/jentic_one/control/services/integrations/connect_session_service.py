@@ -60,7 +60,10 @@ from jentic_one.control.services.credentials.state import consume_callback_state
 from jentic_one.control.services.integrations import identity_echo
 from jentic_one.control.services.integrations.api_targets import (
     SCHEME_OAUTH2,
+    catalog_oauth_endpoints,
+    classify_spec_scope,
     missing_scopes,
+    oauth_scope_descriptions_of,
     oauth_scopes_of,
     require_pinnable_hosts,
     review_digest,
@@ -282,6 +285,10 @@ class SchemeView:
     type: str
     location: str | None
     field_name: str | None
+    # A public-catalog spec's authorization-code endpoints, offered to an approver
+    # bringing their own OAuth app (see ``catalog_oauth_endpoints``).
+    authorization_url: str | None = None
+    token_url: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -694,6 +701,11 @@ def _review_digest(
             "agent_id": row.agent_id,
             "agent_owner_id": agent.owner_id if agent is not None else None,
             "scheme": [row.scheme_type, row.scheme_location, row.scheme_field_name],
+            "oauth_endpoints": (
+                list(catalog_oauth_endpoints(view) or ())
+                if row.scheme_type == SCHEME_OAUTH2
+                else None
+            ),
             "pinned_hosts": sorted(row.pinned_hosts or []),
             "requested_permission_rules": row.requested_permission_rules or [],
             "requested_scopes": sorted(row.requested_scopes or []),
@@ -1502,14 +1514,16 @@ class ConnectSessionService:
         elif row.target_kind == TARGET_KIND_API:
             requested = set(row.requested_scopes or [])
             spec_scopes = oauth_scopes_of(view) if view is not None else []
+            descriptions = oauth_scope_descriptions_of(view) if view is not None else {}
             scopes = [
                 ScopeView(
                     name=name,
-                    # The spec does not classify scopes: flag them for review.
-                    classification="write",
+                    # The spec does not classify scopes: the name decides, and
+                    # an unrecognised one reads as a write the approver reviews.
+                    classification=classify_spec_scope(name),
                     default=False,
                     requested=name in requested,
-                    description="",
+                    description=descriptions.get(name, ""),
                 )
                 for name in [*spec_scopes, *sorted(requested - set(spec_scopes))]
             ]
@@ -1534,6 +1548,7 @@ class ConnectSessionService:
                 api_version = await self._catalog_auto_importer.current_version(api_id=entry.vendor)
 
         agent = await self._agent_view(row.agent_id)
+        endpoints = catalog_oauth_endpoints(view) if row.scheme_type == SCHEME_OAUTH2 else None
         return ReviewData(
             session_id=row.id,
             state=row.state,
@@ -1556,6 +1571,8 @@ class ConnectSessionService:
                     type=row.scheme_type,
                     location=row.scheme_location,
                     field_name=row.scheme_field_name,
+                    authorization_url=endpoints[0] if endpoints else None,
+                    token_url=endpoints[1] if endpoints else None,
                 )
                 if row.scheme_type is not None
                 else None

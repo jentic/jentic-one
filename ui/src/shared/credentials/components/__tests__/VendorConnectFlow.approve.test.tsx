@@ -230,6 +230,38 @@ describe('VendorConnectFlow approve — manual_* sessions', () => {
 		expect(onDone).toHaveBeenCalled();
 	});
 
+	it('closes a finished connect by itself after a short countdown', async () => {
+		const seeded = seedManualSession();
+		const { onDone } = renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		expect(screen.getByTestId('auto-close-countdown')).toHaveTextContent(/Closing in \d…/);
+		expect(screen.getByRole('status')).toHaveTextContent('closes by itself in 5 seconds');
+		await waitFor(() => expect(onDone).toHaveBeenCalled(), { timeout: 8000 });
+	});
+
+	it('Stay open keeps a finished connect on screen', async () => {
+		const seeded = seedManualSession();
+		const { onDone } = renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^API key/), 'sk_live_secret_123');
+		await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+		expect(await screen.findByText('Connected to acme-com')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Stay open' }));
+		expect(screen.queryByTestId('auto-close-countdown')).not.toBeInTheDocument();
+		await new Promise((resolve) => setTimeout(resolve, 6500));
+		expect(onDone).not.toHaveBeenCalled();
+		expect(screen.getByText('Connected to acme-com')).toBeInTheDocument();
+	});
+
 	it('collects a username and password for a manual_basic session', async () => {
 		const seeded = seedManualSession({
 			resolved_flow: 'manual_basic',
@@ -473,6 +505,47 @@ describe('VendorConnectFlow approve — awaiting_app', () => {
 			permission_rules: [SUGGESTED_RULE],
 			expected_agent_id: 'agnt_1',
 			digest: 'dig_awaiting',
+		});
+	});
+
+	it('offers a catalog spec’s endpoints filled in and folded away, editable on Change', async () => {
+		const seeded = seedAwaitingAppSession({
+			scheme: {
+				type: 'oauth2',
+				location: null,
+				field_name: null,
+				authorization_url: 'https://github.com/login/oauth/authorize',
+				token_url: 'https://github.com/login/oauth/access_token',
+			},
+		});
+		renderApprove(seeded.session_id);
+		const user = userEvent.setup();
+
+		await continueFromReview(user);
+		await user.click(screen.getByRole('button', { name: /^continue$/i }));
+		await user.type(await screen.findByLabelText(/^Client ID/), 'client-123');
+		await user.type(screen.getByLabelText(/^Client secret/), 'shh-client-secret');
+		// Folded away: no URL fields to fill, just where they point.
+		expect(screen.queryByLabelText(/^Authorize URL/)).not.toBeInTheDocument();
+		expect(screen.getByTestId('catalog-oauth-endpoints')).toHaveTextContent('github.com');
+		const submit = screen.getByRole('button', { name: 'Continue to sign-in' });
+		expect(submit).toBeEnabled();
+
+		// Change opens them, filled in and editable.
+		await user.click(screen.getByRole('button', { name: 'Change' }));
+		expect(screen.getByLabelText(/^Authorize URL/)).toHaveValue(
+			'https://github.com/login/oauth/authorize',
+		);
+		expect(screen.getByLabelText(/^Token URL/)).toHaveValue(
+			'https://github.com/login/oauth/access_token',
+		);
+		await user.click(submit);
+
+		expect(await screen.findByText(/Almost there/)).toBeInTheDocument();
+		expect(getMockConnectSessions()[0].confirmBodies[0]).toMatchObject({
+			kind: 'own_oauth_client',
+			authorize_url: 'https://github.com/login/oauth/authorize',
+			token_url: 'https://github.com/login/oauth/access_token',
 		});
 	});
 

@@ -85,7 +85,7 @@ export function InstallationSection() {
 				</Prose>
 				<div className="border-border overflow-hidden rounded-lg border">
 					<table className="w-full text-left text-sm">
-						<thead className="bg-muted/50 text-foreground/55">
+						<thead className="bg-muted/50 text-foreground-sub">
 							<tr>
 								<th className="px-3 py-2 font-medium">Variable</th>
 								<th className="px-3 py-2 font-medium">Default</th>
@@ -98,7 +98,7 @@ export function InstallationSection() {
 									<td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
 										{v.name}
 									</td>
-									<td className="text-foreground/60 px-3 py-2 font-mono text-xs">
+									<td className="text-foreground-sub px-3 py-2 font-mono text-xs">
 										{v.def}
 									</td>
 									<td className="text-foreground/70 px-3 py-2">{v.desc}</td>

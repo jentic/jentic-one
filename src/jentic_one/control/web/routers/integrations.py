@@ -362,6 +362,8 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
                 type=data.scheme.type,  # type: ignore[arg-type]
                 location=data.scheme.location,
                 field_name=data.scheme.field_name,
+                authorization_url=data.scheme.authorization_url,
+                token_url=data.scheme.token_url,
             )
             if data.scheme is not None
             else None

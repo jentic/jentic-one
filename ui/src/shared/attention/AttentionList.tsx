@@ -60,6 +60,8 @@ export type AttentionListProps = {
 	variant?: 'page' | 'menu';
 	/** Fired after any link in a row is followed (the menu closes itself). */
 	onNavigate?: () => void;
+	/** Marks the rows this viewer hasn't read yet (the menu's own read state). */
+	isUnread?: (itemKey: string) => boolean;
 };
 
 /** Group a pre-sorted list by what it asks of you, preserving order within a group. */
@@ -77,7 +79,12 @@ function groupItems(items: AttentionItem[]): Array<{ label: string; items: Atten
 	}));
 }
 
-export function AttentionList({ items, variant = 'page', onNavigate }: AttentionListProps) {
+export function AttentionList({
+	items,
+	variant = 'page',
+	onNavigate,
+	isUnread,
+}: AttentionListProps) {
 	const groups = groupItems(items);
 	return (
 		<div className="divide-hairline divide-y">
@@ -99,6 +106,7 @@ export function AttentionList({ items, variant = 'page', onNavigate }: Attention
 								item={item}
 								variant={variant}
 								onNavigate={onNavigate}
+								unread={isUnread?.(item.key) ?? false}
 							/>
 						))}
 					</ul>
@@ -112,10 +120,12 @@ function AttentionRow({
 	item,
 	variant,
 	onNavigate,
+	unread,
 }: {
 	item: AttentionItem;
 	variant: 'page' | 'menu';
 	onNavigate?: () => void;
+	unread: boolean;
 }) {
 	const Icon = KIND_ICON[item.kind];
 	const urgent = item.urgency === 3;
@@ -139,10 +149,17 @@ function AttentionRow({
 
 	if (menu) {
 		return (
-			<li className="flex gap-2.5 px-3 py-2.5">
+			<li className="flex gap-2.5 px-3 py-2.5" data-unread={unread || undefined}>
 				{tile}
 				<div className="min-w-0 flex-1">
 					<p className="text-foreground-name line-clamp-2 text-[13px] leading-snug font-semibold">
+						{unread && (
+							<span
+								className="bg-primary mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
+								aria-hidden="true"
+							/>
+						)}
+						{unread && <span className="sr-only">Unread: </span>}
 						<UserText>{item.title}</UserText>
 					</p>
 					<p className="text-muted-foreground mt-0.5 truncate text-xs">

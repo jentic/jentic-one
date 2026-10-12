@@ -370,6 +370,41 @@ def run_upgrade_steps(skip: Collection[str] = ()) -> int:
         return EXIT_UPGRADE_STEP_FAILED
 
 
+# The control revision that adds API-target connect sessions. A control DB
+# upgraded across it reaches a release where agents may ask for a credential
+# for any registry API, on by default.
+MANUAL_FLOWS_REVISION = "bb2c3d4e5f6a"  # pragma: allowlist secret
+MANUAL_FLOWS_UPGRADE_WARNING = (
+    "agents can now ask for a credential for any registry API "
+    "(`jentic connect --api`, MCP `request_connection` with `api`); a human "
+    "approves each request by entering the credential or bringing an OAuth app. "
+    "control.connect.manual_flows_enabled is on by default; set it to false "
+    "(JENTIC__CONTROL__CONNECT__MANUAL_FLOWS_ENABLED=false) to keep refusing them. "
+    "During a rolling upgrade, older control replicas answer such requests with "
+    "422 until they are replaced."
+)
+
+
+def _crosses_manual_flows_revision() -> bool:
+    """Whether upgrading control now applies :data:`MANUAL_FLOWS_REVISION`.
+
+    True only for an existing control DB whose current revisions predate it —
+    a fresh install (no version table) and a DB already past it stay quiet.
+    """
+    state, current, _heads = status("control")
+    if state == STATE_UNINITIALIZED:
+        return False
+    script = ScriptDirectory.from_config(_build_config("control"))
+    applied = {rev.revision for rev in script.iterate_revisions(tuple(current), "base")}
+    return MANUAL_FLOWS_REVISION not in applied
+
+
+def _warn_manual_flows_on() -> None:
+    """Print the upgrade warning when the setting is on for this deployment."""
+    if load_config().control.connect.manual_flows_enabled:
+        print(f"==> WARNING (connect sessions): {MANUAL_FLOWS_UPGRADE_WARNING}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply Alembic migrations.")
     parser.add_argument(
@@ -447,9 +482,14 @@ def main(argv: list[str] | None = None) -> int:
                 code = retire_service_accounts()
                 if code:
                     return code
+            warn_manual_flows = (
+                db_name == "control" and target == "head" and _crosses_manual_flows_revision()
+            )
             print(f"==> Migrating {db_name} to {target}", flush=True)
             upgrade(db_name, target)
             print(f"==> {db_name} complete", flush=True)
+            if warn_manual_flows:
+                _warn_manual_flows_on()
         if full_upgrade and not args.skip_upgrade_steps:
             return run_upgrade_steps(skip=args.skip_upgrade_step)
     return 0

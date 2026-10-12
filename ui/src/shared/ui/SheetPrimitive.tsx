@@ -97,21 +97,21 @@ const SIDE_STYLES = {
 	right: {
 		container: 'inset-y-0 inset-x-0 sm:left-auto sm:right-0',
 		panel: 'h-full w-full max-w-full',
-		shadow: 'shadow-[-24px_0_60px_-20px_rgba(0,0,0,.7)]',
+		shadow: 'shadow-[-24px_0_60px_-20px_hsl(var(--shadow)/calc(.7*var(--shadow-k)))]',
 		enter: 'translate-x-0',
 		exit: 'translate-x-full',
 	},
 	left: {
 		container: 'inset-y-0 inset-x-0 sm:right-auto sm:left-0',
 		panel: 'h-full w-full max-w-full',
-		shadow: 'shadow-[24px_0_60px_-20px_rgba(0,0,0,.7)]',
+		shadow: 'shadow-[24px_0_60px_-20px_hsl(var(--shadow)/calc(.7*var(--shadow-k)))]',
 		enter: 'translate-x-0',
 		exit: '-translate-x-full',
 	},
 	bottom: {
 		container: 'inset-x-0 bottom-0',
 		panel: 'flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-xl',
-		shadow: 'shadow-[0_-24px_60px_-20px_rgba(0,0,0,.7)]',
+		shadow: 'shadow-[0_-24px_60px_-20px_hsl(var(--shadow)/calc(.7*var(--shadow-k)))]',
 		enter: 'translate-y-0',
 		exit: 'translate-y-full',
 	},
@@ -351,7 +351,7 @@ export function SheetPrimitive({
 			<div
 				className={cn(
 					// Page-tinted scrim with a light blur, rather than flat black.
-					'absolute inset-0 overflow-hidden bg-[hsl(192_35%_4%/.55)] backdrop-blur-[3px]',
+					'bg-scrim absolute inset-0 overflow-hidden backdrop-blur-[3px]',
 					'ease-out-soft transition-opacity duration-[220ms]',
 					'motion-reduce:duration-[10ms]',
 					isVisible ? 'opacity-100' : 'opacity-0',

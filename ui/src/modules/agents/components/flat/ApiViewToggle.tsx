@@ -86,7 +86,7 @@ export function ApiViewToggle({
 							'transition-[color,background-color,box-shadow] duration-150 motion-reduce:transition-none',
 							'focus-visible:shadow-[0_0_0_1.5px_hsl(var(--primary)/0.7)]',
 							checked
-								? 'bg-surface-tonal-hover text-white shadow-[0_1px_2px_hsl(192_35%_4%/0.5)]'
+								? 'bg-surface-tonal-hover text-foreground shadow-[0_1px_2px_hsl(var(--shadow)/calc(.5*var(--shadow-k)))]'
 								: 'text-foreground-faint hover:text-foreground-lighter',
 						)}
 					>

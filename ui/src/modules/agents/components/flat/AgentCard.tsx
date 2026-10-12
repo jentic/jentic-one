@@ -598,7 +598,7 @@ export function AgentCard({
 						<span
 							aria-hidden="true"
 							data-testid="agent-stats-tuck-shadow"
-							className="pointer-events-none absolute inset-x-px h-3 bg-linear-to-b from-black/25 to-transparent"
+							className="pointer-events-none absolute inset-x-px h-3 bg-linear-to-b from-[hsl(var(--shadow)/calc(.25*var(--shadow-k)))] to-transparent"
 							style={{ ...tuckShadow, top: LIP_H }}
 						/>
 					</Fold>
