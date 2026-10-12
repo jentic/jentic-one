@@ -7,11 +7,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { page } from 'vitest/browser';
-import { renderWithProviders, screen, within, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, within, userEvent, waitFor } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
-import { resetAgentsStore, seedServiceAccountSuccessor } from '@/modules/agents/mocks/handlers';
+import {
+	resetAgentsStore,
+	seedExtraAgents,
+	seedServiceAccountSuccessor,
+} from '@/modules/agents/mocks/handlers';
 import { resetApisStore, resetCredentialsStore } from '@/shared/credentials/mocks/handlers';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
@@ -96,6 +100,34 @@ describe('AgentKeysSheet — the dock API key surface', () => {
 		expect(
 			await screen.findByRole('dialog', { name: 'API key generated' }),
 		).toBeInTheDocument();
+	});
+
+	it('cuts a long agent name in the confirm titles, the full name a hover away', async () => {
+		const long = `agent-${'x'.repeat(120)}`;
+		seedExtraAgents([{ id: 'agnt_long_1', name: long, status: 'active' }]);
+		const user = userEvent.setup();
+		renderPage('/?agent=agnt_long_1');
+		const sheet = await openSheet(user);
+		await issueFirstKey(user, sheet, long);
+		for (const verb of ['Regenerate', 'Revoke']) {
+			await user.click(
+				await sheet.findByRole('button', { name: `${verb} API key for ${long}` }),
+			);
+			const confirm = await screen.findByRole('dialog', {
+				name: `${verb} API key for ${long}`,
+			});
+			const name = within(confirm).getByText(long);
+			await waitFor(() => expect(name.scrollWidth).toBeGreaterThan(name.clientWidth));
+			// The cut is measured off a resize observer, so a hover can land a beat
+			// before the name knows it is cut: hover again until it does.
+			await waitFor(async () => {
+				await user.unhover(name);
+				await user.hover(name);
+				expect(screen.getByRole('tooltip')).toHaveTextContent(long);
+			});
+			await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+			await waitFor(() => expect(confirm).not.toHaveAttribute('open'));
+		}
 	});
 
 	it("warns that a service-account successor's migrated key is unrecoverable before rotating it", async () => {

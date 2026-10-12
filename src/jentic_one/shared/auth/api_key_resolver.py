@@ -169,10 +169,15 @@ class ApiKeyResolver:
         return arm if isinstance(arm, Identity) else None
 
     async def _credential_row(self, raw_key: str) -> Any:
-        """The agent holding ``raw_key``'s digest: ``agent_id, status, owner_id``."""
+        """The agent holding ``raw_key``'s digest: ``agent_id, name, status, owner_id``.
+
+        ``name`` rides along off the already-joined ``agents`` row (no extra
+        query) so the resolved ``Identity`` can carry a human-readable actor
+        name into audit event summaries (#1543).
+        """
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         stmt = text(
-            "SELECT a.id AS agent_id, a.status, a.owner_id"
+            "SELECT a.id AS agent_id, a.name, a.status, a.owner_id"
             " FROM agent_credentials ac"
             " JOIN agents a ON a.id = ac.agent_id"
             " WHERE ac.api_key_hash = :key_hash"
@@ -190,6 +195,7 @@ class ApiKeyResolver:
         permissions = await self._load_permissions(row.agent_id, ActorType.AGENT)
         return Identity(
             sub=row.agent_id,
+            actor_name=row.name or "",
             actor_type=ActorType.AGENT,
             permissions=permissions,
             parent_actor_id=row.owner_id,

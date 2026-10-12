@@ -5,6 +5,7 @@ import { Dialog } from '@/shared/ui/Dialog';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
+import { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
 
 /**
  * The entity kinds that expose a hard delete (or a terminal,
@@ -34,6 +35,13 @@ interface CascadeDeleteDialogProps {
 	onConfirm: () => void;
 	entityType: CascadeEntityType;
 	entityName: string;
+	/**
+	 * Cut a long `entityName` to one line (an ellipsis, the full name in a
+	 * tooltip) instead of wrapping it whole. Off by default: most names read
+	 * best in full; opt in where names can run long (an agent's, up to 255
+	 * characters).
+	 */
+	truncateName?: boolean;
 	/**
 	 * The cascade blast radius. When provided, the dialog renders a grouped
 	 * list of everything the delete also takes down. When absent (today's
@@ -153,6 +161,7 @@ export function CascadeDeleteDialog({
 	onConfirm,
 	entityType,
 	entityName,
+	truncateName = false,
 	dependents,
 	dependentsHeadline,
 	loading = false,
@@ -243,8 +252,15 @@ export function CascadeDeleteDialog({
 							id={descriptionId}
 							className="text-foreground min-w-0 pt-1.5 text-sm leading-relaxed"
 						>
-							<span className="font-semibold break-words">{entityName}</span> will be
-							permanently removed from your workspace. This can&apos;t be undone.
+							{truncateName ? (
+								<TruncateWithTooltip inline className="max-w-[32ch] font-semibold">
+									{entityName}
+								</TruncateWithTooltip>
+							) : (
+								<span className="font-semibold break-words">{entityName}</span>
+							)}{' '}
+							will be permanently removed from your workspace. This can&apos;t be
+							undone.
 						</p>
 					</div>
 

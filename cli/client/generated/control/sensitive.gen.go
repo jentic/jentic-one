@@ -7,11 +7,14 @@ package control
 // membership here exactly like a `redact:"true"` struct tag, so generated SDK types
 // (which carry no custom tags) are redacted from the spec, not by naming luck.
 var SensitiveFields = map[string][]string{
+	"ApiKeyConfirmSessionRequest":                []string{"key"},
 	"ApiKeyCreateRequest":                        []string{"key"},
 	"ApiKeyUpdateRequest":                        []string{"key"},
 	"AuthorizationCodeRegistrationCreateRequest": []string{"client_secret"},
 	"BasicAuthCreateRequest":                     []string{"password"},
 	"BasicAuthUpdateRequest":                     []string{"password"},
+	"BasicConfirmSessionRequest":                 []string{"password"},
+	"BearerConfirmSessionRequest":                []string{"token"},
 	"BearerTokenCreateRequest":                   []string{"token"},
 	"BearerTokenUpdateRequest":                   []string{"token"},
 	"ChangePasswordRequest":                      []string{"current_password", "new_password"},
@@ -26,6 +29,7 @@ var SensitiveFields = map[string][]string{
 	"OAuthAppRegistrationRotateSecretRequest":    []string{"client_secret"},
 	"OAuthClientCreateResponse":                  []string{"client_secret"},
 	"OAuthClientRotateSecretResponse":            []string{"client_secret"},
+	"OwnOAuthClientConfirmSessionRequest":        []string{"client_secret"},
 	"RedeemInviteRequest":                        []string{"invite_token", "password"},
 	"RegisterResponse":                           []string{"claim_token", "registration_access_token"},
 	"RevokeRequest":                              []string{"token"},

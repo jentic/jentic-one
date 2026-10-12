@@ -17,7 +17,15 @@
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
-import { ActorLabel, Badge, Button, DetailSection, LoadingState, ConfirmDialog } from '@/shared/ui';
+import {
+	ActorLabel,
+	Badge,
+	Button,
+	DetailSection,
+	LoadingState,
+	ConfirmDialog,
+	Tooltip,
+} from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import { MIGRATED_SERVICE_ACCOUNT_KEY_WARNING, holdsMigratedServiceAccountKey } from '@/shared/lib';
 import { AGENTS_WRITE, useCanAccess } from '@/shared/auth';
@@ -28,6 +36,7 @@ import {
 	useRevokeAgentApiKey,
 	type AgentEntity,
 } from '@/modules/agents/api';
+import { AgentNameText } from '@/modules/agents/components/AgentNameText';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 
@@ -176,12 +185,14 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 									</span>
 								)}
 							</div>
-							<span
-								className="text-muted-foreground shrink-0 text-[11px]"
-								title={formatTimestamp(entry.occurredAt)}
+							<Tooltip
+								content={formatTimestamp(entry.occurredAt)}
+								className="shrink-0"
 							>
-								{timeAgo(entry.occurredAt)}
-							</span>
+								<span className="text-muted-foreground text-[11px]">
+									{timeAgo(entry.occurredAt)}
+								</span>
+							</Tooltip>
 						</div>
 					))}
 				</DetailSection>
@@ -189,7 +200,12 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 			<ConfirmDialog
 				open={confirmRegenerate}
-				title={`Regenerate API key for ${agent.name}`}
+				title={
+					<>
+						Regenerate API key for{' '}
+						<AgentNameText name={agent.name} className="max-w-[32ch]" />
+					</>
+				}
 				body={
 					<>
 						<p>
@@ -208,7 +224,12 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 			<ConfirmDialog
 				open={confirmRevoke}
-				title={`Revoke API key for ${agent.name}`}
+				title={
+					<>
+						Revoke API key for{' '}
+						<AgentNameText name={agent.name} className="max-w-[32ch]" />
+					</>
+				}
 				body={
 					<>
 						<p>

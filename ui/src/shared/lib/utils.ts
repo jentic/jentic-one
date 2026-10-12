@@ -52,3 +52,29 @@ export function formatTimestamp(value: string | null | undefined): string {
 	if (Number.isNaN(ms)) return '—';
 	return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
+
+/** FIRST STRONG ISOLATE — opens a run whose direction is taken from its first
+ * strong character, exactly like `dir="auto"`. */
+const FSI = '\u2068';
+/** POP DIRECTIONAL ISOLATE — closes the innermost isolate. */
+const PDI = '\u2069';
+
+/**
+ * Bidi-isolate a USER-SUPPLIED string that is interpolated into a plain string
+ * rather than into JSX.
+ *
+ * A directional override (U+202E and friends) inside a name applies to the rest
+ * of the enclosing bidi paragraph, so `Unbind ${name} from ${agent}` lets one
+ * name reverse the words after it. `FSI … PDI` scopes the name's direction to
+ * itself; any unbalanced isolate the name itself carries is terminated by the
+ * closing `PDI`.
+ *
+ * Use it in `aria-label`, `title`, `alt`, `document.title`, toast titles and
+ * descriptions — anywhere a component cannot be used. In JSX, render the string
+ * inside `UserText` (`<bdi>`) instead, which isolates without altering the
+ * text content.
+ */
+export function isolateText(value: string | null | undefined): string {
+	if (value == null || value === '') return '';
+	return `${FSI}${value}${PDI}`;
+}

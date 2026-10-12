@@ -46,11 +46,22 @@ from jentic_one.admin.services.user_service import UserService
 from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.web.routers.identity import _resolve_agent, _resolve_user
 from jentic_one.control.services.integrations.connect_session_service import (
+    ApiTarget,
     ConnectSessionService,
 )
 from jentic_one.control.services.integrations.errors import (
+    AuthTypeNotDeclaredError,
+    AuthTypeRequiredError,
     InvalidOAuthAppRegistrationError,
+    ManualFlowsDisabledError,
+    NoDeclaredSchemeError,
     NoOpForFlowError,
+    RecentlyRejectedError,
+    ReservedAuthFieldError,
+    SecuritySchemesLookupUnavailableError,
+    TooManyOpenSessionsError,
+    UnknownApiError,
+    UnpinnedServerHostError,
 )
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
@@ -95,7 +106,10 @@ from jentic_one.registry.services.search_service import SearchService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.auth.permissions import has_effective_permission
-from jentic_one.shared.catalog.protocols import CatalogAutoImportProtocol
+from jentic_one.shared.catalog.protocols import (
+    CatalogAutoImportProtocol,
+    SecuritySchemesLookupProtocol,
+)
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
@@ -125,6 +139,11 @@ class CallEnv:
     #: into ``ConnectSessionService`` (``app.state.catalog_auto_importer``);
     #: ``None`` when this process does not serve the registry.
     catalog_auto_importer: CatalogAutoImportProtocol | None = None
+    #: the process-level registry lookup the HTTP connect route threads into
+    #: ``ConnectSessionService`` (``app.state.security_schemes_lookup``) for
+    #: sessions that target a registry API; ``None`` when this process cannot
+    #: read the registry.
+    security_schemes_lookup: SecuritySchemesLookupProtocol | None = None
 
 
 Handler = Callable[[CallEnv, dict[str, Any]], Awaitable[mcp_types.CallToolResult]]
@@ -1197,6 +1216,8 @@ async def _attach_job_result(env: CallEnv, job_id: str, payload: dict[str, Any])
 
 _REQUEST_CONNECTION_PARAMS = [
     ParamSpec("vendor", "string"),
+    ParamSpec("api", "json"),
+    ParamSpec("auth_type", "string"),
     ParamSpec("requested_scopes", "string_list", ("scopes",)),
     ParamSpec("reason", "string"),
     ParamSpec("oauth_app_registration_id", "string", ("registration_id",)),
@@ -1213,6 +1234,24 @@ _REQUEST_CONNECTION_INSTRUCTION = (
     "they confirm, call whoami to see the new credential binding, then retry the call "
     "that was blocked."
 )
+
+#: Replaces :data:`_REQUEST_CONNECTION_INSTRUCTION` for a session a human
+#: finishes by entering a credential (or picking an OAuth app) — Go:
+#: ``requestConnectionHumanEntryInstruction``, same text. It can take hours and
+#: this surface has no status tool, so the agent ends its turn and retries
+#: ``execute`` later.
+_REQUEST_CONNECTION_HUMAN_ENTRY_INSTRUCTION = (
+    "Relay the approval_url to your human user and end your turn: a human enters the "
+    "credential (or picks the OAuth app) in the browser, which can take hours, so do not "
+    "wait or poll. Later, check your bindings with whoami and retry the call that was "
+    "blocked. Asking again for the same API returns this same request."
+)
+
+#: ``resolved_flow`` of an OAuth API with no OAuth app to connect through yet.
+_FLOW_AWAITING_APP = "awaiting_app"
+
+#: the route's ``auth_type`` bound (``max_length=255``) — Go: ``connectAuthTypeMax``.
+_REQUEST_CONNECTION_AUTH_TYPE_MAX = 255
 
 #: the route's ``reason`` bound (``IntegrationsConnectRequest.reason`` —
 #: ``max_length=1024``), enforced here because the in-process call skips the
@@ -1319,6 +1358,130 @@ def _requested_permission_rules(raw: Any) -> list[dict[str, object]] | None:
     return rules or None
 
 
+def _is_human_entry_flow(flow: str) -> bool:
+    """A session a human finishes by entering a credential (Go: ``isHumanEntryFlow``)."""
+    return flow == _FLOW_AWAITING_APP or flow.startswith("manual_")
+
+
+def _connect_api_target(raw: Any) -> ApiTarget:
+    """The ``api`` argument: a ``{vendor, name, version}`` object or a slug string."""
+    if isinstance(raw, str):
+        parts = raw.strip().split("/")
+        if len(parts) == 3 and all(parts):
+            return ApiTarget(vendor=parts[0], name=parts[1], version=parts[2])
+    elif isinstance(raw, dict):
+        fields = [raw.get(k) for k in ("vendor", "name", "version")]
+        if all(isinstance(v, str) and v for v in fields):
+            vendor, name, version = (str(v) for v in fields)
+            return ApiTarget(vendor=vendor, name=name, version=version)
+    raise invalid_params(
+        'api must be {"vendor", "name", "version"} or a "vendor/name/version" string'
+    )
+
+
+def _api_target_tool_error(exc: Exception, target: str) -> ToolError | None:
+    """The API-target and session-cap service errors as coded tool errors.
+
+    Same codes, prose and ``next_tool`` as the Go mount's ``apiTargetCoded``
+    (MCP vocabulary); ``None`` for any other error.
+    """
+    if isinstance(exc, ManualFlowsDisabledError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"this deployment does not take connect requests for registry APIs ({target}): {exc}",
+            actionable="Report the gap to your human user once: ask them to connect a "
+            f"credential for {target} in the dashboard and bind this agent — name the auth "
+            "type the API's spec declares, the permission rules you need, and why. Then end "
+            "your turn and retry later.",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, UnknownApiError):
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"no live API {target} in this deployment's registry: {exc}",
+            actionable="Check the identity against the api.vendor/name/version that "
+            "inspect_operation reports; if the API is not imported yet, find it with "
+            "search_catalog and import it with import_api, then call request_connection again.",
+            next_tool="search_catalog",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, AuthTypeRequiredError | AuthTypeNotDeclaredError):
+        lead = (
+            "The API's spec declares several auth schemes"
+            if isinstance(exc, AuthTypeRequiredError)
+            else "That auth type is not one the API's spec declares"
+        )
+        retry = "call request_connection again with auth_type set to one of them"
+        if exc.options:
+            actionable = (
+                f"{lead} ({', '.join(exc.options)}): pick the one the task needs and {retry}."
+            )
+        else:
+            actionable = f"{lead}: read them from the API's spec and {retry}."
+        return ToolError(
+            CODE_RESOLVE_FAILED,
+            f"cannot start a connect session for {target}: {exc}",
+            actionable=actionable,
+            details={"options": list(exc.options)} if exc.options else None,
+            next_tool="request_connection",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, NoDeclaredSchemeError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"API {target} declares no auth scheme a connect session can collect: {exc}",
+            actionable="You cannot start this connection. Tell your human user: an operator "
+            f"can create the credential for {target} directly in the dashboard (or the API's "
+            "spec must declare its auth). Do not retry the connect.",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, UnpinnedServerHostError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"API {target} takes its server host from an unrestricted variable: {exc}",
+            actionable="A credential for it cannot be pinned to known hosts, so you cannot "
+            "start this connection. Tell your human user: an operator can create the "
+            "credential directly in the dashboard (or the API's spec must limit its server "
+            "variables to an enum). Do not retry the connect.",
+            details={"variables": list(exc.variables)} if exc.variables else None,
+            extra={"retryable": False},
+        )
+    if isinstance(exc, ReservedAuthFieldError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"API {target} injects its key into a header the platform reserves: {exc}",
+            actionable="You cannot start this connection. Tell your human user: an operator "
+            "can create the credential directly in the dashboard. Do not retry the connect.",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, SecuritySchemesLookupUnavailableError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"this instance cannot read the registry to connect {target}: {exc}",
+            actionable="Report it to your human user: the connect service cannot reach the "
+            "registry on this deployment. They can connect the credential in the dashboard "
+            "instead.",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, TooManyOpenSessionsError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"too many open connect requests are already waiting for a human: {exc}",
+            actionable="Do not open more. Relay the approval URLs you already have to your "
+            "human user, end your turn, and retry the blocked calls once they act.",
+            extra={"retryable": False},
+        )
+    if isinstance(exc, RecentlyRejectedError):
+        return ToolError(
+            CODE_BROKER_DENIED,
+            f"a human recently rejected this agent's request to connect {target}: {exc}",
+            actionable="Do not ask again. Tell your human user the request was rejected and "
+            "what you needed it for; continue without this API unless they say otherwise.",
+            extra={"retryable": False},
+        )
+    return None
+
+
 #: Per-actor rate-limit twin of the route's: the mount calls the
 #: connect-session service in-process, bypassing the route's app-state
 #: limiter, so it carries its own with the SAME policy knobs (imported from
@@ -1339,8 +1502,11 @@ async def handle_request_connection(
     """POST /integrations:connect in-process (Go: ``handleRequestConnection``).
 
     Create-only (theme-7 Phase 1b): starts a connect session for a registry
-    vendor and returns ``{session_id, approval_url, resolved_flow}`` plus the
-    operator-relay instruction. ``poll_token`` is not surfaced — this surface
+    vendor (``vendor``) or a registry API (``api``, with an optional
+    ``auth_type``) and returns ``{session_id, approval_url, resolved_flow}``
+    plus the operator-relay instruction — for a session a human finishes by
+    entering a credential, the end-your-turn instruction and ``next_tool:
+    execute``. ``poll_token`` is not surfaced — this surface
     serves no poll leg (the recovery loop is relay approval_url → operator
     approves → confirm via whoami → retry), and the approval_url carries only
     the session id: the agent's owner or ``org:admin`` approves without the
@@ -1348,15 +1514,31 @@ async def handle_request_connection(
     is never taken from arguments: the caller *is* the agent (the route
     refuses a supplied agent_id with 403 for the same reason). Like the route,
     it forwards ``oauth_app_registration_id``, the validated
-    ``requested_permission_rules`` and the process's catalog auto-importer.
+    ``requested_permission_rules`` and the process's catalog auto-importer and
+    security-schemes lookup.
     """
     args = normalize_tool_args(arguments, _REQUEST_CONNECTION_PARAMS)
     vendor = args.get("vendor", "")
-    if not vendor:
+    api_target = _connect_api_target(args["api"]) if "api" in args else None
+    if bool(vendor) == (api_target is not None):
         raise invalid_params(
-            'request_connection requires "vendor": the vendor registry key, '
-            'e.g. {"vendor": "github"}'
+            'request_connection requires exactly one of "vendor" (the vendor registry key, '
+            'e.g. {"vendor": "github"}) or "api" (e.g. {"api": {"vendor": "stripe-com", '
+            '"name": "stripe-com-api", "version": "2024-06-20"}})'
         )
+    auth_type = args.get("auth_type") or None
+    if auth_type is not None and api_target is None:
+        raise invalid_params('auth_type applies to an "api" target only')
+    if auth_type is not None and len(auth_type) > _REQUEST_CONNECTION_AUTH_TYPE_MAX:
+        raise invalid_params(
+            f"auth_type must be at most {_REQUEST_CONNECTION_AUTH_TYPE_MAX} characters, "
+            f"got {len(auth_type)}"
+        )
+    target = (
+        f"{api_target.vendor}/{api_target.name}/{api_target.version}"
+        if api_target is not None
+        else vendor
+    )
     reason = args.get("reason", "")
     if len(reason) > _REQUEST_CONNECTION_REASON_MAX:
         raise invalid_params(
@@ -1406,9 +1588,13 @@ async def handle_request_connection(
     agent_id = env.identity.sub if env.identity.actor_type == ActorType.AGENT else None
     try:
         created = await ConnectSessionService(
-            env.ctx, catalog_auto_importer=env.catalog_auto_importer
+            env.ctx,
+            catalog_auto_importer=env.catalog_auto_importer,
+            security_schemes_lookup=env.security_schemes_lookup,
         ).create_session(
             vendor_key=vendor,
+            api_target=api_target,
+            auth_type=auth_type,
             agent_id=agent_id,
             initiator_actor_id=env.identity.sub,
             requested_scopes=requested_scopes,
@@ -1417,14 +1603,30 @@ async def handle_request_connection(
             reason=reason or None,
             oauth_app_registration_id=registration_id,
         )
+    except (
+        ManualFlowsDisabledError,
+        UnknownApiError,
+        AuthTypeRequiredError,
+        AuthTypeNotDeclaredError,
+        NoDeclaredSchemeError,
+        UnpinnedServerHostError,
+        ReservedAuthFieldError,
+        SecuritySchemesLookupUnavailableError,
+        TooManyOpenSessionsError,
+        RecentlyRejectedError,
+    ) as exc:
+        mapped = _api_target_tool_error(exc, target)
+        assert mapped is not None
+        raise mapped from None
     except UnknownVendorError as exc:
         raise ToolError(
             CODE_RESOLVE_FAILED,
             f"cannot start a connect session for vendor {vendor!r}: {exc}",
             actionable='Pass a vendor registry key this deployment supports (e.g. "github"). '
-            "If the vendor is not in the registry, this tool cannot connect it: find the "
-            "API with search_catalog and ask your human operator to connect a credential "
-            "for it in the dashboard instead.",
+            "For an API outside the registry, call request_connection with api set to its "
+            "vendor/name/version instead (find it with search_catalog first); if this "
+            "deployment does not take API connect requests, ask your human operator to "
+            "connect a credential for it in the dashboard.",
             next_tool="search_catalog",
         ) from None
     except AmbiguousVendorError as exc:
@@ -1434,17 +1636,17 @@ async def handle_request_connection(
         candidates = await _ambiguous_vendor_candidates(env, exc.registration_ids)
         raise ToolError(
             CODE_RESOLVE_FAILED,
-            f"cannot start a connect session for vendor {vendor!r}: {exc}",
-            actionable=_ambiguous_vendor_actionable(vendor, listed=bool(candidates)),
+            f"cannot start a connect session for {target!r}: {exc}",
+            actionable=_ambiguous_vendor_actionable(vendor or exc.vendor, listed=bool(candidates)),
             details={"candidates": candidates} if candidates else None,
             next_tool="request_connection",
         ) from None
     except InvalidOAuthAppRegistrationError as exc:
         raise ToolError(
             CODE_RESOLVE_FAILED,
-            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            f"cannot start a connect session for {target!r}: {exc}",
             actionable="The registration_id does not name an active shared OAuth app for "
-            f'"{vendor}". Check the id with your human user, or call request_connection '
+            f'"{vendor or target}". Check the id with your human user, or call request_connection '
             "again without oauth_app_registration_id to see the shared apps that serve it.",
             next_tool="request_connection",
         ) from None
@@ -1455,7 +1657,7 @@ async def handle_request_connection(
         # connected here, so rediscover or route to the operator.
         raise ToolError(
             CODE_RESOLVE_FAILED,
-            f"cannot start a connect session for vendor {vendor!r}: {exc}",
+            f"cannot start a connect session for {target!r}: {exc}",
             actionable="This vendor's connect flow is not usable on this deployment, so "
             "this tool cannot connect it: find the API with search_catalog and ask your "
             "human operator to connect a credential for it in the dashboard instead.",
@@ -1472,20 +1674,21 @@ async def handle_request_connection(
 
     logger.info(
         "mcp_request_connection",
-        vendor=vendor,
+        target=target,
         session_id=created.session_id,
         flow=created.resolved_flow,
     )
-    return tool_result(
-        env.ctx,
-        {
-            "schema_version": SCHEMA_VERSION,
-            "session_id": created.session_id,
-            "approval_url": created.approval_url,
-            "resolved_flow": created.resolved_flow,
-            "instruction": _REQUEST_CONNECTION_INSTRUCTION,
-        },
-    )
+    payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "session_id": created.session_id,
+        "approval_url": created.approval_url,
+        "resolved_flow": created.resolved_flow,
+        "instruction": _REQUEST_CONNECTION_INSTRUCTION,
+    }
+    if _is_human_entry_flow(created.resolved_flow):
+        payload["instruction"] = _REQUEST_CONNECTION_HUMAN_ENTRY_INSTRUCTION
+        payload["next_tool"] = "execute"
+    return tool_result(env.ctx, payload)
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────

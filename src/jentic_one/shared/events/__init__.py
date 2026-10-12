@@ -26,6 +26,26 @@ _ZERO_TRACE_ID = "0" * 32
 MAX_EVENT_SUMMARY_FIELD_LEN = 128
 
 
+def summary_text(value: str) -> str:
+    """Bound one variable value interpolated into an event ``summary``.
+
+    ``Event.summary`` is ``String(512)`` and an oversized INSERT fails the
+    emit — which is not always survivable: :func:`emit_credential_access`
+    raises by contract (a failed credential-access audit must fail the
+    injection, not pass silently), and a failed flush aborts the caller's whole
+    Postgres transaction, so even a best-effort emit's swallow cannot contain
+    the damage. Every value an emitter draws from a wide or unbounded source —
+    a ``String(255)`` display name, an actor id minted by a trusted issuer, a
+    registry path template, an API identity tuple — passes through here, so a
+    summary's worst case is a sum of known widths rather than of column
+    guesses. The ellipsis marks the cut so an operator does not read a clipped
+    value as the whole one.
+    """
+    if len(value) <= MAX_EVENT_SUMMARY_FIELD_LEN:
+        return value
+    return value[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
+
+
 def summary_label(name: str | None, fallback_id: str) -> str:
     """Name an entity in an event ``summary``: its quoted display name, else its id.
 
@@ -33,9 +53,11 @@ def summary_label(name: str | None, fallback_id: str) -> str:
     id. Whitespace runs collapse to one space, control and format characters
     (Unicode ``Cc``/``Cf``, e.g. bidi overrides and zero-width marks) are
     dropped, and a single quote becomes a typographic one so a name cannot close
-    the quoting and read as part of the sentence. The name is bounded by
-    :data:`MAX_EVENT_SUMMARY_FIELD_LEN`, so a summary naming two entities stays
-    inside the column. Callers keep the id in the event's ``data``.
+    the quoting and read as part of the sentence. Name *and* fallback id are
+    bounded by :func:`summary_text` — so a label is never wider than
+    :data:`MAX_EVENT_SUMMARY_FIELD_LEN` + 2 whichever branch it takes, and a
+    summary naming two entities stays inside the column. Callers keep the
+    untruncated id in the event's ``data``.
     """
     visible = "".join(
         " " if ch.isspace() else ch
@@ -44,10 +66,8 @@ def summary_label(name: str | None, fallback_id: str) -> str:
     )
     clean = " ".join(visible.replace("'", "\u2019").split())
     if not clean:
-        return fallback_id
-    if len(clean) > MAX_EVENT_SUMMARY_FIELD_LEN:
-        clean = clean[: MAX_EVENT_SUMMARY_FIELD_LEN - 1] + "…"
-    return f"'{clean}'"
+        return summary_text(fallback_id)
+    return f"'{summary_text(clean)}'"
 
 
 def valid_trace_id_or_none(trace_id: str | None) -> str | None:
@@ -220,6 +240,7 @@ async def emit_credential_access(
     api_version: str,
     credential_owner: str | None = None,
     credential_name: str | None = None,
+    actor_name: str | None = None,
     trace_id: str | None = None,
 ) -> str:
     """Emit a credential-access audit event and return its ID.
@@ -235,17 +256,29 @@ async def emit_credential_access(
     the owner is unknown), so under owner-scoped event reads both the owner and
     the actor's owner see the use.
 
-    The summary names the credential by ``credential_name`` (the stored
-    ``Credential.name``), falling back to ``credential_id``; the id always
-    rides in ``data``.
+    The summary names BOTH entities in the sentence through
+    :func:`summary_label` — the credential by ``credential_name`` (the stored
+    ``Credential.name``) and the actor by ``actor_name`` (``Identity.actor_name``,
+    carried from whichever resolver authenticated the caller) — each falling
+    back to its id. The untruncated ids always ride in ``data``/``actor_id``.
+
+    Unlike most emits this one is **not** best-effort: it raises, and the raise
+    fails the whole credential injection. So every interpolated value is width
+    bounded (:func:`summary_text` / :func:`summary_label`) — the API identity
+    tuple alone is three ``String(100)`` columns, which with two named entities
+    would otherwise overflow ``Event.summary`` and take down credential
+    injection for a cosmetic reason.
     """
-    api = "/".join(part for part in (api_vendor, api_name, api_version) if part)
+    api = summary_text(
+        "/".join(part for part in (api_vendor, api_name, api_version) if part) or api_vendor
+    )
     credential = summary_label(credential_name, credential_id)
+    actor = summary_label(actor_name, actor_id)
     return await emit_event(
         session,
         type=EventType.CREDENTIAL_ACCESSED,
         severity=EventSeverity.INFO,
-        summary=f"Credential {credential} accessed by {actor_id} for {api or api_vendor}",
+        summary=f"Credential {credential} accessed by {actor} for {api}",
         created_by=credential_owner or actor_id,
         trace_id=trace_id,
         actor_id=actor_id,

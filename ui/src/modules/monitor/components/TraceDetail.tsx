@@ -40,10 +40,10 @@ import {
 import { StatusGlyph } from '@/modules/monitor/components/LogList';
 import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
 import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
-import { hasTrace, monitorHref } from '@/modules/monitor/lib/links';
+import { monitorHref } from '@/modules/monitor/lib/links';
 import { originLabel, EXECUTION_LABEL, EXECUTION_TONE } from '@/modules/monitor/lib/logVocabulary';
 import { AUDIT_READ, useCanAccess } from '@/shared/auth';
-import { formatOperation } from '@/shared/lib';
+import { formatOperation, hasTrace } from '@/shared/lib';
 
 function apiName(exec: ExecutionResponse): string {
 	return exec.api?.name ?? exec.api?.host ?? 'Unknown API';

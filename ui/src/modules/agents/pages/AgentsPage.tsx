@@ -22,8 +22,11 @@ import {
 	type KeyboardShortcut,
 } from '@/shared/ui';
 import { useHotkey } from '@/shared/hooks';
+import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
 import { ConnectRequestsSection } from '@/modules/agents/components/flat/ConnectRequestsSection';
 
 /** The connect session the approve wizard is open on. */
@@ -38,6 +41,7 @@ const SHORTCUTS: KeyboardShortcut[] = [
 	{ keys: ['a'], label: 'add API' },
 	{ keys: ['n'], label: 'new agent' },
 	{ keys: ['/'], label: 'search' },
+	{ keys: [commandChordLabel('k')], label: 'switch agent' },
 	{ keys: ['Esc'], label: 'close' },
 ];
 
@@ -78,10 +82,12 @@ export default function AgentsPage() {
 	// `connect_session_service.py::_approval_url_for`): `?approve=<sid>`. The
 	// owner or an org admin approves without a poll token; an older link that
 	// still carries `&poll_token=` keeps it for its holder. The params open the
-	// inventory's wizard in approve mode and are stripped from the URL at once
-	// (history, bookmarks and shared screens never keep them); the session is
-	// held in state until the wizard closes. A reload drops the prompt, and the
-	// "Waiting for you" section below re-offers it while the request is open.
+	// approve wizard on its own over this page — not over the credential
+	// inventory, so closing it lands back here — and are stripped from the URL
+	// at once (history, bookmarks and shared screens never keep them); the
+	// session is held in state until the wizard closes. A reload drops the
+	// prompt, and the "Waiting for you" section below re-offers it while the
+	// request is open.
 	const approveParam = searchParams.get('approve');
 	const pollTokenParam = searchParams.get('poll_token');
 	const [approvalSession, setApprovalSession] = useState<ApprovalSession | undefined>();
@@ -93,7 +99,6 @@ export default function AgentsPage() {
 					? { sessionId: approveParam, pollToken: pollTokenParam }
 					: { sessionId: approveParam },
 			);
-			setInventoryOpen(true);
 		}
 		// `replace`, and only these keys: `?agent=` must survive the rewrite.
 		setSearchParams(
@@ -214,13 +219,31 @@ export default function AgentsPage() {
 			<CredentialInventorySheet
 				open={inventoryOpen}
 				autoOpenCreate={inventoryWantsCreate}
-				approvalSession={approvalSession}
-				onApprovalClose={() => setApprovalSession(undefined)}
 				onClose={() => {
 					setInventoryOpen(false);
 					setInventoryWantsCreate(false);
 				}}
 			/>
+
+			{approvalSession && (
+				<CreateCredentialFlow
+					// A different request is a different wizard: remount so one
+					// session's review state never carries into the next.
+					key={approvalSession.sessionId}
+					open
+					approvalSession={approvalSession}
+					onClose={() => setApprovalSession(undefined)}
+					// Approve mode finishes inside the wizard; a create it hands back
+					// is just as finished.
+					onCreated={() => setApprovalSession(undefined)}
+					renderPostConnect={({ credentialId, boundAgentId }) => (
+						<PostConnectBindMore
+							credentialId={credentialId}
+							boundAgentId={boundAgentId}
+						/>
+					)}
+				/>
+			)}
 		</PageShell>
 	);
 }

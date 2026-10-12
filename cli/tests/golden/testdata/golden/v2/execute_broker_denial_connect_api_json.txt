@@ -1,0 +1,43 @@
+exit: 2
+--- stdout ---
+{
+  "body": {
+    "agent_directive": {
+      "human_readable_instruction": "No credential is provisioned for 'acme/pets' yet. Start the request yourself: run `jentic connect --api acme/pets/v1 --reason \"…\"` (or call the request_connection tool with api {\"vendor\": \"acme\", \"name\": \"pets\", \"version\": \"v1\"} and a reason), and relay the approval_url it returns to your operator — a human enters the credential in the browser, which can take a while, so end your turn and retry this call later. Only a human can approve.",
+      "parameters": {
+        "api": {
+          "name": "pets",
+          "vendor": "acme",
+          "version": "v1"
+        },
+        "api_served": false,
+        "connect": {
+          "api": {
+            "name": "pets",
+            "vendor": "acme",
+            "version": "v1"
+          }
+        },
+        "suggested_command": "jentic connect --api acme/pets/v1"
+      },
+      "strategy": "prompt_human"
+    },
+    "error_origin": "broker",
+    "status": 403,
+    "title": "No credential binding for this API",
+    "type": "no_credential_binding"
+  },
+  "headers": {
+    "Content-Length": "952",
+    "Content-Type": "application/problem+json",
+    "Jentic-Error-Origin": "broker"
+  },
+  "schema_version": "1",
+  "status": 403
+}
+--- stderr ---
+Denied — recovery required:
+  No credential is provisioned for 'acme/pets' yet. Start the request yourself: run `jentic connect --api acme/pets/v1 --reason "…"` (or call the request_connection tool with api {"vendor": "acme", "name": "pets", "version": "v1"} and a reason), and relay the approval_url it returns to your operator — a human enters the credential in the browser, which can take a while, so end your turn and retry this call later. Only a human can approve.
+  run: jentic connect --api acme/pets/v1
+  stuck? jentic doctor
+{"details":{"http_status":403},"error":"the broker denied this call before it reached the upstream API","error_code":"BROKER_DENIED","schema_version":"1"}

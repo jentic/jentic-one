@@ -111,10 +111,7 @@ async def revoke_active_grants_for_agent(
             actor_id=identity.sub,
             origin=identity.origin.value,
             audit_reason=audit_reason,
-            summary=(
-                f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
-                f"revoked because agent {summary_label(agent_name, agent_id)} {summary_cause}"
-            ),
+            revocation_cause=f"agent {summary_label(agent_name, agent_id)} {summary_cause}",
             event_reason=event_reason,
         )
     if grants:
@@ -252,9 +249,6 @@ class OAuthGrantService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
                 audit_reason="oauth grant revoked",
-                summary=(
-                    f"OAuth grant {grant_id} for client '{grant.oauth_client_id}' was revoked"
-                ),
             )
 
         revoked = await self._ctx.admin_db.run_in_transaction(_write)

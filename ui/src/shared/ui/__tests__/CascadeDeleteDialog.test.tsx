@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, userEvent, checkA11y, waitFor } from '@/__tests__/test-utils';
 import { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
 import type { CascadeDependentGroup, CascadeEntityType } from '@/shared/ui/CascadeDeleteDialog';
 
@@ -11,6 +11,7 @@ function Harness({
 	loading = false,
 	error,
 	confirmWord,
+	truncateName,
 	onConfirm = () => {},
 }: {
 	entityType?: CascadeEntityType;
@@ -20,6 +21,7 @@ function Harness({
 	loading?: boolean;
 	error?: Error | string | null;
 	confirmWord?: string;
+	truncateName?: boolean;
 	onConfirm?: () => void;
 }) {
 	const [open, setOpen] = useState(true);
@@ -39,12 +41,36 @@ function Harness({
 				loading={loading}
 				error={error}
 				confirmWord={confirmWord}
+				truncateName={truncateName}
 			/>
 		</>
 	);
 }
 
 describe('CascadeDeleteDialog', () => {
+	const longName = `credential-${'x'.repeat(120)}`;
+
+	it('prints the full entity name, wrapped, by default', () => {
+		renderWithProviders(<Harness entityName={longName} />);
+		const name = screen.getByText(longName);
+		expect(name).toHaveClass('break-words');
+		// Whole on the page: no truncation box.
+		expect(name.scrollWidth).toBeLessThanOrEqual(name.clientWidth + 1);
+		expect(name.closest('.truncate')).toBeNull();
+	});
+
+	it('cuts a long name to one line with a tooltip when the caller opts in', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<Harness entityType="agent" entityName={longName} truncateName />);
+		const name = screen.getByText(longName);
+		expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+		await waitFor(() => expect(name).toHaveAttribute('tabindex', '0'));
+		await user.hover(name);
+		const tooltip = await screen.findByRole('tooltip');
+		expect(tooltip).toHaveTextContent(longName);
+		// In the dialog's top layer, not under its backdrop.
+		expect(tooltip.closest('dialog')).not.toBeNull();
+	});
 	it('renders a type-specific title and generic warning when no dependents are given', () => {
 		renderWithProviders(<Harness entityType="credential" entityName="Stripe (prod)" />);
 		expect(screen.getByRole('heading', { name: 'Delete credential' })).toBeInTheDocument();

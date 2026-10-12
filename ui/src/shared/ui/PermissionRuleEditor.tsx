@@ -292,7 +292,7 @@ export function PermissionRuleEditor({
 											aria-pressed={selected}
 											className={
 												selected
-													? 'bg-primary text-background inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold'
+													? 'bg-primary text-primary-foreground inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold'
 													: 'bg-surface-chip text-foreground-sub hover:bg-surface-chip-active hover:text-foreground inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs transition-colors'
 											}
 										>

@@ -1,11 +1,17 @@
 /**
  * Setup-queue state — the pure layer behind the Add-APIs queue, which walks the
  * tray's preflighted batch one API at a time, in pick order. Every item stops in
- * a pane — nothing is bound without the operator confirming it — and, as there
- * is no `Skip for now`, an unsettled item is handed back on re-entry rather than
- * lost.
+ * a pane — nothing is bound without the operator confirming it — and an
+ * unsettled item is handed back on re-entry rather than lost.
+ *
+ * Each item takes two steps: the credential, then its access (the rules the
+ * binding starts with). The binding is made only when the access step is
+ * confirmed — bound, then its rules saved — so an item is never half-added
+ * behind the operator's back. "Set up later" on the access step adds it with
+ * no rules: bound, but every call denied until rules exist.
  */
 import type { Credential, SelectedApi } from '@/shared/credentials/api';
+import type { RulesPreset, ScopeReach } from '@/shared/credentials/lib/accessPresets';
 import type {
 	ExistingAccount,
 	PreflightItem,
@@ -16,6 +22,24 @@ import type {
  * request is in flight, `added`/`dropped` are terminal, `failed` is retryable but
  * not walked past. */
 export type QueueStatus = 'waiting' | 'active' | 'working' | 'added' | 'dropped' | 'failed';
+
+/** Which of an item's two steps its pane shows. */
+export type QueueStep = 'credential' | 'access';
+
+/** What an added item's binding was given: a preset, or nothing yet (`later`). */
+export type QueueAccess = RulesPreset | 'later';
+
+/** The credential picked on the credential step — not bound until the access
+ * step is confirmed. */
+export interface ChosenCredential {
+	credential_id: string;
+	name: string;
+	/** Its first sign-in is outstanding — run once the binding exists. */
+	connect: boolean;
+	/** How far its scope reaches, for the access presets' copy. Absent for a
+	 * credential this queue just created — the pane reads it from the credential. */
+	reach?: ScopeReach;
+}
 
 export interface QueueEntry {
 	/** `apiRefKey` — same identity the tray and the preflight use. */
@@ -44,6 +68,19 @@ export interface QueueEntry {
 	/** An honest qualifier on a terminal row — e.g. an OAuth sign-in that was
 	 *  never finished, which leaves the API attached but unable to serve. */
 	note?: string;
+	/** The pane's step; absent = the credential step. */
+	step?: QueueStep;
+	/** The credential the access step will bind. */
+	chosen?: ChosenCredential;
+	/** Bound, but its rules failed to save — the access step retries just the
+	 * rules (a second bind would be a 409). Settled: the binding exists. */
+	bound?: boolean;
+	/** Why the rules save failed, shown in the access step beside Retry. */
+	rulesError?: string;
+	/** What an added item's binding was given. */
+	access?: QueueAccess;
+	/** How many rules it was saved with (0 for `later`). */
+	ruleCount?: number;
 }
 
 /** Statuses the queue no longer ADVANCES past — a failure must not stall the
@@ -52,11 +89,16 @@ export function isTerminal(status: QueueStatus): boolean {
 	return status === 'added' || status === 'dropped' || status === 'failed';
 }
 
-/** Statuses that SETTLE what happens to the API: attached (`added`), or the
- * operator was told it would not be (`dropped`). `failed` is absent — nobody
- * chose it, so the item is still outstanding work. */
-function isResolved(status: QueueStatus): boolean {
-	return status === 'added' || status === 'dropped';
+/** Entries whose fate is SETTLED: attached (`added`, or bound with its rules
+ * still owed), or the operator was told it would not be (`dropped`). `failed`
+ * is absent — nobody chose it, so the item is still outstanding work. */
+function isResolved(entry: QueueEntry): boolean {
+	return entry.status === 'added' || entry.status === 'dropped' || entry.bound === true;
+}
+
+/** Attached to the agent — added, or bound with its rules still owed. */
+function isAttached(entry: QueueEntry): boolean {
+	return entry.status === 'added' || entry.bound === true;
 }
 
 /** Build the queue from the tray's batch, in pick order. */
@@ -91,7 +133,7 @@ export function reconcileQueue(entries: QueueEntry[], items: PreflightItem[]): Q
 	const kept: QueueEntry[] = [];
 	for (const entry of entries) {
 		const item = byKey.get(entry.key);
-		if (entry.status === 'added' || (entry.status === 'dropped' && !item)) {
+		if (isAttached(entry) || (entry.status === 'dropped' && !item)) {
 			kept.push(entry);
 			continue;
 		}
@@ -123,8 +165,8 @@ export interface QueueBackSeed {
 
 export function queueBackSeed(entries: QueueEntry[]): QueueBackSeed {
 	return {
-		picks: entries.filter((e) => !isResolved(e.status)).map((e) => e.api),
-		added: entries.filter((e) => e.status === 'added').map((e) => e.api),
+		picks: entries.filter((e) => !isResolved(e)).map((e) => e.api),
+		added: entries.filter(isAttached).map((e) => e.api),
 	};
 }
 
@@ -150,9 +192,49 @@ export function markActive(entries: QueueEntry[]): QueueEntry[] {
 	return patchEntry(entries, active.key, { status: 'active' });
 }
 
-/** Retry a failed item by sending it back to the front of the unfinished work. */
+/** Retry a failed item by sending it back to the front of the unfinished work,
+ * on its credential step with that choice still made. */
 export function retryEntry(entries: QueueEntry[], key: string): QueueEntry[] {
-	return patchEntry(entries, key, { status: 'waiting', error: undefined });
+	return patchEntry(entries, key, { status: 'waiting', error: undefined, step: 'credential' });
+}
+
+/** Move an item to its access step with the credential it will bind. */
+export function chooseCredential(
+	entries: QueueEntry[],
+	key: string,
+	chosen: ChosenCredential,
+): QueueEntry[] {
+	return patchEntry(entries, key, { step: 'access', chosen });
+}
+
+/** Back from the access step to the credential step. The access draft lives
+ * with the host and is kept; a bound item has no credential left to change. */
+export function backToCredential(entries: QueueEntry[], key: string): QueueEntry[] {
+	return entries.map((e) => (e.key === key && !e.bound ? { ...e, step: 'credential' } : e));
+}
+
+/** Closing with an item bound but its rules unsaved: it IS attached, with no
+ * rules — record it truthfully as added for later setup. */
+export function settleBoundOnClose(entries: QueueEntry[]): QueueEntry[] {
+	return entries.map((e) =>
+		e.bound && e.status !== 'added'
+			? {
+					...e,
+					status: 'added',
+					bound: undefined,
+					credentialId: e.chosen?.credential_id,
+					credentialName: e.chosen?.name,
+					access: 'later',
+					ruleCount: 0,
+					rulesError: undefined,
+				}
+			: e,
+	);
+}
+
+/** Added items with no rules — bound, but every call is denied. */
+export function blockedCount(entries: QueueEntry[]): number {
+	return entries.filter((e) => e.status === 'added' && e.access === 'later').length;
 }
 
 export interface QueueSummary {
@@ -214,7 +296,7 @@ export function dropWarning(label: string): string {
  * not {@link isTerminal}: a failed item dropped here is lost silently. */
 export function unfinishedItems(entries: QueueEntry[]): PreflightItem[] {
 	return entries
-		.filter((e) => !isResolved(e.status))
+		.filter((e) => !isResolved(e))
 		.map((e) => ({
 			key: e.key,
 			api: e.api,
@@ -235,7 +317,15 @@ export const QUEUE_STATUS_LABELS: Record<QueueStatus, string> = {
 	failed: 'Failed',
 };
 
-/** What a freshly added API can do — a binding is created with no rules, the
- * broker's default-deny state, so the agent reaches it only once rules exist. */
+/** What a freshly added API can do: it gets its access rules as it is added; one
+ * set up later has none — the broker's default deny — until rules are added. */
 export const QUEUE_RULES_NOTICE =
-	'Added APIs start with no access rules, so calls are blocked until you add rules on the API.';
+	'Each API gets its access rules as it is added. One you set up later stays blocked — every call is denied — until you add rules on the API.';
+
+/** Row copy for what an added item's binding was given. */
+export const QUEUE_ACCESS_LABELS: Record<QueueAccess, string> = {
+	all: 'Allow all',
+	read: 'Read-only',
+	custom: 'Custom rules',
+	later: 'Blocked · no rules',
+};

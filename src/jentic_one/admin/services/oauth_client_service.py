@@ -577,10 +577,7 @@ class OAuthClientService:
                     actor_id=identity.sub,
                     origin=identity.origin.value,
                     audit_reason="oauth grant revoked: client deleted",
-                    summary=(
-                        f"OAuth grant {grant.id} for client '{grant.oauth_client_id}' was "
-                        f"revoked because the client was deleted"
-                    ),
+                    revocation_cause="the client was deleted",
                     event_reason=OAUTH_CLIENT_DELETED_REVOCATION_REASON,
                 )
             swept_access = await AccessTokenRepository.revoke_by_client(session, public_client_id)

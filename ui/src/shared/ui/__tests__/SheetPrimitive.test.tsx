@@ -131,6 +131,65 @@ describe('SheetPrimitive', () => {
 		expect(blurs).not.toHaveBeenCalled();
 	});
 
+	it('hands focus back to the trigger after a host swaps initialFocus mid-entrance', async () => {
+		// On a loaded runner the double-rAF entrance outlasts the next click: a
+		// tabbed host (the New agent panel) swaps `initialFocus` while the sheet
+		// is still entering, with focus already on a control inside it. The
+		// return target must stay the trigger, not that control — it unmounts
+		// with the sheet, leaving focus on <body>.
+		function TabbedHost() {
+			const [open, setOpen] = useState(false);
+			const [tab, setTab] = useState<'a' | 'b'>('a');
+			const aRef = useRef<HTMLInputElement>(null);
+			const bRef = useRef<HTMLInputElement>(null);
+			return (
+				<>
+					<button type="button" onClick={() => setOpen(true)}>
+						Open
+					</button>
+					<SheetPrimitive
+						open={open}
+						onClose={() => setOpen(false)}
+						ariaLabel="Tabbed"
+						initialFocus={tab === 'a' ? aRef : bRef}
+					>
+						<button type="button" onClick={() => setTab('b')}>
+							Tab B
+						</button>
+						<button type="button" onClick={() => setOpen(false)}>
+							Close
+						</button>
+						<input aria-label="A" ref={aRef} />
+						<input aria-label="B" ref={bRef} />
+					</SheetPrimitive>
+				</>
+			);
+		}
+		const user = userEvent.setup();
+		renderWithProviders(<TabbedHost />);
+		const trigger = screen.getByRole('button', { name: 'Open' });
+		// Hold every frame so the sheet stays `entering` until released.
+		const held: FrameRequestCallback[] = [];
+		const realRaf = window.requestAnimationFrame;
+		window.requestAnimationFrame = (cb) => held.push(cb);
+		try {
+			await user.click(trigger);
+			await user.click(await screen.findByRole('button', { name: 'Tab B' }));
+		} finally {
+			window.requestAnimationFrame = realRaf;
+		}
+		held.splice(0).forEach((cb) => realRaf(cb));
+		await waitFor(() =>
+			expect(screen.getByRole('dialog', { name: 'Tabbed' }).className).toContain(
+				'translate-x-0',
+			),
+		);
+
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tabbed' })).toBeNull());
+		await waitFor(() => expect(trigger).toHaveFocus());
+	});
+
 	it('stays mounted through the exit animation, then unmounts and calls onAfterClose', async () => {
 		const onAfterClose = vi.fn();
 		const { rerender } = renderWithProviders(

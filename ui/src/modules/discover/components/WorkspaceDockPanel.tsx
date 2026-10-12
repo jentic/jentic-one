@@ -687,7 +687,7 @@ export const WorkspaceDockPanel = memo(function WorkspaceDockPanel({
 			data-drag={phase}
 		>
 			<div className="mb-3.5 flex min-w-0 shrink-0 items-baseline gap-2 px-[18px]">
-				<h2 className="font-heading shrink-0 text-[15.5px] font-bold text-white">
+				<h2 className="font-heading text-foreground shrink-0 text-[15.5px] font-bold">
 					Your workspace
 				</h2>
 				<WorkspaceApiCount digest={digest} />

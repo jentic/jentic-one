@@ -10,6 +10,7 @@ from jentic_one.control.repos import (
     CredentialRepository,
     OAuthTokenRepository,
 )
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.services.credentials.errors import CredentialNotFoundError
 from jentic_one.control.services.credentials.schemas.connect import (
     ConnectCallback,
@@ -28,6 +29,10 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger()
+
+# Bound agents read for the re-authorize re-check: the permitted agent plus any
+# other is enough to refuse.
+_SOLE_BINDING_PROBE = 2
 
 
 class ConnectFlowError(Exception):
@@ -106,6 +111,8 @@ class ConnectService:
             # theme-8 Phase 4): that actor can no longer own a credential.
             raise ConnectFlowError(f"Unsupported actor_type in state: {state.actor_type}") from exc
         try:
+            if state.sole_agent_id is not None:
+                await self._require_sole_binding(state.credential_id, state.sole_agent_id)
             provider = self._ctx.providers.get(state.provider)
             result = await provider.complete_connect(self._ctx, state=state, callback=callback)
 
@@ -191,6 +198,25 @@ class ConnectService:
             actor_type=actor_type,
         )
         return state.credential_id
+
+    async def _require_sole_binding(self, credential_id: str, sole_agent_id: str) -> None:
+        """Refuse a re-authorize whose credential gained another bound agent meanwhile.
+
+        Checked before the code is exchanged, so the wider grant is never
+        stored. Suspended bindings count: lifting the suspension would hand
+        that agent the wider scopes too.
+        """
+        async with self._ctx.admin_db.session() as admin_session:
+            rows = await PrerequisiteRepository.list_agents_for_credential(
+                admin_session, credential_id=credential_id, limit=_SOLE_BINDING_PROBE
+            )
+        if any(row.agent_id != sole_agent_id for row in rows):
+            logger.warning(
+                "oauth_reauthorize_refused_other_agent_bound",
+                credential_id=credential_id,
+                agent_id=sole_agent_id,
+            )
+            raise ConnectFlowError("re-authorize refused: another agent is bound to the credential")
 
     async def _emit_connect_telemetry(
         self, *, type: str, summary: str, created_by: str, actor_type: ActorType

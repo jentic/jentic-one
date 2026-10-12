@@ -41,6 +41,14 @@ export interface DrainedList<T> {
 	error: Error | null;
 	/** True only when every page loaded successfully — the list is whole. */
 	complete: boolean;
+	/**
+	 * The caller may not read this list at all (no permission), so there are no
+	 * rows and never will be. Distinct from {@link error}: nothing failed and
+	 * there is nothing to retry, so a surface degrades quietly instead of
+	 * offering a "Try again" that cannot succeed. Absent on reads that have no
+	 * permission gate of their own.
+	 */
+	forbidden?: boolean;
 	/** Retry after a failure; a success resumes the eager drain. */
 	retry: () => void;
 	/** Re-read every page already loaded, for a surface with a refresh verb.

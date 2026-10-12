@@ -7,6 +7,9 @@ worker generations read during a rolling deploy.
 
 from typing import Any
 
+import pytest
+
+from jentic_one.broker.core.proxy_headers import is_replay_header, replay_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _async_job_payload
 from jentic_one.shared.jobs.operation_payload import operation_from_job_payload
@@ -73,3 +76,70 @@ def test_payload_carries_no_toolkit_and_keeps_server_variables() -> None:
     assert payload["server_variables"] == {"region": "eu"}
     assert payload["server_variable_defaults"] == {"tld": "com"}
     assert payload["server_variables_unresolved"] is True
+
+
+def test_payload_keeps_only_the_replay_headers() -> None:
+    """Content-Type, version headers and friends ride along for the run; the
+    caller's credentials, broker steering headers and arbitrary headers never
+    reach the stored payload."""
+    inbound = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "If-Match": '"v1"',
+        "Notion-Version": "2022-06-28",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Authorization": "Bearer agent-token",
+        "Proxy-Authorization": "Basic abc",
+        "Prefer": "respond-async",
+        "Cookie": "sid=1",
+        "Connection": "keep-alive",
+        "Jentic-Credential-Id": "cred_1",
+        "X-Custom": "1",
+        "Content-Length": "9",
+    }
+    payload = _async_job_payload(
+        _ctx(method="POST"),
+        execution_id="exec_1",
+        origin="api",
+        body=b'{"a": 1}',
+        headers=replay_headers(inbound),
+    )
+
+    assert payload["headers"] == {
+        "content-type": "application/json",
+        "accept": "application/json",
+        "if-match": '"v1"',
+        "notion-version": "2022-06-28",
+        "x-github-api-version": "2022-11-28",
+    }
+
+
+def test_payload_omits_headers_when_none_are_kept() -> None:
+    payload = _async_job_payload(_ctx(), execution_id="exec_1", origin="api", headers={})
+
+    assert "headers" not in payload
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Notion-Version", "Stripe-Version", "X-GitHub-Api-Version", "Box-Version", "x-acme-version"],
+)
+def test_any_vendor_version_header_replays(name: str) -> None:
+    assert is_replay_header(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Authorization",
+        "Cookie",
+        "Proxy-Authorization",
+        "Connection",
+        "Version",
+        "Jentic-Api-Version",
+        "X-Jentic-Version",
+        "X-Api-Key",
+    ],
+)
+def test_credentials_hop_by_hop_and_jentic_headers_never_replay(name: str) -> None:
+    assert not is_replay_header(name)

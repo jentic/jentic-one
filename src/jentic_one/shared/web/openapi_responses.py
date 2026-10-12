@@ -75,6 +75,13 @@ STATUS_EXAMPLES: dict[str, dict[str, Any]] = {
         "instance": "/example/path",
         "errors": [{"detail": "Field 'name' must not be blank.", "pointer": "#/name"}],
     },
+    "429": {
+        "type": "rate_limit_exceeded",
+        "title": "Too Many Requests",
+        "status": 429,
+        "detail": "Too many requests; retry after the indicated delay.",
+        "instance": "/example/path",
+    },
     "500": {
         "type": "server_error",
         "title": "Internal Server Error",
@@ -139,3 +146,8 @@ def conflict(description: str = "Conflict") -> dict[int | str, dict[str, Any]]:
 def gone(description: str = "Gone") -> dict[int | str, dict[str, Any]]:
     """A 410 entry for one-time / self-closing routes (e.g. first-run setup)."""
     return {410: _entry(description)}
+
+
+def too_many_requests(description: str = "Too Many Requests") -> dict[int | str, dict[str, Any]]:
+    """A 429 entry for routes with a rate limit or a quota."""
+    return {429: _entry(description)}

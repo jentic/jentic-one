@@ -118,3 +118,40 @@ describe('#511 — no foreign-module query-key literals', () => {
 		expect(ruleIds(messages)).not.toContain('no-restricted-syntax');
 	});
 });
+
+describe('native title tooltips (opted-in modules)', () => {
+	const banned = (messages: Awaited<ReturnType<typeof lint>>) =>
+		messages.some((m) => m.message.includes('Native `title` tooltips are banned'));
+
+	it('rejects title= on an intrinsic element', async () => {
+		const messages = await lint(
+			'src/modules/agents/components/Bad.tsx',
+			'export const X = () => <span title="hint">x</span>;\n',
+		);
+		expect(banned(messages)).toBe(true);
+	});
+
+	it('rejects title= on a member-expression element (motion.span)', async () => {
+		const messages = await lint(
+			'src/modules/agents/components/Bad.tsx',
+			'import { motion } from \'framer-motion\';\nexport const X = () => <motion.span title="hint">x</motion.span>;\n',
+		);
+		expect(banned(messages)).toBe(true);
+	});
+
+	it("accepts a component's own title prop (a heading, not a hint)", async () => {
+		const messages = await lint(
+			'src/modules/agents/components/Good.tsx',
+			'import { EmptyState } from \'@/shared/ui\';\nexport const X = () => <EmptyState title="Nothing here" />;\n',
+		);
+		expect(banned(messages)).toBe(false);
+	});
+
+	it('leaves modules that have not opted in alone', async () => {
+		const messages = await lint(
+			'src/modules/discover/components/Fine.tsx',
+			'import { motion } from \'framer-motion\';\nexport const X = () => <motion.span title="hint">x</motion.span>;\n',
+		);
+		expect(banned(messages)).toBe(false);
+	});
+});

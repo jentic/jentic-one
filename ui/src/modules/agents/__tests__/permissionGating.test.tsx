@@ -79,7 +79,16 @@ function seedViewer(permissions: readonly string[]) {
 const BINDING_VIEWERS: Record<string, readonly string[]> = {
 	...VIEWERS,
 	'member without credentials:write': without('credentials:write'),
-	'member with agents:read only': ['agents:read', 'owner:credentials:read'],
+	// Reads only — no write anywhere. `apis:read` is a READ and belongs here:
+	// `GET /apis` requires it, and the page sends that request only to a viewer
+	// who holds it (#1543), so a fixture that omits it models a viewer who cannot
+	// resolve an API's display name at all — a different spec from this one.
+	'member with reads only': [
+		'agents:read',
+		'apis:read',
+		'credentials:read',
+		'owner:credentials:read',
+	],
 };
 
 const canManageAgents = (permissions: readonly string[]) =>
@@ -314,9 +323,10 @@ describe("the dock sheets' writes and Add APIs follow agents:write", () => {
 			expect(add).toBeEnabled();
 		} else {
 			expect(add).toBeDisabled();
+			// Beside the tree's button, and as the card button's Tooltip.
 			expect(
-				screen.getByText('Adding APIs needs permission to manage agents.'),
-			).toBeInTheDocument();
+				screen.getAllByText('Adding APIs needs permission to manage agents.').length,
+			).toBeGreaterThanOrEqual(1);
 		}
 	});
 });
@@ -395,15 +405,22 @@ describe('"Recent changes" reads the audit log only with audit:read', () => {
 	});
 });
 
-describe("a tile's pause and resume follow agents:write", () => {
+/** The Slack row's Manage access icon (its label may name the credential). */
+const MANAGE_SLACK = /^Manage access for Slack/;
+
+describe("a row's pause and resume follow agents:write", () => {
 	it.each(Object.entries(BINDING_VIEWERS))('%s', async (_label, permissions) => {
 		seedTiles();
 		seedViewer(permissions);
 		const writes = trackBindingWrites();
+		const user = userEvent.setup();
 		await renderReady('/?agent=agnt_active_1');
 		await waitFor(() => expect(screen.getAllByTestId('api-tile')).toHaveLength(2));
-		// Opening a tile's access details is open to anyone who sees the agent.
-		expect(screen.getByRole('button', { name: 'Manage Slack access' })).toBeInTheDocument();
+		// Opening a row's access details is open to anyone who sees the agent.
+		expect(screen.getByRole('button', { name: MANAGE_SLACK })).toBeInTheDocument();
+		// Pause lives in the row's reveal: pin it open first.
+		await user.click(screen.getByRole('button', { name: 'Slack details' }));
+		await screen.findAllByTestId('api-row-reveal');
 
 		if (canManageAgents(permissions)) {
 			expect(screen.getByRole('button', { name: 'Pause Slack access' })).toBeInTheDocument();
@@ -423,10 +440,38 @@ describe("a tile's pause and resume follow agents:write", () => {
 		const writes = trackBindingWrites();
 		const user = userEvent.setup();
 		await renderReady('/?agent=agnt_active_1');
+		await user.click(await screen.findByRole('button', { name: 'Slack details' }));
 		await user.click(await screen.findByRole('button', { name: 'Pause Slack access' }));
 		await waitFor(() =>
 			expect(writes).toContain('DELETE /agents/agnt_active_1/credentials/cred_slack_1'),
 		);
+	});
+
+	/**
+	 * Pins #1543 item 9. `GET /apis` needs `apis:read`; the registry join is an
+	 * ENRICHMENT (it supplies an API's display name and operation count), never
+	 * the source of the tiles themselves, which come from the agent's bindings.
+	 * A viewer without the permission must still see the grid, not an error card
+	 * whose "Try again" can never succeed — a 403 is a standing fact about the
+	 * viewer, not a transient failure.
+	 */
+	it('still draws the tiles for a viewer who may not read /apis, and sends no request', async () => {
+		seedTiles();
+		const paths = trackRequests();
+		// Everything a member holds except `apis:read`.
+		seedViewer(without('apis:read'));
+		await renderReady('/?agent=agnt_active_1');
+
+		// The grid is intact — the bindings alone are enough to draw it.
+		await waitFor(() => expect(screen.getAllByTestId('api-tile')).toHaveLength(2));
+		// No dead end: no error card, no unreachable retry.
+		expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+		expect(
+			screen.queryByText(/Couldn't load the credential and API details/),
+		).not.toBeInTheDocument();
+		// And the forbidden read is never attempted, so nothing 403s.
+		await new Promise((r) => setTimeout(r, 300));
+		expect(paths).not.toContain('/apis');
 	});
 });
 
@@ -437,7 +482,7 @@ describe("the access sidebar's verbs follow agents:write and credentials:write",
 		const writes = trackBindingWrites();
 		const user = userEvent.setup();
 		await renderReady('/?agent=agnt_active_1');
-		await user.click(await screen.findByRole('button', { name: 'Manage Slack access' }));
+		await user.click(await screen.findByRole('button', { name: MANAGE_SLACK }));
 		const sidebar = within(await screen.findByRole('dialog', { name: 'Slack' }));
 		// The rule tester and the credential id are reads, open to everyone.
 		expect(await sidebar.findByRole('region', { name: 'Test a request' })).toBeInTheDocument();
@@ -500,7 +545,7 @@ describe("a shared credential's binding rules are read-only for a non-owner", ()
 		const writes = trackBindingWrites();
 		const user = userEvent.setup();
 		await renderReady('/?agent=agnt_active_1');
-		await user.click(await screen.findByRole('button', { name: 'Manage Slack access' }));
+		await user.click(await screen.findByRole('button', { name: MANAGE_SLACK }));
 		const sidebar = within(await screen.findByRole('dialog', { name: 'Slack' }));
 		await sidebar.findByText('Permission rules for Slack bot token');
 		expect(sidebar.queryByRole('button', { name: /Save rules/ })).toBeNull();

@@ -24,11 +24,15 @@ from sqlalchemy import delete
 
 from jentic_one.broker.core.exceptions import ActionDeniedError, CredentialNotProvisionedError
 from jentic_one.broker.repos.credential_binding_resolver import CredentialBindingResolver
-from jentic_one.broker.repos.open_connect_session import OpenConnectSessionReader
+from jentic_one.broker.repos.open_connect_session import (
+    _OPEN_SESSION_FOR_API,
+    OpenConnectSessionReader,
+)
 from jentic_one.broker.services.credentials.orchestrator import CredentialService
 from jentic_one.broker.services.execution.authorization import derive_credential_bindings
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.repos.connect_session_repo import LIVE_STATES
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import resolved_auth_base_url
 from jentic_one.shared.context import Context
@@ -123,11 +127,18 @@ async def test_reader_finds_a_created_session(
     assert await _find(control_db) == "cs_open_created"
 
 
-async def test_reader_finds_a_polling_session(
-    control_db: DatabaseSession, clean_sessions: None
+@pytest.mark.parametrize("state", ["polling", "awaiting_app"])
+async def test_reader_finds_a_live_session(
+    control_db: DatabaseSession, clean_sessions: None, state: str
 ) -> None:
-    await _seed_session(control_db, session_id="cs_open_polling", state="polling")
-    assert await _find(control_db) == "cs_open_polling"
+    await _seed_session(control_db, session_id=f"cs_open_{state}", state=state)
+    assert await _find(control_db) == f"cs_open_{state}"
+
+
+def test_open_states_mirror_the_control_live_states() -> None:
+    """The broker's raw-SQL state list tracks the control repo's ``LIVE_STATES``."""
+    for state in LIVE_STATES:
+        assert f"'{state}'" in str(_OPEN_SESSION_FOR_API)
 
 
 @pytest.mark.parametrize("state", ["confirmed", "connected", "expired", "failed"])

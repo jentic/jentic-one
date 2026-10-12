@@ -641,6 +641,25 @@ jobs:
           done
           echo "app did not become ready"; cat /tmp/jentic-app.log; exit 1
 
+      - name: Start the standalone broker
+        # The broker is its own surface (not part of the combined app). The
+        # #1543 follow-ups e2e drives a real credential access through it to a
+        # loopback upstream the spec serves itself, so loopback egress is
+        # admitted. Same reload/process-group handling as the app above.
+        env:
+          JENTIC__SERVER__RELOAD: "false"
+          JENTIC__BROKER__EGRESS__ALLOWED_PRIVATE_SUBNETS: "127.0.0.0/8"
+        run: |
+          setsid make start-broker > /tmp/jentic-broker.log 2>&1 &
+          echo "BROKER_PGID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8100/health >/dev/null 2>&1; then
+              echo "broker ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "broker did not become ready"; cat /tmp/jentic-broker.log; exit 1
+
       - name: Run real-backend e2e
         working-directory: ui
         run: npm run e2e:docker
@@ -659,6 +678,10 @@ jobs:
         if: failure()
         run: cat /tmp/jentic-app.log || true
 
+      - name: Dump broker log on failure
+        if: failure()
+        run: cat /tmp/jentic-broker.log || true
+
       - name: Dump Flow-3 upstream log on failure
         if: failure()
         run: cat /tmp/flow3-upstream.log || true
@@ -671,6 +694,13 @@ jobs:
           # make/uv/python together. Negative PID targets the process group.
           if [ -n "${APP_PGID:-}" ]; then
             kill -TERM "-${APP_PGID}" 2>/dev/null || true
+          fi
+
+      - name: Stop the broker
+        if: always()
+        run: |
+          if [ -n "${BROKER_PGID:-}" ]; then
+            kill -TERM "-${BROKER_PGID}" 2>/dev/null || true
           fi
 
       - name: Stop the Flow-3 fixture upstream

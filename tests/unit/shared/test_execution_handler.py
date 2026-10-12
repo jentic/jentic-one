@@ -749,3 +749,43 @@ async def test_handler_substitutes_server_variable_defaults() -> None:
     req = executor.last_request
     assert req is not None
     assert req.url == "https://api.example.com/us/things"
+
+
+@pytest.mark.asyncio
+async def test_handler_replays_payload_headers_under_injected_credentials() -> None:
+    """The broker-kept request headers reach the upstream; injected auth wins a clash."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(
+        InjectedAuth(headers={"Authorization": "Bearer tok"}, query_params={}, cookies={})
+    )
+    handler = ExecutionHandler(
+        executor=executor,
+        credential_injector=injector,  # pragma: allowlist secret
+        execution_authorizer=_FakeAuthorizer(),
+    )
+
+    await handler.execute(
+        "job_hdr",
+        _FakeSession(),
+        payload=_payload(
+            method="POST",
+            body_b64="eyJhIjoxfQ==",
+            headers={
+                "content-type": "application/json",
+                "stripe-version": "2024-06-20",
+                "authorization": "Bearer agent",
+            },
+        ),
+        created_by="usr_test",
+        actor_type="user",
+    )
+
+    req = executor.last_request
+    assert req is not None
+    assert req.headers["content-type"] == "application/json"
+    assert req.headers["stripe-version"] == "2024-06-20"
+    assert req.body == b'{"a":1}'
+    assert req.headers["Authorization"] == "Bearer tok"
+    assert "authorization" not in req.headers

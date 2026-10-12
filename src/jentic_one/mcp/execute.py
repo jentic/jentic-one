@@ -434,21 +434,46 @@ def _connect_registration_id(directive: dict[str, Any] | None) -> str:
     return registration_id if isinstance(registration_id, str) else ""
 
 
+def _connect_api(directive: dict[str, Any] | None) -> dict[str, str] | None:
+    """The registry API a denial directive names as its connect target, or ``None``.
+
+    ``parameters.connect.api`` (``{vendor, name, version}``) is set when the
+    deployment takes connect requests for any registry API and no vendor key
+    covers the denied one (Go: ``connectAPI``).
+    """
+    if directive is None:
+        return None
+    parameters = directive.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    connect = parameters.get("connect")
+    if not isinstance(connect, dict):
+        return None
+    api = connect.get("api")
+    if not isinstance(api, dict):
+        return None
+    fields = {k: api.get(k) for k in ("vendor", "name", "version")}
+    if not all(isinstance(v, str) and v for v in fields.values()):
+        return None
+    return {k: str(v) for k, v in fields.items()}
+
+
 def _request_connection_arguments(directive: dict[str, Any] | None) -> dict[str, Any]:
     """The ``request_connection`` arguments a denial directive fills (Go twin).
 
-    The ``vendor`` key, with ``oauth_app_registration_id`` when the directive
-    pins the one shared app covering the API. The directive's
-    ``suggested_rules`` stay in ``agent_directive``.
+    The ``vendor`` key — with ``oauth_app_registration_id`` when the directive
+    pins the one shared app covering the API — or else the ``api`` identity.
+    The directive's ``suggested_rules`` stay in ``agent_directive``.
     """
     key = _connect_vendor_key(directive)
-    if not key:
-        return {}
-    arguments = {"vendor": key}
-    registration_id = _connect_registration_id(directive)
-    if registration_id:
-        arguments["oauth_app_registration_id"] = registration_id
-    return arguments
+    if key:
+        arguments = {"vendor": key}
+        registration_id = _connect_registration_id(directive)
+        if registration_id:
+            arguments["oauth_app_registration_id"] = registration_id
+        return arguments
+    api = _connect_api(directive)
+    return {"api": api} if api else {}
 
 
 def _denial_next_tool(problem_type: str, directive: dict[str, Any] | None) -> str:

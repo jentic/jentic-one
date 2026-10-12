@@ -225,6 +225,20 @@ async def test_broker_denial_with_directive_is_the_coded_soft_error(broker) -> N
             "request_connection",
         ),
         (
+            403,
+            {
+                "type": "no_credential_binding",
+                "agent_directive": {
+                    "instruction": "Run `jentic connect --api acme/pets/v1`.",
+                    "parameters": {
+                        "suggested_command": "jentic connect --api acme/pets/v1",
+                        "connect": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}},
+                    },
+                },
+            },
+            "request_connection",
+        ),
+        (
             424,
             {
                 "type": "credential_not_provisioned",
@@ -336,6 +350,13 @@ async def test_denial_next_tool_keys_on_problem_type(
             {"vendor": "google"},
         ),
         ({"suggested_command": "jentic connect acme"}, None),
+        (
+            {
+                "suggested_command": "jentic connect --api acme/pets/v1",
+                "connect": {"api": {"vendor": "acme", "name": "pets", "version": "v1"}},
+            },
+            {"api": {"vendor": "acme", "name": "pets", "version": "v1"}},
+        ),
     ],
 )
 async def test_denial_fills_request_connection_arguments(
@@ -343,7 +364,8 @@ async def test_denial_fills_request_connection_arguments(
 ) -> None:
     """A provisioning denial fills ``next_tool_arguments`` from the directive's
     ``parameters.connect.vendor_key``, with ``oauth_app_registration_id`` when
-    it pins a ``registration_id``; a directive naming only the CLI
+    it pins a ``registration_id`` (else ``parameters.connect.api`` as
+    ``api``); a directive naming only the CLI
     ``suggested_command`` (an older broker) fills none. Go twin:
     ``TestMCPExecute_DenialFillsRequestConnectionArguments``."""
     directive = {"instruction": "Run `jentic connect google`.", "parameters": parameters}

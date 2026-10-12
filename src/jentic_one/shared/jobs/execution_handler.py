@@ -169,7 +169,9 @@ class ExecutionHandler:
             allowed = verdict.allowed_credential_ids
             pinned_credential_id = verdict.credential_id
 
-        headers: dict[str, str] = {}
+        # The request headers the broker kept for the run (Content-Type and
+        # friends); injected credentials are applied over them.
+        headers: dict[str, str] = _str_map(payload.get("headers")) or {}
         credential_id: str | None = None
         credential_name: str | None = None
         signing = None
@@ -190,7 +192,8 @@ class ExecutionHandler:
                 server_variables_unresolved=server_variables_unresolved,
             )
             applied = _apply_injection(upstream_url, injection, server_variable_defaults)
-            upstream_url, headers = applied.url, applied.headers
+            upstream_url = applied.url
+            headers = _merge_headers(headers, applied.headers)
             credential_id = injection.credential_id
             credential_name = injection.credential_name
             signing = injection.signing
@@ -439,6 +442,14 @@ def _str_map(value: Any) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
     return {str(k): str(v) for k, v in value.items()} or None
+
+
+def _merge_headers(replayed: dict[str, str], injected: dict[str, str]) -> dict[str, str]:
+    """``replayed`` overlaid by ``injected``; an injected name wins in any case."""
+    injected_names = {name.lower() for name in injected}
+    merged = {k: v for k, v in replayed.items() if k.lower() not in injected_names}
+    merged.update(injected)
+    return merged
 
 
 def _apply_injection(

@@ -38,6 +38,8 @@ class ConnectSessionOutcome(ControlBase):
     __table_args__ = (
         Index("ix_connect_session_outcomes_session_id", "session_id", unique=True),
         Index("ix_connect_session_outcomes_ended_at", "ended_at"),
+        # Serves the rejection-cooldown lookup (an agent's recent outcomes).
+        Index("ix_connect_session_outcomes_agent_ended_at", "agent_id", "ended_at"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -63,6 +65,9 @@ class ConnectSessionOutcome(ControlBase):
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     # Machine-readable terminal code for ``failed`` (e.g. ``oauth_app_changed``).
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The credential a ``connected`` session left the agent bound to. FK-less:
+    # the outcome outlives it. NULL for every other outcome.
+    credential_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # The session's poll-token digest, so the token holder can still learn
     # the outcome once the session row is gone.
     poll_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)

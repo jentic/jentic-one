@@ -1,3 +1,4 @@
+import { createContext, useContext, type ReactNode } from 'react';
 import { Bot } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { avatarToneIndex, avatarToneStyle } from '@/shared/ui/avatarPalette';
@@ -16,11 +17,21 @@ import { avatarToneIndex, avatarToneStyle } from '@/shared/ui/avatarPalette';
 
 export type AgentBadgeSize = 'xs' | 'sm' | 'md' | 'lg';
 
+export type AgentBadgeShape = 'square' | 'circle';
+
 const SIZE_CLASSES: Record<AgentBadgeSize, string> = {
-	xs: 'h-5 w-5 rounded-[6px] text-[8.5px]',
-	sm: 'h-7 w-7 rounded-[7px] text-[10.5px]',
-	md: 'h-9 w-9 rounded-field text-xs',
-	lg: 'h-11 w-11 rounded-[11px] text-sm',
+	xs: 'h-5 w-5 text-[8.5px]',
+	sm: 'h-7 w-7 text-[10.5px]',
+	md: 'h-9 w-9 text-xs',
+	lg: 'h-11 w-11 text-sm',
+};
+
+/** The square's corner per size; a circle is round at every size. */
+const SQUARE_RADIUS: Record<AgentBadgeSize, string> = {
+	xs: 'rounded-[6px]',
+	sm: 'rounded-[7px]',
+	md: 'rounded-field',
+	lg: 'rounded-[11px]',
 };
 
 const ICON_SIZE: Record<AgentBadgeSize, string> = {
@@ -42,6 +53,28 @@ export function agentInitials(name: string | undefined): string {
 	return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }
 
+/**
+ * Fleet-aware initials by actor id (see `smartInitials`), so near-identical
+ * names read apart on every badge under the provider. A badge whose id is not
+ * in the map falls back to {@link agentInitials}.
+ */
+const AgentInitialsContext = createContext<ReadonlyMap<string, string> | null>(null);
+
+export function AgentInitialsProvider({
+	initials,
+	children,
+}: {
+	initials: ReadonlyMap<string, string>;
+	children: ReactNode;
+}) {
+	return (
+		<AgentInitialsContext.Provider value={initials}>{children}</AgentInitialsContext.Provider>
+	);
+}
+
+/** Three or four letters step the glyph down so they still fit the tile. */
+const GLYPH_SCALE: Record<number, string | undefined> = { 3: '0.84em', 4: '0.7em' };
+
 interface AgentBadgeProps {
 	/** Stable id used to derive the deterministic accent colour. */
 	id?: string;
@@ -50,10 +83,14 @@ interface AgentBadgeProps {
 	/** Actor noun for the accessible label (e.g. "Agent"). */
 	kind?: string;
 	size?: AgentBadgeSize;
+	/** `circle` sets an agent apart from the rounded-square API marks beside it. */
+	shape?: AgentBadgeShape;
 	/** When provided, the badge renders as a button (e.g. navigate to detail). */
 	onClick?: () => void;
 	/** Dim the badge (e.g. an idle agent in a heatmap). */
 	dimmed?: boolean;
+	/** Explicit initials (up to four letters), over the provider's and the name's. */
+	initials?: string;
 	className?: string;
 }
 
@@ -62,15 +99,28 @@ export function AgentBadge({
 	name,
 	kind = 'Agent',
 	size = 'md',
+	shape = 'square',
 	onClick,
 	dimmed = false,
+	initials: initialsOverride,
 	className,
 }: AgentBadgeProps) {
-	const initials = agentInitials(name);
+	const fleetInitials = useContext(AgentInitialsContext);
+	const initials =
+		initialsOverride ?? (id ? fleetInitials?.get(id) : undefined) ?? agentInitials(name);
 	const label = name ? `${kind} ${name}` : kind;
 
 	const content = initials ? (
-		<span className="font-heading font-bold tracking-[0.01em]">{initials}</span>
+		<span
+			className="font-heading font-bold tracking-[0.01em]"
+			style={
+				GLYPH_SCALE[initials.length]
+					? { fontSize: GLYPH_SCALE[initials.length], letterSpacing: '-0.02em' }
+					: undefined
+			}
+		>
+			{initials}
+		</span>
 	) : (
 		<Bot className={ICON_SIZE[size]} aria-hidden />
 	);
@@ -80,6 +130,7 @@ export function AgentBadge({
 	const classes = cn(
 		'inline-flex shrink-0 items-center justify-center leading-none select-none',
 		SIZE_CLASSES[size],
+		shape === 'circle' ? 'rounded-full' : SQUARE_RADIUS[size],
 		tone == null && 'bg-muted text-muted-foreground',
 		dimmed && 'opacity-40',
 		onClick && 'cursor-pointer transition-transform hover:scale-105',

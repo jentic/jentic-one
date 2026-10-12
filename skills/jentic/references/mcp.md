@@ -60,32 +60,39 @@ invent it.
 
 The decide-first doctrine (see `SKILL.md` step 2) is driven by `whoami`:
 read your bindings and the APIs they serve, and decide up front whether the
-job is coverable. When a credential is missing for a vendor in the
-deployment's connect registry, **start the connection yourself** with
-`request_connection`:
+job is coverable. When a credential is missing, **start the connection
+yourself** with `request_connection` — by vendor key for a registry vendor,
+by API identity (the `api.vendor/name/version` from `inspect_operation`)
+for anything else:
 
 ```
 request_connection {"vendor": "github", "reason": "read open PRs to summarise them"}
+request_connection {"api": {"vendor": "stripe-com", "name": "stripe-com-api", "version": "2024-06-20"}, "reason": "list this month's charges"}
 ```
 
 It returns `{session_id, approval_url, resolved_flow}` — relay the
-`approval_url` to your human operator, who opens it in their browser and
-approves the connection and its scopes (you cannot open or approve it, and
-the tool never polls). Once they confirm, call `whoami` to see the new
-binding, then retry the blocked call. Optionally shape the ask with
-`requested_scopes` (vendor scope names; write scopes are flagged for the
-approver), `requested_permission_rules` (the binding rules you need, e.g.
+`approval_url` to your human operator, who approves in their browser (and
+enters the key, for an `api` connect); you cannot open or approve it, and
+the tool never polls. Pass `auth_type` when the spec declares several
+schemes (the error lists them), `requested_scopes` for vendor scopes,
+`requested_permission_rules` for the binding rules you need (e.g.
 `[{"effect": "allow", "methods": ["GET"], "path": "/repos/.*"}]` — the
-approver reviews them) and a `reason` the approver sees. If several shared
-OAuth apps serve the vendor, the error lists them in `details.candidates`
-(name and `registration_id`). Choosing the app is your user's decision, not
-yours: show them the list, ask which one to use, then call
-`request_connection` again with `oauth_app_registration_id` set to their pick.
+approver reviews them), and a `reason` the approver sees. When
+`resolved_flow` is `manual_*` or `awaiting_app` (the result then points
+`next_tool` at `execute`), a human enters the credential, which can take
+hours: relay the URL, **end your turn**, and retry the blocked call later.
+Otherwise, once they confirm, call `whoami` to see the new binding and
+retry. A rejected request means stop: tell your user, don't ask again. If
+several shared OAuth apps serve the vendor, the error lists them in
+`details.candidates` (name and `registration_id`). Choosing the app is your
+user's decision, not yours: show them the list, ask which one to use, then
+call `request_connection` again with `oauth_app_registration_id` set to
+their pick.
 
-For everything else, **report the gap to your human operator in one
-complete summary** — the API (vendor/name), the auth type the spec
-declares, the operations you intend to call, your proposed permission
-rules, and why. Approval is always a human action, and so are binding an
+Where `api` connects aren't available (the error says so), **report the
+gap to your human operator in one complete summary** — the API
+(vendor/name), the auth type the spec declares, the operations you intend
+to call, your proposed permission rules, and why. Approval is always a human action, and so are binding an
 existing credential and permission grants: the operator acts in the Jentic One
 dashboard; your job is to relay the gap, not to grant it.
 
@@ -191,12 +198,14 @@ happens out-of-band, and re-sending duplicates the side effect.
 And know the recovery split: a `credential_not_provisioned` (424) or an
 unserved `no_credential_binding` (403) denial is **provisioning-shaped** —
 its envelope points `next_tool` at `request_connection`. When the directive
-names a connect target (`parameters.connect.vendor_key`, or a
-`suggested_command` naming the key), start the fix yourself — the envelope's
-`next_tool_arguments` (`{"vendor": …}`, plus `oauth_app_registration_id`
-when the directive pins the one shared app that covers the API) are the
-`request_connection` arguments; add the directive's `suggested_rules` as
-`requested_permission_rules` — and relay the `approval_url`;
+names a connect target — `parameters.connect.vendor_key` (pass it as
+`vendor`), `parameters.connect.api` (pass it as `api`), or a
+`suggested_command` naming the registry key — start the fix yourself (the
+envelope's `next_tool_arguments` — `{"vendor": …}`, plus
+`oauth_app_registration_id` when the directive pins the one shared app that
+covers the API, or `{"api": …}` — are the `request_connection` arguments; add
+the directive's `suggested_rules` as `requested_permission_rules`) and relay
+the `approval_url`;
 a denial carrying a `provisioning_url` means a connect request you opened
 is still waiting — relay that link to your operator rather than calling
 `request_connection` again. The denial taxonomy
@@ -210,10 +219,10 @@ delivered in the envelope instead of stderr.
 
 - `whoami` — your identity, status, permissions, and credential bindings with the
   APIs each one serves; start here and decide access from it.
-- `request_connection` — start a connect session for a registry vendor when
-  no binding serves the API you need; relay the returned `approval_url` to
-  your operator (they approve — you never poll or approve), then confirm
-  with `whoami` and retry.
+- `request_connection` — start a connect session (registry vendor or any
+  registry API) when no binding serves the API you need; relay the returned
+  `approval_url` to your operator (they approve — you never poll or
+  approve), then confirm with `whoami` and retry.
 - `search_apis` — search the imported registry for operations by
   natural-language query; each hit carries the `target` to pass to
   `inspect_operation`/`execute`.

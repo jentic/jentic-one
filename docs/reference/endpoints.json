@@ -1872,7 +1872,32 @@
       "required_permissions": [
         "credentials:write"
       ],
-      "summary": "Confirm scopes + permissions and kick off the vendor flow",
+      "summary": "Confirm a connect session",
+      "surface": "connect-sessions",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_permissions": {
+        "credentials:write": [
+          "credentials:connect",
+          "credentials:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rejectConnectSession",
+      "path": "/connect-sessions/{session_id}:reject",
+      "public": false,
+      "required_permissions": [
+        "credentials:write"
+      ],
+      "summary": "Reject an agent's connect request",
       "surface": "connect-sessions",
       "typical_caller": "any"
     },
@@ -4878,5 +4903,5 @@
     "total": 27
   },
   "schema": "jentic.endpoint-permission-tree/v1",
-  "total": 180
+  "total": 181
 }

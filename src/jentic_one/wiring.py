@@ -10,7 +10,9 @@ in-process ``RegistryService``) onto the broker app, so the broker can resolve
 upstream URLs to operations without importing ``jentic_one.registry``; a
 ``CatalogAutoImportProtocol`` onto the control-plane app so the connect flow can
 auto-import a vendor's OpenAPI spec after a credential connects (broker requires
-a registered API before it can route); and carrying the ``/mcp`` mount
+a registered API before it can route); a ``SecuritySchemesLookupProtocol`` onto
+the same app so connect sessions that target a registry API can read its
+declared schemes, hosts and provenance; and carrying the ``/mcp`` mount
 (``jentic_one.mcp``) onto control-plane app shapes via the container seam.
 Swapping an implementation later (e.g. an HTTP-backed resolver) is a change
 here only — the surfaces are unaffected.
@@ -32,6 +34,7 @@ from jentic_one.mcp.installer import (
 )
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
@@ -191,6 +194,16 @@ def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:
     (the catalog reads live in the registry DB). The caller guards the call.
     """
     app.state.catalog_auto_importer = InProcessCatalogAutoImporter(ctx)
+
+
+def install_control_security_schemes_lookup(app: FastAPI, ctx: Context) -> None:
+    """Inject the registry-backed security-schemes lookup onto the control app state.
+
+    Same guard as the catalog auto-importer: only meaningful when the process
+    serves control and can read the registry DB. Without it, ``:connect`` for a
+    registry API answers 503 ``security_schemes_lookup_unavailable``.
+    """
+    app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
 
 
 def build_default_container(ctx: Context) -> AppContainer:

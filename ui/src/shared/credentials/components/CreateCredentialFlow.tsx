@@ -1477,8 +1477,16 @@ export function CreateCredentialFlow({
 				</SheetHeader>
 
 				{/* The connect flow draws its own action band flush with the body's
-				    bottom edge, so the body keeps a matching bottom padding then. */}
-				<SheetBody className={connectInPlay ? 'pb-4' : undefined}>{body}</SheetBody>
+				    bottom edge, so the body keeps a matching bottom padding then. Its
+				    step fills the body's height, so the band (`mt-auto`) sits on the
+				    sheet's bottom edge even when the step is short. */}
+				<SheetBody
+					className={
+						connectInPlay ? 'flex flex-col pb-4 *:flex *:flex-1 *:flex-col' : undefined
+					}
+				>
+					{body}
+				</SheetBody>
 
 				{footer && <SheetFooter className="flex-wrap gap-2">{footer}</SheetFooter>}
 			</div>

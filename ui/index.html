@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -18,7 +18,20 @@
 		<link rel="icon" type="image/x-icon" sizes="32x32" href="/app/favicon.ico" />
 		<link rel="apple-touch-icon" href="/app/apple-touch-icon.png" />
 		<link rel="manifest" href="/app/site.webmanifest" />
-		<meta name="theme-color" content="#0E1A1D" />
+		<meta name="theme-color" content="#F5F7F7" />
+		<!--
+			Theme before first paint: light is the default (`data-theme` above); a
+			stored dark choice (`src/shared/lib/theme.ts`) is applied here so the
+			page never flashes the wrong palette.
+		-->
+		<script>
+			try {
+				if (localStorage.getItem('jentic-one.theme') === 'dark') {
+					document.documentElement.dataset.theme = 'dark';
+					document.querySelector('meta[name="theme-color"]').content = '#0E1A1D';
+				}
+			} catch (e) {}
+		</script>
 
 		<meta property="og:type" content="website" />
 		<meta property="og:site_name" content="Jentic One" />

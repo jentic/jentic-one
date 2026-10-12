@@ -716,3 +716,131 @@ describe('CredentialInventorySheet — whose agents "used by" counts', () => {
 		expect(await usedByCopy()).toHaveTextContent('used by no agents');
 	});
 });
+
+/**
+ * The inventory sheet offers only what the viewer's permissions allow, and
+ * sends no read the server would refuse — pins #1543 items 5 and 4.
+ */
+describe('CredentialInventorySheet — what a reader may see and send', () => {
+	const VIEWER = 'usr_viewer_1';
+
+	function seedViewer(permissions: string[]) {
+		worker.use(
+			http.get('/users/me', () =>
+				HttpResponse.json({
+					id: VIEWER,
+					email: 'viewer@local',
+					first_name: 'View',
+					last_name: 'Er',
+					active: true,
+					permissions,
+					must_change_password: false,
+					created_at: '2026-01-01T00:00:00Z',
+					updated_at: null,
+				}),
+			),
+		);
+	}
+
+	/** Every request path the surface sends, in order. */
+	function trackRequests(): string[] {
+		const paths: string[] = [];
+		worker.events.on('request:start', ({ request }) => {
+			paths.push(new URL(request.url).pathname);
+		});
+		return paths;
+	}
+
+	beforeEach(async () => {
+		await page.viewport(1280, 900);
+		setToken('test-token');
+		resetAgentsStore();
+		resetApisStore([]);
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'cred_own_1',
+				name: 'Own Stripe key',
+				type: CredentialType.API_KEY,
+				api: { vendor: 'stripe.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+			}),
+			// An unconnected OAuth credential: the one shape that offers "Connect".
+			makeMockCredential({
+				credential_id: 'cred_oauth_1',
+				name: 'Slack OAuth',
+				type: CredentialType.OAUTH2,
+				api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+				created_by: VIEWER,
+				details: { grant_type: 'authorization_code', connected: false },
+			}),
+		]);
+	});
+
+	async function openSheet(): Promise<HTMLElement> {
+		// Via the deep link, not the header trigger: a viewer without `agents:read`
+		// has no agent dock to click through.
+		renderWithProviders(
+			<AuthProvider>
+				<AgentsPage />
+				<Toaster />
+			</AuthProvider>,
+			{ route: '/?credentials=1' },
+		);
+		const sheet = await screen.findByTestId('sheet-primitive');
+		await within(sheet).findByText('Own Stripe key');
+		return sheet;
+	}
+
+	/**
+	 * Item 5. The sheet's "used by N agents" figure is a JOIN over every agent's
+	 * bindings, so it reads `GET /agents`, which needs `agents:read`. Fired for a
+	 * credentials-only viewer, that roster read takes a 403 — and because the
+	 * join treats a missing roster as an empty one, the 403 would render as
+	 * "nothing is bound", a WRONG answer rather than a missing one. So the read
+	 * is gated, and the figure withheld.
+	 */
+	it('sends no roster read, and asserts no binding count, without agents:read', async () => {
+		const paths = trackRequests();
+		seedViewer(['credentials:read', 'credentials:write', 'owner:credentials:read']);
+		const sheet = within(await openSheet());
+
+		// The forbidden roster read never goes out…
+		await new Promise((r) => setTimeout(r, 300));
+		expect(paths.some((p) => p === '/agents')).toBe(false);
+		// …so the sheet states nothing about who holds the credential rather than
+		// claiming — from a 403 — that nobody does.
+		expect(sheet.queryByTestId('cred-used-by')).not.toBeInTheDocument();
+		// And "Unbound" is not offered: it is an assertion over the whole roster,
+		// which this viewer can never obtain. ("Any agent" stays; only the
+		// unanswerable option is withheld.)
+		const usedBy = within(sheet.getByRole('group', { name: 'Filter by agent usage' }));
+		expect(usedBy.queryByRole('button', { name: /Unbound/ })).not.toBeInTheDocument();
+		expect(usedBy.getByRole('button', { name: 'Any agent' })).toBeInTheDocument();
+	});
+
+	/**
+	 * Item 4. "Connect" runs the provider sign-in and WRITES the resulting
+	 * tokens onto the credential, so it needs `credentials:write`. Shown to a
+	 * reader, the button would only produce an error on click.
+	 */
+	it('offers no Connect and no Add credential to a viewer without credentials:write', async () => {
+		seedViewer(['agents:read', 'credentials:read']);
+		const sheet = within(await openSheet());
+
+		expect(sheet.queryByRole('button', { name: /^Connect/ })).not.toBeInTheDocument();
+		expect(sheet.queryByRole('button', { name: 'Add credential' })).not.toBeInTheDocument();
+		// Nor the other credential writes, for the same reason.
+		expect(sheet.queryByRole('button', { name: /^Edit credential/ })).not.toBeInTheDocument();
+		expect(sheet.queryByRole('button', { name: /^Delete credential/ })).not.toBeInTheDocument();
+	});
+
+	it('offers Connect and Add credential once the viewer holds credentials:write', async () => {
+		seedViewer(['agents:read', 'credentials:read', 'credentials:write']);
+		const sheet = within(await openSheet());
+
+		// `findBy`: the credential rows can land before `/users/me` does, and the
+		// verbs follow the permissions, not the rows.
+		expect(await sheet.findByRole('button', { name: 'Add credential' })).toBeInTheDocument();
+		expect(await sheet.findByRole('button', { name: /^Connect/ })).toBeInTheDocument();
+	});
+});

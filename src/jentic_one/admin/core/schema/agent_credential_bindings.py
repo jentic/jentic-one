@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, String, UniqueConstraint, text
+from sqlalchemy import Boolean, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from jentic_one.shared.db.base import AdminBase, AuditableMixin
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.db.types import UTCDateTime
 
 
 class AgentCredentialBinding(AuditableMixin, AdminBase):
@@ -62,7 +63,7 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     credential_id: Mapped[str] = mapped_column(String(30), nullable=False)
     rule_set_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
     bound_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime(), nullable=False, server_default=func.now()
     )
     # Reversible per-consumer cut-off (PR #35 review): a suspended binding is
     # excluded from broker derivation but keeps its permission rules, so

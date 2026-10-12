@@ -492,6 +492,27 @@ func connectVendorKey(directive *ux.Directive) string {
 	return key
 }
 
+// connectAPI is the registry API a denial directive names as its connect
+// target in parameters.connect.api ({vendor, name, version}), or nil — set
+// when the deployment takes connect requests for any registry API and no
+// vendor key covers the denied one (Python twin: _connect_api).
+func connectAPI(directive *ux.Directive) map[string]any {
+	if directive == nil {
+		return nil
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	api, _ := connect["api"].(map[string]any)
+	out := map[string]any{}
+	for _, k := range []string{"vendor", "name", "version"} {
+		v, _ := api[k].(string)
+		if v == "" {
+			return nil
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // connectRegistrationID is the shared OAuth app a denial directive pins in
 // parameters.connect.registration_id, or "" (Python twin:
 // _connect_registration_id).
@@ -505,20 +526,22 @@ func connectRegistrationID(directive *ux.Directive) string {
 }
 
 // requestConnectionArguments are the request_connection arguments a denial
-// directive fills: the vendor key, with oauth_app_registration_id when the
-// directive pins the one shared app covering the API. The directive's
-// suggested_rules stay in agent_directive (Python twin:
-// _request_connection_arguments).
+// directive fills: the vendor key — with oauth_app_registration_id when the
+// directive pins the one shared app covering the API — or else the api
+// identity. The directive's suggested_rules stay in agent_directive (Python
+// twin: _request_connection_arguments).
 func requestConnectionArguments(directive *ux.Directive) map[string]any {
-	key := connectVendorKey(directive)
-	if key == "" {
-		return nil
+	if key := connectVendorKey(directive); key != "" {
+		args := map[string]any{"vendor": key}
+		if id := connectRegistrationID(directive); id != "" {
+			args["oauth_app_registration_id"] = id
+		}
+		return args
 	}
-	args := map[string]any{"vendor": key}
-	if id := connectRegistrationID(directive); id != "" {
-		args["oauth_app_registration_id"] = id
+	if api := connectAPI(directive); api != nil {
+		return map[string]any{"api": api}
 	}
-	return args
+	return nil
 }
 
 // synthesizedDenialHint is the MCP counterpart of the CLI's status-keyed

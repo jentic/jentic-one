@@ -6,11 +6,15 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from jentic_one.control.core.schema.connect_sessions import TARGET_KIND_VENDOR, ConnectSession
+from jentic_one.control.core.schema.connect_sessions import (
+    TARGET_KIND_API,
+    TARGET_KIND_VENDOR,
+    ConnectSession,
+)
 
 # The non-terminal states. A session outside these is frozen — no transition
 # (including the terminal sweep) may touch it. ``awaiting_app`` is an OAuth
@@ -34,6 +38,14 @@ class ConnectSessionRepository:
         resolved_flow: str,
         poll_token_hash: str,
         target_kind: str = TARGET_KIND_VENDOR,
+        api_name: str | None = None,
+        api_version: str | None = None,
+        scheme_type: str | None = None,
+        scheme_location: str | None = None,
+        scheme_field_name: str | None = None,
+        pinned_hosts: list[str] | None = None,
+        vendor_key: str | None = None,
+        dedupe_key: str | None = None,
         requested_scopes: list[str] | None = None,
         requested_permission_rules: list[dict[str, Any]] | None = None,
         preferred_flow: str | None = None,
@@ -44,6 +56,14 @@ class ConnectSessionRepository:
             credential_id=credential_id,
             target_kind=target_kind,
             vendor=vendor,
+            api_name=api_name,
+            api_version=api_version,
+            scheme_type=scheme_type,
+            scheme_location=scheme_location,
+            scheme_field_name=scheme_field_name,
+            pinned_hosts=pinned_hosts,
+            vendor_key=vendor_key,
+            dedupe_key=dedupe_key,
             agent_id=agent_id,
             initiator_actor_id=initiator_actor_id,
             state=state,
@@ -158,6 +178,8 @@ class ConnectSessionRepository:
         limit: int,
         flows: Sequence[str] | None = None,
         exclude_flows: Sequence[str] | None = None,
+        target_kind: str | None = None,
+        exclude_target_kind: str | None = None,
     ) -> list[str]:
         """Return ids of live sessions created before ``older_than``.
 
@@ -166,7 +188,8 @@ class ConnectSessionRepository:
         device-flow scanner only sees rows with an aux device-code row), so
         they — and their upfront ``pending`` credential rows — would
         otherwise leak forever. ``flows`` / ``exclude_flows`` narrow the
-        sweep by ``resolved_flow`` so each flow family gets its own cutoff.
+        sweep by ``resolved_flow`` so each flow family gets its own cutoff;
+        ``target_kind`` / ``exclude_target_kind`` narrow it by target kind.
         """
         stmt = select(ConnectSession.id).where(
             ConnectSession.state.in_(LIVE_STATES),
@@ -176,6 +199,10 @@ class ConnectSessionRepository:
             stmt = stmt.where(ConnectSession.resolved_flow.in_(flows))
         if exclude_flows is not None:
             stmt = stmt.where(ConnectSession.resolved_flow.not_in(exclude_flows))
+        if target_kind is not None:
+            stmt = stmt.where(ConnectSession.target_kind == target_kind)
+        if exclude_target_kind is not None:
+            stmt = stmt.where(ConnectSession.target_kind != exclude_target_kind)
         stmt = stmt.order_by(ConnectSession.created_at.asc()).limit(limit)
         result = await session.execute(stmt)
         return [str(row_id) for row_id in result.scalars().all()]
@@ -192,3 +219,103 @@ class ConnectSessionRepository:
             setattr(row, key, value)
         await session.flush()
         return row
+
+    @staticmethod
+    async def get_open_api_target(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        vendor: str,
+        api_name: str,
+        api_version: str,
+    ) -> ConnectSession | None:
+        """The agent's open session for an API identity (the dedupe index's key)."""
+        stmt = select(ConnectSession).where(
+            ConnectSession.target_kind == TARGET_KIND_API,
+            ConnectSession.state.in_(LIVE_STATES),
+            ConnectSession.agent_id == agent_id,
+            ConnectSession.vendor == vendor,
+            ConnectSession.api_name == api_name,
+            ConnectSession.api_version == api_version,
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
+    async def get_open_vendor_target(
+        session: AsyncSession, *, agent_id: str, vendor: str, dedupe_key: str
+    ) -> ConnectSession | None:
+        """The agent's open session for the same OAuth request (the dedupe index's key)."""
+        stmt = select(ConnectSession).where(
+            ConnectSession.target_kind == TARGET_KIND_VENDOR,
+            ConnectSession.state.in_(LIVE_STATES),
+            ConnectSession.agent_id == agent_id,
+            ConnectSession.vendor == vendor,
+            ConnectSession.dedupe_key == dedupe_key,
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    @staticmethod
+    async def rotate_poll_token(
+        session: AsyncSession, session_id: str, *, poll_token_hash: str
+    ) -> bool:
+        """Replace an open session's poll-token digest; False when it is no longer open."""
+        stmt = (
+            update(ConnectSession)
+            .where(ConnectSession.id == session_id, ConnectSession.state.in_(LIVE_STATES))
+            .values(poll_token_hash=poll_token_hash)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+    @staticmethod
+    async def acquire_open_session_cap_lock(session: AsyncSession, owner_key: str) -> None:
+        """Serialise open-session cap checks for one owner until the transaction ends.
+
+        PostgreSQL: a transaction-scoped advisory lock keyed on ``owner_key``.
+        SQLite: a no-op; its write transactions are already serial
+        (``BEGIN IMMEDIATE``).
+        """
+        dialect = session.bind.dialect.name if session.bind else "sqlite"
+        if dialect == "postgresql":
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"connect_session_cap:{owner_key}"},
+            )
+
+    @staticmethod
+    async def count_open(
+        session: AsyncSession,
+        *,
+        agent_ids: Sequence[str] = (),
+        initiator_actor_id: str | None = None,
+    ) -> int:
+        """Open sessions naming one of ``agent_ids`` or started by ``initiator_actor_id``."""
+        clauses: list[ColumnElement[bool]] = []
+        if agent_ids:
+            clauses.append(ConnectSession.agent_id.in_(list(agent_ids)))
+        if initiator_actor_id is not None:
+            clauses.append(ConnectSession.initiator_actor_id == initiator_actor_id)
+        if not clauses:
+            return 0
+        stmt = (
+            select(func.count())
+            .select_from(ConnectSession)
+            .where(ConnectSession.state.in_(LIVE_STATES), or_(*clauses))
+        )
+        result = await session.execute(stmt)
+        return int(result.scalar_one())
+
+    @staticmethod
+    async def list_awaiting_app(session: AsyncSession, *, limit: int) -> list[ConnectSession]:
+        """Sessions waiting for an OAuth app, oldest first."""
+        stmt = (
+            select(ConnectSession)
+            .where(ConnectSession.state == "awaiting_app")
+            .order_by(ConnectSession.created_at.asc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())

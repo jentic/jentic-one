@@ -21,12 +21,13 @@ from jentic_one.shared.db import DatabaseSession
 from jentic_one.shared.models.api_identity import credential_coverage_where
 
 # Live states mirror ``control.repos.connect_session_repo.LIVE_STATES``:
-# ``created`` waits for the owner's review, ``polling`` for the vendor flow.
+# ``created`` waits for the owner's review, ``awaiting_app`` for an OAuth app
+# to connect through, ``polling`` for the vendor flow.
 # Newest first, so the link names the session the agent opened last.
 _OPEN_SESSION_FOR_API = text(
     "SELECT cs.id FROM connect_sessions cs "
     "JOIN credentials c ON c.id = cs.credential_id "
-    "WHERE cs.agent_id = :agent_id AND cs.state IN ('created', 'polling') "
+    "WHERE cs.agent_id = :agent_id AND cs.state IN ('created', 'awaiting_app', 'polling') "
     f"AND {credential_coverage_where()} "
     "ORDER BY cs.created_at DESC, cs.id DESC LIMIT 1"
 )

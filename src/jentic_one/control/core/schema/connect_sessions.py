@@ -28,6 +28,15 @@ _OPEN_API_TARGET_PREDICATE = (
     "AND agent_id IS NOT NULL"
 )
 
+# One open agent-started session per agent, vendor key and OAuth request
+# (``dedupe_key``: resolved flow, registration and requested scopes). Only
+# agent-started ``vendor`` sessions carry a key; every other row is NULL and
+# outside the index.
+_OPEN_VENDOR_TARGET_PREDICATE = (
+    "target_kind = 'vendor' AND state IN ('created', 'awaiting_app', 'polling') "
+    "AND agent_id IS NOT NULL AND dedupe_key IS NOT NULL"
+)
+
 
 class ConnectSession(AuditableMixin, ControlBase):
     """A pending (or completed) connect session, keyed on the target credential."""
@@ -51,6 +60,15 @@ class ConnectSession(AuditableMixin, ControlBase):
             unique=True,
             postgresql_where=text(_OPEN_API_TARGET_PREDICATE),
             sqlite_where=text(_OPEN_API_TARGET_PREDICATE),
+        ),
+        Index(
+            "ix_connect_sessions_open_vendor_target",
+            "agent_id",
+            "vendor",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
+            sqlite_where=text(_OPEN_VENDOR_TARGET_PREDICATE),
         ),
     )
 
@@ -89,6 +107,16 @@ class ConnectSession(AuditableMixin, ControlBase):
     scheme_field_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Snapshot of the API's canonical hosts at create, for the same check.
     pinned_hosts: Mapped[list[str] | None] = mapped_column(json_variant(), nullable=True)
+    # For an ``api`` target whose OAuth app resolved from the vendor registry:
+    # the registry key it resolved to (config entry key, or the shared app's
+    # vendor slug). Every vendor-registry read on such a session uses this key.
+    # NULL for ``vendor`` targets (``vendor`` is the key) and for ``api``
+    # targets without a registry app (human-entered credential, own client).
+    vendor_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Digest of what an agent-started ``vendor`` session asks for (flow,
+    # OAuth app registration, requested scopes), keying the open-session
+    # dedupe index. NULL on every other row.
+    dedupe_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Target agent to bind on success. FK-less: `agents` lives in the admin DB
     # (cross-DB FKs are forbidden by the architecture).
     # Nullable: present when the initiator is an agent (from the auth
