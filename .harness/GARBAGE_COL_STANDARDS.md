@@ -31,8 +31,8 @@ grep -rnEi "(#|//|\*|\"\"\").*\b(used to (be|match|live|read|return)|previously|
   | grep -v migrations/ | grep -v /generated/
 ```
 
-Private plan citations (`theme-N Phase M`) show up in ~170 lines under `src/`
-and `ui/src/`. A bulk sweep is a human decision; don't fold it into an
+Private plan citations (`theme-N Phase M`) are widespread under `src/` and
+`ui/src/`. A bulk sweep is a human decision; don't fold it into an
 unrelated PR.
 
 The host has no system `python3` — use `uv run python` or sed. UI browser-mode
