@@ -271,7 +271,7 @@ export default function ApiDetailPage() {
 							size="sm"
 							onClick={() => setDeleteOpen(true)}
 							disabled={!api}
-							aria-label={`Remove ${title}`}
+							aria-label={`Remove API ${title}`}
 							data-testid="remove-api"
 						>
 							<Trash2 size={14} aria-hidden="true" />

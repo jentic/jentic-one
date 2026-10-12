@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AgentBadge, AgentInitialsProvider, agentInitials } from '@/shared/ui/AgentBadge';
 
+/** The glyph a badge paints (generated content, not DOM text). */
+const initialsOf = (badge: HTMLElement) =>
+	badge.querySelector('[data-initials]')?.getAttribute('data-initials');
+
 describe('agentInitials', () => {
 	it('takes first+last word initials for multi-word names', () => {
 		expect(agentInitials('inbox triage bot')).toBe('IB');
@@ -23,7 +27,12 @@ describe('agentInitials', () => {
 describe('AgentBadge', () => {
 	it('renders initials with an accessible label', () => {
 		render(<AgentBadge id="agnt_1" name="support-agent" />);
-		expect(screen.getByLabelText('Agent support-agent')).toHaveTextContent('SA');
+		const badge = screen.getByLabelText('Agent support-agent');
+		expect(initialsOf(badge)).toBe('SA');
+		// Painted as generated content, so the glyph is not DOM text.
+		expect(badge).toHaveTextContent('');
+		const glyph = badge.querySelector('[data-initials]')!;
+		expect(getComputedStyle(glyph, '::before').content).toBe('"SA"');
 	});
 
 	it('is deterministic — same id keeps the same pastel tone', () => {
@@ -58,7 +67,7 @@ describe('AgentInitialsProvider', () => {
 				<AgentBadge id="agnt_1" name="support-agent" />
 			</AgentInitialsProvider>,
 		);
-		expect(screen.getByLabelText('Agent support-agent')).toHaveTextContent('SUP');
+		expect(initialsOf(screen.getByLabelText('Agent support-agent'))).toBe('SUP');
 	});
 
 	it("falls back to the name's initials for an id it doesn't hold", () => {
@@ -67,7 +76,7 @@ describe('AgentInitialsProvider', () => {
 				<AgentBadge id="agnt_2" name="support-agent" />
 			</AgentInitialsProvider>,
 		);
-		expect(screen.getByLabelText('Agent support-agent')).toHaveTextContent('SA');
+		expect(initialsOf(screen.getByLabelText('Agent support-agent'))).toBe('SA');
 	});
 
 	it('yields to explicit initials on the badge', () => {
@@ -76,6 +85,6 @@ describe('AgentInitialsProvider', () => {
 				<AgentBadge id="agnt_1" name="support-agent" initials="XY" />
 			</AgentInitialsProvider>,
 		);
-		expect(screen.getByLabelText('Agent support-agent')).toHaveTextContent('XY');
+		expect(initialsOf(screen.getByLabelText('Agent support-agent'))).toBe('XY');
 	});
 });

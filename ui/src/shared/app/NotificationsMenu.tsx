@@ -43,8 +43,11 @@ export function NotificationsMenu() {
 	const titleId = useId();
 
 	const urgent = items.some((i) => i.urgency === 3);
+	// The badge's figure leads the count in the name so the visible text is
+	// part of the accessible name (WCAG 2.5.3).
+	const badge = count > 99 ? '99+' : String(count);
 	const label =
-		count > 0 ? `Notifications (${count} need${count === 1 ? 's' : ''} you)` : 'Notifications';
+		count > 0 ? `Notifications, ${badge} need${count === 1 ? 's' : ''} you` : 'Notifications';
 
 	return (
 		<div ref={containerRef} className="relative">
@@ -69,7 +72,7 @@ export function NotificationsMenu() {
 						)}
 						aria-hidden="true"
 					>
-						{count > 99 ? '99+' : count}
+						{badge}
 					</span>
 				)}
 			</button>

@@ -161,7 +161,6 @@ export function JobsTab() {
 														aria-hidden="true"
 													/>
 												}
-												label={`View ${row.kind} job ${row.job_id}`}
 												active={openKey === `job:${row.job_id}`}
 												onOpen={() => open({ kind: 'job', id: row.job_id })}
 											/>

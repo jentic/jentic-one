@@ -363,8 +363,8 @@ function ServingToggle({ agent }: { agent: AgentEntity }) {
 				aria-pressed={serving}
 				aria-label={
 					serving
-						? `Disable ${agent.name} — stop serving traffic`
-						: `Enable ${agent.name} — start serving traffic`
+						? `Serving — disable ${agent.name} to stop serving traffic`
+						: `Not serving — enable ${agent.name} to start serving traffic`
 				}
 				data-testid="dock-serving-toggle"
 				className={cn(

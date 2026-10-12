@@ -59,12 +59,17 @@ export function VendorIcon({ name, vendor, iconUrl, size = 'md', className }: Ve
 	}
 
 	const tone = avatarToneIndex(vendor ?? name);
+	// The initials are painted as generated content rather than a text node:
+	// the mark is decorative (aria-hidden), and as DOM text it would read as
+	// part of the visible label of any control it sits in (WCAG 2.5.3).
 	return (
 		<div
 			data-tone={tone}
 			data-testid="vendor-mark"
+			data-initials={getInitials(name)}
 			className={cn(
 				'font-heading grid shrink-0 place-items-center leading-none font-bold tracking-[0.01em] uppercase select-none',
+				'before:content-[attr(data-initials)]',
 				box,
 				radius,
 				text,
@@ -72,8 +77,6 @@ export function VendorIcon({ name, vendor, iconUrl, size = 'md', className }: Ve
 			)}
 			style={avatarToneStyle(tone)}
 			aria-hidden="true"
-		>
-			{getInitials(name)}
-		</div>
+		/>
 	);
 }

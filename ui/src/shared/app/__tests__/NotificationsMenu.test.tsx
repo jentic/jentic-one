@@ -125,7 +125,7 @@ afterEach(() => {
 describe('NotificationsMenu', () => {
 	it('badges the bell with the count and names it for assistive tech', async () => {
 		renderMenu();
-		const bell = await screen.findByRole('button', { name: 'Notifications (2 need you)' });
+		const bell = await screen.findByRole('button', { name: 'Notifications, 2 need you' });
 		expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
 		expect(bell).toHaveAttribute('aria-expanded', 'false');
 	});
@@ -133,7 +133,7 @@ describe('NotificationsMenu', () => {
 	it('opens a grouped list — alerts before approvals — with no a11y violations', async () => {
 		const user = userEvent.setup();
 		const { container } = renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 		const sections = within(dialog).getAllByRole('region');
 		expect(sections.map((s) => s.getAttribute('aria-label'))).toEqual(['Alerts', 'Approvals']);
@@ -147,7 +147,7 @@ describe('NotificationsMenu', () => {
 	it('approves an agent inline, dropping its row; the alert stays as a View link', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 
 		// An alert is append-only history — it offers a View link, not an inline
@@ -164,14 +164,14 @@ describe('NotificationsMenu', () => {
 		);
 		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
 		expect(
-			screen.getByRole('button', { name: 'Notifications (1 needs you)' }),
+			screen.getByRole('button', { name: 'Notifications, 1 needs you' }),
 		).toBeInTheDocument();
 	});
 
 	it('closes when a row link is followed', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		await user.click(screen.getByRole('link', { name: 'Review' }));
 		expect(screen.getByTestId('location')).toHaveTextContent('/agents?agent=agnt_waiting');
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -180,7 +180,7 @@ describe('NotificationsMenu', () => {
 	it('closes on Escape', async () => {
 		const user = userEvent.setup();
 		renderMenu();
-		await user.click(await screen.findByRole('button', { name: /^Notifications \(2/ }));
+		await user.click(await screen.findByRole('button', { name: /^Notifications, 2/ }));
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 		await user.keyboard('{Escape}');
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -229,7 +229,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(3/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 3/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			const approvals = within(dialog).getByRole('region', { name: 'Approvals' });
 			const row = await within(approvals).findByText(
@@ -271,7 +271,7 @@ describe('NotificationsMenu', () => {
 			];
 			const user = userEvent.setup();
 			renderMenu();
-			await user.click(await screen.findByRole('button', { name: /^Notifications \(4/ }));
+			await user.click(await screen.findByRole('button', { name: /^Notifications, 4/ }));
 			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 			expect(
 				await within(dialog).findByText("Abandoned Slack sign-in isn't finished"),

@@ -521,7 +521,6 @@ function FeedRow({
 				</>
 			}
 			action={action}
-			label={ev.title}
 			active={active}
 			nested={nested}
 			onOpen={onOpen}
@@ -580,7 +579,7 @@ function RunRow({
 						aria-hidden="true"
 					/>
 				}
-				label={`${events.length} successful calls — ${expanded ? 'collapse' : 'expand'}`}
+				expanded={expanded}
 				steppable={false}
 				onOpen={onToggle}
 			/>

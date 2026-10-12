@@ -110,17 +110,20 @@ export function AgentBadge({
 		initialsOverride ?? (id ? fleetInitials?.get(id) : undefined) ?? agentInitials(name);
 	const label = name ? `${kind} ${name}` : kind;
 
+	// Initials are painted as generated content: the badge is an image (its
+	// name is `label`), and as DOM text the glyph would count as visible label
+	// text of any control it sits in (WCAG 2.5.3).
 	const content = initials ? (
 		<span
-			className="font-heading font-bold tracking-[0.01em]"
+			aria-hidden="true"
+			data-initials={initials}
+			className="font-heading font-bold tracking-[0.01em] before:content-[attr(data-initials)]"
 			style={
 				GLYPH_SCALE[initials.length]
 					? { fontSize: GLYPH_SCALE[initials.length], letterSpacing: '-0.02em' }
 					: undefined
 			}
-		>
-			{initials}
-		</span>
+		/>
 	) : (
 		<Bot className={ICON_SIZE[size]} aria-hidden />
 	);

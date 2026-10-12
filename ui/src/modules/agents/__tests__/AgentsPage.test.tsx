@@ -1154,7 +1154,9 @@ describe('AgentsPage — flat agents surface', () => {
 		expect(screen.queryByText(/Not serving traffic\./)).not.toBeInTheDocument();
 
 		// Not serving is never read-only — the toggle itself is live.
-		await user.click(screen.getByRole('button', { name: /^Enable legacy-scraper/ }));
+		await user.click(
+			screen.getByRole('button', { name: /^Not serving — enable legacy-scraper/ }),
+		);
 		await waitFor(() => expect(toggle).toHaveTextContent('Serving'));
 	});
 
@@ -1964,7 +1966,7 @@ describe('AgentsPage — flat agents surface', () => {
 		await user.click(within(sheet).getByRole('button', { name: /Initial permissions/ }));
 		// Expand the Capabilities group, then tick one grantable permission.
 		await user.click(
-			await within(sheet).findByRole('button', { name: /Capabilities permissions/ }),
+			await within(sheet).findByRole('button', { name: /Capabilities \d+\/\d+ permissions/ }),
 		);
 		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
 

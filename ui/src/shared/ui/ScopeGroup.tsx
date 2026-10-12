@@ -85,7 +85,7 @@ export function ScopeGroup({
 				<button
 					type="button"
 					aria-expanded={isExpanded}
-					aria-label={`${group.name} ${noun.plural}, ${selectedCount} of ${totalCount} selected`}
+					aria-label={`${group.name} ${selectedCount}/${totalCount} ${noun.plural} selected`}
 					onClick={toggleExpanded}
 					className="flex flex-1 cursor-pointer items-center gap-3 text-left"
 				>
@@ -95,9 +95,7 @@ export function ScopeGroup({
 					>
 						<ChevronRight className="text-muted-foreground h-4 w-4" />
 					</motion.span>
-
-					<span className="text-foreground flex-1 text-sm font-medium">{group.name}</span>
-
+					<span className="text-foreground flex-1 text-sm font-medium">{group.name}</span>{' '}
 					<span
 						className={cn(
 							'rounded-full px-2 py-0.5 text-[11px] font-medium',

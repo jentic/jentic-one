@@ -228,7 +228,6 @@ export function ExecutionsTab() {
 														aria-hidden="true"
 													/>
 												}
-												label={`View trace for ${op}`}
 												active={openKey === detailKey(d)}
 												onOpen={() => open(d)}
 											/>

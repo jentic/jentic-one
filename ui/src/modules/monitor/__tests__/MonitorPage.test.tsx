@@ -112,7 +112,7 @@ describe('MonitorPage', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Expand activity to the full log' }));
 		expect(
-			await screen.findByRole('link', { name: 'Execution failed: github-api' }),
+			await screen.findByRole('link', { name: /Execution failed: github-api/ }),
 		).toBeInTheDocument();
 		expect(toggle('Activity source', 'Everything')).toHaveAttribute('aria-pressed', 'true');
 		expect(currentParams().get('view')).toBe('activity');
@@ -121,7 +121,7 @@ describe('MonitorPage', () => {
 		await user.click(toggle('Activity source', 'API calls'));
 		await screen.findByText('POST /v1/charges');
 		await user.click(toggle('Activity source', 'Everything'));
-		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await screen.findByRole('link', { name: /Execution failed: github-api/ });
 
 		await user.click(await screen.findByRole('button', { name: 'Overview' }));
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
@@ -145,7 +145,7 @@ describe('MonitorPage', () => {
 		);
 		renderMonitor('/app/monitor?tab=usage');
 		expect(
-			await screen.findByRole('link', { name: 'Execution failed: github-api' }),
+			await screen.findByRole('link', { name: /Execution failed: github-api/ }),
 		).toBeInTheDocument();
 		await waitFor(() =>
 			expect(
@@ -254,7 +254,7 @@ describe('MonitorPage', () => {
 	it('offers non-admins no Audit log source and ignores ?show=audit', async () => {
 		worker.use(http.get('/users/me', () => HttpResponse.json(MEMBER)));
 		renderMonitor('/app/monitor?show=audit');
-		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await screen.findByRole('link', { name: /Execution failed: github-api/ });
 		await waitFor(() =>
 			expect(
 				within(screen.getByRole('group', { name: 'Activity source' })).queryByRole(
@@ -353,15 +353,15 @@ describe('MonitorPage', () => {
 		renderMonitor('/app/monitor?view=activity');
 		// The SSE mock interleaves a heartbeat frame (no severity) with real
 		// events; the always-on stream must drop it rather than throw.
-		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await screen.findByRole('link', { name: /Execution failed: github-api/ });
 		expect(await screen.findByText('Live')).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: 'Import completed' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /Import completed/ })).toBeInTheDocument();
 	});
 
 	it('pauses and resumes the live feed', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
-		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await screen.findByRole('link', { name: /Execution failed: github-api/ });
 
 		await user.click(screen.getByRole('button', { name: 'Pause' }));
 		expect(screen.getByText('Paused')).toBeInTheDocument();
@@ -379,7 +379,7 @@ describe('MonitorPage', () => {
 
 	it('shows no acknowledge control on an action event — events are history', async () => {
 		renderMonitor('/app/monitor?view=activity');
-		const row = await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		const row = await screen.findByRole('link', { name: /Execution failed: github-api/ });
 		expect(within(row).queryByRole('button', { name: 'Acknowledge' })).toBeNull();
 		expect(within(row).queryByText('Acknowledged')).toBeNull();
 	});
@@ -410,14 +410,19 @@ describe('MonitorPage', () => {
 		);
 		renderMonitor('/app/monitor?view=activity');
 
-		const run = await screen.findByRole('link', { name: /3 successful calls — expand/ });
-		expect(screen.queryByRole('link', { name: 'Execution completed: op_1' })).toBeNull();
+		const run = await screen.findByRole('link', {
+			name: /3 successful calls/,
+			expanded: false,
+		});
+		expect(screen.queryByRole('link', { name: /Execution completed: op_1(?!\d)/ })).toBeNull();
 
 		await user.click(run);
 		expect(
-			await screen.findByRole('link', { name: 'Execution completed: op_1' }),
+			await screen.findByRole('link', { name: /Execution completed: op_1(?!\d)/ }),
 		).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: /3 successful calls — collapse/ })).toBeVisible();
+		expect(
+			screen.getByRole('link', { name: /3 successful calls/, expanded: true }),
+		).toBeVisible();
 	});
 
 	it('renders the stat strip + volume, bubble and breakdown charts from the usage endpoint (#561)', async () => {
@@ -692,7 +697,7 @@ describe('MonitorPage', () => {
 
 	it('has no critical a11y violations on the Everything feed', async () => {
 		const { container } = renderMonitor('/app/monitor?view=activity');
-		await screen.findByRole('link', { name: 'Execution failed: github-api' });
+		await screen.findByRole('link', { name: /Execution failed: github-api/ });
 		await checkA11y(container);
 	});
 });
@@ -862,7 +867,7 @@ describe('Monitor inter-linking', () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit');
 
-		await user.click(await screen.findByRole('link', { name: /Open trace .* in API calls/ }));
+		await user.click(await screen.findByRole('link', { name: /^Open trace .* in API calls$/ }));
 		await waitFor(() => {
 			const params = currentParams();
 			expect(params.get('show')).toBe('calls');
@@ -870,7 +875,7 @@ describe('Monitor inter-linking', () => {
 		});
 
 		await user.click(await findToggle('Activity source', 'Audit log'));
-		await user.click(await screen.findByRole('link', { name: /Open job .* in Jobs/ }));
+		await user.click(await screen.findByRole('link', { name: /^Open job .* in Jobs$/ }));
 		await waitFor(() => {
 			const params = currentParams();
 			expect(params.get('show')).toBe('jobs');
@@ -916,7 +921,7 @@ describe('Monitor inter-linking', () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
 
-		await user.click(await screen.findByRole('link', { name: 'Execution failed: github-api' }));
+		await user.click(await screen.findByRole('link', { name: /Execution failed: github-api/ }));
 
 		await waitFor(() => {
 			expect(currentParams().get('trace_id')).toBe('trace_bbbbbbbb');
@@ -953,7 +958,7 @@ describe('Monitor inter-linking', () => {
 		renderMonitor('/app/monitor?view=activity');
 
 		await user.click(
-			await screen.findByRole('link', { name: "Agent 'curl-agent' self-registered" }),
+			await screen.findByRole('link', { name: /Agent 'curl-agent' self-registered/ }),
 		);
 
 		await waitFor(() =>
@@ -966,7 +971,7 @@ describe('Monitor inter-linking', () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
 
-		await user.click(await screen.findByRole('link', { name: 'Import completed' }));
+		await user.click(await screen.findByRole('link', { name: /Import completed/ }));
 
 		await waitFor(() => {
 			expect(currentParams().get('job_id')).toBe('job_import_2');
@@ -1007,7 +1012,7 @@ describe('Monitor inter-linking', () => {
 		renderMonitor('/app/monitor?view=activity');
 
 		await user.click(
-			await screen.findByRole('link', { name: 'Execution failed: example-api' }),
+			await screen.findByRole('link', { name: /Execution failed: example-api/ }),
 		);
 
 		await waitFor(() => {
@@ -1040,18 +1045,18 @@ describe('Monitor feed status filter', () => {
 		});
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
-		await screen.findByRole('link', { name: 'Import completed' });
+		await screen.findByRole('link', { name: /Import completed/ });
 
 		await user.click(toggle('Status', 'Failed'));
 
 		await waitFor(() => expect(currentParams().get('status')).toBe('failed'));
 		await waitFor(() => {
 			expect(
-				screen.queryByRole('link', { name: 'Import completed' }),
+				screen.queryByRole('link', { name: /Import completed/ }),
 			).not.toBeInTheDocument();
 		});
 		expect(
-			screen.getByRole('link', { name: 'Execution failed: github-api' }),
+			screen.getByRole('link', { name: /Execution failed: github-api/ }),
 		).toBeInTheDocument();
 		expect(seen[seen.length - 1]?.getAll('severity').sort()).toEqual(['critical', 'error']);
 		worker.events.removeAllListeners();
@@ -1060,18 +1065,18 @@ describe('Monitor feed status filter', () => {
 	it('Flagged shows only action-required events', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?view=activity');
-		await screen.findByRole('link', { name: 'Import completed' });
+		await screen.findByRole('link', { name: /Import completed/ });
 
 		await user.click(toggle('Status', 'Flagged'));
 
 		await waitFor(() => expect(currentParams().get('status')).toBe('action'));
 		await waitFor(() => {
 			expect(
-				screen.queryByRole('link', { name: 'Import completed' }),
+				screen.queryByRole('link', { name: /Import completed/ }),
 			).not.toBeInTheDocument();
 		});
 		expect(
-			screen.getByRole('link', { name: 'Execution failed: github-api' }),
+			screen.getByRole('link', { name: /Execution failed: github-api/ }),
 		).toBeInTheDocument();
 	});
 

@@ -277,7 +277,6 @@ export function AuditTab() {
 													) : undefined
 												}
 												action={<CrossLink row={row} />}
-												label={sentence}
 												active={
 													detail?.kind === 'audit' && detail.id === row.id
 												}

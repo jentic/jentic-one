@@ -16,6 +16,7 @@ import { cn } from '@/shared/lib/utils';
 import type { BindingRulesState } from '@/modules/agents/api';
 import type { ApiTileModel } from '@/modules/agents/lib/apiTiles';
 import {
+	TILE_STATUS_CARD_LABEL,
 	TILE_STATUS_LABEL,
 	deriveTileStatus,
 	isBlockedStatus,
@@ -71,6 +72,16 @@ export function ApiCard({
 
 	const accountsPhrase =
 		accountCount > 1 ? `, one of ${accountCount} credentials for this API` : '';
+	// The name leads with the card's visible text in reading order (name ·
+	// count badge · credential · status word) so a voice user can say what they
+	// see (WCAG 2.5.3); the full status phrase follows when it adds to the word.
+	const cardWord = TILE_STATUS_CARD_LABEL[status];
+	const visibleText = [
+		accountCount > 1 ? `${tile.title} ${accountCount}` : tile.title,
+		credentialLabel,
+		cardWord,
+	].join(', ');
+	const statusTail = statusLabel === cardWord ? '' : ` — ${statusLabel}`;
 
 	return (
 		<button
@@ -81,7 +92,7 @@ export function ApiCard({
 			aria-haspopup="dialog"
 			aria-expanded={expanded}
 			aria-controls={expanded ? sidebarId : undefined}
-			aria-label={`${tile.title}, credential ${credentialLabel}${accountsPhrase} — ${statusLabel}. Open access details.`}
+			aria-label={`${visibleText}${statusTail}${accountsPhrase}. Open access details.`}
 			onClick={onOpen}
 			className={cn(
 				// ONE fixed height for every card (and the add tile — `API_CARD_HEIGHT`),
@@ -112,6 +123,9 @@ export function ApiCard({
 				>
 					<UserText>{tile.title}</UserText>
 				</TruncateWithTooltip>
+				{/* Whitespace between the card's text segments keeps them separate
+				    words in its visible label (axe joins sibling text verbatim). */}
+				{accountCount > 1 && ' '}
 				{accountCount > 1 && (
 					// Hover-only inside the card: the card is the one focus stop, and
 					// its accessible name already carries the count.
@@ -126,7 +140,7 @@ export function ApiCard({
 						</Tag>
 					</Tooltip>
 				)}
-			</div>
+			</div>{' '}
 			{/* Row 2 (16px): key icon · credential (one line, ellipsis). */}
 			<p
 				data-testid="card-credential"
@@ -136,7 +150,7 @@ export function ApiCard({
 				<TruncateWithTooltip focusable={false} className="min-w-0 flex-1">
 					<UserText>{credentialLabel}</UserText>
 				</TruncateWithTooltip>
-			</p>
+			</p>{' '}
 			{/* Row 3 (18px): status dot + word. */}
 			<div
 				data-testid="card-row-status"

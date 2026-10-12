@@ -35,7 +35,7 @@ describe('ScopeGroup', () => {
 		// Collapsed by default: rows are not rendered.
 		expect(screen.queryByRole('checkbox', { name: 'agents:read' })).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole('button', { name: /Agents scopes, 0 of 2 selected/ }));
+		await user.click(screen.getByRole('button', { name: /Agents 0\/2 scopes selected/ }));
 		await user.click(await screen.findByRole('checkbox', { name: 'agents:read' }));
 		expect(onToggleScope).toHaveBeenCalledWith('agents:read');
 	});
@@ -48,7 +48,7 @@ describe('ScopeGroup', () => {
 		const selectAll = screen.getByRole('checkbox', { name: 'Select all Agents' });
 		// The expand toggle and the select-all must not nest inside one another.
 		const expandToggle = screen.getByRole('button', {
-			name: /Agents scopes, 0 of 2 selected/,
+			name: /Agents 0\/2 scopes selected/,
 		});
 		expect(expandToggle.contains(selectAll)).toBe(false);
 

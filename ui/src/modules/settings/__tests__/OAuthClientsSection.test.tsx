@@ -59,7 +59,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		// The admin-registered confidential client, with its §4.8 grant count.
 		expect(await screen.findByText('Internal Dashboard')).toBeInTheDocument();
 		expect(
-			screen.getByRole('button', { name: 'View grants for Internal Dashboard' }),
+			screen.getByRole('button', { name: /view grants for Internal Dashboard$/ }),
 		).toHaveTextContent('2');
 		// Pending, denied, and deactivated rows stay out of the default view.
 		expect(screen.queryByText('Cursor')).not.toBeInTheDocument();
@@ -317,7 +317,7 @@ describe('OAuth clients surface (via SettingsPage)', () => {
 		// The roster's grant count is HONEST: three active grant rows exist,
 		// but the dormant one (agent disabled) is no working connection → 2.
 		expect(
-			screen.getByRole('button', { name: 'View grants for Internal Dashboard' }),
+			screen.getByRole('button', { name: /view grants for Internal Dashboard$/ }),
 		).toHaveTextContent('2');
 
 		await user.click(

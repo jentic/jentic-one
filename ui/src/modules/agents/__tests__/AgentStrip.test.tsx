@@ -627,9 +627,10 @@ describe('AgentStrip', () => {
 			],
 		});
 		const letters = (name: string) =>
-			within(screen.getByRole('tab', { name: new RegExp(`${name}\\b(?!-)`) })).getByRole(
-				'img',
-			).textContent;
+			within(screen.getByRole('tab', { name: new RegExp(`${name}\\b(?!-)`) }))
+				.getByRole('img')
+				.querySelector('[data-initials]')
+				?.getAttribute('data-initials');
 		expect(letters('my-agent-34')).toBe('M34');
 		expect(letters('my-agent-34-staging')).toBe('M34S');
 		expect(letters('support-triage')).toBe('ST');
