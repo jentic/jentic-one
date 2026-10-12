@@ -30,16 +30,8 @@ import { useEffect, useState } from 'react';
  */
 const ACTIVE_LINE_OFFSET = 120;
 
-export function useScrollSpy(
-	ids: string[],
-	rootMargin = '-80px 0px -70% 0px',
-	defaultFirst = true,
-): string | null {
+export function useScrollSpy(ids: string[], defaultFirst = true): string | null {
 	const [active, setActive] = useState<string | null>(defaultFirst ? (ids[0] ?? null) : null);
-
-	// `rootMargin` is retained for API compatibility but no longer drives the
-	// decision; the observer fires on any boundary crossing and we recompute.
-	void rootMargin;
 
 	useEffect(() => {
 		if (ids.length === 0) {

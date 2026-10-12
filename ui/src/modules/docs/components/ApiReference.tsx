@@ -977,7 +977,7 @@ export function ApiReferenceView({
 		],
 		[parsed, anchorPrefix],
 	);
-	const activeId = useScrollSpy(spyIds, '-120px 0px -70% 0px', false);
+	const activeId = useScrollSpy(spyIds, false);
 
 	const empty = parsed.groups.length === 0 && parsed.models.length === 0;
 

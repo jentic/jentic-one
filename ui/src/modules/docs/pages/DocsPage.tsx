@@ -67,7 +67,7 @@ export default function DocsPage() {
 	// Secondary spy for CLI binary sub-anchors — only lights up while in view
 	// (defaultFirst = false), so the rail's sub-items track the scroll position
 	// as the reader moves from one binary's block to the next.
-	const observedSub = useScrollSpy(SUB_IDS, '-120px 0px -60% 0px', false);
+	const observedSub = useScrollSpy(SUB_IDS, false);
 
 	// The API reference's sub-groups come from the spec (its x-tagGroups), so the
 	// rail's children under "API reference" are computed at runtime. Models gets
@@ -112,10 +112,10 @@ export default function DocsPage() {
 	// API sub-anchor ids feed the secondary spy too, so the rail highlights the
 	// current tag-group while reading the reference.
 	const apiSubIds = useMemo(() => apiChildren.map((c) => c.id), [apiChildren]);
-	const observedApiSub = useScrollSpy(apiSubIds, '-120px 0px -70% 0px', false);
+	const observedApiSub = useScrollSpy(apiSubIds, false);
 
 	const brokerSubIds = useMemo(() => brokerChildren.map((c) => c.id), [brokerChildren]);
-	const observedBrokerSub = useScrollSpy(brokerSubIds, '-120px 0px -70% 0px', false);
+	const observedBrokerSub = useScrollSpy(brokerSubIds, false);
 
 	// Flatten the Broker spec into search entries (namespaced anchors) so its
 	// operations + models are reachable from the global top-nav search too.

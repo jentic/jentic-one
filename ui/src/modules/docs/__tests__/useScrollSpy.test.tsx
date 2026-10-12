@@ -58,7 +58,7 @@ describe('useScrollSpy', () => {
 		});
 		await waitFor(() => expect(result.current).toBe('s3'));
 
-		// Bottom → top: this is the path that used to lose the highlight.
+		// Bottom → top: the direction a narrow observer band loses the highlight on.
 		await act(async () => {
 			scrollToSection('s2');
 		});
@@ -72,7 +72,7 @@ describe('useScrollSpy', () => {
 
 	it('sub-anchor mode reports null until an anchor is reached', async () => {
 		render(<Sections />);
-		const { result } = renderHook(() => useScrollSpy(IDS, '-120px 0px -60% 0px', false));
+		const { result } = renderHook(() => useScrollSpy(IDS, false));
 		expect(result.current).toBeNull();
 
 		await act(async () => {

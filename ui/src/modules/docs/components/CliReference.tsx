@@ -383,7 +383,7 @@ export function CliReferenceView({ binaries }: CliReferenceViewProps) {
 			]),
 		[data],
 	);
-	const activeCmd = useScrollSpy(spyIds, '-120px 0px -70% 0px', false);
+	const activeCmd = useScrollSpy(spyIds, false);
 
 	return (
 		<div className="space-y-4">
