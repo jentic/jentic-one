@@ -42,7 +42,7 @@ async function enableMocking() {
 		worker.use(...reviewScenarioHandlers);
 	}
 	await worker.start({
-		onUnhandledRequest: 'bypass',
+		onUnhandledFrame: 'bypass',
 		// Vite serves static assets (incl. the generated worker script) under
 		// `base: '/app/'`, so the worker lives at `<base>mockServiceWorker.js`
 		// and must claim that scope. Without this MSW probes the root URL, which
