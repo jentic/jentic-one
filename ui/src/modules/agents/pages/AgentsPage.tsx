@@ -3,11 +3,12 @@
  *
  * The header carries what the agent-scoped dock cannot: the org-wide credential
  * inventory (a sheet reached through `?credentials`, `=new` for the wizard, and
- * `?approve=&poll_token=` for an agent's connect approval link), the
+ * `?approve=<sid>` for an agent's connect approval link), the
  * fleet filter and `New agent`. It owns the keyboard map documented in `PageHelp`;
- * everything else is `FlatAgentsSection`, which keeps its selection in `?agent=`.
+ * below it sit the "Waiting for you" connect requests and `FlatAgentsSection`,
+ * which keeps its selection in `?agent=`.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Filter, Plus, Wallet } from 'lucide-react';
 import {
@@ -21,14 +22,26 @@ import {
 	type KeyboardShortcut,
 } from '@/shared/ui';
 import { useHotkey } from '@/shared/hooks';
+import { commandChordLabel } from '@/shared/lib/keyboard';
 import { FlatAgentsSection } from '@/modules/agents/components/flat/FlatAgentsSection';
 import { CredentialInventorySheet } from '@/modules/agents/components/flat/CredentialInventorySheet';
+import { CreateCredentialFlow } from '@/shared/credentials/components/CreateCredentialFlow';
+import { PostConnectBindMore } from '@/shared/credentials/components/PostConnectBindMore';
+import { ConnectRequestsSection } from '@/modules/agents/components/flat/ConnectRequestsSection';
+
+/** The connect session the approve wizard is open on. */
+interface ApprovalSession {
+	sessionId: string;
+	/** Only from an older link that still carries one; owners approve without it. */
+	pollToken?: string;
+}
 
 /** The surface's whole keyboard map, listed on demand in `PageHelp`. */
 const SHORTCUTS: KeyboardShortcut[] = [
 	{ keys: ['a'], label: 'add API' },
 	{ keys: ['n'], label: 'new agent' },
 	{ keys: ['/'], label: 'search' },
+	{ keys: [commandChordLabel('k')], label: 'switch agent' },
 	{ keys: ['Esc'], label: 'close' },
 ];
 
@@ -66,23 +79,28 @@ export default function AgentsPage() {
 	}, [inventoryParam, setSearchParams]);
 
 	// An agent-initiated connect session hands its owner an approval link (see
-	// `connect_session_service.py::_approval_url_for`) carrying
-	// `?approve=<sid>&poll_token=<tok>`. Those params open the inventory's wizard in
-	// approve mode and stay in the URL until it closes, so a reload mid-approval
-	// reopens it rather than losing the prompt.
-	const approveSessionId = searchParams.get('approve');
-	const approvePollToken = searchParams.get('poll_token');
-	const approvalSession = useMemo(
-		() =>
-			approveSessionId && approvePollToken
-				? { sessionId: approveSessionId, pollToken: approvePollToken }
-				: undefined,
-		[approveSessionId, approvePollToken],
-	);
+	// `connect_session_service.py::_approval_url_for`): `?approve=<sid>`. The
+	// owner or an org admin approves without a poll token; an older link that
+	// still carries `&poll_token=` keeps it for its holder. The params open the
+	// approve wizard on its own over this page — not over the credential
+	// inventory, so closing it lands back here — and are stripped from the URL
+	// at once (history, bookmarks and shared screens never keep them); the
+	// session is held in state until the wizard closes. A reload drops the
+	// prompt, and the "Waiting for you" section below re-offers it while the
+	// request is open.
+	const approveParam = searchParams.get('approve');
+	const pollTokenParam = searchParams.get('poll_token');
+	const [approvalSession, setApprovalSession] = useState<ApprovalSession | undefined>();
 	useEffect(() => {
-		if (approvalSession) setInventoryOpen(true);
-	}, [approvalSession]);
-	const clearApprovalParams = (): void => {
+		if (approveParam == null && pollTokenParam == null) return;
+		if (approveParam) {
+			setApprovalSession(
+				pollTokenParam
+					? { sessionId: approveParam, pollToken: pollTokenParam }
+					: { sessionId: approveParam },
+			);
+		}
+		// `replace`, and only these keys: `?agent=` must survive the rewrite.
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -92,7 +110,7 @@ export default function AgentsPage() {
 			},
 			{ replace: true },
 		);
-	};
+	}, [approveParam, pollTokenParam, setSearchParams]);
 
 	return (
 		// The surface mounts the fixed AgentDock, so the page pads its bottom to keep
@@ -187,6 +205,8 @@ export default function AgentsPage() {
 				}
 			/>
 
+			<ConnectRequestsSection />
+
 			<FlatAgentsSection
 				createOpen={agentCreateOpen}
 				setCreateOpen={setAgentCreateOpen}
@@ -199,13 +219,31 @@ export default function AgentsPage() {
 			<CredentialInventorySheet
 				open={inventoryOpen}
 				autoOpenCreate={inventoryWantsCreate}
-				approvalSession={approvalSession}
-				onApprovalClose={clearApprovalParams}
 				onClose={() => {
 					setInventoryOpen(false);
 					setInventoryWantsCreate(false);
 				}}
 			/>
+
+			{approvalSession && (
+				<CreateCredentialFlow
+					// A different request is a different wizard: remount so one
+					// session's review state never carries into the next.
+					key={approvalSession.sessionId}
+					open
+					approvalSession={approvalSession}
+					onClose={() => setApprovalSession(undefined)}
+					// Approve mode finishes inside the wizard; a create it hands back
+					// is just as finished.
+					onCreated={() => setApprovalSession(undefined)}
+					renderPostConnect={({ credentialId, boundAgentId }) => (
+						<PostConnectBindMore
+							credentialId={credentialId}
+							boundAgentId={boundAgentId}
+						/>
+					)}
+				/>
+			)}
 		</PageShell>
 	);
 }

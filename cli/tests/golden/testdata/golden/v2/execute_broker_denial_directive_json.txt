@@ -9,9 +9,23 @@ exit: 2
           "cred_pets",
           "cred_pets_admin"
         ],
+        "connect": {
+          "registration_id": "oar_acme",
+          "vendor_key": "acme"
+        },
         "provisioning_url": "https://console.example/connect/acme",
         "retry_after_seconds": 30,
-        "suggested_command": "jentic execute --header Jentic-Credential-Id=cred_pets ..."
+        "suggested_command": "jentic execute --header Jentic-Credential-Id=cred_pets ...",
+        "suggested_rules": [
+          {
+            "effect": "allow",
+            "match_mode": "exact",
+            "methods": [
+              "GET"
+            ],
+            "path": "/v1/pets"
+          }
+        ]
       },
       "strategy": "wait"
     },
@@ -21,7 +35,7 @@ exit: 2
     "type": "no_credential_binding"
   },
   "headers": {
-    "Content-Length": "733",
+    "Content-Length": "914",
     "Content-Type": "application/problem+json",
     "Jentic-Error-Origin": "broker"
   },

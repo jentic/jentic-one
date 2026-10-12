@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
 import structlog
+from pydantic import SecretStr
 
 from jentic_one.control.core.schema.agent_permission_rules import AgentPermissionRule
 from jentic_one.control.core.schema.credentials import Credential
@@ -74,12 +75,19 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.permission_test import PermissionTestResult
 from jentic_one.control.services.credentials.schemas.provision import APIReference
+from jentic_one.control.services.credentials.typed_secrets import (
+    write_api_key_secret,
+    write_basic_secret,
+    write_bearer_token_secret,
+    write_sigv4_secret,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN, OWNER_AGENTS_READ
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort, summary_label
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.api_identity import (
     CredentialScope,
     canonical_credential_scope,
@@ -148,6 +156,25 @@ class CredentialService:
                 session, agent_id=identity.sub
             )
 
+    async def _owned_agent_ids(self, identity: Identity) -> list[str]:
+        """Agent ids the caller owns, for the read-only owned-agent scoping clause.
+
+        Lets a human read the pending credential of a connect session one of
+        their agents opened (see ``build_access_filters``). Only humans own
+        agents and ``org:admin`` is unrestricted already, so both skip the
+        lookup.
+        """
+        if (
+            ORG_ADMIN in identity.permissions
+            or identity.actor_type != ActorType.USER
+            or not identity.sub
+        ):
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_agent_ids_owned_by(
+                session, owner_id=identity.sub
+            )
+
     def list_providers(
         self, *, default_callback_url: str | None = None
     ) -> list[ProviderDiscoveryEntry]:
@@ -198,6 +225,7 @@ class CredentialService:
         # identity at execute time (#775), and stores github.com as github-com
         # rather than a dead-on-arrival identity (#746).
         api_scope = self._canonical_api_scope(payload.api)
+        api_scope = await self._catalog_registered_scope(api_scope, payload.catalog_api_id)
 
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
@@ -226,48 +254,39 @@ class CredentialService:
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
-                encrypted = encryption.encrypt(payload.token)
-                preview = encryption.preview(payload.token)
-                await TokenValueCredentialRepository.create(
+                secret = await write_bearer_token_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_token_value=encrypted,
-                    token_preview=preview,
+                    token=SecretStr(payload.token),
                     created_by=identity.sub,
                 )
-                secret = BearerTokenFull(token=payload.token)
 
             elif payload.type == CredentialType.API_KEY:
                 assert payload.key
                 assert payload.location
                 assert payload.field_name
-                encrypted = encryption.encrypt(payload.key)
-                preview = encryption.preview(payload.key)
-                await CustomerAPIKeyRepository.create(
+                secret = await write_api_key_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
-                    encrypted_key=encrypted,
-                    key_preview=preview,
+                    key=SecretStr(payload.key),
                     location=payload.location,
                     field_name=payload.field_name,
                     created_by=identity.sub,
-                )
-                secret = ApiKeyFull(
-                    key=payload.key, location=payload.location, field_name=payload.field_name
                 )
 
             elif payload.type == CredentialType.BASIC:
                 assert payload.username
                 assert payload.password
-                encrypted_pw = encryption.encrypt(payload.password)
-                await BasicCredentialRepository.create(
+                secret = await write_basic_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     username=payload.username,
-                    encrypted_password=encrypted_pw,
+                    password=SecretStr(payload.password),
                     created_by=identity.sub,
                 )
-                secret = BasicAuthFull(username=payload.username, password=payload.password)
 
             elif payload.type == CredentialType.OAUTH2:
                 validated_token_url: str | None = None
@@ -344,28 +363,20 @@ class CredentialService:
                 assert payload.secret_access_key
                 assert payload.aws_region
                 assert payload.aws_service
-                encrypted = encryption.encrypt(payload.secret_access_key)
-                preview = encryption.preview(payload.secret_access_key)
-                encrypted_session = (
-                    encryption.encrypt(payload.session_token) if payload.session_token else None
-                )
-                await Sigv4CredentialRepository.create(
+                secret = await write_sigv4_secret(
                     session,
+                    encryption,
                     credential_id=credential.id,
                     access_key_id=payload.access_key_id,
-                    encrypted_secret_access_key=encrypted,
-                    secret_preview=preview,
-                    encrypted_session_token=encrypted_session,
+                    secret_access_key=SecretStr(payload.secret_access_key),
+                    session_token=(
+                        SecretStr(payload.session_token)
+                        if payload.session_token is not None
+                        else None
+                    ),
                     region=payload.aws_region,
                     service=payload.aws_service,
                     created_by=identity.sub,
-                )
-                secret = Sigv4Full(
-                    access_key_id=payload.access_key_id,
-                    secret_access_key=payload.secret_access_key,
-                    session_token=payload.session_token,
-                    aws_region=payload.aws_region,
-                    aws_service=payload.aws_service,
                 )
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
@@ -474,6 +485,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -512,6 +524,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -621,6 +634,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
@@ -1104,6 +1118,7 @@ class CredentialService:
             identity,
             Credential,
             bound_credential_ids=await self._bound_credential_ids(identity),
+            owned_agent_ids=await self._owned_agent_ids(identity),
             include_shared=True,
         )
 
@@ -1511,6 +1526,49 @@ class CredentialService:
                     f"api.{axis} '{value}' is not an identity — it looks like a spec path"
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
+
+    async def _catalog_registered_scope(
+        self, scope: CredentialScope, catalog_api_id: str | None
+    ) -> CredentialScope:
+        """The scope naming the API actually imported from ``catalog_api_id``.
+
+        A client picking a catalog entry derives the API name from its id, and
+        that derivation is not the importer's: a ``domain/sub`` entry registers
+        under its sub segment (or its whole id when sub segments collide), and an
+        API imported by an older release keeps the name it was created with. The
+        imported row is the authority, so when one carries this catalog id and
+        the same vendor, its name replaces the client's. A vendor-wide scope (no
+        name) and a scope on another vendor are the caller's choice and stay.
+        Best effort, like the coverage check: no registry DB, a slow one, or no
+        imported row leaves the scope as given.
+        """
+        if not catalog_api_id or scope.name is None or not self._ctx.has_db("registry"):
+            return scope
+        try:
+            async with asyncio.timeout(_REGISTRY_PROBE_TIMEOUT_S):
+                async with self._ctx.registry_db.session() as session:
+                    registered = await RegistryApiLookupRepository.identity_for_catalog_api_id(
+                        session, catalog_api_id
+                    )
+        except Exception:
+            logger.warning(
+                "credential_catalog_identity_lookup_failed",
+                catalog_api_id=catalog_api_id,
+                exc_info=True,
+            )
+            return scope
+        if registered is None:
+            return scope
+        vendor, name = registered
+        if vendor != scope.vendor or name == scope.name:
+            return scope
+        logger.info(
+            "credential_catalog_identity_resolved",
+            catalog_api_id=catalog_api_id,
+            requested_name=scope.name,
+            registered_name=name,
+        )
+        return CredentialScope(vendor=vendor, name=name, version=scope.version)
 
     async def _unmatched_scope_warning(
         self, scope: CredentialScope

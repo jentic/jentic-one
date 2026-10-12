@@ -95,3 +95,23 @@ def test_extra_carried_pointers_cannot_bypass_the_lane_filter() -> None:
 
     served = ToolError(CODE_TRANSPORT_ERROR, "boom", extra={"next_tool": "whoami"})
     assert _payload(soft_error_result(_ctx(), served))["next_tool"] == "whoami"
+
+
+def test_next_tool_arguments_ride_only_with_their_pointer() -> None:
+    """``next_tool_arguments`` describe the ``next_tool`` call; when the lane
+    filter drops the pointer, its arguments go too."""
+    args = {"vendor": "google"}
+    served = ToolError(
+        CODE_TRANSPORT_ERROR,
+        "boom",
+        next_tool="request_connection",
+        extra={"next_tool_arguments": args},
+    )
+    payload = _payload(soft_error_result(_ctx(), served))
+    assert payload["next_tool"] == "request_connection"
+    assert payload["next_tool_arguments"] == args
+
+    dropped = ToolError(
+        CODE_TRANSPORT_ERROR, "boom", next_tool="get_started", extra={"next_tool_arguments": args}
+    )
+    assert "next_tool_arguments" not in _payload(soft_error_result(_ctx(), dropped))

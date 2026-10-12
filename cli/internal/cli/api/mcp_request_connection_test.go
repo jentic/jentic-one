@@ -26,10 +26,17 @@ type connectControlPlane struct {
 	body    string
 	headers map[string]string
 	seen    []byte
+	// vendors, when set, is served as the GET /vendors 200 body.
+	vendors string
 }
 
 func (c *connectControlPlane) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.vendors != "" && r.Method == http.MethodGet && r.URL.Path == "/vendors" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(c.vendors))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/integrations:connect" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -213,13 +220,20 @@ func TestMCPRequestConnection_UnknownVendor404IsResolveFailedPointingAtSearchCat
 	}
 }
 
-func TestMCPRequestConnection_AmbiguousVendorRoutesToOperator(t *testing.T) {
-	cp := &connectControlPlane{status: http.StatusBadRequest, body: `{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'github' is ambiguous"}`}
+// Several shared OAuth apps for one vendor: the soft error lists them
+// (details.candidates, from GET /vendors) and tells the agent to ask its user,
+// then retry request_connection with the picked oauth_app_registration_id.
+func TestMCPRequestConnection_AmbiguousVendorListsCandidatesAndAsksTheUser(t *testing.T) {
+	cp := &connectControlPlane{
+		status:  http.StatusBadRequest,
+		body:    `{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps"}`,
+		vendors: ambiguousVendorsBody,
+	}
 	srv := httptest.NewServer(cp.handler())
 	defer srv.Close()
 
 	s := stampedTestMCPServer(t)
-	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", `{"vendor":"github"}`))
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", `{"vendor":"googleapis-com"}`))
 	if err != nil {
 		t.Fatalf("an ambiguous vendor must be a soft error: %v", err)
 	}
@@ -230,11 +244,131 @@ func TestMCPRequestConnection_AmbiguousVendorRoutesToOperator(t *testing.T) {
 	if payload["error_code"] != ux.CodeResolveFailed {
 		t.Errorf("error_code = %v, want %q", payload["error_code"], ux.CodeResolveFailed)
 	}
-	if payload["next_tool"] == "search_catalog" {
-		t.Errorf("next_tool = search_catalog, but discovery can't resolve an ambiguous app")
+	if payload["next_tool"] != "request_connection" {
+		t.Errorf("next_tool = %v, want request_connection (retry with the picked id)", payload["next_tool"])
 	}
-	if payload["actionable_step"] != ambiguousVendorActionable {
-		t.Errorf("actionable_step = %v, want the ask-your-operator advice", payload["actionable_step"])
+	want := ambiguousVendorActionable("googleapis-com", true, requestConnectionRegistrationRetry)
+	if payload["actionable_step"] != want {
+		t.Errorf("actionable_step = %v, want %q", payload["actionable_step"], want)
+	}
+	details, _ := payload["details"].(map[string]any)
+	candidates, _ := details["candidates"].([]any)
+	if len(candidates) != 2 {
+		t.Fatalf("details.candidates = %v, want the two googleapis-com shared apps", details["candidates"])
+	}
+	first, _ := candidates[0].(map[string]any)
+	if first["registration_id"] != "oar_gmail" || first["name"] != "Gmail (work)" {
+		t.Errorf("first candidate = %v, want oar_gmail / Gmail (work)", first)
+	}
+}
+
+// An API-target request_connection lists only the shared apps the 400
+// ambiguous_vendor counted (registration_ids), not every app under the key.
+func TestMCPRequestConnection_APITargetAmbiguousListsTheCountedApps(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusBadRequest,
+		body: `{"type":"https://docs.jentic.com/problems/ambiguous_vendor","detail":"vendor 'googleapis-com' matches 2 OAuth apps",` +
+			`"vendor":"googleapis-com","registration_ids":["oar_gmail","oar_other"]}`,
+		vendors: ambiguousVendorsBody,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL),
+		callToolRequest("request_connection", `{"api":"googleapis-com/gmail/v1"}`))
+	if err != nil {
+		t.Fatalf("an ambiguous api target must be a soft error: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["next_tool"] != "request_connection" {
+		t.Errorf("next_tool = %v, want request_connection (retry with the picked id)", payload["next_tool"])
+	}
+	details, _ := payload["details"].(map[string]any)
+	candidates, _ := details["candidates"].([]any)
+	ids := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		m, _ := c.(map[string]any)
+		id, _ := m["registration_id"].(string)
+		ids = append(ids, id)
+	}
+	if strings.Join(ids, ",") != "oar_gmail,oar_other" {
+		t.Errorf("candidates = %v, want the registrations the problem counted (oar_gmail, oar_other)", ids)
+	}
+}
+
+func TestMCPRequestConnection_PinAndRulesRideTheWire(t *testing.T) {
+	cp := &connectControlPlane{
+		status: http.StatusCreated,
+		body:   `{"session_id":"cs_p","approval_url":"https://one.example/c/p","poll_token":"pt","resolved_flow":"authorization_code"}`,
+	}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+		`{"vendor":"googleapis-com","registration_id":"oar_gmail",
+		  "permission_rules":"[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\"/gmail/.*\"}]"}`))
+	if err != nil {
+		t.Fatalf("handleRequestConnection: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected soft error: %s", toolResultText(res))
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(cp.seen, &wire); err != nil {
+		t.Fatalf("decode wire body: %v", err)
+	}
+	if wire["oauth_app_registration_id"] != "oar_gmail" {
+		t.Errorf("oauth_app_registration_id = %v, want oar_gmail (registration_id alias)", wire["oauth_app_registration_id"])
+	}
+	rules, _ := wire["requested_permission_rules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("requested_permission_rules = %v, want the one stringified rule decoded", wire["requested_permission_rules"])
+	}
+	rule, _ := rules[0].(map[string]any)
+	if rule["effect"] != "allow" || rule["path"] != "/gmail/.*" {
+		t.Errorf("rule = %v, want allow GET /gmail/.*", rule)
+	}
+}
+
+func TestMCPRequestConnection_MalformedRulesAreInvalidParams(t *testing.T) {
+	for name, rules := range map[string]string{
+		"unknown key":    `[{"effect":"allow","pattern":"/x"}]`,
+		"missing effect": `[{"methods":["GET"]}]`,
+		"not a list":     `{"effect":"allow"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx("http://127.0.0.1:0"), callToolRequest("request_connection",
+				`{"vendor":"github","requested_permission_rules":`+rules+`}`))
+			if res != nil {
+				t.Fatalf("want a protocol error, got a result: %v", res)
+			}
+			if err == nil || !strings.Contains(err.Error(), "requested_permission_rules") {
+				t.Fatalf("err = %v, want an invalid-params error naming requested_permission_rules", err)
+			}
+		})
+	}
+}
+
+func TestMCPRequestConnection_InvalidRegistrationPointsAtUnpinnedRetry(t *testing.T) {
+	cp := &connectControlPlane{status: http.StatusBadRequest, body: `{"type":"invalid_oauth_app_registration","detail":"not usable"}`}
+	srv := httptest.NewServer(cp.handler())
+	defer srv.Close()
+
+	s := stampedTestMCPServer(t)
+	res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+		`{"vendor":"googleapis-com","oauth_app_registration_id":"oar_x"}`))
+	if err != nil {
+		t.Fatalf("handleRequestConnection: %v", err)
+	}
+	payload := decodeToolJSON(t, res)
+	if payload["error_code"] != ux.CodeResolveFailed || payload["next_tool"] != "request_connection" {
+		t.Errorf("payload = %v, want RESOLVE_FAILED + next_tool request_connection", payload)
+	}
+	if step, _ := payload["actionable_step"].(string); !strings.Contains(step, "without oauth_app_registration_id") {
+		t.Errorf("actionable_step %q must point at the unpinned retry", step)
 	}
 }
 
@@ -329,5 +463,149 @@ func TestMCPRequestConnection_TooManyScopesIsInvalidParams(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "100") {
 		t.Fatalf("err = %v, want an invalid-params error naming the 100-scope bound", err)
+	}
+}
+
+// --- registry-API targets ------------------------------------------------------
+
+func TestMCPRequestConnection_APITargetForwardsIdentityAndAuthType(t *testing.T) {
+	for name, args := range map[string]string{
+		"object": `{"api":{"vendor":"stripe-com","name":"stripe-com-api","version":"2024-06-20"},"auth_type":"api_key"}`,
+		"slug":   `{"api":"stripe-com/stripe-com-api/2024-06-20","auth_type":"api_key"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cp := &connectControlPlane{
+				status: http.StatusCreated,
+				body:   `{"session_id":"cs_a","approval_url":"https://one.example/app/agents?approve=cs_a","poll_token":"pt_a","resolved_flow":"authorization_code"}`,
+			}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection", args))
+			if err != nil || res.IsError {
+				t.Fatalf("handleRequestConnection: err=%v result=%s", err, toolResultText(res))
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(cp.seen, &wire); err != nil {
+				t.Fatalf("decode wire body: %v", err)
+			}
+			if _, has := wire["vendor"]; has {
+				t.Errorf("vendor rode the wire with an api target: %v", wire)
+			}
+			api, _ := wire["api"].(map[string]any)
+			if api["vendor"] != "stripe-com" || api["name"] != "stripe-com-api" || api["version"] != "2024-06-20" {
+				t.Errorf("api = %v, want the stripe identity", wire["api"])
+			}
+			if wire["auth_type"] != "api_key" {
+				t.Errorf("auth_type = %v, want api_key", wire["auth_type"])
+			}
+			// An OAuth flow keeps the relay → whoami instruction and no pointer.
+			payload := decodeToolJSON(t, res)
+			if _, has := payload["next_tool"]; has {
+				t.Errorf("next_tool = %v on an OAuth flow, want none", payload["next_tool"])
+			}
+		})
+	}
+}
+
+// A human enters the credential, which can take hours, and this surface has no
+// status tool: the result says end your turn and points next_tool at execute.
+func TestMCPRequestConnection_HumanEntryFlowPointsAtExecuteLater(t *testing.T) {
+	for _, flow := range []string{"manual_api_key", "awaiting_app"} {
+		t.Run(flow, func(t *testing.T) {
+			cp := &connectControlPlane{
+				status: http.StatusCreated,
+				body: fmt.Sprintf(`{"session_id":"cs_m","approval_url":"https://one.example/app/agents?approve=cs_m",`+
+					`"poll_token":"pt_secret","resolved_flow":%q}`, flow),
+			}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+				`{"api":"acme/acme-api/v1"}`))
+			if err != nil || res.IsError {
+				t.Fatalf("handleRequestConnection: err=%v result=%s", err, toolResultText(res))
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["next_tool"] != "execute" {
+				t.Errorf("next_tool = %v, want execute (retry the blocked call later)", payload["next_tool"])
+			}
+			if instruction, _ := payload["instruction"].(string); !strings.Contains(instruction, "end your turn") {
+				t.Errorf("instruction %q must say end your turn", instruction)
+			}
+			if strings.Contains(toolResultText(res), "pt_secret") {
+				t.Errorf("the poll token leaked into the result")
+			}
+		})
+	}
+}
+
+func TestMCPRequestConnection_TargetArgumentErrorsAreInvalidParams(t *testing.T) {
+	s := stampedTestMCPServer(t)
+	for name, args := range map[string]string{
+		"both targets":     `{"vendor":"github","api":"acme/acme-api/v1"}`,
+		"two-part slug":    `{"api":"acme/acme-api"}`,
+		"partial object":   `{"api":{"vendor":"acme","name":"acme-api"}}`,
+		"auth_type no api": `{"vendor":"github","auth_type":"api_key"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, err := s.handleRequestConnection(activeCtx("http://127.0.0.1:0"), callToolRequest("request_connection", args))
+			if res != nil || err == nil {
+				t.Fatalf("want a protocol error, got result=%v err=%v", res, err)
+			}
+		})
+	}
+}
+
+// The API-target error codes carry the same recovery as the CLI, in tool
+// vocabulary, plus the MCP next_tool.
+func TestMCPRequestConnection_APITargetErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		status             int
+		body               string
+		wantCode, nextTool string
+		wantStep           string
+	}{
+		{
+			http.StatusBadRequest, `{"type":"auth_type_required","detail":"several","options":["api_key","oauth2"]}`,
+			ux.CodeResolveFailed, "request_connection", "auth_type set to one of them",
+		},
+		{http.StatusNotFound, `{"type":"unknown_api","detail":"not found"}`, ux.CodeResolveFailed, "search_catalog", "import_api"},
+		{http.StatusNotFound, `{"type":"manual_flows_disabled","detail":"off"}`, ux.CodeBrokerDenied, "", "Report the gap"},
+		{http.StatusConflict, `{"type":"no_declared_scheme","detail":"none"}`, ux.CodeBrokerDenied, "", "Do not retry"},
+		{
+			http.StatusConflict, `{"type":"host_variable_not_pinned","detail":"x","variables":["region"]}`,
+			ux.CodeBrokerDenied, "", "enum",
+		},
+		{http.StatusTooManyRequests, `{"type":"too_many_open_sessions","detail":"cap"}`, ux.CodeBrokerDenied, "", "Do not open more"},
+		{http.StatusTooManyRequests, `{"type":"recently_rejected","detail":"rejected"}`, ux.CodeBrokerDenied, "", "Do not ask again"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			cp := &connectControlPlane{status: tc.status, body: tc.body, headers: map[string]string{"Retry-After": "3600"}}
+			srv := httptest.NewServer(cp.handler())
+			defer srv.Close()
+
+			s := stampedTestMCPServer(t)
+			res, err := s.handleRequestConnection(activeCtx(srv.URL), callToolRequest("request_connection",
+				`{"api":"acme/acme-api/v1"}`))
+			if err != nil || !res.IsError {
+				t.Fatalf("want a soft error: err=%v result=%v", err, res)
+			}
+			payload := decodeToolJSON(t, res)
+			if payload["error_code"] != tc.wantCode {
+				t.Errorf("error_code = %v, want %q", payload["error_code"], tc.wantCode)
+			}
+			if got, _ := payload["next_tool"].(string); got != tc.nextTool {
+				t.Errorf("next_tool = %q, want %q", got, tc.nextTool)
+			}
+			if payload["retryable"] != false {
+				t.Errorf("retryable = %v, want false", payload["retryable"])
+			}
+			if step, _ := payload["actionable_step"].(string); !strings.Contains(step, tc.wantStep) {
+				t.Errorf("actionable_step %q must contain %q", step, tc.wantStep)
+			}
+		})
 	}
 }

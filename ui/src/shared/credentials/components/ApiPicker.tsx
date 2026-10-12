@@ -510,7 +510,8 @@ function CatalogRow({
 	);
 }
 
-function VendorTile({
+/** One one-click sign-in card: a platform vendor or an organization's shared OAuth app. */
+export function VendorTile({
 	vendor,
 	onSelect,
 }: {

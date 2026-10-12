@@ -19,6 +19,23 @@ export const FIRST_AGENT_NAME = 'my-first-agent';
 /** The suggestion for an org that has (or had) agents. */
 export const NEXT_AGENT_NAME = 'my-agent';
 
+/** The longest name a plain-text line (a toast, a native tooltip) prints whole. */
+const AGENT_NAME_TEXT_BUDGET = 40;
+
+/**
+ * `name` cut to `max` characters with an ellipsis, for plain-text copy that
+ * can't truncate visually (toast titles). Accessible names keep the full name.
+ */
+export function clipName(name: string, max: number = AGENT_NAME_TEXT_BUDGET): string {
+	const chars = [...name];
+	return chars.length <= max
+		? name
+		: `${chars
+				.slice(0, max - 1)
+				.join('')
+				.trimEnd()}…`;
+}
+
 /** Why `name` can't name an agent, or `null` when it can. */
 export function agentNameError(name: string): string | null {
 	return name.trim() ? null : 'A name is required.';

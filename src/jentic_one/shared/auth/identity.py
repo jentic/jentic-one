@@ -40,6 +40,15 @@ class Identity(BaseModel):
 
     sub: str
     email: str = ""
+    # The actor's display name (``agents.name`` / the user's full name) when the
+    # resolver that authenticated this identity already read it — audit event
+    # summaries name the acting actor by it instead of by the opaque ``sub``
+    # (#1543). Empty when the resolving path has no name in hand (a signed JWT
+    # carries no name claim, the async worker rebuilds an identity from a job
+    # payload): every consumer falls back to ``sub``, so a name is a bonus and
+    # never a precondition. Never a lookup of its own — a resolver sets it only
+    # from a row it already loads.
+    actor_name: str = ""
 
     # ---------------------------------------------------------
     # Internal RBAC Capabilities

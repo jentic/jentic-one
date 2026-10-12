@@ -1,8 +1,9 @@
 """Unit tests for the integrations router — HTTP contract, not state.
 
-Pins the router's four endpoints (``POST /integrations:connect``,
-``GET /connect-sessions/{id}``, ``POST /connect-sessions/{id}:confirm``,
-``GET /connect-sessions/{id}/status``) to the response shapes,
+Pins the router's endpoints (``POST /integrations:connect``,
+``GET /connect-sessions``, ``GET /connect-sessions/{id}``,
+``POST /connect-sessions/{id}:confirm``, ``GET /connect-sessions/{id}/status``,
+``POST /connect-sessions/{id}:cancel``) to the response shapes,
 discriminated-union serialisation, and error → HTTP status mapping the
 UI + agents rely on. State-machine behaviour is covered in the integration
 test at ``tests/integration/control/test_connect_session_service.py``;
@@ -35,11 +36,14 @@ from jentic_one.control.services.integrations.device_authorization import (
     DeviceAuthorizationUpstreamError,
 )
 from jentic_one.control.services.integrations.errors import (
+    AgentInactiveError,
     AgentNotFoundError,
     ConfirmationForbiddenError,
     InvalidPollTokenError,
     InvalidStateTransitionError,
+    ManualFlowsDisabledError,
     ScopeValidationError,
+    UnsupportedTargetKindError,
 )
 from jentic_one.control.services.vendors.service import (
     AmbiguousVendorError,
@@ -100,7 +104,7 @@ def test_connect_uses_agent_identity_when_caller_is_agent() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -141,7 +145,7 @@ def test_connect_allows_user_caller_without_agent_id() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_1",
-            approval_url="https://example.com/app/agents?approve=sess_1&poll_token=tok",
+            approval_url="https://example.com/app/agents?approve=sess_1",
             poll_token="tok",
             resolved_flow="device_authorization",
         )
@@ -165,6 +169,25 @@ def test_connect_maps_unknown_vendor_to_404() -> None:
     assert resp.status_code == 404
 
 
+def test_connect_maps_manual_flows_disabled_and_unsupported_target_kind() -> None:
+    """The API-target gate is a coded 404; an unhandled target kind is an internal 500."""
+    svc = AsyncMock(spec=ConnectSessionService)
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    svc.create_session = AsyncMock(side_effect=ManualFlowsDisabledError())
+    with TestClient(app) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh"})
+    assert resp.status_code == 404
+    assert resp.json()["type"].endswith("manual_flows_disabled")
+
+    svc.create_session = AsyncMock(
+        side_effect=UnsupportedTargetKindError(None, "api", "create a session")
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post("/integrations:connect", json={"vendor": "gh"})
+    assert resp.status_code == 500
+    assert resp.json()["type"].endswith("connect_session_error")
+
+
 def test_connect_maps_ambiguous_vendor_to_400() -> None:
     """No pin + several matching registrations → the caller must pin one."""
     svc = AsyncMock(spec=ConnectSessionService)
@@ -175,7 +198,11 @@ def test_connect_maps_ambiguous_vendor_to_400() -> None:
     with TestClient(app) as client:
         resp = client.post("/integrations:connect", json={"vendor": "googleapis-com"})
     assert resp.status_code == 400
-    assert resp.json()["type"].endswith("ambiguous_vendor")
+    body = resp.json()
+    assert body["type"].endswith("ambiguous_vendor")
+    # The key and the apps it counted, so a client lists exactly those.
+    assert body["vendor"] == "googleapis-com"
+    assert body["registration_ids"] == ["oar_a", "oar_b"]
 
 
 def test_connect_rejects_unknown_fields() -> None:
@@ -196,7 +223,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     svc.create_session = AsyncMock(
         return_value=CreatedSession(
             session_id="sess_9",
-            approval_url="https://example.com/app/agents?approve=sess_9&poll_token=tok9",
+            approval_url="https://example.com/app/agents?approve=sess_9",
             poll_token="tok9",
             resolved_flow="authorization_code",
         )
@@ -210,7 +237,7 @@ def test_connect_returns_session_id_and_poll_token() -> None:
     body = resp.json()
     assert body == {
         "session_id": "sess_9",
-        "approval_url": "https://example.com/app/agents?approve=sess_9&poll_token=tok9",
+        "approval_url": "https://example.com/app/agents?approve=sess_9",
         "poll_token": "tok9",
         "resolved_flow": "authorization_code",
     }
@@ -265,15 +292,45 @@ def test_get_review_data_returns_scope_catalog() -> None:
     }
 
 
-def test_get_review_data_requires_poll_token() -> None:
-    # The review payload is poll_token-gated — a bare GET (no token) must
-    # fail schema validation before the service is ever consulted.
+def test_session_routes_forward_a_missing_poll_token_with_the_identity() -> None:
+    # The poll token is optional on review / status / cancel: the target
+    # agent's owner or org:admin may act without it. The router forwards
+    # ``None`` plus the caller's identity and leaves the token-or-owner
+    # decision to the service (which answers a uniform 403 otherwise).
     svc = AsyncMock(spec=ConnectSessionService)
+    svc.get_review_data = AsyncMock(side_effect=InvalidPollTokenError("invalid poll_token"))
+    svc.get_status = AsyncMock(return_value=StatusResult(status="pending"))
+    svc.cancel_session = AsyncMock(return_value=None)
     app = _build_app(svc=svc, identity=_USER_IDENTITY)
     with TestClient(app) as client:
-        resp = client.get("/connect-sessions/sess_1")
-    assert resp.status_code == 422
-    svc.get_review_data.assert_not_called()
+        review = client.get("/connect-sessions/sess_1")
+        status = client.get("/connect-sessions/sess_1/status")
+        cancel = client.post("/connect-sessions/sess_1:cancel")
+    assert review.status_code == 403
+    assert status.status_code == 200
+    assert cancel.status_code == 204
+    for mock in (svc.get_review_data, svc.get_status, svc.cancel_session):
+        call = mock.await_args
+        assert call is not None
+        assert call.kwargs["poll_token"] is None
+        assert call.kwargs["identity"] is _USER_IDENTITY
+
+
+def test_invalid_poll_token_detail_is_static() -> None:
+    # The service raises ``InvalidPollTokenError`` with different messages
+    # for "no session" and "wrong token"; the client must see one detail so
+    # the body is no more of an enumeration oracle than the status code.
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.get_status = AsyncMock(side_effect=InvalidPollTokenError("poll_token mismatch"))
+    svc.cancel_session = AsyncMock(side_effect=InvalidPollTokenError("invalid poll_token"))
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        mismatch = client.get("/connect-sessions/sess_1/status", params={"poll_token": "t"})
+        missing = client.post("/connect-sessions/sess_x:cancel")
+    assert mismatch.status_code == missing.status_code == 403
+    assert mismatch.json()["type"] == missing.json()["type"] == "invalid_poll_token"
+    assert mismatch.json()["detail"] == missing.json()["detail"]
+    assert "mismatch" not in mismatch.json()["detail"]
 
 
 def test_get_review_data_maps_invalid_poll_token_uniformly_to_403() -> None:
@@ -467,6 +524,7 @@ def _summary(session_id: str = "cs_1", state: str = "created") -> SessionSummary
         connected_as=None,
         error_code=None,
         created_at=dt.datetime(2026, 9, 16, 12, 0, 0, tzinfo=dt.UTC),
+        credential_id=f"cred_{session_id}",
     )
 
 
@@ -485,6 +543,7 @@ def test_list_sessions_returns_paginated_envelope() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert [row["session_id"] for row in body["data"]] == ["cs_1", "cs_2"]
+    assert [row["credential_id"] for row in body["data"]] == ["cred_cs_1", "cred_cs_2"]
     assert body["has_more"] is True
     assert body["next_cursor"] == "opaque-cursor"
     call = svc.list_all.await_args
@@ -543,6 +602,7 @@ def test_list_sessions_never_includes_poll_token() -> None:
         "connected_as",
         "error_code",
         "created_at",
+        "credential_id",
     }
 
 
@@ -605,11 +665,11 @@ def test_connect_rate_limit_returns_429_with_retry_after() -> None:
         assert third.json()["type"] == "rate_limit_exceeded"
 
 
-def test_confirm_requires_poll_token_and_forwards_it_with_identity() -> None:
-    # ``:confirm`` is poll_token-gated like the review read — without the
-    # capability, any ``credentials:write`` holder could confirm any
-    # session. The router must also hand the full identity to the service
-    # (agent-ownership validation happens there).
+def test_confirm_forwards_poll_token_or_none_with_identity() -> None:
+    # ``:confirm`` accepts the poll token or, without it, an owner / org:admin
+    # identity — the router forwards whichever it got plus the full identity
+    # (the token-or-owner gate and agent-ownership validation live in the
+    # service).
     svc = AsyncMock(spec=ConnectSessionService)
     svc.confirm = AsyncMock(
         return_value=AuthCodeConfirmResult(authorize_url="https://idp.example.com/authorize")
@@ -620,8 +680,11 @@ def test_confirm_requires_poll_token_and_forwards_it_with_identity() -> None:
             "/connect-sessions/sess_1:confirm",
             json={"confirmed_scopes": [], "permission_rules": []},
         )
-        assert bare.status_code == 422
-        svc.confirm.assert_not_called()
+        assert bare.status_code == 200
+        bare_call = svc.confirm.await_args
+        assert bare_call is not None
+        assert bare_call.kwargs["poll_token"] is None
+        assert bare_call.kwargs["identity"] is _USER_IDENTITY
 
         resp = client.post(
             "/connect-sessions/sess_1:confirm",
@@ -633,6 +696,19 @@ def test_confirm_requires_poll_token_and_forwards_it_with_identity() -> None:
     assert call is not None
     assert call.kwargs["poll_token"] == "tok"
     assert call.kwargs["identity"] is _USER_IDENTITY
+
+
+def test_confirm_maps_inactive_agent_to_409() -> None:
+    svc = AsyncMock(spec=ConnectSessionService)
+    svc.confirm = AsyncMock(side_effect=AgentInactiveError("agnt_old", "archived"))
+    app = _build_app(svc=svc, identity=_USER_IDENTITY)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/connect-sessions/sess_1:confirm",
+            json={"confirmed_scopes": [], "permission_rules": []},
+        )
+    assert resp.status_code == 409
+    assert resp.json()["type"] == "connect_session_agent_inactive"
 
 
 def test_confirm_maps_agent_not_found_to_400() -> None:

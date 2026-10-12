@@ -93,6 +93,84 @@ describe('RuleListEditor — match mode of a stored rule', () => {
 	});
 });
 
+describe('RuleListEditor — an op-template path under regex', () => {
+	// Narrowing a broad preset is the route in: the stored rule is regex (the
+	// backend default), so the draft opens in regex and the path the operator
+	// then types comes from the op templates the field suggests.
+	const regexTemplateRule: PermissionRule = {
+		effect: 'allow',
+		methods: ['GET'],
+		path: '/repos/{owner}/{repo}',
+		match_mode: 'regex',
+	};
+
+	it('marks the saved row as never matching, and spells out the mode', () => {
+		render(<Harness initial={[regexTemplateRule]} />);
+		expect(screen.getByText('/repos/{owner}/{repo} (regex)')).toBeInTheDocument();
+		expect(screen.getByRole('status', { name: /matches no real request/i })).toBeVisible();
+	});
+
+	it('does not mark the same path under exact', () => {
+		render(<Harness initial={[{ ...regexTemplateRule, match_mode: 'exact' }]} />);
+		expect(screen.getByText('/repos/{owner}/{repo} (exact)')).toBeInTheDocument();
+		expect(screen.queryByText('never matches')).not.toBeInTheDocument();
+	});
+
+	it('warns in the open draft and switches the mode on one click', async () => {
+		const user = userEvent.setup();
+		render(<Harness initial={[regexTemplateRule]} />);
+		await user.click(screen.getByRole('button', { name: 'Edit rule' }));
+		expect(screen.getByLabelText('Path match mode')).toHaveValue('regex');
+		expect(screen.getByTestId('rule-placeholder-in-regex')).toBeVisible();
+
+		await user.click(screen.getByRole('button', { name: 'Use prefix' }));
+		expect(screen.getByLabelText('Path match mode')).toHaveValue('prefix');
+		expect(screen.queryByTestId('rule-placeholder-in-regex')).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: 'Save' }));
+		expect(state()[0]).toMatchObject({
+			path: '/repos/{owner}/{repo}',
+			match_mode: 'prefix',
+		});
+	});
+
+	it('takes a regex draft to exact when a template path is picked from the suggestions', async () => {
+		const user = userEvent.setup();
+		render(
+			<Harness
+				initial={[{ effect: 'allow', methods: ['GET'], path: '.*' }]}
+				pathSuggestions={['/repos/{owner}/{repo}']}
+			/>,
+		);
+		await user.click(screen.getByRole('button', { name: 'Edit rule' }));
+		expect(screen.getByLabelText('Path match mode')).toHaveValue('regex');
+
+		await user.clear(screen.getByLabelText('Path pattern'));
+		await user.click(screen.getByRole('option', { name: '/repos/{owner}/{repo}' }));
+
+		expect(screen.getByLabelText('Path match mode')).toHaveValue('exact');
+		await user.click(screen.getByRole('button', { name: 'Save' }));
+		expect(state()[0]).toMatchObject({
+			path: '/repos/{owner}/{repo}',
+			match_mode: 'exact',
+		});
+	});
+
+	it('leaves a deliberate regex draft on regex when the picked path has no placeholder', async () => {
+		const user = userEvent.setup();
+		render(
+			<Harness
+				initial={[{ effect: 'allow', methods: ['GET'], path: '.*' }]}
+				pathSuggestions={['/v1/charges']}
+			/>,
+		);
+		await user.click(screen.getByRole('button', { name: 'Edit rule' }));
+		await user.clear(screen.getByLabelText('Path pattern'));
+		await user.click(screen.getByRole('option', { name: '/v1/charges' }));
+		expect(screen.getByLabelText('Path match mode')).toHaveValue('regex');
+	});
+});
+
 describe('RuleListEditor — the path placeholder', () => {
 	it("names a route of the API being edited, not another vendor's", async () => {
 		const user = userEvent.setup();

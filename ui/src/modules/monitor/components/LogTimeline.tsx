@@ -265,7 +265,7 @@ export function LogTimeline() {
 
 				{hovered && hover != null && (
 					<div
-						className="bg-surface-field text-popover-foreground pointer-events-none absolute bottom-full z-10 mb-1.5 -translate-x-1/2 rounded-md px-2 py-1 text-[11px] whitespace-nowrap shadow-md"
+						className="bg-surface-field text-foreground pointer-events-none absolute bottom-full z-10 mb-1.5 -translate-x-1/2 rounded-md px-2 py-1 text-[11px] whitespace-nowrap shadow-md"
 						style={{
 							left: `clamp(4rem, ${((hover + 0.5) / bars.length) * 100}%, calc(100% - 4rem))`,
 						}}

@@ -508,6 +508,11 @@ async def write_idp_consent_handle(
             "email_verified": claims.email_verified,
             "first_name": claims.first_name,
             "last_name": claims.last_name,
+            # Preserved across the consent round-trip so admission-policy hard
+            # gates (e.g. Google Workspace `hd`) see the same claim they'd see
+            # on the direct callback path — dropping it here rebuilds the
+            # claims with hosted_domain=None and rejects every Workspace user.
+            "hosted_domain": claims.hosted_domain,
         }
     }
     common = _consent_common(

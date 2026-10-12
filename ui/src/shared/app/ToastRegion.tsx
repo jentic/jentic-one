@@ -2,14 +2,12 @@
  * ToastRegion — where both toasters appear: the agent-stream `ToastHost` and the
  * platform `Toaster`, stacked in one column.
  *
- * Bottom-right, beside whatever covers the right edge (the Activity rail at `xl+`,
- * an open right-hand sheet, a page's docked side column such as Library's "Your
- * workspace" panel or Monitor's Live activity panel — see `rightEdge`), so a
- * toast never lands on a panel's footer actions.
- * It sits as high as `FOOTER_ACTION_BAR_PAGE_PADDING`, clearing a page's
- * floating action dock and, below `md`, the bottom nav. When a sheet leaves no
- * room beside it — a full-width sheet on a phone — the toasts drop in under the
- * sheet's header instead, away from its footer.
+ * Bottom-left, always in the same place: every side panel, docked column and the
+ * Activity rail sit on the right edge, so a toast here never lands on a panel's
+ * footer actions. It sits as high as `FOOTER_ACTION_BAR_PAGE_PADDING`, clearing
+ * a page's floating action dock and, below `md`, the bottom nav. When a sheet
+ * leaves no room beside it — a full-width sheet on a phone — the toasts drop in
+ * under the sheet's header instead, away from its footer.
  */
 import { ToastHost } from '@/shared/app/rail/ToastHost';
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery';
@@ -22,6 +20,7 @@ const TOAST_WIDTH_PX = 384;
 const EDGE_GAP_PX = 16;
 
 export function ToastRegion() {
+	// What covers the right edge only matters when it leaves no room on the left.
 	const inset = useRightEdgeInset();
 	const roomBeside = useMediaQuery(`(min-width: ${inset + TOAST_WIDTH_PX + 2 * EDGE_GAP_PX}px)`);
 	const beside = inset === 0 || roomBeside;
@@ -36,7 +35,7 @@ export function ToastRegion() {
 					? 'bottom-[calc(9rem+env(safe-area-inset-bottom))] md:bottom-24'
 					: 'inset-x-0 top-20 mx-auto',
 			)}
-			style={beside ? { right: inset + EDGE_GAP_PX } : undefined}
+			style={beside ? { left: EDGE_GAP_PX } : undefined}
 		>
 			<ToastHost />
 			<Toaster />

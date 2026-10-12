@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
@@ -213,7 +214,7 @@ func (a *App) printNextSteps(st theme.Styles) {
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
-		{"See what you can run right now", "jentic api GET /me"},
+		{"See what you can run right now", "jentic whoami"},
 		{"A fresh agent is bound to no APIs — ask your operator to connect one and bind you (dashboard)", ""},
 		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
 		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
@@ -361,8 +362,20 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 		if _, err := auth.BearerToken(creds); err == nil {
 			a.registerProgress(ctx, st.Success.Render("Agent approved."))
 			return nil
+		} else if transientTransport(err) {
+			// A dropped connection mid-wait (an idle keep-alive the server
+			// closed, a reset, a restart) says nothing about the approval:
+			// ask again on the next tick, until the deadline.
+			continue
 		} else if pending, cerr := classify(err); !pending {
 			return cerr
 		}
 	}
+}
+
+// transientTransport reports a transport-level failure of the token exchange —
+// the request never got an HTTP answer — as opposed to an answer that refuses.
+func transientTransport(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
 }

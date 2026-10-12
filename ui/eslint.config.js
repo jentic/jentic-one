@@ -109,6 +109,36 @@ function assertModuleRootsCoverDirs() {
 	}
 }
 
+// Hover hints use the shared `Tooltip` (styled, instant, keyboard-reachable),
+// not the browser's native `title` box. Flags `title=` on intrinsic elements
+// (bar `iframe`, where it names the frame) and on the primitives that forward
+// it to the DOM, on member-expression elements (`<motion.span>`), plus SVG
+// `<title>` hover text. A component's own `title` prop
+// (Dialog, EmptyState, DetailSection…) is a heading, not a hint, and passes.
+// Opt-in per module while the rest of the app migrates.
+const MODULE_NATIVE_TITLE_BANNED = new Set(['agents']);
+const NO_NATIVE_TITLE_TOOLTIP = [
+	{
+		selector:
+			"JSXOpeningElement[name.name=/^([a-z]|Button$|SectionLabel$)/]:not([name.name='iframe']) > JSXAttribute[name.name='title']",
+		message:
+			"Native `title` tooltips are banned here — wrap the trigger in the shared `Tooltip` from '@/shared/ui'.",
+	},
+	{
+		// `<motion.span title>` and friends: a member-expression element renders
+		// a DOM node just the same.
+		selector:
+			"JSXOpeningElement[name.type='JSXMemberExpression'] > JSXAttribute[name.name='title']",
+		message:
+			"Native `title` tooltips are banned here — wrap the trigger in the shared `Tooltip` from '@/shared/ui'.",
+	},
+	{
+		selector: "JSXOpeningElement[name.name='title']",
+		message:
+			"SVG `<title>` hover hints are banned here — use the shared `Tooltip` from '@/shared/ui'.",
+	},
+];
+
 // One `no-restricted-syntax` selector per module: flag an array-expression
 // literal whose first element is a STRING equal to a FOREIGN module's root.
 // `ArrayExpression > Literal.elements:first-child[value=...]` matches the
@@ -134,6 +164,7 @@ function crossModuleKeyOverrides() {
 						selector: `ArrayExpression > Literal.elements:first-child[value="${rootKey}"]`,
 						message: `Don't hand-write the '${rootKey}' query-key root in another module — invalidate a sibling's cache through @/shared 'sharedQueryKeys' (see #511).`,
 					})),
+					...(MODULE_NATIVE_TITLE_BANNED.has(name) ? NO_NATIVE_TITLE_TOOLTIP : []),
 				],
 			},
 		};

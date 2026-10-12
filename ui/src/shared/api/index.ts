@@ -257,3 +257,9 @@ export type { RuleSetResponse } from '@/shared/api/generated/models/RuleSetRespo
 // RFC 9457 problem bodies: the string `detail` callers surface over the
 // transport's status text. Append-only, like the rest.
 export { problemDetailText } from '@/shared/api/problem';
+
+// Connect sessions — the open requests an agent is waiting on a human for.
+// Read by the credentials api tier (`listOpenConnectRequests`) for the
+// attention inbox and the Agents page; views use its hooks. Append-only.
+export { IntegrationsService } from '@/shared/api/generated/services/IntegrationsService';
+export type { ConnectSessionSummaryResponse } from '@/shared/api/generated/models/ConnectSessionSummaryResponse';

@@ -66,6 +66,9 @@ class VendorEntry(BaseModel):
       exactly one; a config entry may offer several.
     * ``source`` — records where the row came from so surfaces can
       differentiate admin-managed vs platform-shipped registrations.
+    * ``catalog_api_id`` — for DB entries, the catalog API the shared app
+      signs in to (``<domain>/<sub>``), so a flow already on one API can offer
+      only the apps for it; ``None`` for config entries.
 
     Secrets are never surfaced here — ``client_secret`` and other
     flow-specific endpoint detail are dereferenced by the connect-time
@@ -83,3 +86,4 @@ class VendorEntry(BaseModel):
     has_client_secret: bool = False
     default_scopes: list[str] | None = None
     source: VendorEntrySource
+    catalog_api_id: str | None = None

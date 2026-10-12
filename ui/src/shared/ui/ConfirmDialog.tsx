@@ -10,7 +10,7 @@ import { useId, type ReactNode } from 'react';
 
 export interface ConfirmDialogProps {
 	open: boolean;
-	title: string;
+	title: ReactNode;
 	body: ReactNode;
 	confirmLabel: string;
 	onConfirm: () => void;

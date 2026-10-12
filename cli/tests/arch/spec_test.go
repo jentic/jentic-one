@@ -362,6 +362,9 @@ var curatedMigrationAllowlist = map[string]string{
 	// command builds Config from named flags (--project-id/--client-id/…) plus a
 	// prompted client_secret (ARCH-21 A1, migrated off internal/adminclient).
 	"control.SetProviderConfigJSONRequestBody": "free-form Config map, no reflectable scalar fields; built from named admin-provider flags",
+	// connect's nested `api` target: --api takes the whole vendor/name/version
+	// identity as one value (the `api` field is bound on the connect binding).
+	"control.ApiTargetRequest": "nested api target of IntegrationsConnectRequest, bound whole by connect --api <vendor/name/version>",
 }
 
 // TestCuratedRegistryCoversGeneratedStructs is the QA-3/GEN-4 meta-test: it

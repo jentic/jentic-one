@@ -98,6 +98,19 @@ export const ROUTE_PATHS = {
 	 */
 	agentTab: (agentId: string) => `${ROUTES.agents}?agent=${encodeURIComponent(agentId)}`,
 	/**
+	 * An agent's connect request opened for approval — the address the backend
+	 * mints as the session's `approval_url` (`?approve=<sid>`, no poll token:
+	 * the agent's owner or an org admin acts without it). With `agentId`, the
+	 * requesting agent is also selected behind the dialog. Read by
+	 * `modules/agents/pages/AgentsPage`.
+	 */
+	connectApproval: (sessionId: string, agentId?: string) => {
+		const q = new URLSearchParams();
+		if (agentId) q.set('agent', agentId);
+		q.set('approve', sessionId);
+		return `${ROUTES.agents}?${q}`;
+	},
+	/**
 	 * Monitor's Activity view on API calls, optionally pre-filtered. The `show` /
 	 * `actor_id` / `actor_type` names are Monitor's URL vocabulary (read by
 	 * `modules/monitor/lib/useMonitorFilters`); the builder lives here because
@@ -105,10 +118,16 @@ export const ROUTE_PATHS = {
 	 * can't import from each other. Monitor's own richer builder is
 	 * `modules/monitor/lib/links`.
 	 */
-	monitorExecutions: (filter?: { actorId?: string; actorType?: 'agent' | 'user' }) => {
+	monitorExecutions: (filter?: {
+		actorId?: string;
+		actorType?: 'agent' | 'user';
+		/** Open this call's trace sheet on arrival. */
+		traceId?: string;
+	}) => {
 		const q = new URLSearchParams({ show: 'calls' });
 		if (filter?.actorId) q.set('actor_id', filter.actorId);
 		if (filter?.actorType) q.set('actor_type', filter.actorType);
+		if (filter?.traceId) q.set('trace_id', filter.traceId);
 		return `${ROUTES.monitor}?${q.toString()}`;
 	},
 } as const;

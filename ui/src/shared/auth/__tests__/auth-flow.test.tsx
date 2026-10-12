@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
+import {
+	render,
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	checkA11y,
+} from '@/__tests__/test-utils';
 import { AuthProvider } from '@/shared/auth/AuthContext';
+import { LoginPage } from '@/shared/auth/LoginPage';
 import { clearToken, setSession, setToken } from '@/shared/api';
 import { App } from '@/App';
 
@@ -13,6 +23,35 @@ function renderApp(route: string) {
 		</AuthProvider>,
 		{ route },
 	);
+}
+
+function LocationProbe() {
+	const location = useLocation();
+	return <p data-testid="landed">{`${location.pathname}${location.search}${location.hash}`}</p>;
+}
+
+/** Render the login page as the AuthGuard leaves it: remembering `from`. */
+function renderLoginFrom(from: { pathname: string; search?: string; hash?: string }) {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<AuthProvider>
+				<MemoryRouter initialEntries={[{ pathname: '/login', state: { from } }]}>
+					<Routes>
+						<Route path="/login" element={<LoginPage />} />
+						<Route path="*" element={<LocationProbe />} />
+					</Routes>
+				</MemoryRouter>
+			</AuthProvider>
+		</QueryClientProvider>,
+	);
+}
+
+async function signIn() {
+	const user = userEvent.setup();
+	await user.type(await screen.findByLabelText('Email'), 'admin@local');
+	await user.type(screen.getByLabelText('Password'), 'password');
+	await user.click(screen.getByRole('button', { name: 'Sign in' }));
 }
 
 // Routes are basename-relative (the `/app` basename is applied once in
@@ -42,6 +81,22 @@ describe('auth flow', () => {
 		// The page header fades in, so wait for it to settle visible.
 		await waitFor(() => expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible());
 		expect(screen.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+	});
+
+	it('returns to the deep link, query and hash included, after signing in', async () => {
+		renderLoginFrom({ pathname: '/agents', search: '?approve=cs_deeplink', hash: '#review' });
+		await signIn();
+
+		expect(await screen.findByTestId('landed')).toHaveTextContent(
+			'/agents?approve=cs_deeplink#review',
+		);
+	});
+
+	it('sends an off-app return target to the app home after signing in', async () => {
+		renderLoginFrom({ pathname: '//evil.example/agents', search: '?approve=cs_deeplink' });
+		await signIn();
+
+		expect(await screen.findByTestId('landed')).toHaveTextContent(/^\/$/);
 	});
 
 	it('shows an error on bad credentials', async () => {

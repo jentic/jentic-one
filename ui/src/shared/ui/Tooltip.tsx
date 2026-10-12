@@ -7,6 +7,7 @@ import {
 	useLayoutEffect,
 	useRef,
 	useState,
+	type FocusEvent,
 	type ReactElement,
 	type ReactNode,
 } from 'react';
@@ -54,11 +55,15 @@ interface TooltipProps {
  * the rail's scroll container), and carries `role="tooltip"` +
  * `aria-describedby` for assistive tech.
  */
+/** How long a hover rests before a tooltip opens, unless the caller sets
+ * `delayMs` (focus opens it at once). */
+export const TOOLTIP_DELAY_MS = 400;
+
 export function Tooltip({
 	content,
 	children,
 	placement = 'top',
-	delayMs = 400,
+	delayMs = TOOLTIP_DELAY_MS,
 	className,
 	bubbleClassName,
 	interactiveChild = false,
@@ -117,6 +122,18 @@ export function Tooltip({
 		clearTimer();
 		setShow(false);
 	}, [clearTimer]);
+
+	/** Focus open — KEYBOARD focus only. A sheet or dialog opened by a click
+	 *  moves focus onto its first control (and back onto the opener when it
+	 *  closes); that programmatic focus is not `:focus-visible`, and a tooltip
+	 *  it opened would sit over the sheet unasked. */
+	const revealOnFocus = useCallback(
+		(event: FocusEvent<HTMLElement>) => {
+			if (event.target instanceof Element && !event.target.matches(':focus-visible')) return;
+			reveal();
+		},
+		[reveal],
+	);
 
 	// Never leak a pending open timer if the trigger unmounts mid-delay.
 	useEffect(() => clearTimer, [clearTimer]);
@@ -200,7 +217,7 @@ export function Tooltip({
 			aria-describedby={interactiveChild ? undefined : tooltipId}
 			onMouseEnter={openDelayed}
 			onMouseLeave={close}
-			onFocus={reveal}
+			onFocus={revealOnFocus}
 			onBlur={close}
 		>
 			{describedChildren}

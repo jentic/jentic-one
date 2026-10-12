@@ -7,7 +7,8 @@ now comes exclusively from ``bound_credential_ids`` — the caller-resolved
 direct ``agent_credential_bindings`` ids. Theme 7 then removed the
 ``AccessRequest`` axis with the access-request feature. ``Credential`` and
 ``ConnectSession`` (initiator axis, reusing the credential delegation scope)
-are the scoped models.
+are the scoped models; both are also widened, read-only, to what the caller's
+own agents asked for (``owned_agent_ids``).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from sqlalchemy import ColumnElement, exists, select
 
 from jentic_one.control.core.schema.connect_sessions import ConnectSession
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.control.repos.connect_session_repo import LIVE_STATES
 from jentic_one.control.scoping import filters as scoping_filters
 from jentic_one.control.scoping.filters import (
     _ACCESS_FILTER_PROVIDERS,
@@ -258,3 +260,68 @@ def test_connect_session_agent_without_delegation_scope_is_self_only() -> None:
     sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
     assert "agnt_lister" in sql
     assert "usr_owner" not in sql
+
+
+# --- Owned-agent axis (connect sessions an owned agent opened, read-only) ---
+
+
+def _sql(clause: ColumnElement[bool]) -> str:
+    return str(clause.compile(compile_kwargs={"literal_binds": True}))
+
+
+def test_connect_session_owner_sees_sessions_of_owned_agents() -> None:
+    identity = _identity(sub="usr_owner", permissions=["credentials:read"])
+    filters = build_access_filters(identity, ConnectSession, owned_agent_ids=["agnt_a", "agnt_b"])
+    assert len(filters) == 1
+    sql = _sql(filters[0])
+    assert "initiator_actor_id = 'usr_owner'" in sql
+    assert "connect_sessions.agent_id IN ('agnt_a', 'agnt_b')" in sql
+
+
+def test_credential_owner_sees_only_pending_credentials_of_open_owned_sessions() -> None:
+    identity = _identity(sub="usr_owner", permissions=["credentials:read"])
+    filters = build_access_filters(identity, Credential, owned_agent_ids=["agnt_a"])
+    assert len(filters) == 1
+    sql = _sql(filters[0])
+    assert "credentials.created_by = 'usr_owner'" in sql
+    assert "credentials.state = 'pending'" in sql
+    assert "SELECT connect_sessions.credential_id" in sql
+    assert "connect_sessions.agent_id IN ('agnt_a')" in sql
+    assert "connect_sessions.state IN ('created', 'awaiting_app', 'polling')" in sql
+
+
+def test_owned_agent_live_states_match_the_repository() -> None:
+    assert scoping_filters._LIVE_SESSION_STATES == LIVE_STATES
+
+
+def test_owned_agent_ids_empty_or_none_leaves_filters_unchanged() -> None:
+    identity = _identity(sub="usr_owner", permissions=["credentials:read"])
+    for model in (ConnectSession, Credential):
+        base = _sql(build_access_filters(identity, model)[0])
+        assert _sql(build_access_filters(identity, model, owned_agent_ids=None)[0]) == base
+        assert _sql(build_access_filters(identity, model, owned_agent_ids=[])[0]) == base
+
+
+def test_owned_agent_axis_is_not_routed_through_delegation() -> None:
+    """A delegated agent's filter never gains the owned-agent clause on its own.
+
+    The clause is driven only by the caller-resolved ``owned_agent_ids``; a
+    delegated agent holding ``owner:credentials:read`` still sees just its own
+    and its owner's rows by initiator / creator.
+    """
+    identity = _identity(
+        sub="agnt_lister",
+        permissions=[OWNER_CREDENTIALS_READ],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_owner",
+    )
+    for model in (ConnectSession, Credential):
+        sql = _sql(build_access_filters(identity, model)[0])
+        assert "agent_id IN" not in sql
+        assert "connect_sessions.credential_id" not in sql
+
+
+def test_admin_ignores_owned_agent_ids() -> None:
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, ConnectSession, owned_agent_ids=["agnt_a"]) == []
+    assert build_access_filters(identity, Credential, owned_agent_ids=["agnt_a"]) == []

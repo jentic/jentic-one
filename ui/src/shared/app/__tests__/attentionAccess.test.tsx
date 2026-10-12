@@ -13,6 +13,7 @@ import { AuthProvider } from '@/shared/auth';
 import { NotificationsMenu } from '@/shared/app/NotificationsMenu';
 import { AgentStreamProvider } from '@/shared/lib/agentStream';
 import { clearToken, setToken } from '@/shared/api';
+import { useOpenConnectRequests } from '@/shared/credentials/api';
 
 const emptyPage = { data: [], has_more: false, next_cursor: null };
 
@@ -78,7 +79,17 @@ function trackSources({ agentsStatus = 200 }: { agentsStatus?: number } = {}) {
 	return calls;
 }
 
-function renderMenu() {
+/**
+ * Marks the open connect-request read as settled. It shares the menu's query,
+ * so both re-render in the same commit: once the marker is in the DOM, the
+ * menu has rendered (or withheld) the connect-request row.
+ */
+function ConnectRequestsSettled() {
+	const { isSuccess } = useOpenConnectRequests();
+	return isSuccess ? <span data-testid="connect-requests-settled" hidden /> : null;
+}
+
+function renderMenu({ withConnectProbe = false }: { withConnectProbe?: boolean } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -88,6 +99,7 @@ function renderMenu() {
 				<MemoryRouter initialEntries={['/dashboard']}>
 					<AgentStreamProvider live={false}>
 						<NotificationsMenu />
+						{withConnectProbe && <ConnectRequestsSettled />}
 					</AgentStreamProvider>
 				</MemoryRouter>
 			</AuthProvider>
@@ -187,5 +199,103 @@ describe('Notifications — sources follow read permissions', () => {
 		await new Promise((r) => setTimeout(r, 500));
 		if (reads) expect(calls.credentials).toBeGreaterThan(0);
 		else expect(calls.credentials).toBe(0);
+	});
+});
+
+/**
+ * Pins #1543 item 4. "Finish setup" sends the reader into the OAuth sign-in,
+ * which WRITES the resulting tokens onto the credential — so it needs
+ * `credentials:write`. Offering it to a reader produced an error on click; the
+ * row itself still belongs in the list, as the standing fact it is, for whoever
+ * can act on it.
+ */
+describe('Notifications — "Finish setup" follows credentials:write', () => {
+	/** An OAuth credential whose sign-in was never completed. */
+	const unfinishedOauth = {
+		credential_id: 'cred_oauth_1',
+		name: 'Slack OAuth',
+		type: 'oauth2',
+		provider: 'static',
+		api: { vendor: 'slack.com', name: 'default', version: '1.0.0' },
+		details: { grant_type: 'authorization_code', connected: false },
+		is_active: true,
+		created_by: 'usr_viewer_1',
+		created_at: '2026-01-01T00:00:00Z',
+		updated_at: null,
+	};
+
+	it.each([
+		['with credentials:write', ['credentials:read', 'credentials:write'], true],
+		['an org:admin', ['org:admin'], true],
+		['read-only', ['credentials:read'], false],
+	] as const)('%s: %s', async (_label, permissions, canFinish) => {
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
+			http.get('/credentials', () =>
+				HttpResponse.json({ data: [unfinishedOauth], has_more: false, next_cursor: null }),
+			),
+			http.get('/agents', () => HttpResponse.json(emptyPage)),
+			http.get('/events', () => HttpResponse.json(emptyPage)),
+			http.get('/events/stream', () => new HttpResponse(null, { status: 503 })),
+		);
+		renderMenu();
+
+		const dialog = await openMenu();
+		// The row is there either way — it is a fact about the workspace.
+		const row = (await within(dialog).findByText(/Slack OAuth sign-in isn't finished/)).closest(
+			'li',
+		) as HTMLElement;
+		const finish = within(row).queryByRole('link', { name: 'Finish setup' });
+		if (canFinish) expect(finish).toBeInTheDocument();
+		else expect(finish).toBeNull();
+	});
+});
+
+describe('Notifications — connect requests go to approvers', () => {
+	const openRequest = {
+		session_id: 'cs_waiting',
+		state: 'created',
+		vendor_key: 'github',
+		vendor_display_name: 'GitHub',
+		agent_id: 'agnt_pending_9',
+		requested_by_actor_id: 'agnt_pending_9',
+		reason: null,
+		connected_as: null,
+		error_code: null,
+		created_at: '2026-01-01T00:00:00Z',
+		credential_id: 'cred_pending',
+	};
+
+	it.each([
+		['admin', ['org:admin'], true],
+		['credentials:write and agents:write', [...MEMBER_DEFAULTS, 'credentials:write'], true],
+		[
+			'credentials:write without agents:write',
+			[...without('agents:write'), 'credentials:write'],
+			false,
+		],
+		['agents:write without credentials:write', MEMBER_DEFAULTS, false],
+	] as const)('%s', async (_label, permissions, listed) => {
+		worker.use(
+			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
+			http.get('/connect-sessions', ({ request }) => {
+				const state = new URL(request.url).searchParams.get('state');
+				const rows = !state || state === 'created' ? [openRequest] : [];
+				return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+			}),
+		);
+		trackSources();
+		renderMenu({ withConnectProbe: true });
+
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: /^Notifications/ }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		await within(dialog).findByText('waiting-bot is waiting for approval');
+		// The connect-request read is independent of the pending-agents read, so
+		// the agent row alone says nothing about whether it has landed yet.
+		await screen.findByTestId('connect-requests-settled');
+		const row = within(dialog).queryByText(/is waiting for you to connect GitHub/);
+		if (listed) expect(row).toBeInTheDocument();
+		else expect(row).toBeNull();
 	});
 });

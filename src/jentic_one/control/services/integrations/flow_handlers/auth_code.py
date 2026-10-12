@@ -317,19 +317,23 @@ class AuthCodeFlowHandler:
         )
 
     def _redirect_uri(self) -> str:
-        """Resolve the platform redirect URI, the same one standalone connect uses.
+        return platform_redirect_uri(self._ctx)
 
-        An explicit ``credentials.providers.direct_oauth2.redirect_uri`` wins,
-        so the vendor OAuth app only ever needs one redirect_uri whitelisted
-        for both entry points (connect-session flow and standalone credential
-        connect). Otherwise it derives from ``server.public_base_url`` (else
-        the serving bind), as the web connect endpoint does; there's no request
-        here to take an origin from. Deterministic, so the token exchange
-        replays exactly what the authorize request sent (RFC 6749 §4.1.3).
-        """
-        provider_cfg = self._ctx.config.credentials.providers.get("direct_oauth2")
-        configured = getattr(provider_cfg, "redirect_uri", None)
-        if configured:
-            return str(configured)
-        config = self._ctx.config
-        return f"{config.server.public_base_url or bind_origin(config)}{OAUTH_CALLBACK_PATH}"
+
+def platform_redirect_uri(ctx: Context) -> str:
+    """Resolve the platform redirect URI, the same one standalone connect uses.
+
+    An explicit ``credentials.providers.direct_oauth2.redirect_uri`` wins,
+    so the vendor OAuth app only ever needs one redirect_uri whitelisted
+    for both entry points (connect-session flow and standalone credential
+    connect). Otherwise it derives from ``server.public_base_url`` (else
+    the serving bind), as the web connect endpoint does; there's no request
+    here to take an origin from. Deterministic, so the token exchange
+    replays exactly what the authorize request sent (RFC 6749 §4.1.3).
+    """
+    provider_cfg = ctx.config.credentials.providers.get("direct_oauth2")
+    configured = getattr(provider_cfg, "redirect_uri", None)
+    if configured:
+        return str(configured)
+    config = ctx.config
+    return f"{config.server.public_base_url or bind_origin(config)}{OAUTH_CALLBACK_PATH}"

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type VendorSummaryResponse = {
+    catalog_api_id?: (string | null);
     display_name: string;
     entry_id: string;
     flow_kinds: Array<string>;

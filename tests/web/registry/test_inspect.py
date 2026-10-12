@@ -13,6 +13,7 @@ from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.operation_url_index import OperationURLIndex
 from jentic_one.registry.core.schema.operations import Operation
+from jentic_one.registry.core.schema.security_schemes import SecurityScheme, SecuritySchemeFlow
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.repos.operation_repo import _generate_operation_id
 from jentic_one.shared.context import Context
@@ -343,3 +344,80 @@ async def test_inspect_no_raw_operation_yields_empty_inputs(
     assert inputs["query"] == []
     assert inputs["header"] == []
     assert inputs["body"] is None
+
+
+async def _seed_security_schemes(ctx: Context, revision: ApiRevision) -> None:
+    """Attach an apiKey and an oauth2 (authorization-code) scheme to *revision*."""
+    async with ctx.registry_db.session() as session:
+        session.add(
+            SecurityScheme(
+                revision_id=revision.id,
+                name="ApiKeyAuth",
+                type="apiKey",
+                in_location="header",
+                param_name="X-API-Key",
+                raw_scheme={"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            )
+        )
+        oauth = SecurityScheme(
+            revision_id=revision.id,
+            name="OAuth",
+            type="oauth2",
+            raw_scheme={"type": "oauth2"},
+        )
+        session.add(oauth)
+        await session.flush()
+        session.add(
+            SecuritySchemeFlow(
+                security_scheme_id=oauth.id,
+                flow_type="authorizationCode",
+                authorization_url="https://auth.example.com/authorize",
+                token_url="https://auth.example.com/token",
+                scopes={"pets:read": "Read pets"},
+                raw_flow={},
+            )
+        )
+        await session.commit()
+
+
+async def test_inspect_surfaces_declared_security_schemes(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """Inspect reports the API's declared security schemes, so an agent can
+    propose the credential's auth type from it."""
+    _, revision, op_id = await _seed_operation(web_context)
+    await _seed_security_schemes(web_context, revision)
+
+    resp = authed_client.get("/inspect", params={"operation_id": op_id, "detail": "summary"})
+    assert resp.status_code == 200
+    auth = sorted(resp.json()["auth"], key=lambda a: a["type"])
+    assert [a["type"] for a in auth] == ["apiKey", "oauth2"]
+    assert auth[0]["in_location"] == "header"
+    assert auth[0]["param_name"] == "X-API-Key"
+    assert auth[1]["flows"] == [
+        {
+            "flow_type": "authorizationCode",
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "scopes": {"pets:read": "Read pets"},
+        }
+    ]
+
+    md = authed_client.get(
+        "/inspect",
+        params={"operation_id": op_id, "detail": "summary"},
+        headers={"Accept": "text/markdown"},
+    )
+    assert "## Authentication" in md.text
+    assert "In: `header` (`X-API-Key`)" in md.text
+
+
+async def test_inspect_without_declared_schemes_reports_empty_auth(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """An API whose spec declares no security schemes reports ``auth == []``
+    (declared none), distinct from auth not being loaded."""
+    _, _, op_id = await _seed_operation(web_context)
+    resp = authed_client.get("/inspect", params={"operation_id": op_id, "detail": "summary"})
+    assert resp.status_code == 200
+    assert resp.json()["auth"] == []

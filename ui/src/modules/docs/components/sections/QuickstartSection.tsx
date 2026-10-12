@@ -97,7 +97,7 @@ export function QuickstartSection() {
 					</li>
 				))}
 			</ol>
-			<p className="text-foreground/55 text-sm">
+			<p className="text-foreground-sub text-sm">
 				See the{' '}
 				<a href="#cli" className="text-primary underline">
 					CLI reference

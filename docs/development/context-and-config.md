@@ -153,7 +153,7 @@ was lost — the two clients are talking to different backends.
 Several externally-visible URLs must point at the origin clients actually use
 to reach the deployment: the OAuth connect `redirect_uri`, the OIDC issuer and
 JWT-Bearer audience, the DCR `registration_client_uri`, the SPA login
-callback, and access-request approval links. Set them all at once with a
+callback, and connect-session approval links. Set them all at once with a
 single knob:
 
 ```yaml
@@ -164,7 +164,6 @@ server:
 Resolution, per URL:
 
 1. its own specific override if set (`auth.canonical_base_url`,
-   `control.access_requests.canonical_base_url`,
    `credentials.providers.<id>.redirect_uri`), then
 2. `server.public_base_url`, then
 3. for request-scoped URLs (the OAuth connect callback, discovery issuer, SPA

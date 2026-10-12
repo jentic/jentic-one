@@ -71,6 +71,8 @@ export class OAuthAppRegistrationsService {
      *
      * The client secret is stored encrypted and never returned by any read
      * endpoint — reads only expose ``has_client_secret`` + ``secret_last_rotated_at``.
+     * Connect sessions waiting for an OAuth app for the registration's API
+     * move on to it right away.
      * @returns OAuthAppRegistrationResponse Successful Response
      * @throws ApiError
      */

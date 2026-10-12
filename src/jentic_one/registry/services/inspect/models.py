@@ -17,7 +17,7 @@ class InspectLoadOptions:
     load_server: bool
 
 
-SUMMARY_LOAD_OPTIONS = InspectLoadOptions(load_spec=False, load_auth=False, load_server=True)
+SUMMARY_LOAD_OPTIONS = InspectLoadOptions(load_spec=False, load_auth=True, load_server=True)
 
 
 class TagDescription(BaseModel):

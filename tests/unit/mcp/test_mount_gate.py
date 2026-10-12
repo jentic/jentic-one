@@ -562,6 +562,31 @@ def test_resolved_identity_is_stamped_origin_mcp(monkeypatch: pytest.MonkeyPatch
         assert captured["origin"] == Origin.MCP
 
 
+@pytest.mark.parametrize("installed", [True, False])
+def test_call_env_carries_the_app_state_catalog_auto_importer(
+    monkeypatch: pytest.MonkeyPatch, installed: bool
+) -> None:
+    """request_connection threads the same process-level importer the HTTP
+    connect route does (``app.state.catalog_auto_importer``), or ``None``."""
+    captured: dict[str, Any] = {}
+    importer = object()
+
+    async def spy_dispatch(env: Any, name: str, arguments: Any) -> Any:
+        captured["importer"] = env.catalog_auto_importer
+        raise AssertionError("stop here")
+
+    with make_client() as client:
+        if installed:
+            cast(FastAPI, client.app).state.catalog_auto_importer = importer
+        monkeypatch.setattr("jentic_one.mcp.app.dispatch_tool_call", spy_dispatch)
+        client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "request_connection", "arguments": {}}),
+            headers={**_ACCEPT, "Authorization": f"Bearer {_GOOD_BEARER}"},
+        )
+        assert captured["importer"] is (importer if installed else None)
+
+
 # --- batch pre-auth sniff ------------------------------------------------------
 
 

@@ -30,7 +30,7 @@
  * persists across dismissals and resets on a successful bind; transient errors
  * clear on reopen.
  */
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
 import {
 	AppLink,
@@ -40,12 +40,8 @@ import {
 	EmptyState,
 	ErrorAlert,
 	Label,
-	RadioCardGroup,
 	Select,
 	Skeleton,
-	allowAllRule,
-	cleanPermissionRule,
-	isEmptyAllowRule,
 	toast,
 	type PermissionRuleInput,
 } from '@/shared/ui';
@@ -59,71 +55,14 @@ import {
 	useAgentsForPicker,
 	useApplyBindingRules,
 	useBindCredentialToAgents,
-	useVendorOperations,
 } from '@/shared/credentials/api/vendors-hooks';
 import type { PermissionRule } from '@/shared/credentials/api/vendors-types';
-import { RuleListEditor } from '@/shared/credentials/components/RuleListEditor';
-
-/** The rules choice; `null` until the user picks one. */
-type RulesPreset = 'all' | 'read' | 'custom';
-
-type ScopeReach = ReturnType<typeof apiScopeReach>;
-
-/**
- * What "Allow all operations" reaches: the rule is `path ".*"` on the whole
- * credential, so it spans everything the credential's scope covers — an
- * unpinned credential's future versions and, vendor-wide, every API of the
- * vendor (the broker resolves a binding through `credential_covers`).
- */
-const ALLOW_ALL_DESCRIPTION: Record<ScopeReach, string> = {
-	pinned: 'Every operation of this API, any method.',
-	'any-version':
-		'Every operation of every version this credential covers — including versions added later — any method.',
-	'vendor-wide':
-		'Every operation of every API and version this credential covers — including ones added later — any method.',
-};
-
-/** The presets after Allow all — the same whatever the credential covers. */
-const PRESET_REST: { value: RulesPreset; label: string; description: string }[] = [
-	{
-		value: 'read',
-		label: 'Read-only (GET only)',
-		description: 'GET requests only — nothing that changes data.',
-	},
-	{
-		value: 'custom',
-		label: 'Custom rules',
-		description: 'Write your own allow / deny rules, evaluated in order.',
-	},
-];
-
-function presetOptions(
-	reach: ScopeReach,
-): { value: RulesPreset; label: string; description: string }[] {
-	return [
-		{
-			value: 'all',
-			label: 'Allow all operations',
-			description: ALLOW_ALL_DESCRIPTION[reach],
-		},
-		...PRESET_REST,
-	];
-}
-
-/** The read-only preset: any path, GET only. */
-function readOnlyRule(): PermissionRuleInput {
-	return {
-		effect: 'allow' as PermissionRuleInput['effect'],
-		methods: ['GET'],
-		path: null,
-		operations: null,
-	};
-}
-
-/** A rules-editor rule in the wire shape (same fields; enum types differ). */
-function toWireRule(rule: PermissionRule): PermissionRuleInput {
-	return cleanPermissionRule(rule as unknown as PermissionRuleInput);
-}
+import { AccessRulesStep } from '@/shared/credentials/components/AccessRulesStep';
+import {
+	rulesForPreset,
+	type RulesPreset,
+	type ScopeReach,
+} from '@/shared/credentials/lib/accessPresets';
 
 export interface BindAgentDialogProps {
 	open: boolean;
@@ -181,7 +120,6 @@ export function BindAgentDialog({
 	const agents = useAgentsForPicker();
 	const bind = useBindCredentialToAgents();
 	const applyRules = useApplyBindingRules();
-	const rulesId = useId();
 
 	const [credentialId, setCredentialId] = useState<string | null>(initialCredentialId ?? null);
 	// Seed-from-props syncs only when the seed itself changes (dialog-state rule).
@@ -230,7 +168,6 @@ export function BindAgentDialog({
 		: pendingCreate
 			? 'any-version'
 			: 'pinned';
-	const options = useMemo(() => presetOptions(reach), [reach]);
 	// Every page: a partial list would offer already-bound agents as unbound.
 	const boundHere = useAllCredentialAgents(credential?.credential_id, {
 		enabled: open && credential != null,
@@ -252,26 +189,11 @@ export function BindAgentDialog({
 	const everyAgentBound =
 		boundKnown && candidates.length > 0 && candidates.every((a) => alreadyBound.has(a.id));
 
-	// The custom editor's path suggestions: this API's real operations.
-	const opsQuery = useVendorOperations(apiReference ?? undefined, {
-		enabled: open && preset === 'custom' && !!apiReference,
-	});
-	const pathSuggestions = useMemo<readonly string[]>(() => {
-		const rows = opsQuery.data?.data;
-		if (!rows) return [];
-		return Array.from(new Set(rows.map((op) => op.path))).sort();
-	}, [opsQuery.data]);
-
 	// The rules every picked agent gets, or null while the choice is incomplete.
-	const rules = useMemo<PermissionRuleInput[] | null>(() => {
-		if (preset === 'all') return [cleanPermissionRule(allowAllRule())];
-		if (preset === 'read') return [cleanPermissionRule(readOnlyRule())];
-		if (preset === 'custom') {
-			const wire = customRules.map(toWireRule);
-			return wire.length > 0 && !wire.some(isEmptyAllowRule) ? wire : null;
-		}
-		return null;
-	}, [preset, customRules]);
+	const rules = useMemo<PermissionRuleInput[] | null>(
+		() => rulesForPreset(preset, customRules),
+		[preset, customRules],
+	);
 
 	const busy = bind.isPending || applyRules.isPending || creating;
 
@@ -504,38 +426,17 @@ export function BindAgentDialog({
 					)}
 				</fieldset>
 				{!everyAgentBound && (
-					<div className="space-y-2" data-testid="bind-agent-rules">
-						<p id={rulesId} className="text-foreground text-sm font-medium">
-							What can this agent call?
-						</p>
-						<RadioCardGroup
-							options={options}
-							value={preset}
-							onChange={setPreset}
-							ariaLabelledBy={rulesId}
-							disabled={busy}
-							data-testid="bind-agent-rules-preset"
-						/>
-						{reach !== 'pinned' && (
-							<p
-								className="text-muted-foreground text-xs"
-								data-testid="bind-agent-coverage-note"
-							>
-								{reach === 'vendor-wide'
-									? 'This credential covers every API of its vendor, in every version — these rules apply to all of them, including ones added later.'
-									: 'This credential covers every version of this API — these rules apply to future versions too.'}
-							</p>
-						)}
-						{preset === 'custom' && (
-							<RuleListEditor
-								rules={customRules}
-								onChange={setCustomRules}
-								pathSuggestions={pathSuggestions}
-								opTemplates={pathSuggestions}
-								opsLoaded={pathSuggestions.length > 0}
-							/>
-						)}
-					</div>
+					<AccessRulesStep
+						reach={reach}
+						preset={preset}
+						onPresetChange={setPreset}
+						customRules={customRules}
+						onCustomRulesChange={setCustomRules}
+						apiReference={apiReference}
+						active={open}
+						disabled={busy}
+						testIdPrefix="bind-agent"
+					/>
 				)}
 				{createError && (
 					<ErrorAlert

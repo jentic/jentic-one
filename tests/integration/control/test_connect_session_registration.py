@@ -80,7 +80,9 @@ pytestmark = pytest.mark.integration
 
 _USER_ID = "usr_alice"
 _AGENT_ID = "agnt_scout"
-_USER_IDENTITY = Identity(sub=_USER_ID, permissions=["credentials:write"])
+# Confirming for an owned agent needs both write permissions (the bind
+# route's own gate is ``agents:write``).
+_USER_IDENTITY = Identity(sub=_USER_ID, permissions=["credentials:write", "agents:write"])
 
 _VENDOR_KEY = "shareddev"
 _VENDOR_API_ID = "shareddev.example/api.shareddev.example"
@@ -542,7 +544,9 @@ async def test_config_session_ignores_registration_added_after_connect(
 
     await _seed_active_registration(ctx)
 
-    review = await svc.get_review_data(created.session_id, poll_token=created.poll_token)
+    review = await svc.get_review_data(
+        created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+    )
     assert review.vendor_display_name == "Shared Auth Vendor"
     confirmed = await svc.confirm(
         created.session_id,
@@ -864,7 +868,9 @@ async def test_review_ends_session_when_pinned_registration_disabled(
         await OAuthAppRegistrationRepository.update_base(session, registration.id, is_active=False)
 
     with pytest.raises(OAuthAppChangedError):
-        await svc.get_review_data(created.session_id, poll_token=created.poll_token)
+        await svc.get_review_data(
+            created.session_id, poll_token=created.poll_token, identity=_USER_IDENTITY
+        )
     await _assert_session_cancelled(ctx, created.session_id, row.credential_id)
 
 

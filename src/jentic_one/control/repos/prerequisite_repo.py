@@ -119,6 +119,24 @@ class PrerequisiteRepository:
         return [row[0] for row in result.fetchall()]
 
     @staticmethod
+    async def list_agent_ids_owned_by(session: AsyncSession, *, owner_id: str) -> list[str]:
+        """Return the ids of every agent whose ``owner_id`` is ``owner_id``.
+
+        Read-scoping seam for connect sessions: the owner of an agent may read
+        the sessions the agent opened and their pending credentials. Runs
+        against an admin session and returns plain ids for
+        ``build_access_filters(owned_agent_ids=...)`` (the control scoping
+        module must not import admin ORM models or query across databases).
+        Archived agents are included — their sessions stay readable to the
+        owner until they end.
+        """
+        result = await session.execute(
+            text("SELECT id FROM agents WHERE owner_id = :owner_id"),
+            {"owner_id": owner_id},
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
+    @staticmethod
     async def list_agents_for_credential(
         session: AsyncSession,
         *,

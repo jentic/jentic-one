@@ -14,11 +14,11 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from jentic_one.shared.db.base import AuditableMixin, ControlBase
-from jentic_one.shared.db.types import json_variant
+from jentic_one.shared.db.types import UTCDateTime, json_variant
 
 if TYPE_CHECKING:
     from jentic_one.control.core.schema.credentials import Credential
@@ -53,12 +53,8 @@ class DeviceAuthorizationCredential(AuditableMixin, ControlBase):
     verification_uri_complete: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # Vendor-specified minimum poll interval (seconds).
     poll_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    last_polled_at: Mapped[dt.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    device_code_expires_at: Mapped[dt.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_polled_at: Mapped[dt.datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    device_code_expires_at: Mapped[dt.datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     # ---- scopes (per-credential) --------------------------------------------
     # The scopes the initiator asked for at `:connect` time.

@@ -119,11 +119,11 @@ func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status in
 	case http.StatusForbidden: // 403: have an identity, no credential binding for this API yet
 		fmt.Fprintln(w, "  This agent has no credential binding for the API you called. Check what you can run,")
 		fmt.Fprintln(w, "  then ask your operator to connect a credential for this API and bind you to it (dashboard).")
-		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic api GET /me"))
+		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic whoami"))
 	case http.StatusConflict: // 409: several bound credentials cover the API
 		fmt.Fprintln(w, "  Multiple bound credentials cover this API. Resend the same call naming one of them")
 		fmt.Fprintln(w, "  with the Jentic-Credential-Id header (Jentic-Credential-Name also works when names are unique).")
-		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic api GET /me"))
+		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic whoami"))
 	case http.StatusFailedDependency: // 424: no credential provisioned for the call
 		fmt.Fprintln(w, "  No credential is provisioned for this call. Ask your operator to connect one for this API")
 		fmt.Fprintln(w, "  in the dashboard, then retry.")
@@ -131,7 +131,7 @@ func RenderSynthesizedDenialRecovery(ctx context.Context, w io.Writer, status in
 		fmt.Fprintln(w, "  Your credential needs reconnecting. Ask your operator to re-provision it in the dashboard, then retry.")
 	default:
 		fmt.Fprintln(w, "  The broker denied this call. Check what you can run and your setup.")
-		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic api GET /me"))
+		fmt.Fprintln(w, "  run: "+st.Accent.Render("jentic whoami"))
 	}
 	// Point at the read-only self-check as the catch-all when the specific hint
 	// above doesn't unblock (UX9).

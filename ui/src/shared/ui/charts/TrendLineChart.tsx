@@ -175,7 +175,7 @@ export function TrendLineChart({
 							/>
 							<div
 								role="tooltip"
-								className="border-border bg-background pointer-events-none absolute top-0 z-10 rounded-md border px-2.5 py-1.5 whitespace-nowrap shadow-md"
+								className="border-border bg-popover pointer-events-none absolute top-0 z-10 rounded-md border px-2.5 py-1.5 whitespace-nowrap shadow-md"
 								style={{
 									left: `${point.xPct}%`,
 									transform: `translateX(${tooltipTranslateX(point.xPct / VIEW_W)}) translateY(-33%)`,

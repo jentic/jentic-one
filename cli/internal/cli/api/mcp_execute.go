@@ -426,7 +426,13 @@ func (s *mcpServer) executeDenialError(ctx context.Context, denial *agentops.Den
 		// UX7's synthesized recovery, tool-flavored: no denial is a dead end.
 		coded.Actionable = synthesizedDenialHint(denial.Status, denial.ProblemType)
 	}
-	return s.softErrorExtra(ctx, coded, denialNextTool(denial.ProblemType, denial.Directive), extra)
+	nextTool := denialNextTool(denial.ProblemType, denial.Directive)
+	if nextTool == "request_connection" {
+		if args := requestConnectionArguments(denial.Directive); len(args) > 0 {
+			extra["next_tool_arguments"] = args
+		}
+	}
+	return s.softErrorExtra(ctx, coded, nextTool, extra)
 }
 
 // provisioningProblemTypes are the problem+json types whose recovery
@@ -455,18 +461,87 @@ var provisioningProblemTypes = map[string]bool{
 // the safe default for anything unrecognized.
 //
 // Even a provisioning-shaped denial points at request_connection only when the
-// broker's directive carries parameters.suggested_command — the broker sets it
-// exactly when the API maps onto a vendor-registry key. Off the registry (or
+// broker's directive names a connect target (parameters.connect or
+// parameters.suggested_command) — the broker sets them exactly when a
+// vendor-registry entry or a shared OAuth app covers the API. Otherwise (or
 // with no directive to name the vendor) request_connection is guaranteed to
 // fail as an unknown vendor, so the pointer stays on whoami and the directive's
 // operator hand-off.
 func denialNextTool(problemType string, directive *ux.Directive) string {
 	if provisioningProblemTypes[problemType] && directive != nil {
+		if connectVendorKey(directive) != "" {
+			return "request_connection"
+		}
 		if cmd, _ := directive.Parameters["suggested_command"].(string); cmd != "" {
 			return "request_connection"
 		}
 	}
 	return "whoami"
+}
+
+// connectVendorKey is the connect key a denial directive names in its
+// structured parameters.connect.vendor_key, or "" (Python twin:
+// _connect_vendor_key). A directive from a server that predates the field
+// carries only parameters.suggested_command.
+func connectVendorKey(directive *ux.Directive) string {
+	if directive == nil {
+		return ""
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	key, _ := connect["vendor_key"].(string)
+	return key
+}
+
+// connectAPI is the registry API a denial directive names as its connect
+// target in parameters.connect.api ({vendor, name, version}), or nil — set
+// when the deployment takes connect requests for any registry API and no
+// vendor key covers the denied one (Python twin: _connect_api).
+func connectAPI(directive *ux.Directive) map[string]any {
+	if directive == nil {
+		return nil
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	api, _ := connect["api"].(map[string]any)
+	out := map[string]any{}
+	for _, k := range []string{"vendor", "name", "version"} {
+		v, _ := api[k].(string)
+		if v == "" {
+			return nil
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// connectRegistrationID is the shared OAuth app a denial directive pins in
+// parameters.connect.registration_id, or "" (Python twin:
+// _connect_registration_id).
+func connectRegistrationID(directive *ux.Directive) string {
+	if directive == nil {
+		return ""
+	}
+	connect, _ := directive.Parameters["connect"].(map[string]any)
+	id, _ := connect["registration_id"].(string)
+	return id
+}
+
+// requestConnectionArguments are the request_connection arguments a denial
+// directive fills: the vendor key — with oauth_app_registration_id when the
+// directive pins the one shared app covering the API — or else the api
+// identity. The directive's suggested_rules stay in agent_directive (Python
+// twin: _request_connection_arguments).
+func requestConnectionArguments(directive *ux.Directive) map[string]any {
+	if key := connectVendorKey(directive); key != "" {
+		args := map[string]any{"vendor": key}
+		if id := connectRegistrationID(directive); id != "" {
+			args["oauth_app_registration_id"] = id
+		}
+		return args
+	}
+	if api := connectAPI(directive); api != nil {
+		return map[string]any{"api": api}
+	}
+	return nil
 }
 
 // synthesizedDenialHint is the MCP counterpart of the CLI's status-keyed

@@ -53,7 +53,9 @@ async def resolve_pin_for_api(
     resolver and maps the neutral outcome to the broker taxonomy:
 
     - ``UNKNOWN`` / ``ARCHIVED`` → :class:`InvalidRevisionPinError` (422),
-    - ``FORBIDDEN`` → :class:`UnauthorizedRevisionPinError` (403).
+    - ``FORBIDDEN`` → :class:`UnauthorizedRevisionPinError` (403),
+    - ``HOST_CHANGE_HELD`` → :class:`UnauthorizedRevisionPinError` (403
+      ``host_change_requires_operator``).
 
     The API identity uses the *discovered* ``vendor/name/version`` so a pin keyed
     on the same triple matches regardless of display-name fallbacks.
@@ -73,6 +75,8 @@ async def resolve_pin_for_api(
 
     if result.outcome is RevisionPinOutcome.RESOLVED and result.revision_id is not None:
         return result.revision_id
+    if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
+        raise _host_change_held(pin_key)
     if result.outcome is RevisionPinOutcome.FORBIDDEN:
         raise UnauthorizedRevisionPinError(
             detail=f"Not authorised to pin draft revision: {pin_key}",
@@ -86,6 +90,17 @@ async def resolve_pin_for_api(
     raise InvalidRevisionPinError(
         detail=f"Unknown revision pin: {pin_key}",
         type="unknown_revision_pin",
+    )
+
+
+def _host_change_held(pin_key: str) -> UnauthorizedRevisionPinError:
+    return UnauthorizedRevisionPinError(
+        detail=(
+            f"Pinned draft revision {pin_key} serves different server hosts than the "
+            "API's live revision, and the API has bound credentials; an operator "
+            "holding 'credentials:write' must promote or pin it."
+        ),
+        type="host_change_requires_operator",
     )
 
 
@@ -105,17 +120,25 @@ async def discover_via_pins(
     API, so try the pinned revisions directly: the first one that serves the URL
     wins. Pins the caller may not use (unknown, archived, another user's draft)
     are skipped rather than raised — they did not match this URL either way, so
-    the caller gets the ordinary ``operation_not_found``.
+    the caller gets the ordinary ``operation_not_found``. A held draft (its hosts
+    changed on a credential-bound API) that serves the URL is refused with 403
+    ``host_change_requires_operator``: routing through it would send the API's
+    bound credentials to hosts no operator approved.
     """
     for vendor, name, version in sorted(pins):
-        api = APIReference(vendor=vendor, name=name, version=version)
-        try:
-            revision_id = await resolve_pin_for_api(resolver, api=api, pins=pins, identity=identity)
-        except (InvalidRevisionPinError, UnauthorizedRevisionPinError):
+        rev_label = pins[(vendor, name, version)]
+        result = await resolver.resolve_revision_pin(
+            vendor=vendor, name=name, version=version, rev_label=rev_label, identity=identity
+        )
+        if result.revision_id is None or result.outcome not in (
+            RevisionPinOutcome.RESOLVED,
+            RevisionPinOutcome.HOST_CHANGE_HELD,
+        ):
             continue
-        if revision_id is None:
+        resolved = await discover(resolver, method=method, url=url, revision_id=result.revision_id)
+        if resolved is None:
             continue
-        resolved = await discover(resolver, method=method, url=url, revision_id=revision_id)
-        if resolved is not None:
-            return resolved, revision_id
+        if result.outcome is RevisionPinOutcome.HOST_CHANGE_HELD:
+            raise _host_change_held(f"{vendor}:{name}:{version}={rev_label}")
+        return resolved, result.revision_id
     return None

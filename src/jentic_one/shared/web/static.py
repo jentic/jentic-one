@@ -38,11 +38,14 @@ in, so it exposes that path to the SPA via a tiny JSON config endpoint
 (``GET /app-config.json``) the SPA fetches on boot — replacing the older
 ``index.html`` HTML-rewrite. The bundle is served byte-for-byte as built.
 
-Cache policy is applied by :class:`SPACacheHeadersMiddleware`: the unversioned
-shell is revalidated on every navigation while Vite's content-hashed assets are
-cached immutably. Without it a browser can serve a stale ``index.html`` that
-names the *previous* build's assets, so a correctly-upgraded server still
-renders the old UI (#945).
+Cache policy is applied by :class:`SPAResponseHeadersMiddleware`: the
+unversioned shell is revalidated on every navigation while Vite's
+content-hashed assets are cached immutably. Without it a browser can serve a
+stale ``index.html`` that names the *previous* build's assets, so a
+correctly-upgraded server still renders the old UI (#945). The same middleware
+sends ``Referrer-Policy: no-referrer`` so a deep link's query string (e.g. the
+``approve`` session id on ``/app/agents``) never leaks to a third party through
+the ``Referer`` header.
 """
 
 from __future__ import annotations
@@ -82,6 +85,12 @@ _IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 # a cheap 304 when the build is unchanged, but a new build is picked up on the
 # next navigation without a manual hard reload (#945).
 _REVALIDATE_CACHE = "no-cache"
+
+# Referrer policy for every SPA response. Deep links carry identifiers in the
+# query string (``/app/agents?approve=<session id>``); ``no-referrer`` keeps a
+# link or asset the SPA loads from a third-party origin from receiving them.
+# Same-origin API calls do not depend on ``Referer``.
+_REFERRER_POLICY = "no-referrer"
 
 # Fixed, mode-independent path the SPA fetches on boot to learn deploy-mode
 # facts (currently just the admin health path). Served at the site root (NOT
@@ -184,8 +193,8 @@ def _cache_control_for(path: str, status: int) -> str:
     return _REVALIDATE_CACHE
 
 
-class SPACacheHeadersMiddleware:
-    """Stamp cache policy on SPA responses so an upgrade is picked up.
+class SPAResponseHeadersMiddleware:
+    """Stamp cache and referrer policy on SPA responses.
 
     ``app.frontend()`` serves the bundle with an ``ETag`` but no
     ``Cache-Control``, and it exposes no hook to add one. Without an explicit
@@ -210,9 +219,13 @@ class SPACacheHeadersMiddleware:
     without materialising a Starlette ``Response`` or wrapping the downstream
     app in a cancel scope (#627).
 
+    Every SPA response also gets ``Referrer-Policy: no-referrer`` (see
+    :data:`_REFERRER_POLICY`).
+
     Only responses under :data:`SPA_MOUNT_PATH` are touched, and an explicit
-    ``Cache-Control`` already set by a route is never overwritten — the
-    middleware fills a gap, it does not impose policy on API responses.
+    ``Cache-Control`` or ``Referrer-Policy`` already set by a route is never
+    overwritten — the middleware fills a gap, it does not impose policy on API
+    responses.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -222,7 +235,7 @@ class SPACacheHeadersMiddleware:
         if scope["type"] != "http" or not self._owns(scope.get("path", "")):
             await self._app(scope, receive, send)
             return
-        await self._app(scope, receive, self._with_cache_control(send, scope["path"]))
+        await self._app(scope, receive, self._with_headers(send, scope["path"]))
 
     @staticmethod
     def _owns(path: str) -> bool:
@@ -234,13 +247,17 @@ class SPACacheHeadersMiddleware:
         return path == SPA_MOUNT_PATH or path.startswith(f"{SPA_MOUNT_PATH}/")
 
     @staticmethod
-    def _with_cache_control(send: Send, path: str) -> Send:
+    def _with_headers(send: Send, path: str) -> Send:
         async def wrapped(message: Message) -> None:
             if message["type"] == "http.response.start":
-                headers = message.get("headers", [])
-                if not any(name.lower() == b"cache-control" for name, _ in headers):
+                headers = list(message.get("headers", []))
+                present = {name.lower() for name, _ in headers}
+                if b"cache-control" not in present:
                     directive = _cache_control_for(path, message["status"]).encode("latin-1")
-                    message = {**message, "headers": [*headers, (b"cache-control", directive)]}
+                    headers.append((b"cache-control", directive))
+                if b"referrer-policy" not in present:
+                    headers.append((b"referrer-policy", _REFERRER_POLICY.encode("latin-1")))
+                message = {**message, "headers": headers}
             await send(message)
 
         return wrapped
@@ -313,11 +330,11 @@ def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     # subpaths (always SPA routes in practice).
     app.frontend(SPA_MOUNT_PATH, directory=str(static_dir), fallback="auto")
 
-    # Cache policy for the bundle. ``app.frontend()`` sets an ETag but no
-    # Cache-Control, which lets browsers heuristically cache the unversioned
-    # shell and keep rendering a previous build's assets after an upgrade
-    # (#945). See :class:`SPACacheHeadersMiddleware`.
-    app.add_middleware(SPACacheHeadersMiddleware)
+    # Cache and referrer policy for the bundle. ``app.frontend()`` sets an ETag
+    # but no Cache-Control, which lets browsers heuristically cache the
+    # unversioned shell and keep rendering a previous build's assets after an
+    # upgrade (#945). See :class:`SPAResponseHeadersMiddleware`.
+    app.add_middleware(SPAResponseHeadersMiddleware)
 
     # Flag consumed by the shared 401 handler (app_factory): only when an SPA
     # is actually mounted does an anonymous HTML navigation that 401s get

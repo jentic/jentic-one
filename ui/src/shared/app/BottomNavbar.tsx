@@ -170,7 +170,7 @@ export function BottomNavbar() {
 			{sheetOpen && (
 				<>
 					<div
-						className="fixed inset-0 z-50 bg-black/50 md:hidden"
+						className="bg-scrim fixed inset-0 z-50 md:hidden"
 						onClick={closeSheet}
 						aria-hidden="true"
 					/>

@@ -50,6 +50,7 @@ from jentic_one.broker.core.proxy_headers import (
     forward_headers,
     passthrough_response_headers,
     reconstruct_upstream_url,
+    replay_headers,
 )
 from jentic_one.broker.core.revisions import parse_revisions
 from jentic_one.broker.core.schemas import (
@@ -846,8 +847,13 @@ def _async_job_payload(
     selected_credential_id: str | None = None,
     allowed_credential_ids: list[str] | None = None,
     body: bytes | None = None,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the job payload for an async (202) execution.
+
+    ``headers`` are the request headers the run replays (see
+    ``REPLAY_HEADERS``) — without them a JSON body would reach the upstream
+    with no ``Content-Type``.
 
     Extracted from the enqueue path so the operation dual-write below is
     unit-testable at the producer: the worker seams (handler forwarding,
@@ -883,6 +889,8 @@ def _async_job_payload(
         payload["server_variables_unresolved"] = True
     if body:
         payload["body_b64"] = base64.b64encode(body).decode()
+    if headers:
+        payload["headers"] = dict(headers)
     return payload
 
 
@@ -912,6 +920,7 @@ async def _handle_async(
         selected_credential_id=selected_credential_id,
         allowed_credential_ids=allowed_credential_ids,
         body=body,
+        headers=replay_headers(request.headers),
     )
 
     async with ctx.admin_db.transaction() as session:

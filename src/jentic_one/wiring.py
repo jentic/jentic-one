@@ -10,7 +10,9 @@ in-process ``RegistryService``) onto the broker app, so the broker can resolve
 upstream URLs to operations without importing ``jentic_one.registry``; a
 ``CatalogAutoImportProtocol`` onto the control-plane app so the connect flow can
 auto-import a vendor's OpenAPI spec after a credential connects (broker requires
-a registered API before it can route); and carrying the ``/mcp`` mount
+a registered API before it can route); a ``SecuritySchemesLookupProtocol`` onto
+the same app so connect sessions that target a registry API can read its
+declared schemes, hosts and provenance; and carrying the ``/mcp`` mount
 (``jentic_one.mcp``) onto control-plane app shapes via the container seam.
 Swapping an implementation later (e.g. an HTTP-backed resolver) is a change
 here only — the surfaces are unaffected.
@@ -31,6 +33,8 @@ from jentic_one.mcp.installer import (
     mcp_lifespan,
 )
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.services.api_security_lookup_service import ApiSecurityLookupService
 from jentic_one.registry.services.catalog.service import CatalogService
 from jentic_one.registry.services.errors import CatalogEntryNotFoundError
 from jentic_one.registry.services.inspect.registry_service import RegistryService
@@ -52,8 +56,9 @@ class InProcessRegistryResolver:
     factory (not a live session) so it is safe to share across requests.
     """
 
-    def __init__(self, registry_db: DatabaseSession) -> None:
+    def __init__(self, registry_db: DatabaseSession, *, ctx: Context | None = None) -> None:
         self._registry_db = registry_db
+        self._ctx = ctx
 
     async def resolve_operation(
         self, *, method: str, url: str, revision_id: uuid.UUID | None = None
@@ -73,7 +78,7 @@ class InProcessRegistryResolver:
         identity: Identity,
     ) -> RevisionPinResult:
         async with self._registry_db.session() as session:
-            return await RegistryService(session).resolve_revision_pin(
+            return await RegistryService(session, ctx=self._ctx).resolve_revision_pin(
                 vendor=vendor,
                 name=name,
                 version=version,
@@ -84,7 +89,7 @@ class InProcessRegistryResolver:
 
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
     """Inject the in-process registry resolver onto the broker app state."""
-    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db)
+    app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db, ctx=ctx)
 
 
 class InProcessCatalogAutoImporter:
@@ -149,6 +154,15 @@ class InProcessCatalogAutoImporter:
             _logger.warning("catalog_auto_import.failed", api_id=api_id, exc_info=True)
             return None
 
+    async def registered_identity(self, *, api_id: str) -> tuple[str, str] | None:
+        """Return the ``(vendor, name)`` of the local API imported from ``api_id``, or None."""
+        try:
+            async with self._ctx.registry_db.session() as session:
+                return await ApiRepository.identity_for_catalog_api_id(session, api_id)
+        except Exception:
+            _logger.warning("catalog_registered_identity.failed", api_id=api_id, exc_info=True)
+            return None
+
     async def current_version(self, *, api_id: str) -> str | None:
         """Return the imported api's current-revision version, or None.
 
@@ -180,6 +194,16 @@ def install_control_catalog_auto_importer(app: FastAPI, ctx: Context) -> None:
     (the catalog reads live in the registry DB). The caller guards the call.
     """
     app.state.catalog_auto_importer = InProcessCatalogAutoImporter(ctx)
+
+
+def install_control_security_schemes_lookup(app: FastAPI, ctx: Context) -> None:
+    """Inject the registry-backed security-schemes lookup onto the control app state.
+
+    Same guard as the catalog auto-importer: only meaningful when the process
+    serves control and can read the registry DB. Without it, ``:connect`` for a
+    registry API answers 503 ``security_schemes_lookup_unavailable``.
+    """
+    app.state.security_schemes_lookup = ApiSecurityLookupService(ctx)
 
 
 def build_default_container(ctx: Context) -> AppContainer:

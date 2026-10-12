@@ -53,7 +53,7 @@ export function LedgerHead({ children, className }: { children: ReactNode; class
 			role="row"
 			className={cn(
 				GRID,
-				'text-foreground-faint h-9 px-2.5 text-[10.5px] font-bold tracking-[0.08em] uppercase shadow-[0_1px_0_hsl(185_20%_60%/0.08)]',
+				'text-foreground-faint h-9 px-2.5 text-[10.5px] font-bold tracking-[0.08em] uppercase shadow-[0_1px_0_hsl(var(--hairline-head))]',
 				className,
 			)}
 		>

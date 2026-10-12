@@ -1,8 +1,7 @@
 /**
  * CredentialOptions — which credential an API should use, as radio cards: every
  * credential that covers it, then "Add a new credential". The Add APIs setup queue
- * and both access-request dialogs render it, so the choice reads the
- * same wherever it is made.
+ * renders it for each API it works through.
  *
  * Sibling credentials often share the API's own name, so each card carries the
  * type, date and id tail that tell them apart, and reuse is never the only

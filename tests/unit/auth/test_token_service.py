@@ -93,11 +93,17 @@ def _make_refresh_token_row(
     return row
 
 
-def _make_agent_row(*, status: str = "active", owner_id: str = "usr_owner") -> MagicMock:
+def _make_agent_row(
+    *, status: str = "active", owner_id: str = "usr_owner", name: str = "billing-bot"
+) -> MagicMock:
     row = MagicMock()
     row.id = "agnt_x"
     row.status = status
     row.owner_id = owner_id
+    # ``name`` is reserved on the MagicMock constructor, so it has to be
+    # configured after construction; the resolver reads it to carry the agent's
+    # display name onto the Identity (#1543).
+    row.configure_mock(name=name)
     return row
 
 
@@ -460,6 +466,7 @@ async def test_resolve_long_lived_agent_token_uses_live_grants(
     assert resolved is not None
     assert resolved.active is True
     assert resolved.parent_actor_id == "usr_owner"
+    assert resolved.actor_name == "billing-bot", "the loaded agent row's name rides along"
     assert resolved.permissions == ["apis:read", "apis:write"]
     mock_grant_repo.list_for_actor.assert_awaited_once()
 

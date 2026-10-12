@@ -10,7 +10,12 @@ import {
 	RAIL_AUDIO_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 } from '@/shared/lib/agentStream';
-import { clearToken, setToken, type EventResponse } from '@/shared/api';
+import {
+	clearToken,
+	setToken,
+	type ConnectSessionSummaryResponse,
+	type EventResponse,
+} from '@/shared/api';
 
 function LocationProbe() {
 	const loc = useLocation();
@@ -54,13 +59,46 @@ const pendingAgent = {
 
 const page = <T,>(data: T[]) => ({ data, has_more: false, next_cursor: null });
 
+/** An open connect session an agent started (it is both target and requester). */
+function connectRow(
+	overrides: Partial<Omit<ConnectSessionSummaryResponse, 'state'>> & { state?: string } = {},
+) {
+	return {
+		session_id: 'cs_gh',
+		state: 'created',
+		vendor_key: 'github',
+		vendor_display_name: 'GitHub',
+		agent_id: 'agnt_scout',
+		requested_by_actor_id: 'agnt_scout',
+		reason: 'Needs repo read access',
+		connected_as: null,
+		error_code: null,
+		created_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+		credential_id: 'cred_gh_pending',
+		...overrides,
+	};
+}
+
 let approved: string[];
+let connectRows: ReturnType<typeof connectRow>[];
+let credentialRows: unknown[];
 
 beforeEach(() => {
 	window.localStorage.clear();
 	setToken('test-token');
 	approved = [];
+	connectRows = [];
+	credentialRows = [];
 	worker.use(
+		http.get('/connect-sessions', ({ request }) => {
+			const state = new URL(request.url).searchParams.get('state');
+			return HttpResponse.json(page(connectRows.filter((r) => !state || r.state === state)));
+		}),
+		http.get('/actors', () =>
+			HttpResponse.json(
+				page([{ id: 'agnt_scout', actor_type: 'agent', name: 'scout-bot', active: true }]),
+			),
+		),
 		http.get('/events', ({ request }) => {
 			const url = new URL(request.url);
 			if (url.searchParams.get('requires_action') !== 'true')
@@ -75,7 +113,7 @@ beforeEach(() => {
 			approved.push(id);
 			return HttpResponse.json({ ...pendingAgent, status: 'active' });
 		}),
-		http.get('/credentials', () => HttpResponse.json(page([]))),
+		http.get('/credentials', () => HttpResponse.json(page(credentialRows))),
 	);
 });
 
@@ -87,7 +125,7 @@ afterEach(() => {
 describe('NotificationsMenu', () => {
 	it('badges the bell with the count and names it for assistive tech', async () => {
 		renderMenu();
-		const bell = await screen.findByRole('button', { name: 'Notifications (2 need you)' });
+		const bell = await screen.findByRole('button', { name: 'Notifications (2 unread)' });
 		expect(bell).toHaveAttribute('aria-haspopup', 'dialog');
 		expect(bell).toHaveAttribute('aria-expanded', 'false');
 	});
@@ -126,7 +164,58 @@ describe('NotificationsMenu', () => {
 		);
 		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
 		expect(
-			screen.getByRole('button', { name: 'Notifications (1 needs you)' }),
+			screen.getByRole('button', { name: 'Notifications (1 unread)' }),
+		).toBeInTheDocument();
+	});
+
+	it('marks everything read: the badge clears, the rows stay, and it survives a remount', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications (2 unread)' }));
+		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(2);
+
+		await user.click(within(dialog).getByRole('button', { name: 'Mark all as read' }));
+		expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+		// Still waiting on the viewer, so still listed — just no longer unread.
+		expect(within(dialog).getByText('Execution failed: slack.postMessage')).toBeInTheDocument();
+		expect(dialog.querySelectorAll('[data-unread]')).toHaveLength(0);
+		expect(within(dialog).queryByRole('button', { name: 'Mark all as read' })).toBeNull();
+
+		first.unmount();
+		renderMenu();
+		await screen.findByRole('button', { name: 'Notifications' });
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: /unread/ })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('counts an item that arrives after Mark all as read', async () => {
+		const user = userEvent.setup();
+		const first = renderMenu();
+		await user.click(await screen.findByRole('button', { name: 'Notifications (2 unread)' }));
+		await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
+		await screen.findByRole('button', { name: 'Notifications' });
+		first.unmount();
+
+		const later: EventResponse = {
+			...failure,
+			event_id: 'evt_fail_2',
+			summary: 'Execution failed: github.getUser',
+			created_at: new Date().toISOString(),
+		};
+		worker.use(
+			http.get('/events', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('requires_action') !== 'true')
+					return HttpResponse.json(page([]));
+				return HttpResponse.json(page([later, failure]));
+			}),
+		);
+		// A fresh mount refetches; only the new alert is unread.
+		renderMenu();
+		expect(
+			await screen.findByRole('button', { name: 'Notifications (1 unread)' }),
 		).toBeInTheDocument();
 	});
 
@@ -168,5 +257,80 @@ describe('NotificationsMenu', () => {
 
 		await user.click(within(dialog).getByRole('button', { name: 'Back to notifications' }));
 		expect(screen.getByRole('dialog', { name: /^Notifications/ })).toBeInTheDocument();
+	});
+	describe('agents waiting on a connect request', () => {
+		it("collapses an agent's open requests into one approval row with a deep link", async () => {
+			connectRows = [
+				connectRow(),
+				connectRow({
+					session_id: 'cs_slack',
+					state: 'polling',
+					vendor_key: 'slack',
+					vendor_display_name: 'Slack',
+					credential_id: 'cred_slack_pending',
+					created_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+				}),
+				// A session a human started from their own dialog: nobody waits on it.
+				connectRow({
+					session_id: 'cs_self',
+					agent_id: 'agnt_scout',
+					requested_by_actor_id: 'usr_me',
+					vendor_display_name: 'Linear',
+				}),
+			];
+			const user = userEvent.setup();
+			renderMenu();
+			await user.click(await screen.findByRole('button', { name: /^Notifications \(3/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			const approvals = within(dialog).getByRole('region', { name: 'Approvals' });
+			const row = await within(approvals).findByText(
+				'scout-bot is waiting for you to connect GitHub and Slack',
+			);
+			expect(row).toBeInTheDocument();
+			expect(within(dialog).queryByText(/Linear/)).toBeNull();
+
+			// The link opens the longest-waiting request, with no poll token.
+			const item = row.closest('li')!;
+			await user.click(within(item).getByRole('link', { name: 'Review' }));
+			expect(screen.getByTestId('location')).toHaveTextContent(
+				'/agents?agent=agnt_scout&approve=cs_gh',
+			);
+			expect(screen.getByTestId('location').textContent).not.toContain('poll_token');
+		});
+
+		it("does not repeat a request's pending credential as an unfinished sign-in", async () => {
+			connectRows = [connectRow()];
+			credentialRows = [
+				{
+					credential_id: 'cred_gh_pending',
+					name: 'GitHub (connecting…)',
+					type: 'oauth2',
+					provider: 'direct_oauth2',
+					api: { vendor: 'github', name: 'default', version: null },
+					details: { grant_type: 'authorization_code', connected: false },
+					created_at: new Date().toISOString(),
+				},
+				{
+					credential_id: 'cred_other',
+					name: 'Abandoned Slack',
+					type: 'oauth2',
+					provider: 'direct_oauth2',
+					api: { vendor: 'slack', name: 'default', version: null },
+					details: { grant_type: 'authorization_code', connected: false },
+					created_at: new Date().toISOString(),
+				},
+			];
+			const user = userEvent.setup();
+			renderMenu();
+			await user.click(await screen.findByRole('button', { name: /^Notifications \(4/ }));
+			const dialog = screen.getByRole('dialog', { name: /Notifications/ });
+			expect(
+				await within(dialog).findByText("Abandoned Slack sign-in isn't finished"),
+			).toBeInTheDocument();
+			expect(within(dialog).queryByText(/GitHub \(connecting…\) sign-in/)).toBeNull();
+			expect(
+				within(dialog).getByText('scout-bot is waiting for you to connect GitHub'),
+			).toBeInTheDocument();
+		});
 	});
 });

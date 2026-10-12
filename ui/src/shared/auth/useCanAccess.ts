@@ -19,6 +19,8 @@ import { ORG_ADMIN } from '@/shared/auth/usePermission';
 export const AGENTS_READ = 'agents:read';
 /** Create, approve, deny and manage agents. */
 export const AGENTS_WRITE = 'agents:write';
+/** Read the workspace API registry and the catalog (`GET /apis`, `GET /catalog`). */
+export const APIS_READ = 'apis:read';
 /** Read the async job queue (`GET /jobs`). */
 export const JOBS_READ = 'jobs:read';
 /** Read the audit log (`GET /audit`). */

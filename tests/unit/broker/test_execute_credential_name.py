@@ -32,7 +32,6 @@ _IDENTITY = Identity(
 
 def _ctx() -> MagicMock:
     ctx = MagicMock()
-    ctx.config.broker.account_linking_base_url = None
 
     @asynccontextmanager
     async def _noop_transaction() -> Any:

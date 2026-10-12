@@ -296,7 +296,7 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 	// next-step keyed off the 403 (identity check + ask-your-operator), not a
 	// dead end. UX9: it also points at the read-only self-check.
 	errOut := app.Err.(*bytes.Buffer).String()
-	for _, want := range []string{"jentic api GET /me", "operator", "jentic doctor"} {
+	for _, want := range []string{"jentic whoami", "operator", "jentic doctor"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("synthesized 403 recovery missing %q; stderr:\n%s", want, errOut)
 		}
