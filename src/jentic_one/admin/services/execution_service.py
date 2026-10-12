@@ -98,10 +98,9 @@ class ExecutionService:
         return ExecutionView(
             id=record.id,
             toolkit_id=record.toolkit_id,
-            # Denormalized at flattening time (theme-5 Phase 6b) — the
-            # control ``toolkits`` table this used to be resolved from is
-            # gone. NULL for rows whose toolkit was already deleted, exactly
-            # as the old read-time resolver reported them.
+            # Denormalized onto the record — there is no ``toolkits`` table
+            # to resolve it from. NULL for rows whose toolkit was deleted
+            # before the name was recorded.
             toolkit_name=record.toolkit_name,
             trace_id=record.trace_id,
             started_at=record.started_at,

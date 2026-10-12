@@ -7,10 +7,9 @@
  * `timeAgo` cell, and a per-row kebab for the lifecycle verbs. On phones the
  * table swaps to stacked cards (`renderCard`).
  *
- * The toolbar replaces the old unlabelled "Show inactive" checkbox with
- * status segments carrying live counts — the Disabled segment surfaces the
- * approved-but-disabled zombies (#1312) that used to match neither the
- * default list nor the queue filters. The filter input is the client-side
+ * The toolbar carries status segments with live counts — the Disabled
+ * segment surfaces approved-but-disabled clients (#1312), which match
+ * neither the default list nor the queue filters. The filter input is the client-side
  * Filter affordance (status-and-filter rule), disabled when there is nothing
  * to narrow.
  *

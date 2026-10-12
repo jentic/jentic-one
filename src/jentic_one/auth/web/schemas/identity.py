@@ -68,8 +68,7 @@ class MeAgent(BaseModel):
     token_permissions: list[str]
     parent_agent_id: str | None = None
     approved_by: str | None = None
-    # Direct agent↔credential bindings (theme 5). The toolkit_bindings block
-    # was removed with the toolkit surface (Phase 6b).
+    # Direct agent↔credential bindings.
     credential_bindings: list[CredentialBindingEntry] = []
 
 

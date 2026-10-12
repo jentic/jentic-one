@@ -628,9 +628,7 @@ async def _handle(
     # work — only the sync path is idempotent here.
     fp: str | None = None
     if idempotency is not None and idem_key:
-        # The fingerprint's consumer scope is the selected credential
-        # (historically the toolkit on the pre-6b legacy path — same slot,
-        # so replay identity is stable across the cutover).
+        # The fingerprint's consumer scope is the selected credential.
         fp = fingerprint(
             method,
             ctx_req.upstream_url,
