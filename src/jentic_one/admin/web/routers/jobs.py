@@ -50,6 +50,8 @@ def _job_response(view: JobView, request: Request) -> JobResponse:
         error=view.error,
         created_at=view.created_at,
         updated_at=view.updated_at,
+        actor_id=view.actor_id,
+        actor_type=view.actor_type,
         links=links,
     )
 

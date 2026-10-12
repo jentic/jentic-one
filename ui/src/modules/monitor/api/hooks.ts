@@ -36,7 +36,7 @@ import {
 	type ListJobsParams,
 	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
-import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
+import { sharedQueryKeys } from '@/shared/api';
 import { useCanListActors } from '@/shared/hooks';
 import { toJobStatus } from '@/modules/monitor/api/types';
 import type {
@@ -345,15 +345,15 @@ export function useAudit(
 }
 
 /**
- * Resolve "who did it" for a trace or job.
+ * Resolve "who did it" for a trace.
  *
  * Executions now carry `actor_id`/`actor_type` directly (jentic-one#375), so the
  * trace actor is read straight off the execution record — accurate and available
  * to non-admins. The audit log is kept only as a fallback for older traces whose
  * execution records predate actor attribution.
  *
- * Jobs still have no actor on the wire payload, so they resolve via the audit
- * log filtered server-side by `target_id` (the job id).
+ * (Jobs carry `actor_id`/`actor_type` on the job record too, so the job detail
+ * reads them off `useJob` — no separate lookup.)
  */
 export function useActorForTrace(
 	traceId: string | null,
@@ -378,22 +378,6 @@ export function useActorForTrace(
 	const matched = traceId ? entries.filter((e) => e.trace_id === traceId) : [];
 
 	return { ...execQuery, actor: execActor ?? resolveActor(matched) };
-}
-
-export function useActorForJob(
-	jobId: string | null,
-	{ canReadAudit = false }: { canReadAudit?: boolean } = {},
-) {
-	// Filter server-side by target_type+target_id. The backend rejects a
-	// target_id without its matching target_type (400 invalid_input), so both
-	// must be sent together. Audit is org:admin — non-admins skip the lookup.
-	const enabled = jobId != null && canReadAudit;
-	const query = useAudit(jobId ? { targetType: AuditTargetType.JOB, targetId: jobId } : {}, {
-		enabled,
-	});
-	const entries = enabled ? (query.data?.data ?? []) : [];
-	const matched = jobId ? entries.filter((e) => e.job_id === jobId || e.target_id === jobId) : [];
-	return { ...query, actor: resolveActor(matched), canReadAudit };
 }
 
 /* ------------------------------------------------------------------ */

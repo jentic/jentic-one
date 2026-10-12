@@ -831,6 +831,53 @@ describe('Monitor inter-linking', () => {
 		expect(within(badge).getByText('job_import_1')).toBeInTheDocument();
 	});
 
+	it('Job sheet shows who enqueued it from the job record, with no /audit lookup', async () => {
+		const user = userEvent.setup();
+		const calls = { audit: 0 };
+		const onRequest = ({ request }: { request: Request }) => {
+			if (new URL(request.url).pathname === '/audit') calls.audit += 1;
+		};
+		worker.events.on('request:start', onRequest);
+		try {
+			renderMonitor('/app/monitor?show=jobs');
+			await user.click(await screen.findByText('job_exec_3'));
+
+			const dialog = await screen.findByRole('dialog');
+			expect(await within(dialog).findByTitle('agent_billing')).toBeInTheDocument();
+			expect(within(dialog).queryByText(/No actor recorded/)).not.toBeInTheDocument();
+			expect(calls.audit).toBe(0);
+		} finally {
+			worker.events.removeListener('request:start', onRequest);
+		}
+	});
+
+	it('Job sheet without an actor says so without mentioning the audit log', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/jobs/:jobId', ({ params }) =>
+				HttpResponse.json({
+					_links: { self: `/jobs/${params.jobId}`, result: null, execution: null },
+					actor_id: null,
+					actor_type: 'user',
+					created_at: new Date().toISOString(),
+					error: null,
+					execution_id: null,
+					job_id: params.jobId,
+					kind: 'import',
+					status: 'completed',
+					updated_at: new Date().toISOString(),
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?show=jobs');
+		await user.click(await screen.findByText('job_import_2'));
+
+		const dialog = await screen.findByRole('dialog');
+		expect(
+			await within(dialog).findByText('No actor recorded for this job.'),
+		).toBeInTheDocument();
+	});
+
 	it('clears an Audit log deep-link filter from its badge', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit&target_type=job&target_id=job_import_1');

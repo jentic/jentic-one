@@ -150,7 +150,7 @@ func (InviteIssuedResponse) RequiredFields() []string { return []string{"expires
 func (JobLinksResponse) RequiredFields() []string     { return []string{"self"} }
 func (JobListResponse) RequiredFields() []string      { return []string{"data", "has_more"} }
 func (JobResponse) RequiredFields() []string {
-	return []string{"_links", "created_at", "job_id", "kind", "status"}
+	return []string{"_links", "actor_type", "created_at", "job_id", "kind", "status"}
 }
 func (JwksUpdateRequest) RequiredFields() []string { return []string{"jwks"} }
 func (LoginRequest) RequiredFields() []string      { return []string{"email", "password"} }

@@ -418,9 +418,9 @@ export async function listAudit(params: ListAuditParams = {}): Promise<AuditList
 }
 
 /**
- * Resolve the most relevant actor for a trace/job by scanning its audit
- * entries. Jobs/executions carry no actor on the wire, so detail views call
- * this to surface "who did it" via the audit log.
+ * Resolve the most relevant actor from a set of audit entries. Used only as the
+ * fallback for legacy traces whose execution records predate actor attribution
+ * (executions and jobs now carry `actor_id`/`actor_type` on the wire).
  */
 export function resolveActor(
 	entries: AuditResponse[],

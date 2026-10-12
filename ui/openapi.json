@@ -4583,6 +4583,23 @@
           "_links": {
             "$ref": "#/components/schemas/JobLinksResponse"
           },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Subject that enqueued the job. Null only for legacy rows with no actor.",
+            "title": "Actor Id"
+          },
+          "actor_type": {
+            "description": "Kind of actor that enqueued the job (user or agent).",
+            "title": "Actor Type",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4640,6 +4657,7 @@
           "kind",
           "status",
           "created_at",
+          "actor_type",
           "_links"
         ],
         "title": "JobResponse",

@@ -12,7 +12,8 @@ from jentic_one.admin.services.job_service import JobService
 from jentic_one.admin.services.schemas.jobs import JobFilter
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import JobKind, JobStatus
+from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.models import ActorType, JobKind, JobStatus
 
 pytestmark = pytest.mark.integration
 
@@ -84,6 +85,32 @@ async def test_get_by_id(integration_context: Context, clean_jobs: None) -> None
     assert view.id == job_id
     assert view.kind == "execution"
     assert view.status == "queued"
+    assert view.actor_id == "usr_test"
+    assert view.actor_type == "user"
+
+
+async def test_views_carry_the_enqueuing_agent(
+    integration_context: Context, clean_jobs: None
+) -> None:
+    """An agent-enqueued job surfaces the agent as its actor on get and list."""
+    ctx = integration_context
+    agent = Identity(
+        sub="agnt_jobactor",
+        actor_type=ActorType.AGENT,
+        parent_actor_id="usr_test",
+        permissions=["jobs:read"],
+    )
+    async with ctx.admin_db.transaction() as session:
+        job_id = await enqueue_job(
+            session, JobKind.IMPORT, created_by=agent.sub, actor_type=ActorType.AGENT
+        )
+
+    service = JobService(ctx)
+    view = await service.get_by_id(job_id, identity=agent)
+    assert (view.actor_id, view.actor_type) == ("agnt_jobactor", "agent")
+    page = await service.list_all(JobFilter(), identity=agent)
+    listed = next(v for v in page.data if v.id == job_id)
+    assert (listed.actor_id, listed.actor_type) == ("agnt_jobactor", "agent")
 
 
 async def test_get_by_id_not_found(integration_context: Context, clean_jobs: None) -> None:

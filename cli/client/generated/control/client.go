@@ -2134,13 +2134,19 @@ type JobListResponse struct {
 type JobResponse struct {
 	// UnderscoreLinks Hypermedia links for a job.
 	UnderscoreLinks JobLinksResponse `json:"_links"`
-	CreatedAt       time.Time        `json:"created_at"`
-	Error           *string          `json:"error,omitempty"`
-	ExecutionId     *string          `json:"execution_id,omitempty"`
-	JobId           string           `json:"job_id"`
-	Kind            string           `json:"kind"`
-	Status          string           `json:"status"`
-	UpdatedAt       *time.Time       `json:"updated_at,omitempty"`
+
+	// ActorId Subject that enqueued the job. Null only for legacy rows with no actor.
+	ActorId *string `json:"actor_id,omitempty"`
+
+	// ActorType Kind of actor that enqueued the job (user or agent).
+	ActorType   string     `json:"actor_type"`
+	CreatedAt   time.Time  `json:"created_at"`
+	Error       *string    `json:"error,omitempty"`
+	ExecutionId *string    `json:"execution_id,omitempty"`
+	JobId       string     `json:"job_id"`
+	Kind        string     `json:"kind"`
+	Status      string     `json:"status"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
 // JwksUpdateRequest Request body for updating an agent's JWKS (public keys).

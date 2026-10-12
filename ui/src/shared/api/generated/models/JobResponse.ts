@@ -8,6 +8,14 @@ import type { JobLinksResponse } from './JobLinksResponse';
  */
 export type JobResponse = {
     _links: JobLinksResponse;
+    /**
+     * Subject that enqueued the job. Null only for legacy rows with no actor.
+     */
+    actor_id?: (string | null);
+    /**
+     * Kind of actor that enqueued the job (user or agent).
+     */
+    actor_type: string;
     created_at: string;
     error?: (string | null);
     execution_id?: (string | null);

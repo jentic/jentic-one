@@ -114,7 +114,14 @@ def _payload(result: Any) -> dict[str, Any]:
 
 def _job(status: str, *, error: str | None = None, kind: str = "import") -> JobView:
     return JobView(
-        id="job_9", kind=kind, status=status, error=error, created_at=_NOW, updated_at=_NOW
+        id="job_9",
+        kind=kind,
+        status=status,
+        error=error,
+        created_at=_NOW,
+        updated_at=_NOW,
+        actor_id="usr_test",
+        actor_type="user",
     )
 
 

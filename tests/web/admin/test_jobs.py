@@ -128,7 +128,10 @@ def test_other_actor_gets_404_and_empty_list(
     with _scoped_client(web_context, owner) as tc:
         listed = {j["job_id"] for j in tc.get("/jobs?limit=100").json()["data"]}
         assert {done_id, queued_id} <= listed
-        assert tc.get(f"/jobs/{done_id}").status_code == 200
+        got = tc.get(f"/jobs/{done_id}")
+        assert got.status_code == 200
+        assert got.json()["actor_id"] == _SCOPED_OWNER
+        assert got.json()["actor_type"] == "user"
         result = tc.get(f"/jobs/{done_id}/result")
         assert result.status_code == 200
         assert result.json() == {"owner": "only"}
