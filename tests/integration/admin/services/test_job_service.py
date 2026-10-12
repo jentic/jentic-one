@@ -18,6 +18,7 @@ from jentic_one.shared.models import ActorType, JobKind, JobStatus
 pytestmark = pytest.mark.integration
 
 _OWNER = Identity(sub="usr_test", email="test@local")
+_ADMIN = Identity(sub="usr_admin", permissions=["org:admin"])
 
 
 @pytest.fixture()
@@ -111,6 +112,30 @@ async def test_views_carry_the_enqueuing_agent(
     page = await service.list_all(JobFilter(), identity=agent)
     listed = next(v for v in page.data if v.id == job_id)
     assert (listed.actor_id, listed.actor_type) == ("agnt_jobactor", "agent")
+
+
+async def test_legacy_agent_job_reads_as_agent(
+    integration_context: Context, clean_jobs: None
+) -> None:
+    """A pre-``actor_type`` row (column defaulted to 'user') still reads as its agent.
+
+    Rows written before migration r7s8t9u0v1w2 carry ``actor_type='user'`` even
+    when an agent enqueued them; the ``created_by`` prefix wins.
+    """
+    ctx = integration_context
+    async with ctx.admin_db.transaction() as session:
+        legacy = Job(
+            kind=JobKind.IMPORT,
+            status=JobStatus.COMPLETED,
+            created_by="agnt_legacyjob",
+            actor_type="user",
+        )
+        session.add(legacy)
+        await session.flush()
+        job_id = legacy.id
+
+    view = await JobService(ctx).get_by_id(job_id, identity=_ADMIN)
+    assert (view.actor_id, view.actor_type) == ("agnt_legacyjob", "agent")
 
 
 async def test_get_by_id_not_found(integration_context: Context, clean_jobs: None) -> None:

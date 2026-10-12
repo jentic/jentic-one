@@ -843,8 +843,14 @@ describe('Monitor inter-linking', () => {
 			await user.click(await screen.findByText('job_exec_3'));
 
 			const dialog = await screen.findByRole('dialog');
-			expect(await within(dialog).findByTitle('agent_billing')).toBeInTheDocument();
+			const label = await within(dialog).findByTitle('agent_billing');
+			// Rendered as an agent (type prefix from the job's actor_type), not a
+			// bare id or a "User …" label.
+			expect(within(label).getByText(/^Agent/)).toBeInTheDocument();
 			expect(within(dialog).queryByText(/No actor recorded/)).not.toBeInTheDocument();
+			// The removed audit fallback fired alongside GET /jobs/{id}; give any
+			// such request time to land before asserting none did.
+			await new Promise((r) => setTimeout(r, 500));
 			expect(calls.audit).toBe(0);
 		} finally {
 			worker.events.removeListener('request:start', onRequest);
