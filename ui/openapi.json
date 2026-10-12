@@ -4596,7 +4596,7 @@
             "title": "Actor Id"
           },
           "actor_type": {
-            "description": "Kind of actor that enqueued the job (user or agent).",
+            "description": "Kind of actor that enqueued the job: 'user' or 'agent'. Opaque string: historical rows may carry a retired type such as 'service_account'.",
             "title": "Actor Type",
             "type": "string"
           },

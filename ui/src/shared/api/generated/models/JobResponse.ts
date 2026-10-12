@@ -13,7 +13,7 @@ export type JobResponse = {
      */
     actor_id?: (string | null);
     /**
-     * Kind of actor that enqueued the job (user or agent).
+     * Kind of actor that enqueued the job: 'user' or 'agent'. Opaque string: historical rows may carry a retired type such as 'service_account'.
      */
     actor_type: string;
     created_at: string;

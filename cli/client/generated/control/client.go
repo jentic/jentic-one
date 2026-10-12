@@ -2138,7 +2138,7 @@ type JobResponse struct {
 	// ActorId Subject that enqueued the job. Null only for legacy rows with no actor.
 	ActorId *string `json:"actor_id,omitempty"`
 
-	// ActorType Kind of actor that enqueued the job (user or agent).
+	// ActorType Kind of actor that enqueued the job: 'user' or 'agent'. Opaque string: historical rows may carry a retired type such as 'service_account'.
 	ActorType   string     `json:"actor_type"`
 	CreatedAt   time.Time  `json:"created_at"`
 	Error       *string    `json:"error,omitempty"`

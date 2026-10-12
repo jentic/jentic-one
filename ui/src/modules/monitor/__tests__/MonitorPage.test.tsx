@@ -857,6 +857,52 @@ describe('Monitor inter-linking', () => {
 		}
 	});
 
+	it('Job sheet resolves the actor for a non-admin via the by-id lookup, no /audit', async () => {
+		const user = userEvent.setup();
+		const lookedUp = new Set<string>();
+		const calls = { audit: 0, actorsList: 0 };
+		const onRequest = ({ request }: { request: Request }) => {
+			const path = new URL(request.url).pathname;
+			if (path === '/audit') calls.audit += 1;
+			if (path === '/actors') calls.actorsList += 1;
+		};
+		worker.use(
+			// A jobs:read member: no org:admin, no audit:read, no users:read.
+			http.get('/users/me', () =>
+				HttpResponse.json({ ...MEMBER, permissions: ['events:read', 'jobs:read'] }),
+			),
+			http.get('/actors', () => new HttpResponse(null, { status: 403 })),
+			http.get('/actors/lookup', ({ request }) => {
+				const ids = new URL(request.url).searchParams.getAll('id');
+				ids.forEach((id) => lookedUp.add(id));
+				return HttpResponse.json({
+					data: ids.map((id) => ({
+						id,
+						actor_type: 'agent',
+						name: 'billing-agent',
+						active: true,
+					})),
+				});
+			}),
+		);
+		worker.events.on('request:start', onRequest);
+		try {
+			renderMonitor('/app/monitor?show=jobs');
+			await user.click(await screen.findByText('job_exec_3'));
+
+			const dialog = await screen.findByRole('dialog');
+			const label = await within(dialog).findByTitle('agent_billing');
+			expect(within(label).getByText('billing-agent', { exact: false })).toBeInTheDocument();
+			expect(within(label).getByText(/^Agent/)).toBeInTheDocument();
+			expect(lookedUp.has('agent_billing')).toBe(true);
+			await new Promise((r) => setTimeout(r, 500));
+			expect(calls.audit).toBe(0);
+			expect(calls.actorsList).toBe(0);
+		} finally {
+			worker.events.removeListener('request:start', onRequest);
+		}
+	});
+
 	it('Job sheet without an actor says so without mentioning the audit log', async () => {
 		const user = userEvent.setup();
 		worker.use(

@@ -3009,7 +3009,7 @@ components:
           description: Subject that enqueued the job. Null only for legacy rows with no actor.
           title: Actor Id
         actor_type:
-          description: Kind of actor that enqueued the job (user or agent).
+          description: 'Kind of actor that enqueued the job: ''user'' or ''agent''. Opaque string: historical rows may carry a retired type such as ''service_account''.'
           title: Actor Type
           type: string
         created_at:
