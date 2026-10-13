@@ -41,7 +41,7 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 | `test-arch`         | Run architecture enforcement tests                |
 | `test-smoke`        | Run smoke tests (requires running services)       |
 | `cov`               | Run tests with coverage report                    |
-| `score`             | Validate OpenAPI specs with scorecard (80+ req)   |
+| `score`             | Score OpenAPI specs (opt-in: `JENTIC_SCORE_API_KEY`) |
 | `check`             | Run lint, score, secrets audit, unit + arch tests |
 | `hooks`             | Install lefthook git hooks (pre-commit + commit-msg) |
 | `clean`             | Remove caches and build artifacts                 |
