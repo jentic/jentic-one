@@ -7255,7 +7255,13 @@ paths:
       - Discovery
   /actors:
     get:
-      description: List all actors (users and agents) for UI cache hydration.
+      description: |-
+        List actors (users and agents) for UI cache hydration.
+
+        Scoped to the caller: org admins list everyone. Anyone else lists only
+        themselves and the agents they may see (their own agents, or with
+        ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
+        to label other ids.
       operationId: listActors
       parameters:
       - in: query
@@ -8360,6 +8366,9 @@ paths:
         and redirect-URI origin plus the consenting ``user_id`` — after an agent
         ownership transfer the grant stays with the original consenter, so this
         column is how an admin spots stranded grants.
+
+        Scoped to the caller: org admins see every grant. Anyone else sees grants
+        they consented to and grants bound to agents they own.
       operationId: listOauthGrants
       parameters:
       - description: Filter by the client's public client_id.
@@ -19346,7 +19355,10 @@ paths:
       - System
   /users:
     get:
-      description: List all users with cursor-based pagination.
+      description: |-
+        List users with cursor-based pagination.
+
+        Scoped to the caller: org admins see every user; anyone else sees only themselves.
       operationId: listUsers
       parameters:
       - in: query
@@ -19700,7 +19712,11 @@ paths:
       tags:
       - Users
     get:
-      description: Get a user by ID.
+      description: |-
+        Get a user by ID.
+
+        Scoped to the caller: org admins can read any user; anyone else only themselves.
+        Any other user answers 404.
       operationId: getUser
       parameters:
       - in: path
@@ -19737,6 +19753,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
         '422':
           content:
             application/problem+json:

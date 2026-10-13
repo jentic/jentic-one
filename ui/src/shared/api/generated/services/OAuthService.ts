@@ -27,6 +27,9 @@ export class OAuthService {
      * and redirect-URI origin plus the consenting ``user_id`` — after an agent
      * ownership transfer the grant stays with the original consenter, so this
      * column is how an admin spots stranded grants.
+     *
+     * Scoped to the caller: org admins see every grant. Anyone else sees grants
+     * they consented to and grants bound to agents they own.
      * @returns OAuthGrantAdminListResponse Successful Response
      * @throws ApiError
      */

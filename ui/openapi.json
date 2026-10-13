@@ -10804,7 +10804,7 @@
     },
     "/actors": {
       "get": {
-        "description": "List all actors (users and agents) for UI cache hydration.",
+        "description": "List actors (users and agents) for UI cache hydration.\n\nScoped to the caller: org admins list everyone. Anyone else lists only\nthemselves and the agents they may see (their own agents, or with\n``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``\nto label other ids.",
         "operationId": "listActors",
         "parameters": [
           {
@@ -13130,7 +13130,7 @@
     },
     "/admin/oauth-grants": {
       "get": {
-        "description": "List consent→agent grants across all clients and agents.\n\nThe admin cross-view over the grant registry: filter by client, agent,\nconsenting user, or status. Each item carries the client's display name\nand redirect-URI origin plus the consenting ``user_id`` — after an agent\nownership transfer the grant stays with the original consenter, so this\ncolumn is how an admin spots stranded grants.",
+        "description": "List consent→agent grants across all clients and agents.\n\nThe admin cross-view over the grant registry: filter by client, agent,\nconsenting user, or status. Each item carries the client's display name\nand redirect-URI origin plus the consenting ``user_id`` — after an agent\nownership transfer the grant stays with the original consenter, so this\ncolumn is how an admin spots stranded grants.\n\nScoped to the caller: org admins see every grant. Anyone else sees grants\nthey consented to and grants bound to agents they own.",
         "operationId": "listOauthGrants",
         "parameters": [
           {
@@ -35683,7 +35683,7 @@
     },
     "/users": {
       "get": {
-        "description": "List all users with cursor-based pagination.",
+        "description": "List users with cursor-based pagination.\n\nScoped to the caller: org admins see every user; anyone else sees only themselves.",
         "operationId": "listUsers",
         "parameters": [
           {
@@ -36458,7 +36458,7 @@
         ]
       },
       "get": {
-        "description": "Get a user by ID.",
+        "description": "Get a user by ID.\n\nScoped to the caller: org admins can read any user; anyone else only themselves.\nAny other user answers 404.",
         "operationId": "getUser",
         "parameters": [
           {
@@ -36532,6 +36532,23 @@
               }
             },
             "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "422": {
             "content": {

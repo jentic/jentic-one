@@ -10,7 +10,12 @@ import { request as __request } from '../core/request';
 export class ActorsService {
     /**
      * List Actors
-     * List all actors (users and agents) for UI cache hydration.
+     * List actors (users and agents) for UI cache hydration.
+     *
+     * Scoped to the caller: org admins list everyone. Anyone else lists only
+     * themselves and the agents they may see (their own agents, or with
+     * ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
+     * to label other ids.
      * @returns ActorListResponse Successful Response
      * @throws ApiError
      */

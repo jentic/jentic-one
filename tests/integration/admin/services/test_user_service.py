@@ -31,6 +31,8 @@ from jentic_one.shared.models import InviteState
 
 pytestmark = pytest.mark.integration
 
+_ORG_ADMIN = Identity(sub="usr_test_org_admin", email="admin@test.local", permissions=["org:admin"])
+
 
 @pytest.fixture()
 async def admin_user(integration_context: Context) -> AsyncGenerator[str, None]:
@@ -170,7 +172,7 @@ async def test_list(integration_context: Context, admin_user: str) -> None:
         )
         created_ids.append(created.user.id)
 
-    page = await service.list_all(limit=50)
+    page = await service.list_all(limit=50, identity=_ORG_ADMIN)
     page_ids = [u.id for u in page.data]
     for uid in created_ids:
         assert uid in page_ids
@@ -368,7 +370,7 @@ async def test_get_by_id_derives_expired_for_lapsed_pending_invite(
         stored = await UserRepository.get_by_id(session, user_id)
     assert stored is not None and stored.invite_state == InviteState.PENDING
 
-    page = await service.list_all(limit=50)
+    page = await service.list_all(limit=50, identity=_ORG_ADMIN)
     listed = next(u for u in page.data if u.id == user_id)
     assert listed.invite_state == InviteState.EXPIRED
 

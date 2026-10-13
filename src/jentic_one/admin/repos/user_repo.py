@@ -79,8 +79,19 @@ class UserRepository:
         return set(result.scalars().all())
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, user_id: str) -> User | None:
-        return await session.get(User, user_id)
+    async def get_by_id(
+        session: AsyncSession,
+        user_id: str,
+        *,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> User | None:
+        if filters is None:
+            return await session.get(User, user_id)
+        stmt = select(User).where(User.id == user_id)
+        for f in filters:
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_email(session: AsyncSession, email: str) -> User | None:

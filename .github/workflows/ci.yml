@@ -46,6 +46,7 @@ jobs:
       packaging: ${{ steps.filter.outputs.packaging }}
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
+      openapi-spec: ${{ steps.filter.outputs.openapi-spec }}
       installer: ${{ steps.filter.outputs.installer }}
       e2e-install: ${{ steps.filter.outputs.e2e-install }}
     steps:
@@ -147,6 +148,11 @@ jobs:
               - 'ui/package.json'
               - 'ui/package-lock.json'
               - 'ui/src/shared/api/generated/**'
+            openapi-spec:
+              # Inputs to the OpenAPI Scorecard job. Each run spends scorecard
+              # API quota, so it only fires when a scored spec changes.
+              - 'openapi/control/**'
+              - 'openapi/broker/**'
             ui:
               - 'ui/**'
             packaging:
@@ -177,54 +183,48 @@ jobs:
       - name: Lint
         run: make lint
 
-  # OpenAPI Scorecard gates.
+  # OpenAPI Scorecard for the control and broker specs, via the official
+  # jentic/jentic-api-scorecard action (SARIF to the Security tab, HTML report
+  # artifact, Markdown run summary).
   #
-  # control.openapi.yaml is now GENERATED from the FastAPI app (`make openapi`)
-  # and carries the full metadata catalogue (info, tags, summaries, descriptions,
-  # error responses, examples), so `score-control` is expected to clear the 80+
-  # floor. Locally it is wired into `make score` (and therefore `make check`).
+  # Opt-in on the JENTIC_SCORE_API_KEY secret: when it is unset (including fork
+  # and Dependabot PRs, which get no secrets) every step skips and the job passes.
+  # The score gate is the SCORECARD_MIN_SCORE repository variable: unset means
+  # report-only, set it (e.g. 80) to fail a spec scoring below it. Locally the
+  # same pair of env vars drives `make score`.
   #
-  # The CI jobs below stay disabled only because JENTIC_API_KEY is invalid and the
-  # @jentic/api-scorecard-cli package requires private-registry auth not set up
-  # here. Re-enable `score-control` once a valid key + npm registry token are
-  # provisioned. broker.openapi.yaml is still hand-curated (out of scope).
-  # score-broker:
-  #   name: OpenAPI Scorecard (broker)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v7
-  #
-  #     - name: Set up Node.js
-  #       uses: actions/setup-node@v7
-  #       with:
-  #         node-version: "20"
-  #
-  #     - name: Log in to GHCR
-  #       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-  #
-  #     - name: Score broker spec
-  #       run: npx --yes @jentic/api-scorecard-cli@1.0.0-alpha.29 score openapi/broker/broker.openapi.yaml --quiet
-  #       env:
-  #         JENTIC_API_KEY: ${{ secrets.JENTIC_API_KEY }}
-  #
-  # score-control:
-  #   name: OpenAPI Scorecard (control)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v7
-  #
-  #     - name: Set up Node.js
-  #       uses: actions/setup-node@v7
-  #       with:
-  #         node-version: "20"
-  #
-  #     - name: Log in to GHCR
-  #       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-  #
-  #     - name: Score control spec
-  #       run: npx --yes @jentic/api-scorecard-cli@1.0.0-alpha.29 score openapi/control/control.openapi.yaml --quiet
-  #       env:
-  #         JENTIC_API_KEY: ${{ secrets.JENTIC_API_KEY }}
+  # The action is pinned to a full release (CLI version == engine image tag) so
+  # a new scoring engine never moves the score under an unchanged spec.
+  score:
+    name: OpenAPI Scorecard (${{ matrix.spec }})
+    needs: [changes]
+    if: needs.changes.outputs.openapi-spec == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        spec: [control, broker]
+    env:
+      JENTIC_SCORE_API_KEY: ${{ secrets.JENTIC_SCORE_API_KEY }}
+    steps:
+      - name: Skip when JENTIC_SCORE_API_KEY is unset
+        if: env.JENTIC_SCORE_API_KEY == ''
+        run: echo "::notice::JENTIC_SCORE_API_KEY is not set; skipping the ${{ matrix.spec }} scorecard."
+
+      - uses: actions/checkout@v7
+        if: env.JENTIC_SCORE_API_KEY != ''
+
+      - name: Score ${{ matrix.spec }} spec
+        if: env.JENTIC_SCORE_API_KEY != ''
+        uses: jentic/jentic-api-scorecard@v1.12.0
+        with:
+          input: openapi/${{ matrix.spec }}/${{ matrix.spec }}.openapi.yaml
+          api-key: ${{ env.JENTIC_SCORE_API_KEY }}
+          min-score: ${{ vars.SCORECARD_MIN_SCORE }}
+          artifact-name: scorecard-${{ matrix.spec }}
 
   openapi-client-drift:
     name: Generated UI client up to date
@@ -1091,7 +1091,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
+    needs: [lint, openapi-client-drift, score, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, cli-artifact-smoke, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -1099,6 +1099,7 @@ jobs:
           RESULTS: >-
             ${{ needs.lint.result }}
             ${{ needs.openapi-client-drift.result }}
+            ${{ needs.score.result }}
             ${{ needs.security.result }}
             ${{ needs.test-unit.result }}
             ${{ needs.test-integration.result }}

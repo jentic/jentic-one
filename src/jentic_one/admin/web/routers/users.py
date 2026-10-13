@@ -62,8 +62,13 @@ async def list_users(
     limit: int = Query(default=50, ge=1, le=200),
     invite_state: InviteState | None = Query(default=None),
 ) -> UserListResponse:
-    """List all users with cursor-based pagination."""
-    page = await user_svc.list_all(cursor=cursor, limit=limit, invite_state=invite_state)
+    """List users with cursor-based pagination.
+
+    Scoped to the caller: org admins see every user; anyone else sees only themselves.
+    """
+    page = await user_svc.list_all(
+        cursor=cursor, limit=limit, invite_state=invite_state, identity=identity
+    )
     return UserListResponse(
         data=[_user_response(u) for u in page.data],
         has_more=page.has_more,
@@ -94,14 +99,18 @@ async def create_user(
     )
 
 
-@router.get("/users/{user_id}")
+@router.get("/users/{user_id}", responses=with_responses(not_found()))
 async def get_user(
     user_id: str,
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
-    """Get a user by ID."""
-    view = await user_svc.get_by_id(user_id)
+    """Get a user by ID.
+
+    Scoped to the caller: org admins can read any user; anyone else only themselves.
+    Any other user answers 404.
+    """
+    view = await user_svc.get(user_id, identity=identity)
     return _user_response(view)
 
 

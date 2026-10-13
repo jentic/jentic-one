@@ -73,7 +73,9 @@ export class UsersService {
     }
     /**
      * List Users
-     * List all users with cursor-based pagination.
+     * List users with cursor-based pagination.
+     *
+     * Scoped to the caller: org admins see every user; anyone else sees only themselves.
      * @returns UserListResponse Successful Response
      * @throws ApiError
      */
@@ -217,6 +219,9 @@ export class UsersService {
     /**
      * Get User
      * Get a user by ID.
+     *
+     * Scoped to the caller: org admins can read any user; anyone else only themselves.
+     * Any other user answers 404.
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
@@ -235,6 +240,7 @@ export class UsersService {
                 400: `Bad Request`,
                 401: `Unauthorized`,
                 403: `Forbidden`,
+                404: `Not Found`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,

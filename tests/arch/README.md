@@ -55,6 +55,7 @@ vendored fallback under [`vendored/`](vendored/) guarded by
 - [`test_migration_single_head.py`](test_migration_single_head.py) — exactly one alembic head per migration tree
 - [`test_no_db_mocking.py`](test_no_db_mocking.py) — tests never mock database internals
 - [`test_scoping_boundary.py`](test_scoping_boundary.py), [`test_scoping_coverage.py`](test_scoping_coverage.py) — repos stay auth-agnostic, every scoped model is registered, identity is mandatory in scoped surfaces
+- [`test_scoped_list_reads.py`](test_scoped_list_reads.py) — every admin/auth/control service list read takes and uses `identity`, or is allowlisted with a reason
 
 ## Security, secrets, and audit
 

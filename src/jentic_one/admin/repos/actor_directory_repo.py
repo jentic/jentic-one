@@ -18,11 +18,12 @@ from jentic_one.shared.models import ActorStatus, ActorType
 
 def _build_union(
     agent_filters: Sequence[ColumnElement[bool]] = (),
+    user_filters: Sequence[ColumnElement[bool]] = (),
 ) -> CompoundSelect[Any]:
     """Build a UNION ALL query across users and agents.
 
-    ``agent_filters`` narrows the agents arm only (the caller's agent
-    visibility); the users arm is never filtered here.
+    ``agent_filters`` narrows the agents arm and ``user_filters`` the users arm
+    (each the caller's visibility for that model); empty means unrestricted.
 
     Service accounts left the directory in theme-8 Phase 2: every SA was
     migrated to a successor agent (which the agents arm lists).
@@ -33,7 +34,7 @@ def _build_union(
         (User.first_name + literal(" ") + User.last_name).label("name"),
         User.active.cast(Boolean).label("active"),
         User.created_at.label("created_at"),
-    )
+    ).where(*user_filters)
 
     agents_q = select(
         Agent.id.label("id"),
@@ -58,8 +59,10 @@ class ActorDirectoryRepository:
         limit: int = 1000,
         cursor_ts: datetime | None = None,
         cursor_id: str | None = None,
+        agent_filters: Sequence[ColumnElement[bool]] = (),
+        user_filters: Sequence[ColumnElement[bool]] = (),
     ) -> list[Any]:
-        subq = _build_union().subquery()
+        subq = _build_union(agent_filters, user_filters).subquery()
         stmt = select(subq).order_by(subq.c.created_at.desc(), subq.c.id.desc()).limit(limit)
 
         if cursor_ts is not None and cursor_id is not None:

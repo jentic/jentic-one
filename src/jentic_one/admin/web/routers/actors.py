@@ -34,8 +34,14 @@ async def list_actors(
     cursor: str | None = None,
     limit: int = Query(default=1000, ge=1, le=5000),
 ) -> ActorListResponse:
-    """List all actors (users and agents) for UI cache hydration."""
-    page = await actor_svc.list_all(cursor=cursor, limit=limit)
+    """List actors (users and agents) for UI cache hydration.
+
+    Scoped to the caller: org admins list everyone. Anyone else lists only
+    themselves and the agents they may see (their own agents, or with
+    ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
+    to label other ids.
+    """
+    page = await actor_svc.list_all(cursor=cursor, limit=limit, identity=identity)
     return ActorListResponse(
         data=[
             ActorSummaryResponse(

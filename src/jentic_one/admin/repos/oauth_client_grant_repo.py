@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.oauth_client_grants import OAuthClientGrant
@@ -117,6 +119,7 @@ class OAuthClientGrantRepository:
         limit: int = 50,
         cursor_created_at: datetime | None = None,
         cursor_id: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> list[OAuthClientGrant]:
         """List grant rows for the grant listing surfaces, newest first.
 
@@ -150,6 +153,8 @@ class OAuthClientGrantRepository:
                     ),
                 )
             )
+        for f in filters or ():
+            stmt = stmt.where(f)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
