@@ -28,19 +28,21 @@ MAX_LOOKUP_IDS = 100
 MAX_LOOKUP_ID_LENGTH = 64
 
 
-@router.get("/actors")
+@router.get("/actors", summary="List users and agents")
 async def list_actors(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     actor_svc: ActorService = Depends(get_actor_service),
     cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
     limit: int = Query(default=1000, ge=1, le=5000, openapi_examples=ex.example(25)),
 ) -> ActorListResponse:
-    """List actors (users and agents) for UI cache hydration.
+    """List users and agents with the minimal fields needed to label them.
 
-    Scoped to the caller: org admins list everyone. Anyone else lists only
-    themselves and the agents they may see (their own agents, or with
-    ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
-    to label other ids.
+    Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+    and `active`. Requires `users:read`. Results are scoped to the caller:
+    `org:admin` lists everyone; anyone else lists only themselves and the
+    agents they may see (their own, or with `owner:agents:read` their owner's
+    agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+    already hold, use `GET /actors/lookup`.
     """
     page = await actor_svc.list_all(cursor=cursor, limit=limit, identity=identity)
     return ActorListResponse(
@@ -75,16 +77,18 @@ async def lookup_actors(
         openapi_examples=ex.example([ex.AGENT_ID, ex.USER_ID]),
     ),
 ) -> ActorLookupResponse:
-    """Resolve user and agent ids to display names for any signed-in caller.
+    """Resolve user and agent ids to display names.
 
-    Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
-    asked for, so a caller without ``users:read`` can label the owners,
-    approvers and actors it already sees by id. Users resolve for any caller;
-    agents only when the caller may see them (its own agents, itself, or with
-    ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
-    Ids that match no visible user or agent are left out of the response
-    rather than reported as errors. Listing the whole directory stays behind
-    ``users:read`` on ``GET /actors``.
+    Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+    `name` and `active` for each id the caller may see. Any signed-in caller
+    may call it, so a UI can label the owners, approvers and actors it
+    already holds by id without `users:read`.
+
+    Users resolve for every caller. Agents resolve only when visible to the
+    caller: itself, its own agents, its owner's agents with
+    `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+    visible actor are silently left out rather than reported as errors.
+    Listing the whole directory needs `users:read` on `GET /actors`.
     """
     views = await actor_svc.lookup(ids, identity=identity)
     return ActorLookupResponse(

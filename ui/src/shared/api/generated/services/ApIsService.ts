@@ -180,8 +180,16 @@ export class ApIsService {
         });
     }
     /**
-     * List Api Revisions
-     * List revisions for an API with optional state filter and cursor pagination.
+     * List an API's revisions
+     * List every revision imported for an API, newest first.
+     *
+     * Each revision gives its `state` (`draft`, `published`, `imported` or
+     * `archived`), whether it `is_current` (the one served), its source, spec
+     * digest, operation count and lifecycle timestamps, plus links to the
+     * actions valid in its state. Repeat `state` to filter by several states.
+     * Results are cursor-paginated: pass `next_cursor` as `cursor` while
+     * `has_more` is true. Fetch one revision with
+     * `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -224,8 +232,12 @@ export class ApIsService {
         });
     }
     /**
-     * Delete Revision
-     * Delete an archived revision.
+     * Delete an archived API revision
+     * Permanently delete an archived revision.
+     *
+     * Only an `archived` revision can be deleted — archive it first; any other
+     * state is refused with 409 (`revision_state_conflict`). Deletion cannot
+     * be undone. Requires `apis:write`. Returns 204.
      * @returns void
      * @throws ApiError
      */
@@ -260,8 +272,14 @@ export class ApIsService {
         });
     }
     /**
-     * Get Api Revision
-     * Retrieve a single revision by ID.
+     * Get an API revision
+     * Get one revision's metadata and lifecycle state.
+     *
+     * Returns the same fields as an entry in the revision list: `state`,
+     * `is_current`, source, spec digest, operation count, timestamps, and links
+     * to the actions valid in its state. This is metadata only — download the
+     * spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+     * revision does not exist.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -296,8 +314,14 @@ export class ApIsService {
         });
     }
     /**
-     * Archive Revision
-     * Archive a draft revision.
+     * Archive an API revision
+     * Retire a `draft` or `imported` revision without deleting it.
+     *
+     * The revision moves to `archived` and is kept for reference; it can then
+     * be deleted. If it was the API's current revision, the API is left with
+     * no live revision until another is promoted. A revision in any other
+     * state is refused with 409 (`revision_state_conflict`). Requires
+     * `apis:write`. Returns the archived revision.
      * @returns any Successful Response
      * @throws ApiError
      */

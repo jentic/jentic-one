@@ -42,7 +42,7 @@
       "path": "/.well-known/oauth-authorization-server/mcp",
       "public": true,
       "required_permissions": [],
-      "summary": "OAuth authorization server metadata for the MCP resource",
+      "summary": "Get OAuth authorization server metadata for MCP clients",
       "surface": ".well-known",
       "typical_caller": null
     },
@@ -57,7 +57,7 @@
       "path": "/.well-known/oauth-protected-resource",
       "public": true,
       "required_permissions": [],
-      "summary": "OAuth protected resource metadata (root alias for the MCP resource)",
+      "summary": "Get MCP protected resource metadata (root fallback)",
       "surface": ".well-known",
       "typical_caller": null
     },
@@ -94,7 +94,7 @@
       "required_permissions": [
         "users:read"
       ],
-      "summary": "List Actors",
+      "summary": "List users and agents",
       "surface": "actors",
       "typical_caller": "operator"
     },
@@ -451,7 +451,7 @@
       "required_permissions": [
         "agents:read"
       ],
-      "summary": "List Agents",
+      "summary": "List visible agents",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -475,7 +475,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Create Agent",
+      "summary": "Create an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -517,7 +517,7 @@
       "path": "/agents/{agent_id}",
       "public": false,
       "required_permissions": [],
-      "summary": "Get Agent",
+      "summary": "Get an agent",
       "surface": "agents",
       "typical_caller": "any"
     },
@@ -541,7 +541,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Update Agent",
+      "summary": "Update an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -563,7 +563,7 @@
       "required_permissions": [
         "agents:read"
       ],
-      "summary": "Get Agent Api Key Info",
+      "summary": "Get an agent's API key metadata",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -585,7 +585,7 @@
       "required_permissions": [
         "agents:read"
       ],
-      "summary": "Get Agent Api Key History",
+      "summary": "Get an agent's API key history",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -603,7 +603,7 @@
       "path": "/agents/{agent_id}/credentials",
       "public": false,
       "required_permissions": [],
-      "summary": "List Credentials",
+      "summary": "List an agent's credential bindings",
       "surface": "agents",
       "typical_caller": "any"
     },
@@ -627,7 +627,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Bind Credential",
+      "summary": "Bind a credential to an agent",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -651,7 +651,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Unbind Credential",
+      "summary": "Suspend or remove a credential binding",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -675,7 +675,7 @@
       "required_permissions": [
         "agents:write"
       ],
-      "summary": "Resume Credential Binding",
+      "summary": "Resume a suspended credential binding",
       "surface": "agents",
       "typical_caller": "operator"
     },
@@ -717,7 +717,7 @@
       "path": "/agents/{agent_id}/oauth-grants",
       "public": false,
       "required_permissions": [],
-      "summary": "List agent OAuth grants",
+      "summary": "List an agent's connected OAuth clients",
       "surface": "agents",
       "typical_caller": "any"
     },
@@ -1087,7 +1087,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "List Api Operations",
+      "summary": "List the operations an API currently serves",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1109,7 +1109,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "List Overlays",
+      "summary": "List an API's overlays",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1134,7 +1134,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Submit Overlay",
+      "summary": "Submit an OpenAPI overlay",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -1159,7 +1159,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Deprecate Overlay",
+      "summary": "Deprecate an overlay",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -1206,7 +1206,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Update Overlay",
+      "summary": "Edit an overlay",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -1230,7 +1230,7 @@
       "required_permissions": [
         "overlays:confirm"
       ],
-      "summary": "Confirm Overlay",
+      "summary": "Confirm an overlay and apply it to the served spec",
       "surface": "apis",
       "typical_caller": "operator"
     },
@@ -1254,7 +1254,7 @@
       "required_permissions": [
         "overlays:confirm"
       ],
-      "summary": "Rollback Overlay",
+      "summary": "Roll back a confirmed overlay",
       "surface": "apis",
       "typical_caller": "operator"
     },
@@ -1276,7 +1276,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "List Api Revisions",
+      "summary": "List an API's revisions",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1301,7 +1301,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Delete Revision",
+      "summary": "Delete an archived API revision",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -1323,7 +1323,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "Get Api Revision",
+      "summary": "Get an API revision",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1345,7 +1345,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "Get Api Revision Spec",
+      "summary": "Download an API revision's OpenAPI document",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1367,7 +1367,7 @@
       "required_permissions": [
         "apis:read"
       ],
-      "summary": "List Api Revision Operations",
+      "summary": "List the operations in an API revision",
       "surface": "apis",
       "typical_caller": "agent"
     },
@@ -1392,7 +1392,7 @@
       "required_permissions": [
         "apis:write"
       ],
-      "summary": "Archive Revision",
+      "summary": "Archive an API revision",
       "surface": "apis",
       "typical_caller": "any"
     },
@@ -3451,7 +3451,7 @@
       "required_permissions": [
         "credentials:write"
       ],
-      "summary": "Update permission rule set",
+      "summary": "Rename or re-describe a permission rule set",
       "surface": "permission-rule-sets",
       "typical_caller": "any"
     },
@@ -3476,7 +3476,7 @@
       "required_permissions": [
         "credentials:write"
       ],
-      "summary": "Replace rule set rules",
+      "summary": "Replace all rules in a permission rule set",
       "surface": "permission-rule-sets",
       "typical_caller": "any"
     },
@@ -3494,7 +3494,7 @@
       "path": "/permissions",
       "public": false,
       "required_permissions": [],
-      "summary": "List Permissions",
+      "summary": "List the permission catalogue",
       "surface": "permissions",
       "typical_caller": "any"
     },
@@ -3955,7 +3955,7 @@
       "required_permissions": [
         "capabilities:read"
       ],
-      "summary": "Get a vendor's SSO capabilities",
+      "summary": "Get a vendor's OAuth flows and scopes",
       "surface": "vendors",
       "typical_caller": "agent"
     },

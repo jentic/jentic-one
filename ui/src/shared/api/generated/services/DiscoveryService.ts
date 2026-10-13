@@ -43,15 +43,18 @@ export class DiscoveryService {
         });
     }
     /**
-     * OAuth authorization server metadata for the MCP resource
-     * RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+     * Get OAuth authorization server metadata for MCP clients
+     * Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
      *
-     * RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-     * the issuer `{base}/mcp` named by the protected-resource document. It
-     * advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-     * and the public-client profile (`none` + PKCE S256) — the root document is a
-     * separate, unchanged surface whose `registration_endpoint` remains the agent
-     * `/register`.
+     * Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+     * — the URL an MCP client derives from the protected-resource document
+     * (RFC 8414 §3.1). It lists the authorization, token and revocation
+     * endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+     * the MCP tool scopes, and the public client profile: no client secret
+     * (`none`) with PKCE `S256`. It differs from the root
+     * `/.well-known/oauth-authorization-server` document, whose
+     * `registration_endpoint` is the agent `/register`. Returns 404 when
+     * interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -69,27 +72,16 @@ export class DiscoveryService {
         });
     }
     /**
-     * OAuth protected resource metadata (root alias for the MCP resource)
-     * Root-path alias of the MCP protected-resource document.
+     * Get MCP protected resource metadata (root fallback)
+     * Serve the MCP protected-resource document at the root well-known path.
      *
-     * Compatibility fallback for clients that probe the root
-     * `/.well-known/oauth-protected-resource` instead of following the 401's
-     * `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-     * because this deployment has exactly one OAuth-protected resource, so the
-     * root and path-scoped documents are the same body.
-     *
-     * Two acknowledged trades:
-     *
-     * - RFC 9728 §3 says this well-known path corresponds to resource identifier
-     * ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
-     * the resource they queried. This body claims ``resource={base}/mcp`` — a
-     * strict path-deriving validator would reject it, but Claude's fallback
-     * validates against the MCP server URL (``{base}/mcp``), which is exactly
-     * what the alias exists to satisfy. That is the intended trade.
-     * - The alias squats the deployment's only root PRM slot: a future non-MCP
-     * protected resource at ``{base}`` cannot get its own root document
-     * without breaking this fallback. The mounted MCP app must re-confirm the
-     * "exactly one OAuth-protected resource" premise before adding one.
+     * Returns the same RFC 9728 body as
+     * `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+     * its authorization server, and the MCP tool scopes. It exists for clients
+     * (such as Claude Code) that probe this root path instead of following the
+     * `resource_metadata` pointer in a 401. That is safe while this deployment
+     * has exactly one OAuth-protected resource. Returns 404 when interactive
+     * OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
      * @returns any Successful Response
      * @throws ApiError
      */

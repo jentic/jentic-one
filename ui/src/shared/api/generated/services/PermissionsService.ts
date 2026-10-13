@@ -8,8 +8,14 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class PermissionsService {
     /**
-     * List Permissions
-     * List the permission catalogue visible to the caller.
+     * List the permission catalogue
+     * List every permission, flagged with whether the caller may grant it to an agent.
+     *
+     * Each entry gives the permission `name`, a `description`, the permissions
+     * it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+     * `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+     * `org:admin` is listed only to callers who hold it. Use it to build an
+     * agent permission picker. Any signed-in caller may call it.
      * @returns PermissionListResponse Successful Response
      * @throws ApiError
      */

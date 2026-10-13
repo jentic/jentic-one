@@ -51,7 +51,7 @@ def grant_response(view: OAuthGrantView) -> OAuthGrantResponse:
 
 @router.get(
     "/agents/{agent_id}/oauth-grants",
-    summary="List agent OAuth grants",
+    summary="List an agent's connected OAuth clients",
     responses=not_found(),
 )
 async def list_agent_oauth_grants(
@@ -66,14 +66,15 @@ async def list_agent_oauth_grants(
     limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
     cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
 ) -> OAuthGrantListResponse:
-    """List OAuth consent grants binding clients to this agent.
+    """List the OAuth clients a user has consented to act as this agent.
 
-    The "Connected clients" surface: every grant carries the client's display
-    name and redirect-URI origin, the granted scopes, the consenting user,
-    and created/last-used timestamps. Allowed for the agent's owner or an
-    admin — authorization is enforced in the service layer, mirroring the
-    ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-    same as an agent that does not exist.
+    Each grant gives the client's display name and redirect-URI origin, the
+    granted scopes, the consenting user, its `status`, created and last-used
+    timestamps, and `can_revoke` for the caller. Filter by `status`
+    (`active` or `revoked`); results are cursor-paginated. Allowed for the
+    agent's owner or an admin. An agent the caller cannot see answers 404,
+    the same as one that does not exist. Revoke a grant with
+    `POST /oauth-grants/{grant_id}:revoke`.
     """
     page = await grant_svc.list_grants_for_agent(
         agent_id, identity=identity, status=status, limit=limit, cursor=cursor

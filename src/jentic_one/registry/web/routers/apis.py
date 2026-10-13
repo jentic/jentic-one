@@ -271,7 +271,7 @@ def _build_revision_links(
     )
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions")
+@router.get("/apis/{vendor}/{name}/{version}/revisions", summary="List an API's revisions")
 async def list_api_revisions(
     request: Request,
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
@@ -283,7 +283,16 @@ async def list_api_revisions(
     cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
     limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
 ) -> JSONResponse:
-    """List revisions for an API with optional state filter and cursor pagination."""
+    """List every revision imported for an API, newest first.
+
+    Each revision gives its `state` (`draft`, `published`, `imported` or
+    `archived`), whether it `is_current` (the one served), its source, spec
+    digest, operation count and lifecycle timestamps, plus links to the
+    actions valid in its state. Repeat `state` to filter by several states.
+    Results are cursor-paginated: pass `next_cursor` as `cursor` while
+    `has_more` is true. Fetch one revision with
+    `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
+    """
     svc = RevisionService(ctx)
     try:
         page = await svc.list_revisions(
@@ -331,7 +340,9 @@ async def list_api_revisions(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions/{revision_id}")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}", summary="Get an API revision"
+)
 async def get_api_revision(
     request: Request,
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
@@ -341,7 +352,14 @@ async def get_api_revision(
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Retrieve a single revision by ID."""
+    """Get one revision's metadata and lifecycle state.
+
+    Returns the same fields as an entry in the revision list: `state`,
+    `is_current`, source, spec digest, operation count, timestamps, and links
+    to the actions valid in its state. This is metadata only — download the
+    spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+    revision does not exist.
+    """
     svc = RevisionService(ctx)
     view = await svc.get_revision(
         vendor=vendor, name=name, version=version, revision_id=revision_id
@@ -413,6 +431,7 @@ def _build_operations_response(
     "/apis/{vendor}/{name}/{version}/operations",
     response_model=OperationSummaryListResponse,
     response_model_by_alias=True,
+    summary="List the operations an API currently serves",
 )
 async def list_api_operations(
     request: Request,
@@ -424,7 +443,15 @@ async def list_api_operations(
     cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
     limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
 ) -> JSONResponse:
-    """List operations for the API's current (live) revision."""
+    """List every operation in the API's current (live) revision.
+
+    Each row gives the operation's id, method, path, name, description, tags,
+    `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+    a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+    Use this to browse an API exhaustively; to find operations by intent,
+    use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+    revision.
+    """
     svc = OperationService(ctx)
     try:
         page = await svc.list_for_live_revision(
@@ -440,7 +467,10 @@ async def list_api_operations(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations",
+    summary="List the operations in an API revision",
+)
 async def list_api_revision_operations(
     request: Request,
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
@@ -452,7 +482,13 @@ async def list_api_revision_operations(
     cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
     limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
 ) -> JSONResponse:
-    """List operations for a specific revision."""
+    """List every operation in one specific revision, live or not.
+
+    Same rows, ordering and cursor pagination as the live-revision listing,
+    but for the named revision, so you can review a draft before promoting
+    it or compare against an archived one. Follow each row's `inspect` link
+    for full detail. 404 if the API or revision does not exist.
+    """
     svc = OperationService(ctx)
     try:
         page = await svc.list_for_revision(
@@ -544,7 +580,10 @@ async def promote_revision(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.post("/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive")
+@router.post(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive",
+    summary="Archive an API revision",
+)
 async def archive_revision(
     request: Request,
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
@@ -554,7 +593,14 @@ async def archive_revision(
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Archive a draft revision."""
+    """Retire a `draft` or `imported` revision without deleting it.
+
+    The revision moves to `archived` and is kept for reference; it can then
+    be deleted. If it was the API's current revision, the API is left with
+    no live revision until another is promoted. A revision in any other
+    state is refused with 409 (`revision_state_conflict`). Requires
+    `apis:write`. Returns the archived revision.
+    """
     svc = RevisionService(ctx)
     rev_view = await svc.archive(vendor, name, version, revision_id, identity=identity)
 
@@ -583,7 +629,11 @@ async def archive_revision(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.delete("/apis/{vendor}/{name}/{version}/revisions/{revision_id}", status_code=204)
+@router.delete(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}",
+    status_code=204,
+    summary="Delete an archived API revision",
+)
 async def delete_revision(
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
     name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
@@ -592,7 +642,12 @@ async def delete_revision(
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
-    """Delete an archived revision."""
+    """Permanently delete an archived revision.
+
+    Only an `archived` revision can be deleted — archive it first; any other
+    state is refused with 409 (`revision_state_conflict`). Deletion cannot
+    be undone. Requires `apis:write`. Returns 204.
+    """
     svc = RevisionService(ctx)
     await svc.delete(vendor, name, version, revision_id, identity=identity)
     return Response(status_code=204)
@@ -649,7 +704,10 @@ async def get_api_spec(
     return _spec_response(request, doc)
 
 
-@router.get("/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi")
+@router.get(
+    "/apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi",
+    summary="Download an API revision's OpenAPI document",
+)
 async def get_api_revision_spec(
     request: Request,
     vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
@@ -660,7 +718,15 @@ async def get_api_revision_spec(
     ctx: Context = Depends(get_ctx),
     overlays: bool = Query(default=True, openapi_examples=ex.example(False)),
 ) -> Response:
-    """Download the OpenAPI spec for a specific revision."""
+    """Download the stored OpenAPI document of one revision.
+
+    Choose the format with `Accept`: `application/json` (the default), or
+    `application/openapi+yaml` / `application/yaml`; anything else returns
+    406. The response carries `Content-Disposition: attachment` with a
+    `.json` or `.yaml` filename. The document is served exactly as stored —
+    a revision produced by confirming an overlay already includes it, so the
+    `overlays` flag currently has no effect.
+    """
     # `overlays` is accepted for forward-compatibility with a future read-time merge.
     # Confirmed overlays are applied by materialization (they produce their own
     # revision), so a specific revision's body is served as-stored and this flag is

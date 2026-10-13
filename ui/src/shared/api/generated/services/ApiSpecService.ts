@@ -45,8 +45,15 @@ export class ApiSpecService {
         });
     }
     /**
-     * Get Api Revision Spec
-     * Download the OpenAPI spec for a specific revision.
+     * Download an API revision's OpenAPI document
+     * Download the stored OpenAPI document of one revision.
+     *
+     * Choose the format with `Accept`: `application/json` (the default), or
+     * `application/openapi+yaml` / `application/yaml`; anything else returns
+     * 406. The response carries `Content-Disposition: attachment` with a
+     * `.json` or `.yaml` filename. The document is served exactly as stored —
+     * a revision produced by confirming an overlay already includes it, so the
+     * `overlays` flag currently has no effect.
      * @returns any Successful Response
      * @throws ApiError
      */

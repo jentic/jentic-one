@@ -7165,14 +7165,17 @@ paths:
   /.well-known/oauth-authorization-server/mcp:
     get:
       description: |-
-        RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+        Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 
-        RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-        the issuer `{base}/mcp` named by the protected-resource document. It
-        advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-        and the public-client profile (`none` + PKCE S256) — the root document is a
-        separate, unchanged surface whose `registration_endpoint` remains the agent
-        `/register`.
+        Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+        — the URL an MCP client derives from the protected-resource document
+        (RFC 8414 §3.1). It lists the authorization, token and revocation
+        endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+        the MCP tool scopes, and the public client profile: no client secret
+        (`none`) with PKCE `S256`. It differs from the root
+        `/.well-known/oauth-authorization-server` document, whose
+        `registration_endpoint` is the agent `/register`. Returns 404 when
+        interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
       operationId: mcpOauthAuthorizationServer
       responses:
         '200':
@@ -7220,32 +7223,21 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
       security: []
-      summary: OAuth authorization server metadata for the MCP resource
+      summary: Get OAuth authorization server metadata for MCP clients
       tags:
       - Discovery
   /.well-known/oauth-protected-resource:
     get:
       description: |-
-        Root-path alias of the MCP protected-resource document.
+        Serve the MCP protected-resource document at the root well-known path.
 
-        Compatibility fallback for clients that probe the root
-        `/.well-known/oauth-protected-resource` instead of following the 401's
-        `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-        because this deployment has exactly one OAuth-protected resource, so the
-        root and path-scoped documents are the same body.
-
-        Two acknowledged trades:
-
-        - RFC 9728 §3 says this well-known path corresponds to resource identifier
-          ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
-          the resource they queried. This body claims ``resource={base}/mcp`` — a
-          strict path-deriving validator would reject it, but Claude's fallback
-          validates against the MCP server URL (``{base}/mcp``), which is exactly
-          what the alias exists to satisfy. That is the intended trade.
-        - The alias squats the deployment's only root PRM slot: a future non-MCP
-          protected resource at ``{base}`` cannot get its own root document
-          without breaking this fallback. The mounted MCP app must re-confirm the
-          "exactly one OAuth-protected resource" premise before adding one.
+        Returns the same RFC 9728 body as
+        `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+        its authorization server, and the MCP tool scopes. It exists for clients
+        (such as Claude Code) that probe this root path instead of following the
+        `resource_metadata` pointer in a 401. That is safe while this deployment
+        has exactly one OAuth-protected resource. Returns 404 when interactive
+        OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
       operationId: mcpOauthProtectedResourceRootAlias
       responses:
         '200':
@@ -7293,7 +7285,7 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
       security: []
-      summary: OAuth protected resource metadata (root alias for the MCP resource)
+      summary: Get MCP protected resource metadata (root fallback)
       tags:
       - Discovery
   /.well-known/oauth-protected-resource/mcp:
@@ -7357,12 +7349,14 @@ paths:
   /actors:
     get:
       description: |-
-        List actors (users and agents) for UI cache hydration.
+        List users and agents with the minimal fields needed to label them.
 
-        Scoped to the caller: org admins list everyone. Anyone else lists only
-        themselves and the agents they may see (their own agents, or with
-        ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
-        to label other ids.
+        Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+        and `active`. Requires `users:read`. Results are scoped to the caller:
+        `org:admin` lists everyone; anyone else lists only themselves and the
+        agents they may see (their own, or with `owner:agents:read` their owner's
+        agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+        already hold, use `GET /actors/lookup`.
       operationId: listActors
       parameters:
       - examples:
@@ -7449,22 +7443,24 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Actors
+      summary: List users and agents
       tags:
       - Actors
   /actors/lookup:
     get:
       description: |-
-        Resolve user and agent ids to display names for any signed-in caller.
+        Resolve user and agent ids to display names.
 
-        Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
-        asked for, so a caller without ``users:read`` can label the owners,
-        approvers and actors it already sees by id. Users resolve for any caller;
-        agents only when the caller may see them (its own agents, itself, or with
-        ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
-        Ids that match no visible user or agent are left out of the response
-        rather than reported as errors. Listing the whole directory stays behind
-        ``users:read`` on ``GET /actors``.
+        Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+        `name` and `active` for each id the caller may see. Any signed-in caller
+        may call it, so a UI can label the owners, approvers and actors it
+        already holds by id without `users:read`.
+
+        Users resolve for every caller. Agents resolve only when visible to the
+        caller: itself, its own agents, its owner's agents with
+        `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+        visible actor are silently left out rather than reported as errors.
+        Listing the whole directory needs `users:read` on `GET /actors`.
       operationId: lookupActors
       parameters:
       - description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
@@ -8650,7 +8646,15 @@ paths:
       - OAuth
   /agents:
     get:
-      description: List agents — scoped by identity via dynamic query scoping.
+      description: |-
+        List the agents the caller can see, newest first.
+
+        Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+        else sees the agents they own. An agent caller also sees itself, and with
+        `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+        (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+        cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+        while `has_more` is true.
       operationId: listAgents
       parameters:
       - examples:
@@ -8738,11 +8742,23 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Agents
+      summary: List visible agents
       tags:
       - Agents
     post:
-      description: Create a new agent manually.
+      description: |-
+        Create an agent owned by the caller.
+
+        The agent is `active` immediately and owned by the caller. Supply `name`
+        (required), an optional `description`, and optional `permissions`. When
+        `permissions` is omitted the agent gets the default agent permission set.
+        When supplied, every permission must be one the caller may grant (see
+        `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+        with 403 (`agent_permission_not_grantable`). Returns the created agent.
+
+        The agent has no way to authenticate yet. Follow up with
+        `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+        for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
       operationId: createAgent
       requestBody:
         content:
@@ -8801,7 +8817,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Create Agent
+      summary: Create an agent
       tags:
       - Agents
   /agents/{agent_id}:
@@ -8875,7 +8891,13 @@ paths:
       tags:
       - Agents
     get:
-      description: Get agent by ID — requires agents:read or self-read.
+      description: |-
+        Get one agent's profile and lifecycle state.
+
+        Returns the agent's name, description, owner, `status`, approval or
+        denial details, and whether it currently has an API key (`has_api_key`).
+        Readable by the agent itself, its owner, and `org:admin`; an agent outside
+        the caller's visibility answers 404.
       operationId: getAgent
       parameters:
       - examples:
@@ -8938,11 +8960,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent
+      summary: Get an agent
       tags:
       - Agents
     patch:
-      description: Partially update an agent — name, description, or owner_id.
+      description: |-
+        Partially update an agent's `name`, `description` or `owner_id`.
+
+        Only the fields present in the body change; an empty body returns the
+        agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+        else gets 404). Changing `owner_id` transfers ownership, is
+        `org:admin`-only, and revokes every active OAuth client grant bound to
+        the agent, so the new owner must re-consent any connected client. The
+        agent's API key, permissions and credential bindings are unaffected. An
+        archived agent cannot be updated (409). Returns the updated agent.
       operationId: updateAgent
       parameters:
       - examples:
@@ -9011,12 +9042,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update Agent
+      summary: Update an agent
       tags:
       - Agents
   /agents/{agent_id}/api-key:
     get:
-      description: Get API key metadata for an agent. Returns info even after revocation.
+      description: |-
+        Describe an agent's API key without revealing it.
+
+        Returns the key record's `id`, `status` (`active`, or `revoked` once
+        revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+        is never returned — it is shown once, by `:generate-api-key`. Metadata
+        stays available after revocation; the body is `null` if the agent never
+        had a key. Allowed for the agent's owner or an `org:admin`.
       operationId: getAgentApiKeyInfo
       parameters:
       - examples:
@@ -9082,12 +9120,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Api Key Info
+      summary: Get an agent's API key metadata
       tags:
       - Agents
   /agents/{agent_id}/api-key/history:
     get:
-      description: Get the audit history of API key operations for an agent.
+      description: |-
+        List recent API key rotations and revocations for an agent.
+
+        Each entry gives the audit `action`, its `reason` (key rotated or key
+        revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+        50 most recent audit entries, newest first, so very old key events may
+        not appear; it is not paginated. Allowed for the agent's owner or an
+        `org:admin`.
       operationId: getAgentApiKeyHistory
       parameters:
       - examples:
@@ -9150,12 +9195,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Api Key History
+      summary: Get an agent's API key history
       tags:
       - Agents
   /agents/{agent_id}/credentials:
     get:
-      description: List direct credential bindings for an agent — requires agents:read or self.
+      description: |-
+        List the credentials bound directly to an agent.
+
+        Each binding names the credential, the API it serves, when it was bound,
+        whether it is `suspended` (and why), and any attached permission
+        `rule_set_id`. Credential secrets are never returned. Readable by the
+        agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+        paginated.
       operationId: listAgentCredentials
       parameters:
       - examples:
@@ -9218,15 +9270,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Credentials
+      summary: List an agent's credential bindings
       tags:
       - Agents
     post:
       description: |-
-        Directly bind a credential to an agent (theme 5 phase 1).
+        Let an agent use a credential by binding it directly.
 
-        The caller must own the target credential (or hold ``org:admin``); a
-        credential that does not exist or that the caller does not own returns 404.
+        A new binding starts with no permission rules, so the agent can make no
+        calls with it until rules are set or a rule set is attached. The caller
+        must be able to see the agent and must own the credential (or hold
+        `org:admin`). A credential that does not exist or that the caller does
+        not own returns 404; binding the same credential twice returns 409
+        (`credential_binding_conflict`).
+        Returns the new binding.
       operationId: bindAgentCredential
       parameters:
       - examples:
@@ -9295,12 +9352,21 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Bind Credential
+      summary: Bind a credential to an agent
       tags:
       - Agents
   /agents/{agent_id}/credentials/{credential_id}:
     delete:
-      description: Unbind a credential from an agent — suspend by default, purge on request.
+      description: |-
+        Stop an agent using a credential: suspend the binding, or purge it.
+
+        By default the binding is **suspended**: the agent loses access at once,
+        but the binding and its permission rules are kept, and
+        `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+        With `purge=true` the binding and its inline permission rules are deleted
+        outright, so a later re-bind starts from deny-all. An agent may suspend
+        its own binding but not purge it. Both modes are audited. Returns 204; a
+        missing binding returns 404.
       operationId: unbindAgentCredential
       parameters:
       - examples:
@@ -9380,12 +9446,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Unbind Credential
+      summary: Suspend or remove a credential binding
       tags:
       - Agents
   /agents/{agent_id}/credentials/{credential_id}:resume:
     post:
-      description: Lift a suspended credential binding — the reverse of the default unbind.
+      description: |-
+        Restore an agent's access to a credential whose binding was suspended.
+
+        Reverses the default (non-purge) unbind; a purged binding is gone and must
+        be bound again instead. Because resuming re-grants the credential, the
+        caller must own the credential (or hold `org:admin`) as well as see the
+        agent, and an agent cannot resume its own binding. Returns the binding;
+        404 when no binding exists.
       operationId: resumeAgentCredentialBinding
       parameters:
       - examples:
@@ -9457,7 +9530,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Resume Credential Binding
+      summary: Resume a suspended credential binding
       tags:
       - Agents
   /agents/{agent_id}/jwks:
@@ -9542,14 +9615,15 @@ paths:
   /agents/{agent_id}/oauth-grants:
     get:
       description: |-
-        List OAuth consent grants binding clients to this agent.
+        List the OAuth clients a user has consented to act as this agent.
 
-        The "Connected clients" surface: every grant carries the client's display
-        name and redirect-URI origin, the granted scopes, the consenting user,
-        and created/last-used timestamps. Allowed for the agent's owner or an
-        admin — authorization is enforced in the service layer, mirroring the
-        ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-        same as an agent that does not exist.
+        Each grant gives the client's display name and redirect-URI origin, the
+        granted scopes, the consenting user, its `status`, created and last-used
+        timestamps, and `can_revoke` for the caller. Filter by `status`
+        (`active` or `revoked`); results are cursor-paginated. Allowed for the
+        agent's owner or an admin. An agent the caller cannot see answers 404,
+        the same as one that does not exist. Revoke a grant with
+        `POST /oauth-grants/{grant_id}:revoke`.
       operationId: listAgentOauthGrants
       parameters:
       - examples:
@@ -9658,7 +9732,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List agent OAuth grants
+      summary: List an agent's connected OAuth clients
       tags:
       - Agents
   /agents/{agent_id}/permissions:
@@ -10840,7 +10914,15 @@ paths:
       - API Spec
   /apis/{vendor}/{name}/{version}/operations:
     get:
-      description: List operations for the API's current (live) revision.
+      description: |-
+        List every operation in the API's current (live) revision.
+
+        Each row gives the operation's id, method, path, name, description, tags,
+        `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+        a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+        Use this to browse an API exhaustively; to find operations by intent,
+        use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+        revision.
       operationId: listApiOperations
       parameters:
       - examples:
@@ -10944,12 +11026,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Operations
+      summary: List the operations an API currently serves
       tags:
       - API Operations
   /apis/{vendor}/{name}/{version}/overlays:
     get:
-      description: List overlays for an API with optional status filter and cursor pagination.
+      description: |-
+        List the overlays submitted against an API, newest first.
+
+        Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+        (applied to the served spec) or `deprecated` (retired) — and links to the
+        actions valid in that state. Filter with `status`. Results are
+        cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+        true.
       operationId: listOverlays
       parameters:
       - examples:
@@ -11064,11 +11153,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Overlays
+      summary: List an API's overlays
       tags:
       - Overlays
     post:
-      description: Submit a new overlay for an API.
+      description: |-
+        Propose a change to an API's spec as an OpenAPI Overlay document.
+
+        An overlay is a list of `actions` that patch the API's OpenAPI document —
+        for example correcting a description or adding a missing parameter.
+        Submitting stores it as `pending`; it changes nothing until an operator
+        confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+        record a `contributed_by` label. The document must be a JSON object with
+        an `actions` array (at most 512 actions, 1 MB), else 422
+        (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
       operationId: submitOverlay
       parameters:
       - examples:
@@ -11155,12 +11253,18 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Submit Overlay
+      summary: Submit an OpenAPI overlay
       tags:
       - Overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:
     delete:
-      description: Deprecate an overlay (soft delete).
+      description: |-
+        Retire an overlay so it is no longer offered for confirmation.
+
+        The overlay moves to `deprecated` but is kept, and remains readable for
+        history; nothing is deleted. Deprecating does not rewrite the served
+        spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+        `apis:write`. Returns 204.
       operationId: deprecateOverlay
       parameters:
       - examples:
@@ -11246,7 +11350,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Deprecate Overlay
+      summary: Deprecate an overlay
       tags:
       - Overlays
     get:
@@ -11345,17 +11449,20 @@ paths:
       - Overlays
     patch:
       description: |-
-        Update an overlay's document or target revision.
+        Change an overlay's `document` or `target_revision_id`.
 
-        Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-        ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-        (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-        is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-        the API's served spec (D1). That is an operator action, so it additionally requires
-        ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-        (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-        overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-        if no clean base was recorded to re-apply over.
+        What the edit does depends on the overlay's state:
+
+        - **Pending** (or confirmed but not yet applied): the stored overlay is
+          updated; the served spec is untouched. Requires `apis:write`.
+        - **Confirmed and live**: the edited document is re-applied over the
+          overlay's original base and the result replaces the API's served spec.
+          This also requires `overlays:confirm`, else 403
+          (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+          overlay is no longer the live revision, or
+          (`overlay_rollback_target_missing`) if no clean base was recorded.
+
+        Returns the updated overlay.
       operationId: updateOverlay
       parameters:
       - examples:
@@ -11451,23 +11558,24 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update Overlay
+      summary: Edit an overlay
       tags:
       - Overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm:
     post:
       description: |-
-        Confirm an overlay, materializing it onto the served spec.
+        Apply a pending overlay, producing a new current revision of the API.
 
-        Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-        re-ingests the base spec with the overlay applied and promotes the result to the
-        current revision), so it is an operator action, not a contributor one (contributors
-        ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-        purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-        owner can grant it to a trusted operator without handing over full admin power.
-        ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-        deliberately excluded from an agent's self-service grantable set so a low-privilege
-        agent cannot escalate into it.
+        The base spec is re-imported with the overlay applied and the result is
+        promoted to the API's current revision, so it is what the API now serves.
+        The overlay becomes `confirmed`. Confirming an already-applied overlay is
+        a no-op that returns it unchanged; a deprecated overlay is refused with
+        409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+        with 409 (`overlay_apply_conflict`).
+
+        Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+        overlays with `apis:write`, and an operator reviews and confirms them.
+        Agents cannot grant themselves this permission. Returns the overlay.
       operationId: confirmOverlay
       parameters:
       - examples:
@@ -11563,22 +11671,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Confirm Overlay
+      summary: Confirm an overlay and apply it to the served spec
       tags:
       - Overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback:
     post:
       description: |-
-        Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+        Undo a confirmed overlay by restoring the revision it replaced.
 
-        Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-        rewrites the API's served spec (it archives the overlay's materialized revision and
-        promotes the prior revision back to current), so it is the same operator action as
-        confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-        carry a recorded superseded revision that is still restorable; otherwise a 409 is
-        returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-        ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-        restored revision's hosts) and nothing changes.
+        The overlay's revision is archived and the revision it superseded becomes
+        the API's current revision again, so the served spec reverts, and the
+        overlay is marked `deprecated`. Requires `overlays:confirm`, like
+        confirming.
+
+        Preconditions: the overlay is `confirmed`, its revision is still the
+        live one, and the revision it replaced is still restorable. Otherwise
+        nothing changes and 409 is returned: `overlay_conflict`,
+        `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+        another vendor's live API now serves one of the restored revision's
+        hosts. Returns 204.
       operationId: rollbackOverlay
       parameters:
       - examples:
@@ -11664,12 +11775,21 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Rollback Overlay
+      summary: Roll back a confirmed overlay
       tags:
       - Overlays
   /apis/{vendor}/{name}/{version}/revisions:
     get:
-      description: List revisions for an API with optional state filter and cursor pagination.
+      description: |-
+        List every revision imported for an API, newest first.
+
+        Each revision gives its `state` (`draft`, `published`, `imported` or
+        `archived`), whether it `is_current` (the one served), its source, spec
+        digest, operation count and lifecycle timestamps, plus links to the
+        actions valid in its state. Repeat `state` to filter by several states.
+        Results are cursor-paginated: pass `next_cursor` as `cursor` while
+        `has_more` is true. Fetch one revision with
+        `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
       operationId: listApiRevisions
       parameters:
       - examples:
@@ -11786,12 +11906,17 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Revisions
+      summary: List an API's revisions
       tags:
       - APIs
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:
     delete:
-      description: Delete an archived revision.
+      description: |-
+        Permanently delete an archived revision.
+
+        Only an `archived` revision can be deleted — archive it first; any other
+        state is refused with 409 (`revision_state_conflict`). Deletion cannot
+        be undone. Requires `apis:write`. Returns 204.
       operationId: deleteRevision
       parameters:
       - examples:
@@ -11877,11 +12002,18 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Delete Revision
+      summary: Delete an archived API revision
       tags:
       - APIs
     get:
-      description: Retrieve a single revision by ID.
+      description: |-
+        Get one revision's metadata and lifecycle state.
+
+        Returns the same fields as an entry in the revision list: `state`,
+        `is_current`, source, spec digest, operation count, timestamps, and links
+        to the actions valid in its state. This is metadata only — download the
+        spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+        revision does not exist.
       operationId: getApiRevision
       parameters:
       - examples:
@@ -11970,12 +12102,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Api Revision
+      summary: Get an API revision
       tags:
       - APIs
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi:
     get:
-      description: Download the OpenAPI spec for a specific revision.
+      description: |-
+        Download the stored OpenAPI document of one revision.
+
+        Choose the format with `Accept`: `application/json` (the default), or
+        `application/openapi+yaml` / `application/yaml`; anything else returns
+        406. The response carries `Content-Disposition: attachment` with a
+        `.json` or `.yaml` filename. The document is served exactly as stored —
+        a revision produced by confirming an overlay already includes it, so the
+        `overlays` flag currently has no effect.
       operationId: getApiRevisionSpec
       parameters:
       - examples:
@@ -12074,12 +12214,18 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Api Revision Spec
+      summary: Download an API revision's OpenAPI document
       tags:
       - API Spec
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations:
     get:
-      description: List operations for a specific revision.
+      description: |-
+        List every operation in one specific revision, live or not.
+
+        Same rows, ordering and cursor pagination as the live-revision listing,
+        but for the named revision, so you can review a draft before promoting
+        it or compare against an archived one. Follow each row's `inspect` link
+        for full detail. 404 if the API or revision does not exist.
       operationId: listApiRevisionOperations
       parameters:
       - examples:
@@ -12191,12 +12337,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Revision Operations
+      summary: List the operations in an API revision
       tags:
       - API Operations
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive:
     post:
-      description: Archive a draft revision.
+      description: |-
+        Retire a `draft` or `imported` revision without deleting it.
+
+        The revision moves to `archived` and is kept for reference; it can then
+        be deleted. If it was the API's current revision, the API is left with
+        no live revision until another is promoted. A revision in any other
+        state is refused with 409 (`revision_state_conflict`). Requires
+        `apis:write`. Returns the archived revision.
       operationId: archiveRevision
       parameters:
       - examples:
@@ -12285,7 +12438,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Archive Revision
+      summary: Archive an API revision
       tags:
       - APIs
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote:
@@ -19609,10 +19762,17 @@ paths:
       - Permission Rule Sets
     post:
       description: |-
-        Create a named, shareable ordered rule list (theme 5 rule grouping).
+        Create a named, reusable list of permission rules.
 
-        N agent-credential bindings can point at one set, so `permissions:test`
-        and "revoke this operation everywhere" stay single-place edits.
+        Attach the set to any number of agent-credential bindings
+        (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+        its rules later updates every attached binding at once, so a policy
+        change such as "block this operation everywhere" is a single edit.
+        Supply a unique `name`, an optional `description`, and optional initial
+        ordered `rules`. A set created by an `org:admin` is *curated*: any
+        `credentials:write` holder may attach it, but only an `org:admin` may
+        edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+        if the name is taken.
       operationId: createPermissionRuleSet
       requestBody:
         content:
@@ -19683,7 +19843,13 @@ paths:
       - Permission Rule Sets
   /permission-rule-sets/{rule_set_id}:
     delete:
-      description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+      description: |-
+        Permanently delete a rule set that no binding uses.
+
+        Detach the set from every binding first: while any binding still
+        references it the delete fails with 409 (`rule_set_in_use`) and nothing
+        changes. Same edit permission as updating the set (403
+        `rule_set_access_denied`). Returns 204.
       operationId: deletePermissionRuleSet
       parameters:
       - examples:
@@ -19835,10 +20001,14 @@ paths:
       - Permission Rule Sets
     patch:
       description: |-
-        Rename or re-describe a rule set.
+        Change a rule set's `name` and/or `description`.
 
-        A curated set is editable by an org admin; any other set by its creator
-        or an org admin (403 `rule_set_access_denied` otherwise).
+        The rules themselves are replaced separately, with
+        `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+        only by an `org:admin`; any other set by its creator or an `org:admin`
+        (403 `rule_set_access_denied` otherwise). Returns the updated set with
+        its rules and the number of bindings referencing it; 409
+        (`rule_set_name_conflict`) if the new name is taken.
       operationId: updatePermissionRuleSet
       parameters:
       - examples:
@@ -19914,16 +20084,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update permission rule set
+      summary: Rename or re-describe a permission rule set
       tags:
       - Permission Rule Sets
   /permission-rule-sets/{rule_set_id}/rules:
     put:
       description: |-
-        Replace the set's full ordered rule list (idempotent PUT).
+        Replace a rule set's entire ordered rule list with the body.
 
-        Every binding pointing at the set picks the new list up at once — the
-        single-place edit rule grouping exists for.
+        This is a full replacement, not a merge: user rules missing from the body
+        are removed, and an empty list clears them. Platform-managed system rules
+        (`_system: true`) are kept. The request is idempotent.
+        Every binding attached to the set enforces the new rules immediately.
+        Same edit permission as updating the set (403 `rule_set_access_denied`).
+        Returns the stored rules in order.
       operationId: replacePermissionRuleSetRules
       parameters:
       - examples:
@@ -20003,12 +20177,19 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Replace rule set rules
+      summary: Replace all rules in a permission rule set
       tags:
       - Permission Rule Sets
   /permissions:
     get:
-      description: List the permission catalogue visible to the caller.
+      description: |-
+        List every permission, flagged with whether the caller may grant it to an agent.
+
+        Each entry gives the permission `name`, a `description`, the permissions
+        it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+        `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+        `org:admin` is listed only to callers who hold it. Use it to build an
+        agent permission picker. Any signed-in caller may call it.
       operationId: listPermissions
       responses:
         '200':
@@ -20061,7 +20242,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Permissions
+      summary: List the permission catalogue
       tags:
       - Permissions
   /register:
@@ -21445,11 +21626,17 @@ paths:
   /vendors/{vendor_key}/auth-capabilities:
     get:
       description: |-
-        Full auth capabilities for one vendor — flows, scopes, classifications.
+        Describe how to connect a vendor: its OAuth flows and scope catalogue.
 
-        Never returns client_secret (authorization-code flow's secret is stripped
-        at response build time). ``UnknownVendorError`` maps to a 404 problem
-        detail via the handler registered in ``control/web/app.py``.
+        `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+        name, the OAuth `flows` it supports (`authorization_code` and/or
+        `device_authorization`), and every scope with its `classification`
+        (`read`, `write` or `admin`), whether it is requested by default, and a
+        description. Use it to build a connect screen before starting a connect
+        session. When the vendor has several admin-registered OAuth apps, pass
+        `oauth_app_registration_id` to pick one; without it the request fails
+        with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+        An unknown vendor returns 404 (`unknown_vendor`).
       operationId: getAuthCapabilities
       parameters:
       - examples:
@@ -21525,7 +21712,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get a vendor's SSO capabilities
+      summary: Get a vendor's OAuth flows and scopes
       tags:
       - Vendors
 security:

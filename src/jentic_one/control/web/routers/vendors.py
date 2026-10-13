@@ -61,7 +61,7 @@ async def list_vendors(
 
 @router.get(
     "/vendors/{vendor_key}/auth-capabilities",
-    summary="Get a vendor's SSO capabilities",
+    summary="Get a vendor's OAuth flows and scopes",
     response_model=None,
 )
 async def get_auth_capabilities(
@@ -79,11 +79,17 @@ async def get_auth_capabilities(
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: VendorRegistryService = Depends(get_vendor_registry_service),
 ) -> VendorAuthCapabilitiesResponse:
-    """Full auth capabilities for one vendor — flows, scopes, classifications.
+    """Describe how to connect a vendor: its OAuth flows and scope catalogue.
 
-    Never returns client_secret (authorization-code flow's secret is stripped
-    at response build time). ``UnknownVendorError`` maps to a 404 problem
-    detail via the handler registered in ``control/web/app.py``.
+    `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+    name, the OAuth `flows` it supports (`authorization_code` and/or
+    `device_authorization`), and every scope with its `classification`
+    (`read`, `write` or `admin`), whether it is requested by default, and a
+    description. Use it to build a connect screen before starting a connect
+    session. When the vendor has several admin-registered OAuth apps, pass
+    `oauth_app_registration_id` to pick one; without it the request fails
+    with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+    An unknown vendor returns 404 (`unknown_vendor`).
     """
     entry = await svc.resolve_by_pin(vendor_key, registration_id=oauth_app_registration_id)
     return VendorAuthCapabilitiesResponse(
