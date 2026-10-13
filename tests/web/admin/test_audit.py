@@ -111,3 +111,50 @@ def test_get_by_id_not_found(authed_client: TestClient) -> None:
     resp = authed_client.get("/audit/nonexistent-id")
     assert resp.status_code == 404
     assert resp.json()["type"] == "audit_entry_not_found"
+
+
+def _audit_reader_headers(web_context: Context, sub: str) -> dict[str, str]:
+    """Bearer header for a non-admin user holding only ``audit:read``."""
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": sub,
+        "email": f"{sub}@test.local",
+        "actor_type": "user",
+        "permissions": ["audit:read"],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.usefixtures("_seed_audit_entries")
+def test_list_is_scoped_to_non_admin_caller(
+    unauthed_client: TestClient, authed_client: TestClient, web_context: Context
+) -> None:
+    headers = _audit_reader_headers(web_context, "actor-a")
+    resp = unauthed_client.get("/audit", headers=headers)
+    assert resp.status_code == 200
+    entries = resp.json()["data"]
+    assert len(entries) >= 2
+    assert {e["actor_id"] for e in entries} == {"actor-a"}
+
+    # Asking for someone else's activity explicitly still yields nothing.
+    resp = unauthed_client.get("/audit?actor_id=actor-b", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
+
+    # The admin view is unchanged.
+    admin_actors = {e["actor_id"] for e in authed_client.get("/audit").json()["data"]}
+    assert {"actor-a", "actor-b"} <= admin_actors
+
+
+@pytest.mark.usefixtures("_seed_audit_entries")
+def test_get_other_users_entry_is_not_found(
+    unauthed_client: TestClient, authed_client: TestClient, web_context: Context
+) -> None:
+    other = authed_client.get("/audit?actor_id=actor-b").json()["data"]
+    assert other
+    headers = _audit_reader_headers(web_context, "actor-a")
+    resp = unauthed_client.get(f"/audit/{other[0]['id']}", headers=headers)
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "audit_entry_not_found"

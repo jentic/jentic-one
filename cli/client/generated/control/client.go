@@ -2978,7 +2978,7 @@ type PermissionRuleSchema struct {
 	// Operations OpenAPI operation IDs to match. None matches all operations.
 	Operations *[]string `json:"operations,omitempty"`
 
-	// Path Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
+	// Path Path pattern to match, relative to the API's server URL — the spec's path (`/widgets`), never the full upstream path with the server's base path (`/eu/widgets` for a server `https://host/{region}`). Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
 	Path *string `json:"path,omitempty"`
 }
 
@@ -2996,7 +2996,7 @@ type PermissionTestRequest struct {
 	// OperationId Optional OpenAPI operation id resolved from the request URL.
 	OperationId *string `json:"operation_id,omitempty"`
 
-	// Path Path of the hypothetical request as the broker would see it.
+	// Path Path of the hypothetical request relative to the API's server URL (the spec's path, e.g. `/widgets/42`) — the path the broker evaluates rules on.
 	Path string `json:"path"`
 }
 
@@ -6103,6 +6103,9 @@ type ClientInterface interface {
 	// ListAuditEntries List Audit Entries
 	//
 	// List audit entries with optional filters.
+	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
 	//
 	// Corresponds with GET /audit (the `ListAuditEntries` operationId).
 	ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9628,6 +9631,9 @@ func (c *Client) ListApiSecuritySchemes(ctx context.Context, vendor string, name
 // ListAuditEntries List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Corresponds with GET /audit (the `ListAuditEntries` operationId).
 func (c *Client) ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -23028,6 +23034,9 @@ type ClientWithResponsesInterface interface {
 	// ListAuditEntriesWithResponse List Audit Entries
 	//
 	// List audit entries with optional filters.
+	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -40529,6 +40538,9 @@ func (c *ClientWithResponses) ListApiSecuritySchemesWithResponse(ctx context.Con
 // ListAuditEntriesWithResponse List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Returns a wrapper object for the known response body format(s).
 //
