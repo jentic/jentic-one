@@ -20606,7 +20606,7 @@
     },
     "/audit": {
       "get": {
-        "description": "List audit entries with optional filters.\n\nScoped to the caller: their own entries plus those made by agents they own.\n``org:admin`` sees every entry.",
+        "description": "List audit entries with optional filters.\n\nScoped to the caller: their own entries plus those made by agents they own.\nOrg admins see every entry.",
         "operationId": "listAuditEntries",
         "parameters": [
           {

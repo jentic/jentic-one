@@ -6093,6 +6093,9 @@ type ClientInterface interface {
 	//
 	// List audit entries with optional filters.
 	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
+	//
 	// Corresponds with GET /audit (the `ListAuditEntries` operationId).
 	ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -9612,6 +9615,9 @@ func (c *Client) ListApiSecuritySchemes(ctx context.Context, vendor string, name
 // ListAuditEntries List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Corresponds with GET /audit (the `ListAuditEntries` operationId).
 func (c *Client) ListAuditEntries(ctx context.Context, params *ListAuditEntriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -22980,6 +22986,9 @@ type ClientWithResponsesInterface interface {
 	// ListAuditEntriesWithResponse List Audit Entries
 	//
 	// List audit entries with optional filters.
+	//
+	// Scoped to the caller: their own entries plus those made by agents they own.
+	// Org admins see every entry.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -40476,6 +40485,9 @@ func (c *ClientWithResponses) ListApiSecuritySchemesWithResponse(ctx context.Con
 // ListAuditEntriesWithResponse List Audit Entries
 //
 // List audit entries with optional filters.
+//
+// Scoped to the caller: their own entries plus those made by agents they own.
+// Org admins see every entry.
 //
 // Returns a wrapper object for the known response body format(s).
 //

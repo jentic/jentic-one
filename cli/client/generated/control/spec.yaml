@@ -11947,7 +11947,11 @@ paths:
       - APIs
   /audit:
     get:
-      description: List audit entries with optional filters.
+      description: |-
+        List audit entries with optional filters.
+
+        Scoped to the caller: their own entries plus those made by agents they own.
+        Org admins see every entry.
       operationId: listAuditEntries
       parameters:
       - in: query
