@@ -13,6 +13,10 @@ export type CatalogEntryResponse = {
      */
     api_id: string;
     /**
+     * Short plain-text description from the manifest, when known.
+     */
+    description?: (string | null);
+    /**
      * Manifest path of the entry within the public-APIs repo.
      */
     path: (string | null);
@@ -24,6 +28,10 @@ export type CatalogEntryResponse = {
      * Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).
      */
     spec_url: (string | null);
+    /**
+     * Human display title from the manifest (e.g. `Stripe API`), when known.
+     */
+    title?: (string | null);
     /**
      * Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
      */
