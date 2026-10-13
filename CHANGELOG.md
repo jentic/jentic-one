@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.42.2](https://github.com/jentic/jentic-one/compare/v0.42.1...v0.42.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **admin:** scope audit log reads to the caller and their agents ([#1604](https://github.com/jentic/jentic-one/issues/1604)) ([3014995](https://github.com/jentic/jentic-one/commit/30149956f7194871d9ed9bba8d8c29110edf7f30))
+* **broker:** evaluate binding rules on the spec-relative operation path ([#1552](https://github.com/jentic/jentic-one/issues/1552)) ([31e6b8f](https://github.com/jentic/jentic-one/commit/31e6b8f50e7d002056a9435329515711b23ef147))
+* **registry:** delete API revisions before the API and explain blocked deletes ([#1605](https://github.com/jentic/jentic-one/issues/1605)) ([459dc06](https://github.com/jentic/jentic-one/commit/459dc060ceb0e3d8900bf584594d5e9f7feb14fa))
+
 ## [0.42.1](https://github.com/jentic/jentic-one/compare/v0.42.0...v0.42.1) (2026-10-12)
 
 
