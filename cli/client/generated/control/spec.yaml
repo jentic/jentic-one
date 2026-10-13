@@ -7365,7 +7365,10 @@ paths:
         to label other ids.
       operationId: listActors
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -7373,7 +7376,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -7462,6 +7468,11 @@ paths:
       operationId: lookupActors
       parameters:
       - description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
+        examples:
+          example:
+            value:
+            - agnt_6968b3984d1c238dbe7e2e29
+            - usr_6968b3987ee4c3ec0b4ee3b9
         in: query
         name: id
         required: true
@@ -7591,7 +7602,10 @@ paths:
       description: Get a stored provider config by name, with secret fields redacted.
       operationId: getProviderConfig
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: pipedream
+        in: path
         name: name
         required: true
         schema:
@@ -7673,7 +7687,10 @@ paths:
         secret fields.
       operationId: setProviderConfig
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: pipedream
+        in: path
         name: name
         required: true
         schema:
@@ -7787,7 +7804,10 @@ paths:
       description: List all registered OAuth clients, optionally filtered by approval status.
       operationId: listOauthClients
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: include_inactive
         required: false
         schema:
@@ -7795,6 +7815,9 @@ paths:
           title: Include Inactive
           type: boolean
       - description: 'Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.'
+        examples:
+          example:
+            value: pending
         in: query
         name: approval_status
         required: false
@@ -7935,7 +7958,10 @@ paths:
         The row is kept; this is not a delete.
       operationId: deactivateOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8002,7 +8028,10 @@ paths:
       description: Get an OAuth client by its internal ID.
       operationId: getOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8073,7 +8102,10 @@ paths:
       description: Update an OAuth client's name, description, redirect_uris, or active status.
       operationId: updateOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8154,7 +8186,10 @@ paths:
         The new secret is shown only once — store it securely.
       operationId: rotateOauthClientSecret
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8230,7 +8265,10 @@ paths:
         never deleted, so the client's cached client_id becomes valid again).
       operationId: approveOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8311,7 +8349,10 @@ paths:
         approval queue as pending; it is never re-attached to the deleted one.
       operationId: deleteOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8382,7 +8423,10 @@ paths:
         The row is retained so a later approve can reverse the decision.
       operationId: denyOauthClient
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oac_6968b39840a935d9f7e2714b
+        in: path
         name: id
         required: true
         schema:
@@ -8473,6 +8517,9 @@ paths:
       operationId: listOauthGrants
       parameters:
       - description: Filter by the client's public client_id.
+        examples:
+          example:
+            value: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         in: query
         name: client_id
         required: false
@@ -8483,6 +8530,9 @@ paths:
           description: Filter by the client's public client_id.
           title: Client Id
       - description: Filter by bound agent.
+        examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: agent_id
         required: false
@@ -8493,6 +8543,9 @@ paths:
           description: Filter by bound agent.
           title: Agent Id
       - description: Filter by consenting user.
+        examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
         in: query
         name: user_id
         required: false
@@ -8503,6 +8556,9 @@ paths:
           description: Filter by consenting user.
           title: User Id
       - description: Filter by grant lifecycle state.
+        examples:
+          example:
+            value: active
         in: query
         name: status
         required: false
@@ -8515,7 +8571,10 @@ paths:
           - type: 'null'
           description: Filter by grant lifecycle state.
           title: Status
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -8524,7 +8583,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -8591,7 +8653,10 @@ paths:
       description: List agents — scoped by identity via dynamic query scoping.
       operationId: listAgents
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -8599,7 +8664,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -8608,7 +8676,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: active
+        in: query
         name: status
         required: false
         schema:
@@ -8749,7 +8820,10 @@ paths:
         agent; purge accepts any status.
       operationId: archiveAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -8757,11 +8831,7 @@ paths:
           type: string
       - description: 'Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings, events, execution records, jobs, finished connect sessions and notes. Audit entries and credentials are kept.'
         examples:
-          archive:
-            summary: Archive the agent (default)
-            value: false
-          purge:
-            summary: Hard-delete the agent and its data
+          example:
             value: true
         in: query
         name: purge
@@ -8825,7 +8895,10 @@ paths:
       description: Get agent by ID — requires agents:read or self-read.
       operationId: getAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -8889,7 +8962,10 @@ paths:
       description: Partially update an agent — name, description, or owner_id.
       operationId: updateAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -8960,7 +9036,10 @@ paths:
       description: Get API key metadata for an agent. Returns info even after revocation.
       operationId: getAgentApiKeyInfo
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9028,7 +9107,10 @@ paths:
       description: Get the audit history of API key operations for an agent.
       operationId: getAgentApiKeyHistory
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9093,7 +9175,10 @@ paths:
       description: List direct credential bindings for an agent — requires agents:read or self.
       operationId: listAgentCredentials
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9161,7 +9246,10 @@ paths:
         credential that does not exist or that the caller does not own returns 404.
       operationId: bindAgentCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9232,19 +9320,28 @@ paths:
       description: Unbind a credential from an agent — suspend by default, purge on request.
       operationId: unbindAgentCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
           title: Agent Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
       - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
+        examples:
+          example:
+            value: true
         in: query
         name: purge
         required: false
@@ -9308,13 +9405,19 @@ paths:
       description: Lift a suspended credential binding — the reverse of the default unbind.
       operationId: resumeAgentCredentialBinding
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
           title: Agent Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
@@ -9384,7 +9487,10 @@ paths:
         JWT-bearer assertions signed with the corresponding private key.
       operationId: updateAgentJwks
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9463,13 +9569,19 @@ paths:
         same as an agent that does not exist.
       operationId: listAgentOauthGrants
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
           title: Agent Id
           type: string
       - description: Filter by grant lifecycle state.
+        examples:
+          example:
+            value: active
         in: query
         name: status
         required: false
@@ -9482,7 +9594,10 @@ paths:
           - type: 'null'
           description: Filter by grant lifecycle state.
           title: Status
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -9491,7 +9606,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -9565,7 +9683,10 @@ paths:
       description: List permissions granted to an agent.
       operationId: getAgentPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9629,7 +9750,10 @@ paths:
       description: Replace all permissions for an agent.
       operationId: replaceAgentPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9707,7 +9831,10 @@ paths:
         ownership.
       operationId: approveAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9789,7 +9916,10 @@ paths:
         agent — so allowing it under an expired password is low-risk.
       operationId: claimAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9865,7 +9995,10 @@ paths:
         404.
       operationId: denyAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9936,7 +10069,10 @@ paths:
       description: Disable an active agent.
       operationId: disableAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -9997,7 +10133,10 @@ paths:
       description: Enable a disabled agent.
       operationId: enableAgent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -10058,7 +10197,10 @@ paths:
       description: Generate a new API key for an active agent. Rotates any existing key.
       operationId: generateAgentApiKey
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -10123,7 +10265,10 @@ paths:
       description: Revoke an agent's API key without generating a new one.
       operationId: revokeAgentApiKey
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -10189,7 +10334,10 @@ paths:
         (``GET /catalog``); the two are not blended.
       operationId: listApis
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: stripe.com
+        in: query
         name: vendor
         required: false
         schema:
@@ -10197,7 +10345,10 @@ paths:
           - type: string
           - type: 'null'
           title: Vendor
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -10205,7 +10356,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -10335,19 +10489,28 @@ paths:
       description: Delete an API and all its revisions.
       operationId: deleteApi
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
@@ -10426,19 +10589,28 @@ paths:
       description: Retrieve a single API by its (vendor, name, version) identity.
       operationId: getApi
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
@@ -10502,19 +10674,28 @@ paths:
       description: Partially update an API's presentation fields.
       operationId: updateApi
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
@@ -10584,25 +10765,37 @@ paths:
       description: Download the OpenAPI spec for the API's current (live) revision.
       operationId: getApiSpec
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: query
+      - examples:
+          example:
+            value: false
+        in: query
         name: overlays
         required: false
         schema:
@@ -10667,25 +10860,37 @@ paths:
       description: List operations for the API's current (live) revision.
       operationId: listApiOperations
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -10693,7 +10898,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -10761,25 +10969,37 @@ paths:
       description: List overlays for an API with optional status filter and cursor pagination.
       operationId: listOverlays
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -10787,7 +11007,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -10796,7 +11019,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: confirmed
+        in: query
         name: status
         required: false
         schema:
@@ -10862,19 +11088,28 @@ paths:
       description: Submit a new overlay for an API.
       operationId: submitOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
@@ -10945,25 +11180,37 @@ paths:
       description: Deprecate an overlay (soft delete).
       operationId: deprecateOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: ovr_6968b398ae1c9a6e2fe6520a
+        in: path
         name: overlay_id
         required: true
         schema:
@@ -11023,25 +11270,37 @@ paths:
       description: Retrieve a single overlay by ID.
       operationId: getOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: ovr_6968b398ae1c9a6e2fe6520a
+        in: path
         name: overlay_id
         required: true
         schema:
@@ -11116,25 +11375,37 @@ paths:
         if no clean base was recorded to re-apply over.
       operationId: updateOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: ovr_6968b398ae1c9a6e2fe6520a
+        in: path
         name: overlay_id
         required: true
         schema:
@@ -11216,25 +11487,37 @@ paths:
         agent cannot escalate into it.
       operationId: confirmOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: ovr_6968b398ae1c9a6e2fe6520a
+        in: path
         name: overlay_id
         required: true
         schema:
@@ -11315,25 +11598,37 @@ paths:
         restored revision's hosts) and nothing changes.
       operationId: rollbackOverlay
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: ovr_6968b398ae1c9a6e2fe6520a
+        in: path
         name: overlay_id
         required: true
         schema:
@@ -11394,25 +11689,38 @@ paths:
       description: List revisions for an API with optional state filter and cursor pagination.
       operationId: listApiRevisions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: query
+      - examples:
+          example:
+            value:
+            - published
+        in: query
         name: state
         required: false
         schema:
@@ -11422,7 +11730,10 @@ paths:
             type: array
           - type: 'null'
           title: State
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -11430,7 +11741,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -11497,25 +11811,37 @@ paths:
       description: Delete an archived revision.
       operationId: deleteRevision
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
@@ -11575,25 +11901,37 @@ paths:
       description: Retrieve a single revision by ID.
       operationId: getApiRevision
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
@@ -11657,31 +11995,46 @@ paths:
       description: Download the OpenAPI spec for a specific revision.
       operationId: getApiRevisionSpec
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
           title: Revision Id
           type: string
-      - in: query
+      - examples:
+          example:
+            value: false
+        in: query
         name: overlays
         required: false
         schema:
@@ -11746,31 +12099,46 @@ paths:
       description: List operations for a specific revision.
       operationId: listApiRevisionOperations
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
           title: Revision Id
           type: string
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -11778,7 +12146,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -11845,25 +12216,37 @@ paths:
       description: Archive a draft revision.
       operationId: archiveRevision
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
@@ -11934,25 +12317,37 @@ paths:
         ``host_change_requires_operator``.
       operationId: promoteRevision
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
           title: Version
           type: string
-      - in: path
+      - examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
+        in: path
         name: revision_id
         required: true
         schema:
@@ -12016,19 +12411,28 @@ paths:
       description: List security schemes (with OAuth2 flow URLs) for the API's current revision.
       operationId: listApiSecuritySchemes
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: vendor
         required: true
         schema:
           title: Vendor
           type: string
-      - in: path
+      - examples:
+          example:
+            value: stripe
+        in: path
         name: name
         required: true
         schema:
           title: Name
           type: string
-      - in: path
+      - examples:
+          example:
+            value: '2024-04-10'
+        in: path
         name: version
         required: true
         schema:
@@ -12104,7 +12508,10 @@ paths:
         Org admins see every entry.
       operationId: listAuditEntries
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: agent
+        in: query
         name: target_type
         required: false
         schema:
@@ -12112,7 +12519,10 @@ paths:
           - $ref: '#/components/schemas/AuditTargetType'
           - type: 'null'
           title: Target Type
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: target_id
         required: false
         schema:
@@ -12120,7 +12530,10 @@ paths:
           - type: string
           - type: 'null'
           title: Target Id
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: actor_id
         required: false
         schema:
@@ -12128,7 +12541,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Id
-      - in: query
+      - examples:
+          example:
+            value: dashboard
+        in: query
         name: origin
         required: false
         schema:
@@ -12136,7 +12552,10 @@ paths:
           - type: string
           - type: 'null'
           title: Origin
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-01T00:00:00Z'
+        in: query
         name: since
         required: false
         schema:
@@ -12145,7 +12564,10 @@ paths:
             type: string
           - type: 'null'
           title: Since
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-31T23:59:59Z'
+        in: query
         name: until
         required: false
         schema:
@@ -12154,7 +12576,10 @@ paths:
             type: string
           - type: 'null'
           title: Until
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -12162,7 +12587,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -12230,7 +12658,10 @@ paths:
       description: Get a single audit entry by ID.
       operationId: getAuditEntry
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: aud_6968b3984275d71e90f7f09f
+        in: path
         name: audit_id
         required: true
         schema:
@@ -12515,44 +12946,65 @@ paths:
         Otherwise returns an error (direct login requires a separate credential exchange).
       operationId: authorizeEndpoint
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: code
+        in: query
         name: response_type
         required: true
         schema:
           title: Response Type
           type: string
-      - in: query
+      - examples:
+          example:
+            value: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
+        in: query
         name: client_id
         required: true
         schema:
           title: Client Id
           type: string
-      - in: query
+      - examples:
+          example:
+            value: https://client.example.com/oauth/callback
+        in: query
         name: redirect_uri
         required: true
         schema:
           title: Redirect Uri
           type: string
-      - in: query
+      - examples:
+          example:
+            value: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+        in: query
         name: code_challenge
         required: true
         schema:
           title: Code Challenge
           type: string
-      - in: query
+      - examples:
+          example:
+            value: S256
+        in: query
         name: code_challenge_method
         required: true
         schema:
           title: Code Challenge Method
           type: string
-      - in: query
+      - examples:
+          example:
+            value: openid
+        in: query
         name: scope
         required: false
         schema:
           default: openid
           title: Scope
           type: string
-      - in: query
+      - examples:
+          example:
+            value: af0ifjsldkj
+        in: query
         name: state
         required: false
         schema:
@@ -12560,7 +13012,10 @@ paths:
           - type: string
           - type: 'null'
           title: State
-      - in: query
+      - examples:
+          example:
+            value: n-0S6_WzA2Mj
+        in: query
         name: nonce
         required: false
         schema:
@@ -12569,6 +13024,9 @@ paths:
           - type: 'null'
           title: Nonce
       - description: Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
+        examples:
+          example:
+            value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: sc
         required: false
@@ -12627,7 +13085,10 @@ paths:
         manifest, not the page, so the Discover status row stays stable while scrolling.
       operationId: listCatalog
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: charges
+        in: query
         name: q
         required: false
         schema:
@@ -12636,35 +13097,50 @@ paths:
             type: string
           - type: 'null'
           title: Q
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: registered_only
         required: false
         schema:
           default: false
           title: Registered Only
           type: boolean
-      - in: query
+      - examples:
+          example:
+            value: false
+        in: query
         name: unregistered_only
         required: false
         schema:
           default: false
           title: Unregistered Only
           type: boolean
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: outdated_only
         required: false
         schema:
           default: false
           title: Outdated Only
           type: boolean
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: include_snoozed
         required: false
         schema:
           default: false
           title: Include Snoozed
           type: boolean
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -12672,7 +13148,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -12740,7 +13219,10 @@ paths:
       description: Retrieve a single catalog entry by api_id.
       operationId: getCatalogEntry
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: api_id
         required: true
         schema:
@@ -12810,13 +13292,19 @@ paths:
         filtered set via ``offset``/``limit`` ("Load more").
       operationId: previewCatalogOperations
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: api_id
         required: true
         schema:
           title: Api Id
           type: string
-      - in: query
+      - examples:
+          example:
+            value: 0
+        in: query
         name: offset
         required: false
         schema:
@@ -12824,7 +13312,10 @@ paths:
           minimum: 0
           title: Offset
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -12833,7 +13324,10 @@ paths:
           minimum: 0
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: Charges
+        in: query
         name: tag
         required: false
         schema:
@@ -12841,7 +13335,10 @@ paths:
           - type: string
           - type: 'null'
           title: Tag
-      - in: query
+      - examples:
+          example:
+            value: charges
+        in: query
         name: q
         required: false
         schema:
@@ -12909,7 +13406,10 @@ paths:
       description: Enqueue an async import of a catalog entry into the local registry.
       operationId: importCatalogEntry
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: api_id
         required: true
         schema:
@@ -12981,7 +13481,10 @@ paths:
         genuinely newer upstream change re-lights the badge automatically.
       operationId: snoozeCatalogEntry
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: api_id
         required: true
         schema:
@@ -13057,7 +13560,10 @@ paths:
       description: Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
       operationId: unsnoozeCatalogEntry
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: stripe.com
+        in: path
         name: api_id
         required: true
         schema:
@@ -13183,6 +13689,9 @@ paths:
       operationId: listConnectSessions
       parameters:
       - description: Filter by session state
+        examples:
+          example:
+            value: polling
         in: query
         name: state
         required: false
@@ -13198,6 +13707,9 @@ paths:
           description: Filter by session state
           title: State
       - description: Filter by vendor registry key
+        examples:
+          example:
+            value: github
         in: query
         name: vendor
         required: false
@@ -13207,7 +13719,10 @@ paths:
           - type: 'null'
           description: Filter by vendor registry key
           title: Vendor
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -13215,7 +13730,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -13292,13 +13810,19 @@ paths:
         enumeration oracle).
       operationId: getConnectSession
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
         name: session_id
         required: true
         schema:
           title: Session Id
           type: string
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+        examples:
+          example:
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
         required: false
@@ -13387,13 +13911,19 @@ paths:
         403, so the endpoint is not a session-id enumeration oracle.
       operationId: pollConnectSessionStatus
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
         name: session_id
         required: true
         schema:
           title: Session Id
           type: string
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+        examples:
+          example:
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
         required: false
@@ -13474,13 +14004,19 @@ paths:
         into the UX.
       operationId: cancelConnectSession
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
         name: session_id
         required: true
         schema:
           title: Session Id
           type: string
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+        examples:
+          example:
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
         required: false
@@ -13559,13 +14095,19 @@ paths:
         (``poll_token`` or owner / ``org:admin``; 403 otherwise).
       operationId: confirmConnectSession
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
         name: session_id
         required: true
         schema:
           title: Session Id
           type: string
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
+        examples:
+          example:
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
         required: false
@@ -13670,7 +14212,10 @@ paths:
         without rejecting makes no call; an unmount cancel stays ``cancelled``.
       operationId: rejectConnectSession
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cs_6968b3983b8b91c75627bee5
+        in: path
         name: session_id
         required: true
         schema:
@@ -13782,7 +14327,10 @@ paths:
       description: List credentials with cursor-based pagination.
       operationId: listCredentials
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -13790,7 +14338,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -13799,7 +14350,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: stripe.com
+        in: query
         name: vendor
         required: false
         schema:
@@ -13965,7 +14519,10 @@ paths:
         structured logging for operators.
       operationId: oauthCallback
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: SplxlOBeZQQYbYS6WxSbIA
+        in: query
         name: code
         required: false
         schema:
@@ -13973,7 +14530,10 @@ paths:
           - type: string
           - type: 'null'
           title: Code
-      - in: query
+      - examples:
+          example:
+            value: af0ifjsldkj
+        in: query
         name: state
         required: false
         schema:
@@ -13981,7 +14541,10 @@ paths:
           - type: string
           - type: 'null'
           title: State
-      - in: query
+      - examples:
+          example:
+            value: access_denied
+        in: query
         name: error
         required: false
         schema:
@@ -14090,7 +14653,10 @@ paths:
       description: Delete a credential.
       operationId: deleteCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
@@ -14157,7 +14723,10 @@ paths:
       description: Get a single credential with redacted secrets.
       operationId: getCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
@@ -14228,7 +14797,10 @@ paths:
       description: Update or rotate a credential.
       operationId: updateCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
@@ -14326,13 +14898,19 @@ paths:
         Suspended bindings are included with their flag set.
       operationId: listCredentialAgents
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -14340,7 +14918,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -14415,13 +14996,19 @@ paths:
       description: List the ordered PBAC rules for a direct `(agent, credential)` binding.
       operationId: listAgentCredentialPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14492,13 +15079,19 @@ paths:
       description: Additively add and/or remove permission rules on a binding.
       operationId: patchAgentCredentialPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14575,13 +15168,19 @@ paths:
       description: Replace the full set of permission rules for a binding (idempotent PUT).
       operationId: replaceAgentCredentialPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14668,13 +15267,19 @@ paths:
         exactly this binding's policy. Default-deny when nothing matches.
       operationId: testAgentCredentialPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14755,13 +15360,19 @@ paths:
         Idempotent: detaching a binding already on inline rules is a no-op 204.
       operationId: detachAgentCredentialRuleSet
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14837,13 +15448,19 @@ paths:
         binding already points at is a no-op.
       operationId: attachAgentCredentialRuleSet
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
           title: Credential Id
           type: string
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -14923,7 +15540,10 @@ paths:
         ``verification_uri`` for the RFC 8628 human step.
       operationId: connectCredential
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: path
         name: credential_id
         required: true
         schema:
@@ -15007,7 +15627,10 @@ paths:
       description: Minimal error endpoint for browser-facing authorization failures.
       operationId: errorPage
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: access_denied
+        in: query
         name: error
         required: false
         schema:
@@ -15061,7 +15684,11 @@ paths:
       description: List events with optional filters.
       operationId: listEvents
       parameters:
-      - in: query
+      - examples:
+          example:
+            value:
+            - import.completed
+        in: query
         name: event_type
         required: false
         schema:
@@ -15071,7 +15698,12 @@ paths:
             type: array
           - type: 'null'
           title: Event Type
-      - in: query
+      - examples:
+          example:
+            value:
+            - warning
+            - error
+        in: query
         name: severity
         required: false
         schema:
@@ -15081,7 +15713,10 @@ paths:
             type: array
           - type: 'null'
           title: Severity
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: requires_action
         required: false
         schema:
@@ -15089,7 +15724,10 @@ paths:
           - type: boolean
           - type: 'null'
           title: Requires Action
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-01T00:00:00Z'
+        in: query
         name: from
         required: false
         schema:
@@ -15098,7 +15736,10 @@ paths:
             type: string
           - type: 'null'
           title: From
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-31T23:59:59Z'
+        in: query
         name: to
         required: false
         schema:
@@ -15107,7 +15748,10 @@ paths:
             type: string
           - type: 'null'
           title: To
-      - in: query
+      - examples:
+          example:
+            value: 4bf92f3577b34da6a3ce929d0e0e4736
+        in: query
         name: trace_id
         required: false
         schema:
@@ -15115,7 +15759,10 @@ paths:
           - type: string
           - type: 'null'
           title: Trace Id
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: actor_id
         required: false
         schema:
@@ -15123,7 +15770,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Id
-      - in: query
+      - examples:
+          example:
+            value: agent
+        in: query
         name: actor_type
         required: false
         schema:
@@ -15131,7 +15781,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Type
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -15139,7 +15792,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -15207,7 +15863,10 @@ paths:
       description: Stream events as Server-Sent Events.
       operationId: streamEvents
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-01T00:00:00Z'
+        in: query
         name: since
         required: false
         schema:
@@ -15216,7 +15875,11 @@ paths:
             type: string
           - type: 'null'
           title: Since
-      - in: query
+      - examples:
+          example:
+            value:
+            - import.completed
+        in: query
         name: event_type
         required: false
         schema:
@@ -15226,7 +15889,12 @@ paths:
             type: array
           - type: 'null'
           title: Event Type
-      - in: query
+      - examples:
+          example:
+            value:
+            - warning
+            - error
+        in: query
         name: severity
         required: false
         schema:
@@ -15236,7 +15904,10 @@ paths:
             type: array
           - type: 'null'
           title: Severity
-      - in: query
+      - examples:
+          example:
+            value: true
+        in: query
         name: requires_action
         required: false
         schema:
@@ -15244,7 +15915,10 @@ paths:
           - type: boolean
           - type: 'null'
           title: Requires Action
-      - in: query
+      - examples:
+          example:
+            value: 4bf92f3577b34da6a3ce929d0e0e4736
+        in: query
         name: trace_id
         required: false
         schema:
@@ -15252,7 +15926,10 @@ paths:
           - type: string
           - type: 'null'
           title: Trace Id
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: actor_id
         required: false
         schema:
@@ -15260,7 +15937,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Id
-      - in: query
+      - examples:
+          example:
+            value: agent
+        in: query
         name: actor_type
         required: false
         schema:
@@ -15268,7 +15948,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Type
-      - in: header
+      - examples:
+          example:
+            value: evt_6968b398b04f002b6dbff4d1
+        in: header
         name: Last-Event-ID
         required: false
         schema:
@@ -15334,7 +16017,10 @@ paths:
       description: Get an event by ID.
       operationId: getEvent
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: evt_6968b398b04f002b6dbff4d1
+        in: path
         name: event_id
         required: true
         schema:
@@ -15399,7 +16085,10 @@ paths:
       description: List execution records with optional filters.
       operationId: listExecutions
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: tk_6968b3981ec22d56dbbc91e8
+        in: query
         name: toolkit_id
         required: false
         schema:
@@ -15407,7 +16096,10 @@ paths:
           - type: string
           - type: 'null'
           title: Toolkit Id
-      - in: query
+      - examples:
+          example:
+            value: 4bf92f3577b34da6a3ce929d0e0e4736
+        in: query
         name: trace_id
         required: false
         schema:
@@ -15415,7 +16107,12 @@ paths:
           - type: string
           - type: 'null'
           title: Trace Id
-      - in: query
+      - examples:
+          example:
+            value:
+            - completed
+            - failed
+        in: query
         name: status
         required: false
         schema:
@@ -15425,7 +16122,10 @@ paths:
             type: array
           - type: 'null'
           title: Status
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-01T00:00:00Z'
+        in: query
         name: from
         required: false
         schema:
@@ -15434,7 +16134,10 @@ paths:
             type: string
           - type: 'null'
           title: From
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-31T23:59:59Z'
+        in: query
         name: to
         required: false
         schema:
@@ -15443,7 +16146,10 @@ paths:
             type: string
           - type: 'null'
           title: To
-      - in: query
+      - examples:
+          example:
+            value: stripe.com:stripe:2024-04-10
+        in: query
         name: api
         required: false
         schema:
@@ -15451,7 +16157,10 @@ paths:
           - type: string
           - type: 'null'
           title: Api
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: actor_id
         required: false
         schema:
@@ -15459,7 +16168,10 @@ paths:
           - type: string
           - type: 'null'
           title: Actor Id
-      - in: query
+      - examples:
+          example:
+            value: dashboard
+        in: query
         name: origin
         required: false
         schema:
@@ -15467,7 +16179,10 @@ paths:
           - type: string
           - type: 'null'
           title: Origin
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -15475,7 +16190,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -15543,7 +16261,10 @@ paths:
       description: Get an execution record by ID.
       operationId: getExecution
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: exec_6968b3982706c619fe73f0cf
+        in: path
         name: execution_id
         required: true
         schema:
@@ -15629,6 +16350,9 @@ paths:
       operationId: getGovernedHosts
       parameters:
       - description: 'Change-poll precondition: the `ETag` from a previous response (quoted, `"<digest>"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.'
+        examples:
+          example:
+            value: '"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"'
         in: header
         name: if-none-match
         required: false
@@ -15735,6 +16459,9 @@ paths:
       operationId: inspectOperation
       parameters:
       - description: METHOD URL identifier
+        examples:
+          example:
+            value: GET https://api.stripe.com/v1/charges
         in: query
         name: id
         required: false
@@ -15745,6 +16472,9 @@ paths:
           description: METHOD URL identifier
           title: Id
       - description: Operation ID
+        examples:
+          example:
+            value: listCharges
         in: query
         name: operation_id
         required: false
@@ -15755,6 +16485,9 @@ paths:
           description: Operation ID
           title: Operation Id
       - description: Pin to specific revision
+        examples:
+          example:
+            value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: query
         name: revision_id
         required: false
@@ -15764,7 +16497,10 @@ paths:
           - type: 'null'
           description: Pin to specific revision
           title: Revision Id
-      - in: query
+      - examples:
+          example:
+            value: summary
+        in: query
         name: detail
         required: false
         schema:
@@ -15950,7 +16686,10 @@ paths:
       description: List jobs with optional filters.
       operationId: listJobs
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: import
+        in: query
         name: kind
         required: false
         schema:
@@ -15958,7 +16697,11 @@ paths:
           - type: string
           - type: 'null'
           title: Kind
-      - in: query
+      - examples:
+          example:
+            value:
+            - running
+        in: query
         name: status
         required: false
         schema:
@@ -15968,7 +16711,10 @@ paths:
             type: array
           - type: 'null'
           title: Status
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-01T00:00:00Z'
+        in: query
         name: from
         required: false
         schema:
@@ -15977,7 +16723,10 @@ paths:
             type: string
           - type: 'null'
           title: From
-      - in: query
+      - examples:
+          example:
+            value: '2026-01-31T23:59:59Z'
+        in: query
         name: to
         required: false
         schema:
@@ -15986,7 +16735,10 @@ paths:
             type: string
           - type: 'null'
           title: To
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -15994,7 +16746,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -16062,7 +16817,10 @@ paths:
       description: Get a job by ID.
       operationId: getJob
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: job_6968b3985e8c9902207afaeb
+        in: path
         name: job_id
         required: true
         schema:
@@ -16127,7 +16885,10 @@ paths:
       description: Get the result of a completed job — polymorphic by kind.
       operationId: getJobResult
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: job_6968b3985e8c9902207afaeb
+        in: path
         name: job_id
         required: true
         schema:
@@ -16191,7 +16952,10 @@ paths:
       description: Cancel an active job.
       operationId: cancelJob
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: job_6968b3985e8c9902207afaeb
+        in: path
         name: job_id
         required: true
         schema:
@@ -16264,6 +17028,9 @@ paths:
       operationId: loginPage
       parameters:
       - description: Signed authorization-flow state (carry-through token)
+        examples:
+          example:
+            value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: ls
         required: true
@@ -16532,7 +17299,10 @@ paths:
       description: Return aggregated execution statistics for the dashboard.
       operationId: getExecutionStats
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: 7
+        in: query
         name: days
         required: false
         schema:
@@ -16600,7 +17370,10 @@ paths:
       description: Return detailed usage statistics for the monitoring overview.
       operationId: getUsageStats
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: 1767225600
+        in: query
         name: since
         required: false
         schema:
@@ -16608,7 +17381,10 @@ paths:
           - type: integer
           - type: 'null'
           title: Since
-      - in: query
+      - examples:
+          example:
+            value: 1769903999
+        in: query
         name: until
         required: false
         schema:
@@ -16616,7 +17392,10 @@ paths:
           - type: integer
           - type: 'null'
           title: Until
-      - in: query
+      - examples:
+          example:
+            value: api
+        in: query
         name: group_by
         required: false
         schema:
@@ -16624,7 +17403,10 @@ paths:
           - $ref: '#/components/schemas/GroupBy'
           - type: 'null'
           title: Group By
-      - in: query
+      - examples:
+          example:
+            value: 10
+        in: query
         name: top_limit
         required: false
         schema:
@@ -16633,7 +17415,10 @@ paths:
           minimum: 1
           title: Top Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: tk_6968b3981ec22d56dbbc91e8
+        in: query
         name: toolkit_id
         required: false
         schema:
@@ -16641,7 +17426,10 @@ paths:
           - type: string
           - type: 'null'
           title: Toolkit Id
-      - in: query
+      - examples:
+          example:
+            value: stripe.com/stripe
+        in: query
         name: api_id
         required: false
         schema:
@@ -16649,7 +17437,10 @@ paths:
           - type: string
           - type: 'null'
           title: Api Id
-      - in: query
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: query
         name: agent_id
         required: false
         schema:
@@ -16657,7 +17448,10 @@ paths:
           - type: string
           - type: 'null'
           title: Agent Id
-      - in: query
+      - examples:
+          example:
+            value: completed
+        in: query
         name: status
         required: false
         schema:
@@ -16724,7 +17518,10 @@ paths:
       description: List notes with optional filters and cursor pagination.
       operationId: listNotes
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -16732,7 +17529,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -16741,7 +17541,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: stripe.com:stripe:2024-04-10
+        in: query
         name: api
         required: false
         schema:
@@ -16749,7 +17552,10 @@ paths:
           - type: string
           - type: 'null'
           title: Api
-      - in: query
+      - examples:
+          example:
+            value: listCharges
+        in: query
         name: operation_id
         required: false
         schema:
@@ -16757,7 +17563,10 @@ paths:
           - type: string
           - type: 'null'
           title: Operation Id
-      - in: query
+      - examples:
+          example:
+            value: exec_6968b3982706c619fe73f0cf
+        in: query
         name: execution_id
         required: false
         schema:
@@ -16765,7 +17574,10 @@ paths:
           - type: string
           - type: 'null'
           title: Execution Id
-      - in: query
+      - examples:
+          example:
+            value: cred_6968b39855d91a3561684b32
+        in: query
         name: credential_id
         required: false
         schema:
@@ -16773,7 +17585,10 @@ paths:
           - type: string
           - type: 'null'
           title: Credential Id
-      - in: query
+      - examples:
+          example:
+            value: usage_hint
+        in: query
         name: type
         required: false
         schema:
@@ -16781,7 +17596,10 @@ paths:
           - type: string
           - type: 'null'
           title: Type
-      - in: query
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: query
         name: created_by
         required: false
         schema:
@@ -16909,13 +17727,19 @@ paths:
       description: Delete a note. Supports optimistic concurrency via If-Match.
       operationId: deleteNote
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: note_6968b398edb465624291e405
+        in: path
         name: note_id
         required: true
         schema:
           title: Note Id
           type: string
-      - in: header
+      - examples:
+          example:
+            value: '"3"'
+        in: header
         name: if-match
         required: false
         schema:
@@ -16977,7 +17801,10 @@ paths:
       description: Retrieve a single note by ID.
       operationId: getNote
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: note_6968b398edb465624291e405
+        in: path
         name: note_id
         required: true
         schema:
@@ -17040,13 +17867,19 @@ paths:
       description: Update a note (partial). Supports optimistic concurrency via If-Match.
       operationId: updateNote
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: note_6968b398edb465624291e405
+        in: path
         name: note_id
         required: true
         schema:
           title: Note Id
           type: string
-      - in: header
+      - examples:
+          example:
+            value: '"3"'
+        in: header
         name: if-match
         required: false
         schema:
@@ -17124,6 +17957,9 @@ paths:
       operationId: listOauthAppRegistrations
       parameters:
       - description: Filter by vendor slug.
+        examples:
+          example:
+            value: github
         in: query
         name: api_vendor
         required: false
@@ -17134,6 +17970,9 @@ paths:
           description: Filter by vendor slug.
           title: Api Vendor
       - description: Include registrations with is_active=false in the response.
+        examples:
+          example:
+            value: true
         in: query
         name: include_inactive
         required: false
@@ -17143,6 +17982,9 @@ paths:
           title: Include Inactive
           type: boolean
       - description: Filter by OAuth flow kind.
+        examples:
+          example:
+            value: authorization_code
         in: query
         name: flow_kind
         required: false
@@ -17152,7 +17994,10 @@ paths:
           - type: 'null'
           description: Filter by OAuth flow kind.
           title: Flow Kind
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -17160,7 +18005,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -17309,7 +18157,10 @@ paths:
         deactivate the registration with a PATCH ``is_active=false`` instead.
       operationId: deleteOauthAppRegistration
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oar_6968b39821e5f89a6975f501
+        in: path
         name: id
         required: true
         schema:
@@ -17383,7 +18234,10 @@ paths:
       description: Get an OAuth app registration by id (admin-only, see the list endpoint).
       operationId: getOauthAppRegistration
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oar_6968b39821e5f89a6975f501
+        in: path
         name: id
         required: true
         schema:
@@ -17458,7 +18312,10 @@ paths:
         use ``:rotate-secret`` for the client secret.
       operationId: updateOauthAppRegistration
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oar_6968b39821e5f89a6975f501
+        in: path
         name: id
         required: true
         schema:
@@ -17538,7 +18395,10 @@ paths:
         subsequent refreshes present the new secret.
       operationId: rotateOauthAppRegistrationSecret
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: oar_6968b39821e5f89a6975f501
+        in: path
         name: id
         required: true
         schema:
@@ -17689,7 +18549,10 @@ paths:
         use or refresh fails closed. Idempotent on an already-revoked grant.
       operationId: revokeOauthGrant
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: ocg_6968b3985e21c5fdf643025d
+        in: path
         name: grant_id
         required: true
         schema:
@@ -17840,6 +18703,9 @@ paths:
       operationId: approvalStatusEndpoint
       parameters:
       - description: Signed approval-state blob minted by /authorize
+        examples:
+          example:
+            value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: st
         required: true
@@ -17891,13 +18757,19 @@ paths:
       description: External IdP callback — exchanges upstream code and issues platform auth code.
       operationId: authorizeOauthCallback
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: SplxlOBeZQQYbYS6WxSbIA
+        in: query
         name: code
         required: true
         schema:
           title: Code
           type: string
-      - in: query
+      - examples:
+          example:
+            value: af0ifjsldkj
+        in: query
         name: state
         required: true
         schema:
@@ -17947,6 +18819,9 @@ paths:
       operationId: consentPage
       parameters:
       - description: Opaque consent-flow handle
+        examples:
+          example:
+            value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: ch
         required: true
@@ -18151,6 +19026,9 @@ paths:
       operationId: consentAgentStatus
       parameters:
       - description: Signed agent-status blob minted by the consent flow's pending arm
+        examples:
+          example:
+            value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: st
         required: true
@@ -18669,7 +19547,10 @@ paths:
       description: List shared rule sets with per-set rule counts (cursor-paginated).
       operationId: listPermissionRuleSets
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -18677,7 +19558,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -18819,7 +19703,10 @@ paths:
       description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
       operationId: deletePermissionRuleSet
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: prs_6968b3987c22b63e87e79f05
+        in: path
         name: rule_set_id
         required: true
         schema:
@@ -18893,7 +19780,10 @@ paths:
       description: Get a rule set with its ordered rules and referencing-binding count.
       operationId: getPermissionRuleSet
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: prs_6968b3987c22b63e87e79f05
+        in: path
         name: rule_set_id
         required: true
         schema:
@@ -18968,7 +19858,10 @@ paths:
         or an org admin (403 `rule_set_access_denied` otherwise).
       operationId: updatePermissionRuleSet
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: prs_6968b3987c22b63e87e79f05
+        in: path
         name: rule_set_id
         required: true
         schema:
@@ -19050,7 +19943,10 @@ paths:
         single-place edit rule grouping exists for.
       operationId: replacePermissionRuleSetRules
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: prs_6968b3987c22b63e87e79f05
+        in: path
         name: rule_set_id
         required: true
         schema:
@@ -19239,7 +20135,10 @@ paths:
       description: Client deletion not supported — returns 403.
       operationId: deleteRegistrationEndpoint
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -19302,7 +20201,10 @@ paths:
       description: Poll registration status (RFC 7592).
       operationId: pollStatusEndpoint
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -19358,7 +20260,10 @@ paths:
       description: Client update not supported — returns 403.
       operationId: updateRegistrationEndpoint
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: agnt_6968b3984d1c238dbe7e2e29
+        in: path
         name: agent_id
         required: true
         schema:
@@ -19563,7 +20468,10 @@ paths:
         Scoped to the caller: org admins see every user; anyone else sees only themselves.
       operationId: listUsers
       parameters:
-      - in: query
+      - examples:
+          example:
+            value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
+        in: query
         name: cursor
         required: false
         schema:
@@ -19571,7 +20479,10 @@ paths:
           - type: string
           - type: 'null'
           title: Cursor
-      - in: query
+      - examples:
+          example:
+            value: 25
+        in: query
         name: limit
         required: false
         schema:
@@ -19580,7 +20491,10 @@ paths:
           minimum: 1
           title: Limit
           type: integer
-      - in: query
+      - examples:
+          example:
+            value: pending
+        in: query
         name: invite_state
         required: false
         schema:
@@ -19843,7 +20757,10 @@ paths:
         switch use ``:disable`` / ``:enable`` instead.
       operationId: deleteUser
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -19921,7 +20838,10 @@ paths:
         Any other user answers 404.
       operationId: getUser
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -19992,7 +20912,10 @@ paths:
       description: Update a user's profile fields.
       operationId: updateUser
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -20063,7 +20986,10 @@ paths:
       description: Set the assigned permissions for a user.
       operationId: setUserPermissions
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -20148,7 +21074,10 @@ paths:
       description: Disable a user account.
       operationId: disableUser
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -20223,7 +21152,10 @@ paths:
       description: Enable a user account.
       operationId: enableUser
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -20284,7 +21216,10 @@ paths:
       description: Reissue an invite token for a user.
       operationId: reissueInvite
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: usr_6968b3987ee4c3ec0b4ee3b9
+        in: path
         name: user_id
         required: true
         schema:
@@ -20534,13 +21469,19 @@ paths:
         detail via the handler registered in ``control/web/app.py``.
       operationId: getAuthCapabilities
       parameters:
-      - in: path
+      - examples:
+          example:
+            value: github
+        in: path
         name: vendor_key
         required: true
         schema:
           title: Vendor Key
           type: string
       - description: Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
+        examples:
+          example:
+            value: oar_6968b39821e5f89a6975f501
         in: query
         name: oauth_app_registration_id
         required: false

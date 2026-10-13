@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest
 
@@ -22,6 +22,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 
 router = APIRouter(prefix="/notes")
@@ -135,14 +136,14 @@ async def list_notes(
     request: Request,
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    api: str | None = None,
-    operation_id: str | None = None,
-    execution_id: str | None = None,
-    credential_id: str | None = None,
-    type: str | None = None,
-    created_by: str | None = None,
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    api: str | None = Query(default=None, openapi_examples=ex.example(ex.API_REF)),
+    operation_id: str | None = Query(default=None, openapi_examples=ex.example(ex.OPERATION_ID)),
+    execution_id: str | None = Query(default=None, openapi_examples=ex.example(ex.EXECUTION_ID)),
+    credential_id: str | None = Query(default=None, openapi_examples=ex.example(ex.CREDENTIAL_ID)),
+    type: str | None = Query(default=None, openapi_examples=ex.example("usage_hint")),
+    created_by: str | None = Query(default=None, openapi_examples=ex.example(ex.USER_ID)),
 ) -> JSONResponse:
     """List notes with optional filters and cursor pagination."""
     svc = NoteService(ctx)
@@ -172,7 +173,7 @@ async def list_notes(
 @router.get("/{note_id}")
 async def get_note(
     request: Request,
-    note_id: str,
+    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
@@ -192,11 +193,13 @@ async def get_note(
 @router.patch("/{note_id}")
 async def update_note(
     request: Request,
-    note_id: str,
+    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
     body: NoteUpdateRequest,
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
-    if_match: str | None = Header(default=None, alias="if-match"),
+    if_match: str | None = Header(
+        default=None, alias="if-match", openapi_examples=ex.example(ex.NOTE_ETAG)
+    ),
 ) -> Response:
     """Update a note (partial). Supports optimistic concurrency via If-Match."""
     revision = _parse_if_match(if_match, instance=request.url.path)
@@ -237,10 +240,12 @@ async def update_note(
 @router.delete("/{note_id}", status_code=204)
 async def delete_note(
     request: Request,
-    note_id: str,
+    note_id: Annotated[str, Path(openapi_examples=ex.example(ex.NOTE_ID))],
     identity: Identity = get_current_identity(),
     ctx: Context = Depends(get_ctx),
-    if_match: str | None = Header(default=None, alias="if-match"),
+    if_match: str | None = Header(
+        default=None, alias="if-match", openapi_examples=ex.example(ex.NOTE_ETAG)
+    ),
 ) -> Response:
     """Delete a note. Supports optimistic concurrency via If-Match."""
     revision = _parse_if_match(if_match, instance=request.url.path)

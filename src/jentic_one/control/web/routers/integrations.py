@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
 from jentic.problem_details import Forbidden, TooManyRequests
 
 from jentic_one.control.services.integrations.connect_session_service import (
@@ -68,6 +68,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.state import MemoryStateBackend
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import (
     conflict,
     not_found,
@@ -234,10 +235,18 @@ async def integrations_connect(
     summary="List connect sessions",
 )
 async def list_connect_sessions(
-    state: ConnectSessionState | None = Query(default=None, description="Filter by session state"),
-    vendor: str | None = Query(default=None, description="Filter by vendor registry key"),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    state: ConnectSessionState | None = Query(
+        default=None,
+        description="Filter by session state",
+        openapi_examples=ex.example("polling"),
+    ),
+    vendor: str | None = Query(
+        default=None,
+        description="Filter by vendor registry key",
+        openapi_examples=ex.example(ex.VENDOR_KEY),
+    ),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
@@ -289,8 +298,12 @@ async def list_connect_sessions(
     responses=with_responses(conflict("The session's OAuth app changed; start a new session")),
 )
 async def get_connect_session(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ReviewSessionResponse:
@@ -409,10 +422,14 @@ def _review_response(data: ReviewData) -> ReviewSessionResponse:
     ),
 )
 async def confirm_connect_session(
-    session_id: str,
+    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
     request: Request,
     body: Annotated[ConfirmSessionRequest, Body()],
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> ConfirmSessionResponse:
@@ -516,8 +533,12 @@ def _to_variant(
     response_model=None,
 )
 async def poll_connect_session_status(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     # Auth is intentionally lightweight: caller must be authenticated with a
     # credential-touching permission, but the poll_token (or being the agent's
     # owner / org:admin) is the real capability that scopes the response — an
@@ -568,8 +589,12 @@ async def poll_connect_session_status(
     response_model=None,
 )
 async def cancel_connect_session(
-    session_id: str,
-    poll_token: str | None = Query(default=None, description=_POLL_TOKEN_DESCRIPTION),
+    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
+    poll_token: str | None = Query(
+        default=None,
+        description=_POLL_TOKEN_DESCRIPTION,
+        openapi_examples=ex.example(ex.OPAQUE_TOKEN),
+    ),
     identity: Identity = get_current_identity(
         required_permissions=["credentials:connect", "credentials:write"]
     ),
@@ -605,7 +630,7 @@ async def cancel_connect_session(
     response_model=None,
 )
 async def reject_connect_session(
-    session_id: str,
+    session_id: Annotated[str, Path(openapi_examples=ex.example(ex.CONNECT_SESSION_ID))],
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> Response:

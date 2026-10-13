@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest
 
@@ -26,6 +27,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import OverlayStatus
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 
 router = APIRouter(prefix="/apis/{vendor}/{name}/{version}/overlays")
@@ -124,9 +126,9 @@ def _build_overlay_list_item(
 @router.post("", status_code=201, response_model=OverlayResponse)
 async def submit_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
     body: OverlaySubmitRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
@@ -160,14 +162,14 @@ async def submit_overlay(
 @router.get("", response_model=OverlayListResponse)
 async def list_overlays(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    status: str | None = None,
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    status: str | None = Query(default=None, openapi_examples=ex.example("confirmed")),
 ) -> JSONResponse:
     """List overlays for an API with optional status filter and cursor pagination."""
     svc = OverlayService(ctx)
@@ -188,10 +190,10 @@ async def list_overlays(
 @router.get("/{overlay_id}", response_model=OverlayResponse)
 async def get_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
+    overlay_id: Annotated[str, Path(openapi_examples=ex.example(ex.OVERLAY_ID))],
     identity: Identity = get_current_identity(required_permissions=["apis:read"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
@@ -206,10 +208,10 @@ async def get_overlay(
 @router.patch("/{overlay_id}", response_model=OverlayResponse)
 async def update_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
+    overlay_id: Annotated[str, Path(openapi_examples=ex.example(ex.OVERLAY_ID))],
     body: OverlayUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
@@ -253,10 +255,10 @@ async def update_overlay(
 
 @router.delete("/{overlay_id}", status_code=204)
 async def deprecate_overlay(
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
+    overlay_id: Annotated[str, Path(openapi_examples=ex.example(ex.OVERLAY_ID))],
     identity: Identity = get_current_identity(required_permissions=["apis:write"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:
@@ -269,10 +271,10 @@ async def deprecate_overlay(
 @router.post("/{overlay_id}:confirm", response_model=OverlayResponse)
 async def confirm_overlay(
     request: Request,
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
+    overlay_id: Annotated[str, Path(openapi_examples=ex.example(ex.OVERLAY_ID))],
     body: OverlayConfirmRequest,
     identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
@@ -300,10 +302,10 @@ async def confirm_overlay(
 
 @router.post("/{overlay_id}:rollback", status_code=204)
 async def rollback_overlay(
-    vendor: str,
-    name: str,
-    version: str,
-    overlay_id: str,
+    vendor: Annotated[str, Path(openapi_examples=ex.example(ex.API_VENDOR))],
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.API_NAME))],
+    version: Annotated[str, Path(openapi_examples=ex.example(ex.API_VERSION))],
+    overlay_id: Annotated[str, Path(openapi_examples=ex.example(ex.OVERLAY_ID))],
     identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
 ) -> Response:

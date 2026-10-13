@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from jentic.problem_details import ValidationError as ProblemValidationError
 
 from jentic_one.admin.services.execution_service import ExecutionService
@@ -19,6 +20,7 @@ from jentic_one.admin.web.schemas.executions import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ExecutionStatus
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 
 router = APIRouter()
@@ -76,16 +78,20 @@ async def list_executions(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
     exec_svc: ExecutionService = Depends(get_execution_service),
-    toolkit_id: str | None = None,
-    trace_id: str | None = None,
-    status: list[str] | None = Query(default=None),
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = None,
-    api: str | None = None,
-    actor_id: str | None = None,
-    origin: str | None = None,
-    cursor: str | None = None,
-    limit: int = Query(default=25, ge=1, le=100),
+    toolkit_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TOOLKIT_ID)),
+    trace_id: str | None = Query(default=None, openapi_examples=ex.example(ex.TRACE_ID)),
+    status: list[str] | None = Query(
+        default=None, openapi_examples=ex.example(["completed", "failed"])
+    ),
+    from_: datetime | None = Query(
+        default=None, alias="from", openapi_examples=ex.example(ex.DATETIME_FROM)
+    ),
+    to: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
+    api: str | None = Query(default=None, openapi_examples=ex.example(ex.API_REF)),
+    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
+    origin: str | None = Query(default=None, openapi_examples=ex.example("dashboard")),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=25, ge=1, le=100, openapi_examples=ex.example(25)),
 ) -> ExecutionListResponse:
     """List execution records with optional filters."""
     if status is not None:
@@ -129,7 +135,7 @@ async def list_executions(
 
 @router.get("/executions/{execution_id}")
 async def get_execution(
-    execution_id: str,
+    execution_id: Annotated[str, Path(openapi_examples=ex.example(ex.EXECUTION_ID))],
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["executions:read"]),
     exec_svc: ExecutionService = Depends(get_execution_service),

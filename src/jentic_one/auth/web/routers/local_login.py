@@ -100,6 +100,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.openapi_responses import problem, route_not_found
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -399,7 +400,11 @@ def _render_login_page(
 )
 async def login_page(
     request: Request,
-    ls: str = Query(..., description="Signed authorization-flow state (carry-through token)"),
+    ls: str = Query(
+        ...,
+        description="Signed authorization-flow state (carry-through token)",
+        openapi_examples=ex.example(ex.SIGNED_FLOW_STATE),
+    ),
     ctx: Context = Depends(get_ctx),
 ) -> HTMLResponse | RedirectResponse:
     """Render the local-account login form for an in-flight ``/authorize`` request.

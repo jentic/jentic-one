@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from jentic_one.admin.services.schemas.users import (
     UserCreatePayload,
@@ -23,6 +25,7 @@ from jentic_one.admin.web.schemas.users import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import InviteState
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
@@ -58,9 +61,9 @@ def _user_response(view: UserView) -> UserResponse:
 async def list_users(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    invite_state: InviteState | None = Query(default=None),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    invite_state: InviteState | None = Query(default=None, openapi_examples=ex.example("pending")),
 ) -> UserListResponse:
     """List users with cursor-based pagination.
 
@@ -101,7 +104,7 @@ async def create_user(
 
 @router.get("/users/{user_id}", responses=with_responses(not_found()))
 async def get_user(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> UserResponse:
@@ -116,7 +119,7 @@ async def get_user(
 
 @router.patch("/users/{user_id}")
 async def update_user(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     body: UserUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
@@ -140,7 +143,7 @@ async def update_user(
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
 async def delete_user(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -161,7 +164,7 @@ async def delete_user(
     responses=with_responses(not_found(), conflict(_LAST_ADMIN)),
 )
 async def disable_user(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -172,7 +175,7 @@ async def disable_user(
 
 @router.post("/users/{user_id}:enable", status_code=204)
 async def enable_user(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> Response:
@@ -183,7 +186,7 @@ async def enable_user(
 
 @router.post("/users/{user_id}:reissue-invite")
 async def reissue_invite(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     user_svc: UserService = Depends(get_user_service),
 ) -> InviteIssuedResponse:

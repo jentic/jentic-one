@@ -17,6 +17,7 @@ from jentic_one.admin.web.schemas.actors import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -31,8 +32,8 @@ MAX_LOOKUP_ID_LENGTH = 64
 async def list_actors(
     identity: Identity = get_current_identity(required_permissions=["users:read"]),
     actor_svc: ActorService = Depends(get_actor_service),
-    cursor: str | None = None,
-    limit: int = Query(default=1000, ge=1, le=5000),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=1000, ge=1, le=5000, openapi_examples=ex.example(25)),
 ) -> ActorListResponse:
     """List actors (users and agents) for UI cache hydration.
 
@@ -71,6 +72,7 @@ async def lookup_actors(
             f"(at most {MAX_LOOKUP_IDS} per call, each at most "
             f"{MAX_LOOKUP_ID_LENGTH} characters)."
         ),
+        openapi_examples=ex.example([ex.AGENT_ID, ex.USER_ID]),
     ),
 ) -> ActorLookupResponse:
     """Resolve user and agent ids to display names for any signed-in caller.

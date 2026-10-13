@@ -129,6 +129,7 @@ from jentic_one.shared.db import DatabaseIntegrityError
 from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import derive_origin, get_ctx
 from jentic_one.shared.web.openapi_responses import problem
 from jentic_one.shared.web.sensitive import SENSITIVE
@@ -1151,19 +1152,20 @@ def _render_approval_pending_page(
 @router.get("/authorize", dependencies=[Depends(check_rate_limit)], response_model=None)
 async def authorize_endpoint(
     request: Request,
-    response_type: str = Query(...),
-    client_id: str = Query(...),
-    redirect_uri: str = Query(...),
-    code_challenge: str = Query(...),
-    code_challenge_method: str = Query(...),
-    scope: str = Query(default="openid"),
-    state: str | None = Query(default=None),
-    nonce: str | None = Query(default=None),
+    response_type: str = Query(..., openapi_examples=ex.example("code")),
+    client_id: str = Query(..., openapi_examples=ex.example(ex.OAUTH_PUBLIC_CLIENT_ID)),
+    redirect_uri: str = Query(..., openapi_examples=ex.example(ex.REDIRECT_URI)),
+    code_challenge: str = Query(..., openapi_examples=ex.example(ex.PKCE_CODE_CHALLENGE)),
+    code_challenge_method: str = Query(..., openapi_examples=ex.example("S256")),
+    scope: str = Query(default="openid", openapi_examples=ex.example("openid")),
+    state: str | None = Query(default=None, openapi_examples=ex.example(ex.OAUTH_STATE)),
+    nonce: str | None = Query(default=None, openapi_examples=ex.example(ex.OIDC_NONCE)),
     sc: str | None = Query(
         default=None,
         description="Signed session-continuation blob minted by "
         "POST /oauth/session/continue (identity-ladder rung 1). Optional; an "
         "invalid or absent value leaves the flow byte-identical to before.",
+        openapi_examples=ex.example(ex.SIGNED_FLOW_STATE),
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
@@ -1401,7 +1403,11 @@ async def _redeem_session_continuation(
 async def approval_status_endpoint(
     request: Request,
     response: Response,
-    st: str = Query(..., description="Signed approval-state blob minted by /authorize"),
+    st: str = Query(
+        ...,
+        description="Signed approval-state blob minted by /authorize",
+        openapi_examples=ex.example(ex.SIGNED_FLOW_STATE),
+    ),
     ctx: Context = Depends(get_ctx),
 ) -> OAuthApprovalStatusResponse:
     """Minimal tri-state poll for the approval-pending page.
@@ -1483,8 +1489,8 @@ async def approval_decision_endpoint(
 )
 async def oauth_callback(
     request: Request,
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str = Query(..., openapi_examples=ex.example(ex.AUTHORIZATION_CODE)),
+    state: str = Query(..., openapi_examples=ex.example(ex.OAUTH_STATE)),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> RedirectResponse:
@@ -1581,7 +1587,9 @@ async def oauth_callback(
 
 
 @router.get("/error")
-async def error_page(error: str = Query(default="unknown_error")) -> dict[str, str]:
+async def error_page(
+    error: str = Query(default="unknown_error", openapi_examples=ex.example("access_denied")),
+) -> dict[str, str]:
     """Minimal error endpoint for browser-facing authorization failures."""
     return {"error": error}
 
@@ -1970,7 +1978,9 @@ def _render_agent_options(
 @router.get("/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(check_rate_limit)])
 async def consent_page(
     request: Request,
-    ch: str = Query(..., description="Opaque consent-flow handle"),
+    ch: str = Query(
+        ..., description="Opaque consent-flow handle", openapi_examples=ex.example(ex.OPAQUE_TOKEN)
+    ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),
 ) -> HTMLResponse:
@@ -2600,7 +2610,9 @@ async def _approval_note_for_params(
 async def consent_agent_status_endpoint(
     response: Response,
     st: str = Query(
-        ..., description="Signed agent-status blob minted by the consent flow's pending arm"
+        ...,
+        description="Signed agent-status blob minted by the consent flow's pending arm",
+        openapi_examples=ex.example(ex.SIGNED_FLOW_STATE),
     ),
     ctx: Context = Depends(get_ctx),
     authorize_svc: AuthorizeService = Depends(get_authorize_service),

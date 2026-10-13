@@ -12,6 +12,7 @@ from jentic_one.registry.web.deps import get_governed_hosts_service
 from jentic_one.registry.web.schemas.governed_hosts import GovernedHostsResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -71,7 +72,8 @@ async def get_governed_hosts(
                 '(quoted, `"<digest>"`; the bare digest is accepted as a '
                 "compatibility form). When it still matches, the response is "
                 "an empty `304`."
-            )
+            ),
+            openapi_examples=ex.example(ex.GOVERNED_HOSTS_ETAG),
         ),
     ] = None,
     identity: Identity = get_current_identity(

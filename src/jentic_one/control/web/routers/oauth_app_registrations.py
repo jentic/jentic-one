@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from jentic_one.control.services.integrations.connect_session_service import (
     ConnectSessionService,
@@ -30,6 +32,7 @@ from jentic_one.control.web.schemas.oauth_app_registrations import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permission_catalog import ORG_ADMIN
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
@@ -111,16 +114,23 @@ async def create_oauth_app_registration(
 async def list_oauth_app_registrations(
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
-    api_vendor: str | None = Query(default=None, description="Filter by vendor slug."),
+    api_vendor: str | None = Query(
+        default=None,
+        description="Filter by vendor slug.",
+        openapi_examples=ex.example(ex.VENDOR_KEY),
+    ),
     include_inactive: bool = Query(
         default=False,
         description="Include registrations with is_active=false in the response.",
+        openapi_examples=ex.example(True),
     ),
     flow_kind: OAuthAppRegistrationFlowKind | None = Query(
-        default=None, description="Filter by OAuth flow kind."
+        default=None,
+        description="Filter by OAuth flow kind.",
+        openapi_examples=ex.example("authorization_code"),
     ),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
 ) -> OAuthAppRegistrationListResponse:
     """List OAuth application registrations with cursor-based pagination.
 
@@ -148,7 +158,7 @@ async def list_oauth_app_registrations(
     responses=not_found(),
 )
 async def get_oauth_app_registration(
-    id: str,
+    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
 ) -> OAuthAppRegistrationResponse:
@@ -163,7 +173,7 @@ async def get_oauth_app_registration(
     responses=not_found(),
 )
 async def update_oauth_app_registration(
-    id: str,
+    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
     body: OAuthAppRegistrationUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
@@ -194,7 +204,7 @@ async def update_oauth_app_registration(
     responses=with_responses(not_found(), conflict()),
 )
 async def rotate_oauth_app_registration_secret(
-    id: str,
+    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
     body: OAuthAppRegistrationRotateSecretRequest,
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
@@ -212,7 +222,7 @@ async def rotate_oauth_app_registration_secret(
     responses=with_responses(not_found(), conflict()),
 )
 async def delete_oauth_app_registration(
-    id: str,
+    id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_APP_REGISTRATION_ID))],
     identity: Identity = get_current_identity(required_permissions=[ORG_ADMIN]),
     svc: OAuthAppRegistrationService = Depends(get_oauth_app_registration_service),
 ) -> Response:

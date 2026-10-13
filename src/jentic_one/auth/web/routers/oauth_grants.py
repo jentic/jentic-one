@@ -7,9 +7,9 @@ clients" listing. The admin cross-view lives on the admin router
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from jentic_one.admin.services.schemas.oauth_grants import OAuthGrantView
 from jentic_one.auth.services.oauth_grant_service import OAuthGrantService
@@ -20,6 +20,7 @@ from jentic_one.auth.web.schemas.oauth_grants import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.openapi_responses import not_found
 
@@ -54,14 +55,16 @@ def grant_response(view: OAuthGrantView) -> OAuthGrantResponse:
     responses=not_found(),
 )
 async def list_agent_oauth_grants(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
     status: Literal["active", "revoked"] | None = Query(
-        default=None, description="Filter by grant lifecycle state."
+        default=None,
+        description="Filter by grant lifecycle state.",
+        openapi_examples=ex.example("active"),
     ),
-    limit: int = Query(default=50, ge=1, le=200),
-    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
 ) -> OAuthGrantListResponse:
     """List OAuth consent grants binding clients to this agent.
 
@@ -89,7 +92,7 @@ async def list_agent_oauth_grants(
     responses=not_found(),
 )
 async def revoke_oauth_grant(
-    grant_id: str,
+    grant_id: Annotated[str, Path(openapi_examples=ex.example(ex.OAUTH_GRANT_ID))],
     identity: Identity = get_current_identity(),
     grant_svc: OAuthGrantService = Depends(get_oauth_grant_service),
 ) -> Response:
