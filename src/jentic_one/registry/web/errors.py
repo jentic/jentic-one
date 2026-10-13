@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from jentic_one.registry.services.errors import (
     AmbiguousMatchError,
+    ApiDeleteBlockedError,
     ApiNotFoundError,
     ArchivedRevisionPinError,
     CatalogEntryNotFoundError,
@@ -49,6 +50,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CatalogEntryNotFoundError: (404, "catalog_entry_not_found"),
     MethodNotAllowedError: (405, "method_not_allowed"),
     AmbiguousMatchError: (409, "ambiguous_match"),
+    # An API delete refused by a non-cascading reference into the API or its
+    # revisions. Distinct from the generic DB-integrity "conflict" so surfaces
+    # can tell the caller *what* failed; the blocking constraint is logged.
+    ApiDeleteBlockedError: (409, "api_delete_blocked"),
     # Refused overlay-superseding re-import (privilege inversion guard, A4b): the caller
     # lacks overlays:confirm. 403 (not 409) — it's an authorization decision, and an
     # operator-facing conflict event was re-emitted for someone who can resolve it.

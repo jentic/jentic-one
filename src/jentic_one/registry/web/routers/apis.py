@@ -44,7 +44,7 @@ from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.links import build_link
-from jentic_one.shared.web.openapi_responses import not_found
+from jentic_one.shared.web.openapi_responses import conflict, not_found
 
 router = APIRouter()
 
@@ -492,7 +492,17 @@ async def update_api(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.delete("/apis/{vendor}/{name}/{version}", status_code=204)
+@router.delete(
+    "/apis/{vendor}/{name}/{version}",
+    status_code=204,
+    responses={
+        **not_found(),
+        **conflict(
+            "The API can't be deleted because another record still references it "
+            "(type `api_delete_blocked`). Nothing was deleted."
+        ),
+    },
+)
 async def delete_api(
     vendor: str,
     name: str,

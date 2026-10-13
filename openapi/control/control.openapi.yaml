@@ -10246,6 +10246,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '409':
+          content:
+            application/problem+json:
+              example: &id008
+                detail: The request conflicts with the current state of the resource.
+                instance: /example/path
+                status: 409
+                title: Conflict
+                type: conflict
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: The API can't be deleted because another record still references it (type `api_delete_blocked`). Nothing was deleted.
         '422':
           content:
             application/problem+json:
@@ -12868,12 +12887,7 @@ paths:
         '409':
           content:
             application/problem+json:
-              example: &id008
-                detail: The request conflicts with the current state of the resource.
-                instance: /example/path
-                status: 409
-                title: Conflict
-                type: conflict
+              example: *id008
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: The catalog entry has no outstanding update to snooze.
