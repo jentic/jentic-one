@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { HealthResponse } from '../models/HealthResponse';
 import type { InstanceIdentityResponse } from '../models/InstanceIdentityResponse';
+import type { RootHealthResponse } from '../models/RootHealthResponse';
 import type { VersionResponse } from '../models/VersionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -77,10 +78,10 @@ export class SystemService {
      *
      * Unauthenticated and dependency-free so orchestrators and load balancers
      * have a stable target. Returns ``{"status": "ok"}`` when the process is up.
-     * @returns any Successful Response
+     * @returns RootHealthResponse Successful Response
      * @throws ApiError
      */
-    public static getHealth(): CancelablePromise<any> {
+    public static getHealth(): CancelablePromise<RootHealthResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/health',

@@ -42,6 +42,7 @@ from jentic_one.shared.state.backend import MemoryStateBackend, SharedStateBacke
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
+from jentic_one.shared.web.openapi_responses import oauth_error, route_not_found
 
 logger = structlog.get_logger(__name__)
 
@@ -315,8 +316,8 @@ token_router = APIRouter(route_class=_TokenRoute)
     dependencies=[Depends(_check_token_rate_limit)],
     openapi_extra=_TOKEN_REQUEST_BODY,
     responses={
-        400: {
-            "description": "RFC 6749 §5.2 error dialect (NOT platform Problem Details — "
+        400: oauth_error(
+            "RFC 6749 §5.2 error dialect (NOT platform Problem Details — "
             "this is a spec-facing endpoint real OAuth/MCP clients parse): "
             '`{"error": "invalid_request" | "invalid_grant" | "invalid_client" | '
             '"unsupported_grant_type", "error_description": "..."}`. '
@@ -327,11 +328,13 @@ token_router = APIRouter(route_class=_TokenRoute)
             "authentication fails after attempting HTTP Basic (`Authorization` header, "
             "RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status "
             "401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
-        },
-        429: {
-            "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; "
-            "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
-        },
+        ),
+        429: oauth_error(
+            "Per-client+IP rate limit exceeded (`Retry-After` header set; "
+            "RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).",
+            error="slow_down",
+            error_description="rate limit exceeded, retry later",
+        ),
     },
     # RFC 6749 §5.1 + OIDC Core §3.1.3.3: optional members the grant did not
     # mint (id_token on grant-bearing agent-channel codes per D11, refresh_token
@@ -610,27 +613,30 @@ _REVOKE_FORM_BODY: dict[str, object] = {
     status_code=200,
     openapi_extra=_REVOKE_FORM_BODY,
     responses={
-        400: {
-            "description": "Form-encoded (RFC 7009) requests only: missing `token` "
+        400: oauth_error(
+            "Form-encoded (RFC 7009) requests only: missing `token` "
             "(RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): "
             '`{"error": "invalid_request", "error_description": "..."}`.'
-        },
-        404: {
-            "description": "Form-encoded (RFC 7009) requests only: interactive OAuth "
+        ),
+        404: route_not_found(
+            "Form-encoded (RFC 7009) requests only: interactive OAuth "
             "for MCP is disabled (`server.mcp.oauth.enabled=false`), so the RFC 7009 "
             "arm answers the framework's plain route-not-found 404 (gate state "
             "unobservable — same posture as the anonymous DCR door). The "
             "bearer-authenticated JSON arm is not gated."
-        },
-        413: {
-            "description": "Form-encoded (RFC 7009) requests only: declared "
-            "Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect)."
-        },
-        429: {
-            "description": "Form-encoded (RFC 7009) requests only: per-IP rate limit "
+        ),
+        413: oauth_error(
+            "Form-encoded (RFC 7009) requests only: declared "
+            "Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).",
+            error_description="request body too large",
+        ),
+        429: oauth_error(
+            "Form-encoded (RFC 7009) requests only: per-IP rate limit "
             "exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, "
-            "`error=slow_down` per RFC 8628 §3.5)."
-        },
+            "`error=slow_down` per RFC 8628 §3.5).",
+            error="slow_down",
+            error_description="rate limit exceeded, retry later",
+        ),
     },
 )
 async def revoke_endpoint(

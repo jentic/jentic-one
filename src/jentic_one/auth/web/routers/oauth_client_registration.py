@@ -44,6 +44,7 @@ from jentic_one.auth.web.schemas.oauth_client_registration import (
 from jentic_one.shared.context import Context
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.openapi_responses import oauth_error
 
 logger = structlog.get_logger(__name__)
 
@@ -180,10 +181,12 @@ async def _check_registration_rate_limit(request: Request, ctx: Context = Depend
     response_model_exclude_none=True,
     dependencies=[Depends(_check_registration_rate_limit)],
     responses={
-        400: {
-            "description": "Invalid client metadata (RFC 7591 §3.2.2): "
-            '`{"error": "invalid_client_metadata", "error_description": "..."}`.'
-        },
+        400: oauth_error(
+            "Invalid client metadata (RFC 7591 §3.2.2): "
+            '`{"error": "invalid_client_metadata", "error_description": "..."}`.',
+            error="invalid_client_metadata",
+            error_description="redirect_uris: at least one redirect URI is required",
+        ),
     },
 )
 async def register_oauth_client_endpoint(

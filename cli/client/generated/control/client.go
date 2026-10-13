@@ -1755,7 +1755,7 @@ type CredentialBindingResponse struct {
 
 // CredentialCreateResponse Create response: redacted + secret shown once.
 //
-// Examples: {"credential":{"active":true,"api":{"name":"stripe","vendor":"stripe-com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","name":"Stripe live key","provider":"static","type":"api_key"},"secret":{"key":"sk_live_…"}}, {"credential":{"active":true,"api":{"name":"posthog-api","vendor":"posthog-com"},"created_at":"2026-01-15T09:31:00Z","credential_id":"cred_01HZXA...","name":"PostHog personal key","provider":"static","type":"bearer_token"},"secret":{"token":"phx_…"},"warnings":["API scope 'posthog-com/posthog-api/*' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"]}
+// Examples: {"credential":{"active":true,"api":{"name":"stripe","vendor":"stripe-com","version":"2024-04-10"},"created_at":"2026-01-15T09:30:00Z","credential_id":"cred_01HZX9...","name":"Stripe live key","provider":"static","type":"api_key"},"secret":{"key":"sk_live_…"}}, {"credential":{"active":true,"api":{"name":"posthog-api","vendor":"posthog-com","version":"1.0"},"created_at":"2026-01-15T09:31:00Z","credential_id":"cred_01HZXA...","name":"PostHog personal key","provider":"static","type":"bearer_token"},"secret":{"token":"phx_…"},"warnings":["API scope 'posthog-com/posthog-api/1.0' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"]}
 type CredentialCreateResponse struct {
 	// Credential Redacted credential response (for read/list/patch).
 	//
@@ -2458,7 +2458,7 @@ type OAuthClientCreateRequestTokenEndpointAuthMethod string
 
 // OAuthClientCreateResponse Returned on creation — includes the one-time plaintext client secret.
 //
-// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
+// Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","client_secret":"\u003credacted\u003e","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientCreateResponse struct {
 	Active bool `json:"active"`
 
@@ -2561,7 +2561,7 @@ type OAuthClientRegistrationResponse struct {
 
 // OAuthClientResponse An OAuth client in API responses.
 //
-// Examples: {"active":true,"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"token_endpoint_auth_method":"client_secret_basic"}
+// Examples: {"active":true,"active_grant_count":0,"allowed_scopes":["agents:read","credentials:read"],"approval_status":"approved","client_id":"oc_abc123...","consent_model":"user","created_at":"2026-08-18T12:00:00Z","created_by":"usr_abc123","description":"My application production deployment","id":"oac_2NxYz...","name":"my-app-production","redirect_uris":["https://app.example.com/auth/callback"],"registration_source":"admin","require_consent":true,"software_id":"com.example.my-app","token_endpoint_auth_method":"client_secret_basic","updated_at":"2026-08-18T12:00:00Z"}
 type OAuthClientResponse struct {
 	Active bool `json:"active"`
 
@@ -2634,6 +2634,21 @@ type OAuthConfirmSessionRequest struct {
 
 // OAuthConfirmSessionRequestKind defines model for OAuthConfirmSessionRequest.Kind.
 type OAuthConfirmSessionRequestKind string
+
+// OAuthErrorResponse OAuth 2.0 error response (RFC 6749 §5.2 dialect).
+//
+// Spec-facing OAuth endpoints (token, RFC 7009 revocation, RFC 7591
+// registration) answer errors in this dialect rather than RFC 9457 Problem
+// Details, because real OAuth/MCP clients parse it.
+//
+// Examples: {"error":"invalid_request","error_description":"missing required parameter"}
+type OAuthErrorResponse struct {
+	// Error ASCII error code, e.g. `invalid_request`, `invalid_grant`, `invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.
+	Error string `json:"error"`
+
+	// ErrorDescription Human-readable explanation of the error.
+	ErrorDescription *string `json:"error_description,omitempty"`
+}
 
 // OAuthGrantAdminListResponse A paginated list of OAuth grants (admin cross-view).
 type OAuthGrantAdminListResponse struct {
@@ -3049,7 +3064,7 @@ type PreviewInfoResponse struct {
 
 // PreviewOperationResponse A slimmed operation in a catalog spec preview.
 //
-// Examples: {"description":"","method":"GET","operation_id":"listCharges","parameters":[],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}
+// Examples: {"description":"","method":"GET","operation_id":"listCharges","parameters":[{"description":"Page size.","in":"query","name":"limit","required":false}],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}
 type PreviewOperationResponse struct {
 	// Description Operation description (empty string when absent).
 	Description string `json:"description"`
@@ -3077,8 +3092,6 @@ type PreviewOperationResponse struct {
 }
 
 // PreviewParameterResponse A slimmed parameter in an operation preview.
-//
-// Examples: {"description":"Page size.","in":"query","name":"limit","required":false}
 type PreviewParameterResponse struct {
 	// Description Parameter description (empty string when absent).
 	Description string `json:"description"`
@@ -3161,7 +3174,7 @@ type ProviderConfigResponse struct {
 // “client_secret“ (write-only), and optional “environment“,
 // “connect_base_url“, “expiry_skew_seconds“.
 //
-// Examples: {"client_id":"client_abc123","client_secret":"\u003credacted\u003e","environment":"production","project_id":"proj_abc123"}
+// Examples: {"config":{"client_id":"client_abc123","client_secret":"\u003credacted\u003e","environment":"production","project_id":"proj_abc123"}}
 type ProviderConfigSetRequest struct {
 	// Config Provider-specific configuration fields, validated by provider name.
 	Config map[string]interface{} `json:"config"`
@@ -3256,6 +3269,31 @@ type RevokeRequest struct {
 	ClientId      *string `json:"client_id,omitempty"`
 	Token         string  `json:"token"`
 	TokenTypeHint *string `json:"token_type_hint,omitempty"`
+}
+
+// RootHealthResponse Liveness body of the canonical root “GET /health“ probe.
+//
+// Examples: {"status":"ok","version":"1.0.0"}
+type RootHealthResponse struct {
+	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
+	Reason *string `json:"reason,omitempty"`
+
+	// Status `ok` while the process is serving requests. A metered marketplace deployment whose entitlement lapsed answers `not_entitled` (still HTTP 200, so orchestrators don't restart it).
+	Status string `json:"status"`
+
+	// Version Running Jentic One release. Absent on the `not_entitled` body.
+	Version *string `json:"version,omitempty"`
+}
+
+// RouteNotFoundResponse The framework's plain route-not-found body.
+//
+// Config-gated routes answer this exact body when their gate is closed, so the
+// gate state is indistinguishable from a route that does not exist.
+//
+// Examples: {"detail":"Not Found"}
+type RouteNotFoundResponse struct {
+	// Detail Always `Not Found`.
+	Detail string `json:"detail"`
 }
 
 // RuleSetAttachRequest Point a direct agent↔credential binding at a shared rule set.
@@ -3766,19 +3804,19 @@ type ListConnectSessionsParamsState string
 
 // GetConnectSessionParams defines parameters for GetConnectSession.
 type GetConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // PollConnectSessionStatusParams defines parameters for PollConnectSessionStatus.
 type PollConnectSessionStatusParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
 // CancelConnectSessionParams defines parameters for CancelConnectSession.
 type CancelConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
@@ -3789,7 +3827,7 @@ type ConfirmConnectSessionJSONBody struct {
 
 // ConfirmConnectSessionParams defines parameters for ConfirmConnectSession.
 type ConfirmConnectSessionParams struct {
-	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+	// PollToken Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
 	PollToken *string `form:"poll_token,omitempty" json:"poll_token,omitempty"`
 }
 
@@ -6287,6 +6325,21 @@ type ClientInterface interface {
 	GetConnectSession(ctx context.Context, sessionId string, params *GetConnectSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PollConnectSessionStatus Poll a connect session's status
+	//
+	// Poll the lifecycle status of a connect session.
+	//
+	// Returns the session's current ``status`` and, once it has connected, the
+	// resulting ``credential_id``, the account it ``connected_as``, and the
+	// ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+	// SPA poll this after ``:connect`` until the status is terminal.
+	//
+	// Auth is intentionally lightweight: the caller must be authenticated with
+	// ``credentials:connect`` or ``credentials:write``, but the real capability
+	// that scopes the response is the session's ``poll_token`` (or being the
+	// target agent's owner / ``org:admin``). An agent handed the token by
+	// ``:connect`` can poll without full session-read rights. A missing session,
+	// a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+	// 403, so the endpoint is not a session-id enumeration oracle.
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 	PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10003,6 +10056,21 @@ func (c *Client) GetConnectSession(ctx context.Context, sessionId string, params
 }
 
 // PollConnectSessionStatus Poll a connect session's status
+//
+// Poll the lifecycle status of a connect session.
+//
+// Returns the session's current “status“ and, once it has connected, the
+// resulting “credential_id“, the account it “connected_as“, and the
+// “bound_scopes“; a failed session carries an “error_code“. Agents and the
+// SPA poll this after “:connect“ until the status is terminal.
+//
+// Auth is intentionally lightweight: the caller must be authenticated with
+// “credentials:connect“ or “credentials:write“, but the real capability
+// that scopes the response is the session's “poll_token“ (or being the
+// target agent's owner / “org:admin“). An agent handed the token by
+// “:connect“ can poll without full session-read rights. A missing session,
+// a “poll_token“ mismatch, and a caller who is neither all answer a uniform
+// 403, so the endpoint is not a session-id enumeration oracle.
 //
 // Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
 func (c *Client) PollConnectSessionStatus(ctx context.Context, sessionId string, params *PollConnectSessionStatusParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -23236,6 +23304,21 @@ type ClientWithResponsesInterface interface {
 
 	// PollConnectSessionStatusWithResponse Poll a connect session's status
 	//
+	// Poll the lifecycle status of a connect session.
+	//
+	// Returns the session's current ``status`` and, once it has connected, the
+	// resulting ``credential_id``, the account it ``connected_as``, and the
+	// ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+	// SPA poll this after ``:connect`` until the status is terminal.
+	//
+	// Auth is intentionally lightweight: the caller must be authenticated with
+	// ``credentials:connect`` or ``credentials:write``, but the real capability
+	// that scopes the response is the session's ``poll_token`` (or being the
+	// target agent's owner / ``org:admin``). An agent handed the token by
+	// ``:connect`` can poll without full session-read rights. A missing session,
+	// a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+	// 403, so the endpoint is not a session-id enumeration oracle.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
@@ -25182,6 +25265,8 @@ type McpOauthAuthorizationServerHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -25198,6 +25283,11 @@ func (r McpOauthAuthorizationServerHTTPResp) GetJSON200() *map[string]interface{
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthAuthorizationServerHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthAuthorizationServerHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -25251,6 +25341,8 @@ type McpOauthProtectedResourceRootAliasHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -25267,6 +25359,11 @@ func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON200() *map[string]int
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthProtectedResourceRootAliasHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthProtectedResourceRootAliasHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -25320,6 +25417,8 @@ type McpOauthProtectedResourceHTTPResp struct {
 	JSON200 *map[string]interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -25336,6 +25435,11 @@ func (r McpOauthProtectedResourceHTTPResp) GetJSON200() *map[string]interface{} 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r McpOauthProtectedResourceHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r McpOauthProtectedResourceHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -33907,11 +34011,11 @@ type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *RootHealthResponse
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetHealthHTTPResp) GetJSON200() *interface{} {
+func (r GetHealthHTTPResp) GetJSON200() *RootHealthResponse {
 	return r.JSON200
 }
 
@@ -34507,6 +34611,41 @@ func (r CancelJobHTTPResp) ContentType() string {
 type LoginPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LoginPageHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r LoginPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -34545,6 +34684,8 @@ type LoginSubmitHTTPResp struct {
 	JSON200 *interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34561,6 +34702,11 @@ func (r LoginSubmitHTTPResp) GetJSON200() *interface{} {
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
 func (r LoginSubmitHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LoginSubmitHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -35885,6 +36031,8 @@ type RegisterOauthClientEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *OAuthClientRegistrationResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -35894,6 +36042,11 @@ type RegisterOauthClientEndpointHTTPResp struct {
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
 func (r RegisterOauthClientEndpointHTTPResp) GetJSON201() *OAuthClientRegistrationResponse {
 	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RegisterOauthClientEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -36023,6 +36176,8 @@ type ApprovalDecisionEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
@@ -36038,6 +36193,11 @@ type ApprovalDecisionEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ApprovalDecisionEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApprovalDecisionEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -36099,6 +36259,8 @@ type ApprovalStatusEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthApprovalStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36110,6 +36272,11 @@ type ApprovalStatusEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ApprovalStatusEndpointHTTPResp) GetJSON200() *OAuthApprovalStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApprovalStatusEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36228,6 +36395,34 @@ func (r AuthorizeOauthCallbackHTTPResp) ContentType() string {
 type ConsentPageHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ConsentPageHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -36402,6 +36597,8 @@ type ConsentAgentStatusHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ConsentAgentStatusResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36413,6 +36610,11 @@ type ConsentAgentStatusHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ConsentAgentStatusHTTPResp) GetJSON200() *ConsentAgentStatusResponse {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConsentAgentStatusHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36547,10 +36749,18 @@ type RevokeEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *OAuthErrorResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -36562,14 +36772,34 @@ func (r RevokeEndpointHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
 }
 
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
+}
+
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON413() *OAuthErrorResponse {
+	return r.JSON413
+}
+
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
 func (r RevokeEndpointHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r RevokeEndpointHTTPResp) GetJSON429() *OAuthErrorResponse {
+	return r.JSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -36616,10 +36846,14 @@ type SessionContinueEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *OAuthSessionContinueResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *RouteNotFoundResponse
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -36633,6 +36867,11 @@ func (r SessionContinueEndpointHTTPResp) GetJSON200() *OAuthSessionContinueRespo
 	return r.JSON200
 }
 
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
@@ -36641,6 +36880,11 @@ func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON401() *Problem
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r SessionContinueEndpointHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SessionContinueEndpointHTTPResp) GetJSON404() *RouteNotFoundResponse {
+	return r.JSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -36692,6 +36936,10 @@ type TokenEndpointHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TokenResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OAuthErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OAuthErrorResponse
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationproblemJSON500 *ProblemDetail
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -36701,6 +36949,16 @@ type TokenEndpointHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r TokenEndpointHTTPResp) GetJSON200() *TokenResponse {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r TokenEndpointHTTPResp) GetJSON400() *OAuthErrorResponse {
+	return r.JSON400
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r TokenEndpointHTTPResp) GetJSON429() *OAuthErrorResponse {
+	return r.JSON429
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -40877,6 +41135,21 @@ func (c *ClientWithResponses) GetConnectSessionWithResponse(ctx context.Context,
 
 // PollConnectSessionStatusWithResponse Poll a connect session's status
 //
+// Poll the lifecycle status of a connect session.
+//
+// Returns the session's current “status“ and, once it has connected, the
+// resulting “credential_id“, the account it “connected_as“, and the
+// “bound_scopes“; a failed session carries an “error_code“. Agents and the
+// SPA poll this after “:connect“ until the status is terminal.
+//
+// Auth is intentionally lightweight: the caller must be authenticated with
+// “credentials:connect“ or “credentials:write“, but the real capability
+// that scopes the response is the session's “poll_token“ (or being the
+// target agent's owner / “org:admin“). An agent handed the token by
+// “:connect“ can poll without full session-read rights. A missing session,
+// a “poll_token“ mismatch, and a caller who is neither all answer a uniform
+// 403, so the endpoint is not a session-id enumeration oracle.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /connect-sessions/{session_id}/status (the `PollConnectSessionStatus` operationId).
@@ -43605,8 +43878,12 @@ func ParseMcpOauthAuthorizationServerHTTPResp(rsp *http.Response) (*McpOauthAuth
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -43662,8 +43939,12 @@ func ParseMcpOauthProtectedResourceRootAliasHTTPResp(rsp *http.Response) (*McpOa
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -43719,8 +44000,12 @@ func ParseMcpOauthProtectedResourceHTTPResp(rsp *http.Response) (*McpOauthProtec
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -50805,7 +51090,7 @@ func ParseGetHealthHTTPResp(rsp *http.Response) (*GetHealthHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest RootHealthResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -51284,6 +51569,44 @@ func ParseLoginPageHTTPResp(rsp *http.Response) (*LoginPageHTTPResp, error) {
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -51315,8 +51638,12 @@ func ParseLoginSubmitHTTPResp(rsp *http.Response) (*LoginSubmitHTTPResp, error) 
 		}
 		response.ApplicationproblemJSON400 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -52419,8 +52746,12 @@ func ParseRegisterOauthClientEndpointHTTPResp(rsp *http.Response) (*RegisterOaut
 		}
 		response.JSON201 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
@@ -52533,8 +52864,12 @@ func ParseApprovalDecisionEndpointHTTPResp(rsp *http.Response) (*ApprovalDecisio
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -52597,8 +52932,12 @@ func ParseApprovalStatusEndpointHTTPResp(rsp *http.Response) (*ApprovalStatusEnd
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -52691,6 +53030,37 @@ func ParseConsentPageHTTPResp(rsp *http.Response) (*ConsentPageHTTPResp, error) 
 	response := &ConsentPageHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	return response, nil
@@ -52825,8 +53195,12 @@ func ParseConsentAgentStatusHTTPResp(rsp *http.Response) (*ConsentAgentStatusHTT
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -52943,8 +53317,12 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -52953,11 +53331,19 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON401 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
-	case rsp.StatusCode == 413:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -52966,8 +53352,12 @@ func ParseRevokeEndpointHTTPResp(rsp *http.Response) (*RevokeEndpointHTTPResp, e
 		}
 		response.ApplicationproblemJSON422 = &dest
 
-	case rsp.StatusCode == 429:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail
@@ -53009,8 +53399,12 @@ func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueE
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest ProblemDetail
@@ -53026,8 +53420,12 @@ func ParseSessionContinueEndpointHTTPResp(rsp *http.Response) (*SessionContinueE
 		}
 		response.ApplicationproblemJSON403 = &dest
 
-	case rsp.StatusCode == 404:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest RouteNotFoundResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail
@@ -53076,11 +53474,19 @@ func ParseTokenEndpointHTTPResp(rsp *http.Response) (*TokenEndpointHTTPResp, err
 		}
 		response.JSON200 = &dest
 
-	case rsp.StatusCode == 400:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
-	case rsp.StatusCode == 429:
-		break // No content-type
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OAuthErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ProblemDetail

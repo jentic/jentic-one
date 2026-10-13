@@ -2004,6 +2004,7 @@ components:
           api:
             name: posthog-api
             vendor: posthog-com
+            version: '1.0'
           created_at: '2026-01-15T09:31:00Z'
           credential_id: cred_01HZXA...
           name: PostHog personal key
@@ -2012,7 +2013,7 @@ components:
         secret:
           token: phx_…
         warnings:
-        - 'API scope ''posthog-com/posthog-api/*'' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)'
+        - 'API scope ''posthog-com/posthog-api/1.0'' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)'
       properties:
         credential:
           $ref: '#/components/schemas/CredentialRedactedResponse'
@@ -3855,8 +3856,13 @@ components:
       description: Returned on creation — includes the one-time plaintext client secret.
       examples:
       - active: true
+        active_grant_count: 0
+        allowed_scopes:
+        - agents:read
+        - credentials:read
         approval_status: approved
         client_id: oc_abc123...
+        client_secret: <redacted>
         consent_model: user
         created_at: '2026-08-18T12:00:00Z'
         created_by: usr_abc123
@@ -3867,7 +3873,9 @@ components:
         - https://app.example.com/auth/callback
         registration_source: admin
         require_consent: true
+        software_id: com.example.my-app
         token_endpoint_auth_method: client_secret_basic
+        updated_at: '2026-08-18T12:00:00Z'
       properties:
         active:
           title: Active
@@ -4140,6 +4148,10 @@ components:
       description: An OAuth client in API responses.
       examples:
       - active: true
+        active_grant_count: 0
+        allowed_scopes:
+        - agents:read
+        - credentials:read
         approval_status: approved
         client_id: oc_abc123...
         consent_model: user
@@ -4152,7 +4164,9 @@ components:
         - https://app.example.com/auth/callback
         registration_source: admin
         require_consent: true
+        software_id: com.example.my-app
         token_endpoint_auth_method: client_secret_basic
+        updated_at: '2026-08-18T12:00:00Z'
       properties:
         active:
           title: Active
@@ -4349,6 +4363,31 @@ components:
       required:
       - confirmed_scopes
       title: OAuthConfirmSessionRequest
+      type: object
+    OAuthErrorResponse:
+      description: |-
+        OAuth 2.0 error response (RFC 6749 §5.2 dialect).
+
+        Spec-facing OAuth endpoints (token, RFC 7009 revocation, RFC 7591
+        registration) answer errors in this dialect rather than RFC 9457 Problem
+        Details, because real OAuth/MCP clients parse it.
+      examples:
+      - error: invalid_request
+        error_description: missing required parameter
+      properties:
+        error:
+          description: ASCII error code, e.g. `invalid_request`, `invalid_grant`, `invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.
+          title: Error
+          type: string
+        error_description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Human-readable explanation of the error.
+          title: Error Description
+      required:
+      - error
+      title: OAuthErrorResponse
       type: object
     OAuthGrantAdminListResponse:
       description: A paginated list of OAuth grants (admin cross-view).
@@ -5338,7 +5377,11 @@ components:
       - description: ''
         method: GET
         operation_id: listCharges
-        parameters: []
+        parameters:
+        - description: Page size.
+          in: query
+          name: limit
+          required: false
         path: /v1/charges
         security:
         - BearerAuth
@@ -5399,11 +5442,6 @@ components:
       type: object
     PreviewParameterResponse:
       description: A slimmed parameter in an operation preview.
-      examples:
-      - description: Page size.
-        in: query
-        name: limit
-        required: false
       properties:
         description:
           description: Parameter description (empty string when absent).
@@ -5570,10 +5608,11 @@ components:
         ``client_secret`` (write-only), and optional ``environment``,
         ``connect_base_url``, ``expiry_skew_seconds``.
       examples:
-      - client_id: client_abc123
-        client_secret: <redacted>
-        environment: production
-        project_id: proj_abc123
+      - config:
+          client_id: client_abc123
+          client_secret: <redacted>
+          environment: production
+          project_id: proj_abc123
       properties:
         config:
           additionalProperties: true
@@ -5834,6 +5873,49 @@ components:
       required:
       - token
       title: RevokeRequest
+      type: object
+    RootHealthResponse:
+      description: Liveness body of the canonical root ``GET /health`` probe.
+      examples:
+      - status: ok
+        version: 1.0.0
+      properties:
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Why the deployment is not entitled. Present only on the `not_entitled` body.
+          title: Reason
+        status:
+          description: '`ok` while the process is serving requests. A metered marketplace deployment whose entitlement lapsed answers `not_entitled` (still HTTP 200, so orchestrators don''t restart it).'
+          title: Status
+          type: string
+        version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Running Jentic One release. Absent on the `not_entitled` body.
+          title: Version
+      required:
+      - status
+      title: RootHealthResponse
+      type: object
+    RouteNotFoundResponse:
+      description: |-
+        The framework's plain route-not-found body.
+
+        Config-gated routes answer this exact body when their gate is closed, so the
+        gate state is indistinguishable from a route that does not exist.
+      examples:
+      - detail: Not Found
+      properties:
+        detail:
+          description: Always `Not Found`.
+          title: Detail
+          type: string
+      required:
+      - detail
+      title: RouteNotFoundResponse
       type: object
     RuleSetAttachRequest:
       description: Point a direct agent↔credential binding at a shared rule set.
@@ -7108,6 +7190,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
@@ -7175,6 +7263,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
@@ -7227,6 +7321,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
@@ -13176,7 +13276,7 @@ paths:
         schema:
           title: Session Id
           type: string
-      - description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+      - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         in: query
         name: poll_token
         required: false
@@ -13184,7 +13284,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+          description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
           title: Poll Token
       responses:
         '200':
@@ -13248,6 +13348,21 @@ paths:
       - Integrations
   /connect-sessions/{session_id}/status:
     get:
+      description: |-
+        Poll the lifecycle status of a connect session.
+
+        Returns the session's current ``status`` and, once it has connected, the
+        resulting ``credential_id``, the account it ``connected_as``, and the
+        ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+        SPA poll this after ``:connect`` until the status is terminal.
+
+        Auth is intentionally lightweight: the caller must be authenticated with
+        ``credentials:connect`` or ``credentials:write``, but the real capability
+        that scopes the response is the session's ``poll_token`` (or being the
+        target agent's owner / ``org:admin``). An agent handed the token by
+        ``:connect`` can poll without full session-read rights. A missing session,
+        a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+        403, so the endpoint is not a session-id enumeration oracle.
       operationId: pollConnectSessionStatus
       parameters:
       - in: path
@@ -13256,7 +13371,7 @@ paths:
         schema:
           title: Session Id
           type: string
-      - description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+      - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         in: query
         name: poll_token
         required: false
@@ -13264,7 +13379,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+          description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
           title: Poll Token
       responses:
         '200':
@@ -13343,7 +13458,7 @@ paths:
         schema:
           title: Session Id
           type: string
-      - description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+      - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         in: query
         name: poll_token
         required: false
@@ -13351,7 +13466,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+          description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
           title: Poll Token
       responses:
         '204':
@@ -13428,7 +13543,7 @@ paths:
         schema:
           title: Session Id
           type: string
-      - description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+      - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         in: query
         name: poll_token
         required: false
@@ -13436,7 +13551,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin
+          description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
           title: Poll Token
       requestBody:
         content:
@@ -15579,7 +15694,8 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/RootHealthResponse'
           description: Successful Response
       security: []
       summary: Health
@@ -16144,17 +16260,21 @@ paths:
           content:
             application/problem+json:
               example: *id001
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
             application/problem+json:
               example: *id002
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unprocessable Entity
@@ -16162,7 +16282,6 @@ paths:
           content:
             application/problem+json:
               example: *id003
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Internal Server Error
@@ -16170,7 +16289,6 @@ paths:
           content:
             application/problem+json:
               example: *id004
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
@@ -16215,6 +16333,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
@@ -17505,6 +17629,13 @@ paths:
                 $ref: '#/components/schemas/OAuthClientRegistrationResponse'
           description: Successful Response
         '400':
+          content:
+            application/json:
+              example:
+                error: invalid_client_metadata
+                error_description: 'redirect_uris: at least one redirect URI is required'
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: 'Invalid client metadata (RFC 7591 §3.2.2): `{"error": "invalid_client_metadata", "error_description": "..."}`.'
         '500':
           content:
@@ -17627,6 +17758,11 @@ paths:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
         '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired approval-state blob.
         '401':
           content:
@@ -17697,6 +17833,11 @@ paths:
                 $ref: '#/components/schemas/OAuthApprovalStatusResponse'
           description: Successful Response
         '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired approval-state blob.
         '422':
           content:
@@ -17802,7 +17943,6 @@ paths:
           content:
             application/problem+json:
               example: *id001
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Bad Request
@@ -17810,7 +17950,6 @@ paths:
           content:
             application/problem+json:
               example: *id002
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unprocessable Entity
@@ -17818,7 +17957,6 @@ paths:
           content:
             application/problem+json:
               example: *id003
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Internal Server Error
@@ -17826,7 +17964,6 @@ paths:
           content:
             application/problem+json:
               example: *id004
-            text/html:
               schema:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
@@ -18007,6 +18144,11 @@ paths:
                 $ref: '#/components/schemas/ConsentAgentStatusResponse'
           description: Successful Response
         '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, or expired agent-status blob.
         '422':
           content:
@@ -18185,6 +18327,13 @@ paths:
               schema: {}
           description: Successful Response
         '400':
+          content:
+            application/json:
+              example:
+                error: invalid_request
+                error_description: missing required parameter
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: 'Form-encoded (RFC 7009) requests only: missing `token` (RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): `{"error": "invalid_request", "error_description": "..."}`.'
         '401':
           content:
@@ -18194,8 +18343,21 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unauthorized
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`), so the RFC 7009 arm answers the framework''s plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated.'
         '413':
+          content:
+            application/json:
+              example:
+                error: invalid_request
+                error_description: request body too large
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: 'Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect).'
         '422':
           content:
@@ -18205,6 +18367,13 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Unprocessable Entity
         '429':
+          content:
+            application/json:
+              example:
+                error: slow_down
+                error_description: rate limit exceeded, retry later
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: 'Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).'
         '500':
           content:
@@ -18261,6 +18430,11 @@ paths:
                 $ref: '#/components/schemas/OAuthSessionContinueResponse'
           description: Successful Response
         '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
           description: Malformed, tampered, expired, or otherwise unusable authorize state — one generic rejection, never a reason.
         '401':
           content:
@@ -18277,6 +18451,12 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Forbidden
         '404':
+          content:
+            application/json:
+              example:
+                detail: Not Found
+              schema:
+                $ref: '#/components/schemas/RouteNotFoundResponse'
           description: 'Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework''s plain route-not-found 404, so the gate state is unobservable.'
         '422':
           content:
@@ -18427,8 +18607,22 @@ paths:
                 $ref: '#/components/schemas/TokenResponse'
           description: Successful Response
         '400':
+          content:
+            application/json:
+              example:
+                error: invalid_request
+                error_description: missing required parameter
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: 'RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): `{"error": "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type", "error_description": "..."}`. `invalid_request` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as `invalid_grant` with `error_description: "consent grant has been revoked"` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (`Authorization` header, RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status 401 and a `WWW-Authenticate: Basic` challenge, per §5.2.'
         '429':
+          content:
+            application/json:
+              example:
+                error: slow_down
+                error_description: rate limit exceeded, retry later
+              schema:
+                $ref: '#/components/schemas/OAuthErrorResponse'
           description: Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5).
         '500':
           content:

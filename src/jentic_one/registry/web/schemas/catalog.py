@@ -160,14 +160,10 @@ class CatalogRefreshResponse(BaseModel):
 class PreviewParameterResponse(BaseModel):
     """A slimmed parameter in an operation preview."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        json_schema_extra={
-            "examples": [
-                {"name": "limit", "in": "query", "required": False, "description": "Page size."}
-            ]
-        },
-    )
+    # No class-level ``examples``: a ``{name, in, ...}`` example here is
+    # misread by OpenAPI linters as a Parameter/Example Object. The parent
+    # ``PreviewOperationResponse`` example already shows this shape.
+    model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(description="Parameter name.")
     location: str = Field(serialization_alias="in", description="OpenAPI parameter location.")
@@ -187,7 +183,14 @@ class PreviewOperationResponse(BaseModel):
                     "summary": "List charges",
                     "description": "",
                     "operation_id": "listCharges",
-                    "parameters": [],
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "required": False,
+                            "description": "Page size.",
+                        }
+                    ],
                     "security": ["BearerAuth"],
                     "tags": ["charges"],
                 }

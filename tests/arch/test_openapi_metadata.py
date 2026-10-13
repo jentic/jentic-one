@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import jsonschema
 import pytest
 
 from jentic_one.shared.web.openapi_meta import OPENAPI_TAGS
@@ -118,4 +119,106 @@ def test_business_operations_document_error_envelope(
             + "\n\nFix: include the router with "
             "`responses=COMMON_ERROR_RESPONSES` (or merge via with_responses(...)) "
             f"from openapi_responses.py. {_GUIDE_HINT}"
+        )
+
+
+def _is_error_code(code: str) -> bool:
+    return code.startswith(("4", "5"))
+
+
+@pytest.mark.arch
+def test_every_operation_has_description(generated_control_spec: dict[str, Any]) -> None:
+    """Every operation must carry a non-empty ``description`` (the handler docstring)."""
+    violations = [
+        f"{method} {path}"
+        for method, path, op in _operations(generated_control_spec)
+        if not (op.get("description") or "").strip()
+    ]
+    if violations:
+        pytest.fail(
+            "Operations missing a description:\n"
+            + "\n".join(violations)
+            + f"\n\nFix: give the handler a docstring explaining what it does and returns. "
+            f"{_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_error_responses_document_a_body(generated_control_spec: dict[str, Any]) -> None:
+    """Every 4xx/5xx response must declare content with a schema.
+
+    A description-only error response tells a client nothing about the body it
+    will parse. Problem Details routes get this from ``model=ProblemDetail``;
+    other dialects use ``oauth_error()`` / ``route_not_found()`` from
+    ``openapi_responses.py``.
+    """
+    violations: list[str] = []
+    for method, path, op in _operations(generated_control_spec):
+        for code, response in (op.get("responses") or {}).items():
+            if not _is_error_code(code):
+                continue
+            content = response.get("content") or {}
+            if not content:
+                violations.append(f"{method} {path} {code} -> no content")
+                continue
+            for media_type, media in content.items():
+                if not (media or {}).get("schema"):
+                    violations.append(f"{method} {path} {code} {media_type} -> no schema")
+    if violations:
+        pytest.fail(
+            "Error responses without a documented body:\n"
+            + "\n".join(violations)
+            + "\n\nFix: declare model=ProblemDetail (or use problem()/oauth_error()/"
+            f"route_not_found() from openapi_responses.py). {_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_error_responses_are_not_html(generated_control_spec: dict[str, Any]) -> None:
+    """Error bodies are JSON, even on HTML-page routes (``response_class=HTMLResponse``)."""
+    violations = [
+        f"{method} {path} {code}"
+        for method, path, op in _operations(generated_control_spec)
+        for code, response in (op.get("responses") or {}).items()
+        if _is_error_code(code) and "text/html" in (response.get("content") or {})
+    ]
+    if violations:
+        pytest.fail(
+            "Error responses documented as text/html:\n"
+            + "\n".join(violations)
+            + "\n\nFix: _normalise_error_responses in openapi_meta.py should fold these "
+            f"into a JSON media type. {_GUIDE_HINT}"
+        )
+
+
+@pytest.mark.arch
+def test_component_schema_examples_validate(generated_control_spec: dict[str, Any]) -> None:
+    """Every ``components.schemas.*.examples`` entry must validate against its schema.
+
+    A common trap: FastAPI's OpenAPI encoder drops ``None`` values from
+    ``json_schema_extra`` examples, so a required-but-nullable field set to
+    ``None`` silently disappears and the example no longer validates. Use a
+    non-null example value for those fields.
+    """
+    components = generated_control_spec.get("components") or {}
+    schemas: dict[str, Any] = components.get("schemas") or {}
+    violations: list[str] = []
+    for name, schema in schemas.items():
+        examples = schema.get("examples") or []
+        if not examples:
+            continue
+        # Resolve ``#/components/schemas/...`` refs against the document itself.
+        subject = {key: value for key, value in schema.items() if key != "examples"}
+        subject["components"] = {"schemas": schemas}
+        validator = jsonschema.Draft202012Validator(subject)
+        for index, example in enumerate(examples):
+            for error in validator.iter_errors(example):
+                location = "/".join(str(p) for p in error.absolute_path) or "<root>"
+                violations.append(f"{name}.examples[{index}] at {location}: {error.message}")
+    if violations:
+        pytest.fail(
+            "Component schema examples that fail their own schema:\n"
+            + "\n".join(violations)
+            + "\n\nFix: correct the model's json_schema_extra examples (and avoid None for "
+            f"required-but-nullable fields). {_GUIDE_HINT}"
         )

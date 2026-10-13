@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
@@ -41,6 +41,7 @@ from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.errors import request_validation_error_handler
+from jentic_one.shared.web.health import RootHealthResponse
 from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -669,14 +670,17 @@ def create_combined_app(
         operation_id="getHealth",
         summary="Health",
         tags=["System"],
+        # Keep the wire body exactly ``{"status", "version"}`` — the
+        # lockout-only ``reason`` member is never emitted as null.
+        response_model_exclude_none=True,
     )
-    async def health() -> JSONResponse:
+    async def health() -> RootHealthResponse:
         """Liveness probe for the combined control-plane app.
 
         Unauthenticated and dependency-free so orchestrators and load balancers
         have a stable target. Returns ``{"status": "ok"}`` when the process is up.
         """
-        return JSONResponse({"status": "ok", "version": __version__})
+        return RootHealthResponse(status="ok", version=__version__)
 
     # Public, schema-hidden agent-discovery documents: the skill set
     # (GET /skills/{name}.md, the GET /SKILL.md alias, GET /skills/index.json)

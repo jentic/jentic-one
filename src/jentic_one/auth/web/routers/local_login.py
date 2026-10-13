@@ -101,6 +101,7 @@ from jentic_one.shared.models import ActorType
 from jentic_one.shared.resilience import RateLimiter
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.openapi_responses import problem, route_not_found
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 logger = structlog.get_logger(__name__)
@@ -153,12 +154,12 @@ class _LocalLoginRoute(APIRoute):
 router = APIRouter(route_class=_LocalLoginRoute)
 
 _GATED_404_RESPONSE: dict[int | str, dict[str, Any]] = {
-    404: {
-        "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, "
+    404: route_not_found(
+        "Local-account login is unavailable (`auth.local_login.enabled=false`, "
         "or an external IdP is configured — `auth.idp.enabled=true` — which always wins): "
         "the route answers the framework's plain route-not-found 404, so the gate state "
         "is unobservable."
-    }
+    )
 }
 
 # Static page structure only — every dynamic value is HTML-escaped before it
@@ -630,10 +631,10 @@ async def check_session_continue_rate_limit(
     summary="Exchange a live platform session for an authorize continuation",
     responses={
         **_GATED_404_RESPONSE,
-        400: {
-            "description": "Malformed, tampered, expired, or otherwise unusable "
+        400: problem(
+            "Malformed, tampered, expired, or otherwise unusable "
             "authorize state — one generic rejection, never a reason."
-        },
+        ),
     },
     dependencies=[Depends(check_session_continue_rate_limit)],
 )
