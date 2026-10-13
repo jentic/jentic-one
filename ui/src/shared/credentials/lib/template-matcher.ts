@@ -1,7 +1,8 @@
 // Template-aware rule matcher for the UI's operation-impact preview.
 //
-// The backend enforce path (``broker/repos/rule_evaluator.py``) sees the
-// CONCRETE request path (e.g. ``/repos/octocat/hello-world``) — its
+// The backend enforce path (``broker/repos/agent_rule_evaluator.py``) sees the
+// CONCRETE request path relative to the API's server URL (e.g.
+// ``/repos/octocat/hello-world`` — never the server's base path) — its
 // matcher is a plain string comparison via ``shared/permissions/matching.py``
 // and doesn't need any template awareness.
 //

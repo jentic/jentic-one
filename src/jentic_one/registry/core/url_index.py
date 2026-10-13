@@ -9,7 +9,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
+
+from jentic_one.shared.url_path import normalize_path as normalize_path
 
 SCHEME_DEFAULT_PORTS: dict[str, int] = {
     "http": 80,
@@ -18,8 +20,6 @@ SCHEME_DEFAULT_PORTS: dict[str, int] = {
 }
 
 PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
-PERCENT_ENCODED_RE = re.compile(r"%[0-9A-Fa-f]{2}")
-UNRESERVED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 # RFC 6570 expression operators. These are single-character prefixes on the
 # expression (e.g. ``{+var}``, ``{#var}``), never part of the variable name, so
@@ -62,47 +62,6 @@ from the defaults-expanded server URL; ``URLLookupService`` re-derives the
 values of such a row from the operation's stored servers instead. The comment
 is zero-width, so it never changes what a regex matches.
 """
-
-
-def _normalize_percent_encoding(path: str) -> str:
-    """Normalize percent-encoding: decode unreserved chars, uppercase remaining."""
-
-    def _replace(match: re.Match[str]) -> str:
-        encoded = match.group(0)
-        char = chr(int(encoded[1:], 16))
-        if char in UNRESERVED_CHARS:
-            return char
-        return encoded.upper()
-
-    return PERCENT_ENCODED_RE.sub(_replace, path)
-
-
-def _resolve_dot_segments(path: str) -> str:
-    """Resolve . and .. segments in a path per RFC 3986."""
-    segments = path.split("/")
-    output: list[str] = []
-    for segment in segments:
-        if segment == ".":
-            continue
-        elif segment == "..":
-            if output:
-                output.pop()
-        else:
-            output.append(segment)
-    resolved = "/".join(output)
-    if path.startswith("/") and not resolved.startswith("/"):
-        resolved = "/" + resolved
-    return resolved
-
-
-def normalize_path(path: str) -> str:
-    """Normalize a URL path: decode, resolve dots, normalize encoding."""
-    decoded = unquote(path)
-    resolved = _resolve_dot_segments(decoded)
-    normalized = _normalize_percent_encoding(resolved)
-    if normalized and not normalized.startswith("/"):
-        normalized = "/" + normalized
-    return normalized.rstrip("/") or "/"
 
 
 def normalize_path_template(template: str) -> str:
@@ -312,6 +271,35 @@ def build_path_regex(path_template: str) -> re.Pattern[str]:
             matcher = ".+" if is_catch_all else "[^/]+"
             regex_parts.append(f"(?P<{safe_name}>{matcher})")
     return re.compile("^" + "".join(regex_parts) + "$")
+
+
+def expand_path_template(path_template: str, path_params: Mapping[str, str]) -> str | None:
+    """Rebuild the concrete, server-relative request path an operation matched.
+
+    ``path_params`` are the groups a URL-index row captured (keyed by the
+    regex-safe names :func:`build_path_regex` gives them), so substituting them
+    into the normalized template reproduces exactly the operation part of the
+    normalized request path — the server base path (``/v3``, ``/{region}``) is
+    not part of the template and so never part of the result. This is the path
+    binding permission rules are authored and enforced against (#1424).
+
+    Returns ``None`` when a template token has no captured value (e.g. a row
+    whose groups could not be recovered), so the caller can fall back
+    explicitly instead of matching a half-substituted path.
+    """
+    normalized = normalize_path_template(path_template)
+    parts = PATH_PARAM_RE.split(normalized)
+    out: list[str] = []
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            out.append(part)
+            continue
+        name, _is_catch_all = _split_param_token(part)
+        value = path_params.get(_safe_param_name(name))
+        if value is None:
+            return None
+        out.append(value)
+    return "".join(out) or "/"
 
 
 def structural_regex(path_template: str) -> str:

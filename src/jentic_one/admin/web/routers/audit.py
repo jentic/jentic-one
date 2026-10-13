@@ -55,7 +55,11 @@ async def list_audit_entries(
     cursor: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> AuditListResponse:
-    """List audit entries with optional filters."""
+    """List audit entries with optional filters.
+
+    Scoped to the caller: their own entries plus those made by agents they own.
+    Org admins see every entry.
+    """
     page = await audit_svc.list_all(
         filter=AuditFilter(
             target_type=target_type,
@@ -65,6 +69,7 @@ async def list_audit_entries(
             since=since,
             until=until,
         ),
+        identity=identity,
         cursor=cursor,
         limit=limit,
     )
@@ -82,5 +87,5 @@ async def get_audit_entry(
     audit_svc: AuditService = Depends(get_audit_service),
 ) -> AuditResponse:
     """Get a single audit entry by ID."""
-    view = await audit_svc.get_by_id(audit_id)
+    view = await audit_svc.get_by_id(audit_id, identity=identity)
     return _audit_response(view)

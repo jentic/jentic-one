@@ -35,7 +35,10 @@ class BasePermissionRuleSchema(BaseModel):
     path: str | None = Field(
         default=None,
         description=(
-            "Path pattern to match. Interpreted per `match_mode`: `regex` uses "
+            "Path pattern to match, relative to the API's server URL — the "
+            "spec's path (`/widgets`), never the full upstream path with the "
+            "server's base path (`/eu/widgets` for a server `https://host/{region}`). "
+            "Interpreted per `match_mode`: `regex` uses "
             "full-match semantics (the pattern must describe the whole path); "
             "`prefix` and `exact` are literal. None matches all paths."
         ),
@@ -127,7 +130,11 @@ class PermissionTestRequest(BaseModel):
         description="HTTP method of the hypothetical request (case-insensitive).",
     )
     path: str = Field(
-        description="Path of the hypothetical request as the broker would see it.",
+        description=(
+            "Path of the hypothetical request relative to the API's server URL "
+            "(the spec's path, e.g. `/widgets/42`) — the path the broker "
+            "evaluates rules on."
+        ),
     )
     operation_id: str | None = Field(
         default=None,
