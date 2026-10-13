@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import ActorDirectoryRepository
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
@@ -25,7 +26,16 @@ class ActorService:
         self,
         cursor: str | None = None,
         limit: int = 1000,
+        *,
+        identity: Identity,
     ) -> Page[ActorView]:
+        """List the actor directory, scoped to the caller.
+
+        Unlike :meth:`lookup`, this enumerates, so both arms are scoped: users
+        by ``build_access_filters(identity, User)`` (a non-admin lists only
+        themselves) and agents by ``build_access_filters(identity, Agent)``.
+        ``org:admin`` lists everyone.
+        """
         cursor_dt = None
         cursor_id: str | None = None
         if cursor is not None:
@@ -33,7 +43,12 @@ class ActorService:
 
         async with self._ctx.admin_db.session() as session:
             rows = await ActorDirectoryRepository.list_all(
-                session, limit=limit + 1, cursor_ts=cursor_dt, cursor_id=cursor_id
+                session,
+                limit=limit + 1,
+                cursor_ts=cursor_dt,
+                cursor_id=cursor_id,
+                agent_filters=build_access_filters(identity, Agent),
+                user_filters=build_access_filters(identity, User),
             )
 
         has_more = len(rows) > limit

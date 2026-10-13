@@ -5312,7 +5312,12 @@ type ClientInterface interface {
 
 	// ListActors List Actors
 	//
-	// List all actors (users and agents) for UI cache hydration.
+	// List actors (users and agents) for UI cache hydration.
+	//
+	// Scoped to the caller: org admins list everyone. Anyone else lists only
+	// themselves and the agents they may see (their own agents, or with
+	// ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
+	// to label other ids.
 	//
 	// Corresponds with GET /actors (the `ListActors` operationId).
 	ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5514,6 +5519,9 @@ type ClientInterface interface {
 	// and redirect-URI origin plus the consenting ``user_id`` — after an agent
 	// ownership transfer the grant stays with the original consenter, so this
 	// column is how an admin spots stranded grants.
+	//
+	// Scoped to the caller: org admins see every grant. Anyone else sees grants
+	// they consented to and grants bound to agents they own.
 	//
 	// Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
 	ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7757,7 +7765,9 @@ type ClientInterface interface {
 
 	// ListUsers List Users
 	//
-	// List all users with cursor-based pagination.
+	// List users with cursor-based pagination.
+	//
+	// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 	//
 	// Corresponds with GET /users (the `ListUsers` operationId).
 	ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7828,6 +7838,9 @@ type ClientInterface interface {
 	// GetUser Get User
 	//
 	// Get a user by ID.
+	//
+	// Scoped to the caller: org admins can read any user; anyone else only themselves.
+	// Any other user answers 404.
 	//
 	// Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 	GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8075,7 +8088,12 @@ func (c *Client) McpOauthProtectedResource(ctx context.Context, reqEditors ...Re
 
 // ListActors List Actors
 //
-// List all actors (users and agents) for UI cache hydration.
+// List actors (users and agents) for UI cache hydration.
+//
+// Scoped to the caller: org admins list everyone. Anyone else lists only
+// themselves and the agents they may see (their own agents, or with
+// “owner:agents:read“ their owner's agents). Use “GET /actors/lookup“
+// to label other ids.
 //
 // Corresponds with GET /actors (the `ListActors` operationId).
 func (c *Client) ListActors(ctx context.Context, params *ListActorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8467,6 +8485,9 @@ func (c *Client) DenyOauthClient(ctx context.Context, id string, body DenyOauthC
 // and redirect-URI origin plus the consenting “user_id“ — after an agent
 // ownership transfer the grant stays with the original consenter, so this
 // column is how an admin spots stranded grants.
+//
+// Scoped to the caller: org admins see every grant. Anyone else sees grants
+// they consented to and grants bound to agents they own.
 //
 // Corresponds with GET /admin/oauth-grants (the `ListOauthGrants` operationId).
 func (c *Client) ListOauthGrants(ctx context.Context, params *ListOauthGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12570,7 +12591,9 @@ func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 // ListUsers List Users
 //
-// List all users with cursor-based pagination.
+// List users with cursor-based pagination.
+//
+// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 //
 // Corresponds with GET /users (the `ListUsers` operationId).
 func (c *Client) ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -12711,6 +12734,9 @@ func (c *Client) DeleteUser(ctx context.Context, userId string, reqEditors ...Re
 // GetUser Get User
 //
 // Get a user by ID.
+//
+// Scoped to the caller: org admins can read any user; anyone else only themselves.
+// Any other user answers 404.
 //
 // Corresponds with GET /users/{user_id} (the `GetUser` operationId).
 func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -22118,7 +22144,12 @@ type ClientWithResponsesInterface interface {
 
 	// ListActorsWithResponse List Actors
 	//
-	// List all actors (users and agents) for UI cache hydration.
+	// List actors (users and agents) for UI cache hydration.
+	//
+	// Scoped to the caller: org admins list everyone. Anyone else lists only
+	// themselves and the agents they may see (their own agents, or with
+	// ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
+	// to label other ids.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -22342,6 +22373,9 @@ type ClientWithResponsesInterface interface {
 	// and redirect-URI origin plus the consenting ``user_id`` — after an agent
 	// ownership transfer the grant stays with the original consenter, so this
 	// column is how an admin spots stranded grants.
+	//
+	// Scoped to the caller: org admins see every grant. Anyone else sees grants
+	// they consented to and grants bound to agents they own.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -24779,7 +24813,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsersWithResponse List Users
 	//
-	// List all users with cursor-based pagination.
+	// List users with cursor-based pagination.
+	//
+	// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -24856,6 +24892,9 @@ type ClientWithResponsesInterface interface {
 	// GetUserWithResponse Get User
 	//
 	// Get a user by ID.
+	//
+	// Scoped to the caller: org admins can read any user; anyone else only themselves.
+	// Any other user answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -38256,6 +38295,8 @@ type GetUserHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -38282,6 +38323,11 @@ func (r GetUserHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetUserHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetUserHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -39175,7 +39221,12 @@ func (c *ClientWithResponses) McpOauthProtectedResourceWithResponse(ctx context.
 
 // ListActorsWithResponse List Actors
 //
-// List all actors (users and agents) for UI cache hydration.
+// List actors (users and agents) for UI cache hydration.
+//
+// Scoped to the caller: org admins list everyone. Anyone else lists only
+// themselves and the agents they may see (their own agents, or with
+// “owner:agents:read“ their owner's agents). Use “GET /actors/lookup“
+// to label other ids.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -39513,6 +39564,9 @@ func (c *ClientWithResponses) DenyOauthClientWithResponse(ctx context.Context, i
 // and redirect-URI origin plus the consenting “user_id“ — after an agent
 // ownership transfer the grant stays with the original consenter, so this
 // column is how an admin spots stranded grants.
+//
+// Scoped to the caller: org admins see every grant. Anyone else sees grants
+// they consented to and grants bound to agents they own.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -43066,7 +43120,9 @@ func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEdi
 
 // ListUsersWithResponse List Users
 //
-// List all users with cursor-based pagination.
+// List users with cursor-based pagination.
+//
+// Scoped to the caller: org admins see every user; anyone else sees only themselves.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -43185,6 +43241,9 @@ func (c *ClientWithResponses) DeleteUserWithResponse(ctx context.Context, userId
 // GetUserWithResponse Get User
 //
 // Get a user by ID.
+//
+// Scoped to the caller: org admins can read any user; anyone else only themselves.
+// Any other user answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -54346,6 +54405,13 @@ func ParseGetUserHTTPResp(rsp *http.Response) (*GetUserHTTPResp, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

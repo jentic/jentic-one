@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from jentic_one.admin.core.permissions import IMPLICATION_MAP, compute_effective
+from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import (
     AuditRepository,
     ExternalIdentityRepository,
@@ -11,6 +14,7 @@ from jentic_one.admin.repos import (
     UserRepository,
     UserSecretRepository,
 )
+from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.admin.services._support.pagination import Page, decode_cursor, encode_cursor
 from jentic_one.admin.services._support.user_management import (
     ensure_can_change_email,
@@ -98,7 +102,13 @@ class UserService:
         cursor: str | None = None,
         limit: int = 50,
         invite_state: InviteState | None = None,
+        *,
+        identity: Identity,
     ) -> Page[UserView]:
+        """List users, scoped to the caller (``build_access_filters`` on ``User``).
+
+        ``org:admin`` sees every user; anyone else sees only themselves.
+        """
         # NOTE: the `invite_state` filter matches the STORED column, so it can't
         # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
         # returns nothing and `PENDING` may return rows that render as expired.
@@ -108,9 +118,14 @@ class UserService:
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)
 
+        access_filters = build_access_filters(identity, User)
         async with self._ctx.admin_db.session() as session:
             users = await UserRepository.list_all(
-                session, limit=limit + 1, cursor=cursor_dt, invite_state=invite_state
+                session,
+                limit=limit + 1,
+                cursor=cursor_dt,
+                invite_state=invite_state,
+                filters=access_filters,
             )
 
         has_more = len(users) > limit
@@ -213,9 +228,18 @@ class UserService:
             user=user_view, invite_token=invite.token, invite_expires_at=invite.expires_at
         )
 
+    async def get(self, user_id: str, *, identity: Identity) -> UserView:
+        """Read one user, scoped to the caller; out-of-scope reads as not found (404)."""
+        return await self._load_view(user_id, filters=build_access_filters(identity, User))
+
     async def get_by_id(self, user_id: str) -> UserView:
+        """Unscoped read for trusted callers: self-lookups and post-write re-reads."""
+        return await self._load_view(user_id, filters=None)
+
+    async def _load_view(self, user_id: str, *, filters: list[Any] | None) -> UserView:
+        """``filters`` comes from ``build_access_filters``; ``None`` means unscoped."""
         async with self._ctx.admin_db.session() as session:
-            user = await UserRepository.get_by_id(session, user_id)
+            user = await UserRepository.get_by_id(session, user_id, filters=filters)
             if user is None:
                 raise UserNotFoundError(user_id)
             # Derive EXPIRED at read time (see list_all): a pending user with no
