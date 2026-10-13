@@ -8157,14 +8157,7 @@
             "description": "",
             "method": "GET",
             "operation_id": "listCharges",
-            "parameters": [
-              {
-                "description": "Page size.",
-                "in": "query",
-                "name": "limit",
-                "required": false
-              }
-            ],
+            "parameters": [],
             "path": "/v1/charges",
             "security": [
               "BearerAuth"
@@ -8248,6 +8241,12 @@
       },
       "PreviewParameterResponse": {
         "description": "A slimmed parameter in an operation preview.",
+        "example": {
+          "description": "Page size.",
+          "in": "query",
+          "name": "limit",
+          "required": false
+        },
         "properties": {
           "description": {
             "description": "Parameter description (empty string when absent).",

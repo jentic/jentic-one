@@ -160,10 +160,23 @@ class CatalogRefreshResponse(BaseModel):
 class PreviewParameterResponse(BaseModel):
     """A slimmed parameter in an operation preview."""
 
-    # No class-level ``examples``: a ``{name, in, ...}`` example here is
-    # misread by OpenAPI linters as a Parameter/Example Object. The parent
-    # ``PreviewOperationResponse`` example already shows this shape.
-    model_config = ConfigDict(populate_by_name=True)
+    # Its ``{name, in, ...}`` shape makes OpenAPI linters treat it as a
+    # Parameter Object: a plural ``examples`` array is then misread as Example
+    # Objects (``oas3-examples-value-or-externalValue``), while no example at
+    # all trips ``params-must-include-examples``. The singular ``example``
+    # keyword satisfies both. The parent ``PreviewOperationResponse`` example
+    # keeps ``parameters`` empty for the same reason.
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "name": "limit",
+                "in": "query",
+                "required": False,
+                "description": "Page size.",
+            }
+        },
+    )
 
     name: str = Field(description="Parameter name.")
     location: str = Field(serialization_alias="in", description="OpenAPI parameter location.")
@@ -183,14 +196,7 @@ class PreviewOperationResponse(BaseModel):
                     "summary": "List charges",
                     "description": "",
                     "operation_id": "listCharges",
-                    "parameters": [
-                        {
-                            "name": "limit",
-                            "in": "query",
-                            "required": False,
-                            "description": "Page size.",
-                        }
-                    ],
+                    "parameters": [],
                     "security": ["BearerAuth"],
                     "tags": ["charges"],
                 }

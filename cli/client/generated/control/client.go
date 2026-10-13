@@ -3064,7 +3064,7 @@ type PreviewInfoResponse struct {
 
 // PreviewOperationResponse A slimmed operation in a catalog spec preview.
 //
-// Examples: {"description":"","method":"GET","operation_id":"listCharges","parameters":[{"description":"Page size.","in":"query","name":"limit","required":false}],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}
+// Examples: {"description":"","method":"GET","operation_id":"listCharges","parameters":[],"path":"/v1/charges","security":["BearerAuth"],"summary":"List charges","tags":["charges"]}
 type PreviewOperationResponse struct {
 	// Description Operation description (empty string when absent).
 	Description string `json:"description"`

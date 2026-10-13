@@ -204,11 +204,15 @@ def test_component_schema_examples_validate(generated_control_spec: dict[str, An
     schemas: dict[str, Any] = components.get("schemas") or {}
     violations: list[str] = []
     for name, schema in schemas.items():
-        examples = schema.get("examples") or []
+        examples = list(schema.get("examples") or [])
+        if "example" in schema:
+            examples.append(schema["example"])
         if not examples:
             continue
         # Resolve ``#/components/schemas/...`` refs against the document itself.
-        subject = {key: value for key, value in schema.items() if key != "examples"}
+        subject = {
+            key: value for key, value in schema.items() if key not in ("examples", "example")
+        }
         subject["components"] = {"schemas": schemas}
         validator = jsonschema.Draft202012Validator(subject)
         for index, example in enumerate(examples):
