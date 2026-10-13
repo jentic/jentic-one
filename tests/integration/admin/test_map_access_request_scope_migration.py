@@ -49,6 +49,8 @@ _USER = "usr_arscope_owner"
 _OLD_AGENT = "agnt_arscope_old"
 _HOLDING_AGENT = "agnt_arscope_holding"
 _NEW_AGENT = "agnt_arscope_new"
+_REVOKED_AGENT = "agnt_arscope_revoked"
+_LEGACY_REVOKED_AGENT = "agnt_arscope_legacy_revoked"
 
 #: The v0.39 agent baseline a DCR client registered then stores as its ceiling
 #: (``owner:toolkits:read`` already swept by the theme-5 migration).
@@ -155,6 +157,57 @@ def _client(target: _Target, row_id: str, client_id: str, scopes: list[str] | No
     )
 
 
+def _audit(
+    target: _Target, row_id: str, target_type: str, target_id: str, before: object, after: object
+) -> None:
+    _run(
+        target,
+        "INSERT INTO audit_entries"
+        " (id, actor_type, actor_id, action, target_type, target_id, before, after)"
+        " VALUES (:id, 'user', :user, 'update', :target_type, :target_id, :before, :after)",
+        {
+            "id": row_id,
+            "user": _USER,
+            "target_type": target_type,
+            "target_id": target_id,
+            "before": json.dumps(before),
+            "after": json.dumps(after),
+        },
+    )
+
+
+def _seed_revocations(target: _Target) -> None:
+    """Old-baseline rows whose owner or admin deliberately removed the successor."""
+    for agent, key in ((_REVOKED_AGENT, "permissions"), (_LEGACY_REVOKED_AGENT, "scopes")):
+        _grant(target, f"asg_arscope_rv_{key}", agent, _RETIRED)
+        _audit(
+            target,
+            f"aud_arscope_rv_{key}",
+            "agent",
+            agent,
+            {key: [_RETIRED, _SUCCESSOR, "apis:read"]},
+            {key: [_RETIRED, "apis:read"]},
+        )
+    _client(target, "oac_arscope_revoked", "oc_arscope_revoked", ["apis:read", _RETIRED])
+    _audit(
+        target,
+        "aud_arscope_client",
+        "oauth_client",
+        "oac_arscope_revoked",
+        {"name": "x", "allowed_scopes": ["apis:read", _RETIRED, _SUCCESSOR]},
+        {"allowed_scopes": ["apis:read", _RETIRED]},
+    )
+    # An unrelated edit that kept the successor must not count as a removal.
+    _audit(
+        target,
+        "aud_arscope_kept",
+        "agent",
+        _OLD_AGENT,
+        {"permissions": [_SUCCESSOR]},
+        {"permissions": [_SUCCESSOR, "apis:read"]},
+    )
+
+
 def _seed(target: _Target) -> None:
     expires = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
     _run(
@@ -228,12 +281,14 @@ def test_maps_ceilings_and_agents_and_sweeps_the_rest(
 ) -> None:
     command.upgrade(admin_target.alembic, _BEFORE)
     _seed(admin_target)
+    _seed_revocations(admin_target)
     capsys.readouterr()
 
     command.upgrade(admin_target.alembic, _MAP)
 
     # Agents: the old one gains the successor on its own row id; the one already
-    # holding it loses only the retired row; the new one is untouched.
+    # holding it loses only the retired row; the new one is untouched; the ones
+    # whose audit trail shows the successor revoked only lose the retired row.
     assert _agent_permissions(admin_target) == {
         _OLD_AGENT: {_SUCCESSOR, "apis:read"},
         _HOLDING_AGENT: {_SUCCESSOR},
@@ -257,6 +312,9 @@ def test_maps_ceilings_and_agents_and_sweeps_the_rest(
         "apis:read"
     ]
     assert _array(admin_target, "oauth_clients", "allowed_scopes", "oac_arscope_open") is None
+    assert _array(admin_target, "oauth_clients", "allowed_scopes", "oac_arscope_revoked") == [
+        "apis:read"
+    ]
     assert _array(admin_target, "oauth_client_grants", "scopes", "ocg_arscope_1") == [
         "apis:read",
         _SUCCESSOR,
@@ -276,6 +334,11 @@ def test_maps_ceilings_and_agents_and_sweeps_the_rest(
     assert _OLD_AGENT in warning
     assert _HOLDING_AGENT not in warning
     assert "oc_arscope_claude" in warning
+    granted, withheld = warning.split("Not granted", 1)
+    assert _OLD_AGENT in granted
+    for name in (_REVOKED_AGENT, _LEGACY_REVOKED_AGENT, "oc_arscope_revoked"):
+        assert name not in granted
+        assert name in withheld
 
 
 def test_nothing_to_map_stays_quiet_and_rerun_is_a_noop(

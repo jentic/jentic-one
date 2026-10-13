@@ -46,3 +46,9 @@ def test_warning_names_the_counts_and_caps_the_id_lists() -> None:
     assert "agnt_20" not in line
     assert "(+5 more)" in line
     assert "OAuth clients: oc_claude." in line
+
+
+def test_warning_names_withheld_rows_only_when_there_are_some() -> None:
+    assert "Not granted" not in _migration.warning_line(["agnt_a"], [], 0)
+    line = _migration.warning_line(["agnt_a"], [], 0, ["agnt_b", "oc_x"])
+    assert line.endswith("removed from them: agnt_b, oc_x.")

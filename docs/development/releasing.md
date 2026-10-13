@@ -222,20 +222,22 @@ section below.
 
 ## Upgrading to 0.42.3
 
-- **`owner:access-requests:read` maps onto `credentials:connect`.** The
-  agent baseline carries `credentials:connect` where it carried the retired
+- **`owner:access-requests:read` maps onto `credentials:connect`.** The agent
+  baseline carries `credentials:connect` where it carried the retired
   `owner:access-requests:read`, but rows written before the swap keep the
   retired string. A DCR client registered then (Claude, Cursor, `mcp-remote`)
   gets `invalid_scope` from `/authorize` as soon as it asks for the advertised
-  `credentials:connect` (Claude Desktop shows "couldn't connect"), and an agent
-  created then cannot start a connect session. The admin migration
+  `credentials:connect` (Claude Desktop shows "couldn't connect"), and an
+  agent created then cannot start a connect session. The admin migration
   `6ae76df5ece5` gives `credentials:connect` to every agent and every OAuth
   client allowlist or consent grant that still carries the retired scope, and
   strips the retired scope everywhere else (user grants, token snapshots,
-  authorization codes). Allowlists without it are untouched. The migration
-  prints one `==> WARNING (access-request scope retirement)` line naming the
-  agents and OAuth clients it changed; revoke `credentials:connect` per agent
-  or per client to opt out. No window is needed.
+  authorization codes). Allowlists without it are untouched, and an agent or
+  client whose audit log shows `credentials:connect` removed by a human is not
+  granted it again. The migration prints one `==> WARNING (access-request
+  scope retirement)` line naming the agents and OAuth clients it changed (and
+  any it withheld); revoke `credentials:connect` per agent or per client to
+  opt out. No window is needed.
 
 ## Upgrading to 0.42.0
 
