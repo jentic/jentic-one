@@ -220,6 +220,10 @@ async def archive_agent(
             " connect sessions and notes. Audit entries and credentials are"
             " kept."
         ),
+        openapi_examples={
+            "archive": {"summary": "Archive the agent (default)", "value": False},
+            "purge": {"summary": "Hard-delete the agent and its data", "value": True},
+        },
     ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),

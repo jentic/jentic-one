@@ -13709,6 +13709,16 @@
           },
           {
             "description": "Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings, events, execution records, jobs, finished connect sessions and notes. Audit entries and credentials are kept.",
+            "examples": {
+              "archive": {
+                "summary": "Archive the agent (default)",
+                "value": false
+              },
+              "purge": {
+                "summary": "Hard-delete the agent and its data",
+                "value": true
+              }
+            },
             "in": "query",
             "name": "purge",
             "required": false,
