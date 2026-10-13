@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
@@ -60,3 +61,14 @@ class AuthorizationCodeRepository:
         if code is not None:
             code.consumed_at = consumed_at
             await session.flush()
+
+    @staticmethod
+    async def delete_by_grant_ids(session: AsyncSession, grant_ids: Sequence[str]) -> int:
+        """Delete every code minted for one of ``grant_ids``; returns the row count."""
+        if not grant_ids:
+            return 0
+        result = await session.execute(
+            delete(AuthorizationCode).where(AuthorizationCode.grant_id.in_(list(grant_ids)))
+        )
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]

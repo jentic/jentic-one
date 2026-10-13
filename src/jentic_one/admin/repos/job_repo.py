@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -160,3 +160,21 @@ class JobRepository:
             .group_by(Job.status)
         )
         return {JobStatus(row[0]): row[1] for row in result.all()}
+
+    @staticmethod
+    async def delete_for_actor(session: AsyncSession, *, actor_id: str, actor_type: str) -> int:
+        """Delete one actor's jobs that no worker holds; returns the row count.
+
+        The agent-purge sweep. ``job_results`` go with each job via
+        ``ON DELETE CASCADE``. A ``RUNNING`` job is left for its worker to
+        finalise: deleting the row under a live claim would make the worker's
+        terminal write fail rather than end the job cleanly.
+        """
+        stmt = delete(Job).where(
+            Job.created_by == actor_id,
+            Job.actor_type == actor_type,
+            Job.status != JobStatus.RUNNING.value,
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]

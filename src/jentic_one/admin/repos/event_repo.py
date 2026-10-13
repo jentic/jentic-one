@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -187,3 +187,23 @@ class EventRepository:
             stmt = stmt.where(*filters)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def delete_for_agent(session: AsyncSession, agent_id: str) -> int:
+        """Delete every event about or by one agent; returns the row count.
+
+        The agent-purge sweep. Matches the agent as the acting actor
+        (``actor_id``), as the event's visibility subject (``created_by``), or
+        as the subject carried in ``data.agent_id`` (the same portable JSON
+        comparison as :meth:`exists_with_data_value`).
+        """
+        stmt = delete(Event).where(
+            or_(
+                Event.actor_id == agent_id,
+                Event.created_by == agent_id,
+                Event.data["agent_id"].as_string() == agent_id,
+            )
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]

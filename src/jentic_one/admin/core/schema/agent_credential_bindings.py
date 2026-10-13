@@ -21,9 +21,9 @@ class AgentCredentialBinding(AuditableMixin, AdminBase):
     (``sva_…``); the theme-8 migration re-keyed those onto successor agents
     and its sweep deleted the originals, and the Phase-4 drop refuses to run
     while any remain. The column carries no FK (it predates that cleanup);
-    lifecycle cleanup is application-level (``AgentService.delete`` removes
-    an agent's bindings). Every consumer (broker derivation SQL, repos) keys
-    on it.
+    lifecycle cleanup is application-level (``AgentService.archive`` and
+    ``AgentService.purge`` remove an agent's bindings). Every consumer (broker
+    derivation SQL, repos) keys on it.
 
     ``credential_id`` references a row in the control database, so it is a
     plain string column with no FK (cross-DB reference — same pattern as

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
@@ -107,5 +108,20 @@ class RefreshTokenRepository:
     async def delete_expired(session: AsyncSession, before: datetime) -> int:
         stmt = delete(RefreshToken).where(RefreshToken.expires_at < before)
         result = await session.execute(stmt)
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    @staticmethod
+    async def delete_for_actor(
+        session: AsyncSession, actor_id: str, *, grant_ids: Sequence[str] = ()
+    ) -> int:
+        """Delete every token held by ``actor_id`` or minted under one of ``grant_ids``.
+
+        The agent-purge sweep (any revocation state). Returns the row count.
+        """
+        predicate = RefreshToken.actor_id == actor_id
+        if grant_ids:
+            predicate = or_(predicate, RefreshToken.oauth_grant_id.in_(list(grant_ids)))
+        result = await session.execute(delete(RefreshToken).where(predicate))
         await session.flush()
         return int(result.rowcount)  # type: ignore[attr-defined]

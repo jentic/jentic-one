@@ -12,13 +12,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import (
+    AccessTokenRepository,
     ActorPermissionGrantRepository,
     AgentCredentialBindingRepository,
     AgentCredentialRepository,
     AgentRepository,
+    AuthorizationCodeRepository,
+    EventRepository,
+    ExecutionRecordRepository,
+    JobRepository,
+    OAuthClientGrantRepository,
+    RefreshTokenRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
-from jentic_one.auth.repos import BindingRuleRepository, CredentialRefRepository
+from jentic_one.auth.repos import (
+    AgentControlPurgeRepository,
+    AgentRegistryPurgeRepository,
+    BindingRuleRepository,
+    CredentialRefRepository,
+)
 from jentic_one.auth.services.agent_permission_ceiling import check_agent_permission_grant
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
@@ -34,6 +46,7 @@ from jentic_one.auth.services.errors import (
 )
 from jentic_one.auth.services.oauth_grant_service import (
     AGENT_ARCHIVE_REVOCATION_REASON,
+    AGENT_DELETE_REVOCATION_REASON,
     revoke_active_grants_for_agent,
 )
 from jentic_one.auth.services.registration_service import validate_jwks
@@ -77,7 +90,10 @@ _ROW_LOCKED_VERBS: frozenset[ActorVerb] = frozenset({ActorVerb.APPROVE, ActorVer
 
 
 class AgentService:
-    """Manages agent lifecycle: create, list, get, approve, deny, disable, enable, archive."""
+    """Manages agent lifecycle: create, list, get, approve, deny, disable, enable, archive.
+
+    Also the hard delete (``purge``).
+    """
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
@@ -440,26 +456,21 @@ class AgentService:
             agent = await self._load_owned_agent(session, agent_id, identity=identity)
             if agent.status == ActorStatus.ARCHIVED:
                 raise InvalidTransitionError(agent_id, ActorStatus.ARCHIVED, "archive")
-            await AgentRepository.archive(session, agent_id)
-            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
-            await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
             # #1233 (archive arm): archive is terminal — the status enum has
             # no exit — so any consent grant left `active` would misreport
             # every "active grants" listing/count on a dead agent forever.
-            # Sweep them in the archive's own transaction, reusing the G10
-            # per-agent revocation body (row flip + token sweep + audit +
-            # event) with an archive stamp. `disable` deliberately does NOT
-            # sweep (#1233, decided): it is reversible, grants stay dormant
-            # and re-enable restores the standing consent — see disable().
-            await revoke_active_grants_for_agent(
+            # The sweep revokes them in the archive's own transaction.
+            # `disable` deliberately does NOT sweep (#1233, decided): it is
+            # reversible, grants stay dormant and re-enable restores the
+            # standing consent — see disable().
+            await self._archive_and_sweep(
                 session,
-                agent_id,
+                agent,
                 identity=identity,
                 audit_reason="oauth grant revoked: agent archived",
                 event_reason=AGENT_ARCHIVE_REVOCATION_REASON,
                 summary_cause="was archived",
                 log_event="oauth_grants_revoked_on_agent_archive",
-                agent_name=agent.name,
             )
             await record_audit(
                 session,
@@ -470,6 +481,160 @@ class AgentService:
                 actor_id=identity.sub,
                 origin=identity.origin.value,
             )
+
+    async def purge(self, agent_id: str, *, identity: Identity) -> None:
+        """Hard-delete an agent and, best effort, everything keyed to it.
+
+        Allowed from any status, for the same callers as ``archive`` (the
+        owner or an ``org:admin``). Runs in three steps:
+
+        1. An agent that is not yet archived is archived first, in its own
+           committed transaction (status flip, permission grants, credential
+           bindings and OAuth consent grants swept). Its authority is gone
+           before any cleanup runs, so a failure later leaves it archived —
+           inert — and the purge can be retried.
+        2. Control-DB and registry-DB rows are swept best effort, each in its
+           own transaction: a failure is logged and the purge carries on.
+        3. One admin transaction deletes the remaining admin rows and the
+           agent itself, and records a ``DELETE`` audit entry. Audit entries
+           are history and are kept; credentials belong to their owner and
+           are never touched.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await self._load_owned_agent(
+                session, agent_id, identity=identity, for_update=True
+            )
+            agent_name = agent.name
+            prior_status = agent.status
+            if agent.status != ActorStatus.ARCHIVED:
+                await self._archive_and_sweep(
+                    session,
+                    agent,
+                    identity=identity,
+                    audit_reason="oauth grant revoked: agent deleted",
+                    event_reason=AGENT_DELETE_REVOCATION_REASON,
+                    summary_cause="was deleted",
+                    log_event="oauth_grants_revoked_on_agent_delete",
+                )
+
+        await self._purge_control(agent_id)
+        await self._purge_registry(agent_id)
+
+        async with self._ctx.admin_db.transaction() as session:
+            await self._load_owned_agent(session, agent_id, identity=identity, for_update=True)
+            await ActorPermissionGrantRepository.revoke_all(session, agent_id)
+            await AgentCredentialBindingRepository.delete_for_agent(session, agent_id)
+            grant_ids = await OAuthClientGrantRepository.delete_for_agent(session, agent_id)
+            codes = await AuthorizationCodeRepository.delete_by_grant_ids(session, grant_ids)
+            access = await AccessTokenRepository.delete_for_actor(
+                session, agent_id, grant_ids=grant_ids
+            )
+            refresh = await RefreshTokenRepository.delete_for_actor(
+                session, agent_id, grant_ids=grant_ids
+            )
+            events = await EventRepository.delete_for_agent(session, agent_id)
+            executions = await ExecutionRecordRepository.delete_for_actor(
+                session, actor_id=agent_id, actor_type=ActorType.AGENT.value
+            )
+            jobs = await JobRepository.delete_for_actor(
+                session, actor_id=agent_id, actor_type=ActorType.AGENT.value
+            )
+            await AgentRepository.delete(session, agent_id)
+            await record_audit(
+                session,
+                action=AuditAction.DELETE,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before={"name": agent_name, "status": str(prior_status)},
+                origin=identity.origin.value,
+            )
+        logger.info(
+            "agent_purged",
+            agent_id=agent_id,
+            actor_id=identity.sub,
+            prior_status=str(prior_status),
+            oauth_grants=len(grant_ids),
+            authorization_codes=codes,
+            access_tokens=access,
+            refresh_tokens=refresh,
+            events=events,
+            execution_records=executions,
+            jobs=jobs,
+        )
+
+    async def _archive_and_sweep(
+        self,
+        session: AsyncSession,
+        agent: Agent,
+        *,
+        identity: Identity,
+        audit_reason: str,
+        event_reason: str,
+        summary_cause: str,
+        log_event: str,
+    ) -> None:
+        """Flip the agent to ``archived`` and sweep its standing authority.
+
+        Shared by ``archive`` and the first step of ``purge``; each caller
+        passes its own revocation cause so a purge never reads as an archive.
+        Flush-only and not best-effort: a failed sweep rolls the caller's
+        transaction back.
+        """
+        await AgentRepository.archive(session, agent.id)
+        await ActorPermissionGrantRepository.revoke_all(session, agent.id)
+        await AgentCredentialBindingRepository.delete_for_agent(session, agent.id)
+        await revoke_active_grants_for_agent(
+            session,
+            agent.id,
+            identity=identity,
+            audit_reason=audit_reason,
+            event_reason=event_reason,
+            summary_cause=summary_cause,
+            log_event=log_event,
+            agent_name=agent.name,
+        )
+
+    async def _purge_control(self, agent_id: str) -> None:
+        """Best-effort control-DB sweep for ``purge``; logs and never raises."""
+        if not self._ctx.is_db_allowed("control"):
+            logger.warning("agent_purge_cleanup_skipped", step="control", agent_id=agent_id)
+            return
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                counts = await AgentControlPurgeRepository.delete_for_agent(session, agent_id)
+        except Exception:
+            logger.warning(
+                "agent_purge_cleanup_failed", step="control", agent_id=agent_id, exc_info=True
+            )
+            return
+        logger.info(
+            "agent_purge_control_swept",
+            agent_id=agent_id,
+            permission_rules=counts.permission_rules,
+            connect_sessions=counts.connect_sessions,
+            connect_session_outcomes=counts.connect_session_outcomes,
+        )
+
+    async def _purge_registry(self, agent_id: str) -> None:
+        """Best-effort registry-DB sweep for ``purge``; logs and never raises.
+
+        A standalone auth surface has no registry database, so the sweep is
+        skipped there.
+        """
+        if not self._ctx.is_db_allowed("registry"):
+            logger.warning("agent_purge_cleanup_skipped", step="registry", agent_id=agent_id)
+            return
+        try:
+            async with self._ctx.registry_db.transaction() as session:
+                notes = await AgentRegistryPurgeRepository.delete_for_agent(session, agent_id)
+        except Exception:
+            logger.warning(
+                "agent_purge_cleanup_failed", step="registry", agent_id=agent_id, exc_info=True
+            )
+            return
+        logger.info("agent_purge_registry_swept", agent_id=agent_id, notes=notes)
 
     def _can_bind_credential(self, identity: Identity, created_by: str | None) -> bool:
         """Bind authorization for the direct bind path.

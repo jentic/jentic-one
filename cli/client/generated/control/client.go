@@ -3641,6 +3641,12 @@ type ListAgentsParams struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// ArchiveAgentParams defines parameters for ArchiveAgent.
+type ArchiveAgentParams struct {
+	// Purge Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings, events, execution records, jobs, finished connect sessions and notes. Audit entries and credentials are kept.
+	Purge *bool `form:"purge,omitempty" json:"purge,omitempty"`
+}
+
 // UnbindAgentCredentialParams defines parameters for UnbindAgentCredential.
 type UnbindAgentCredentialParams struct {
 	// Purge Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.
@@ -5545,15 +5551,20 @@ type ClientInterface interface {
 
 	// ArchiveAgent Archive Agent
 	//
-	// Archive an agent — terminal-but-kept.
+	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
-	// The row is retained for history, but the action is not reversible and
+	// Archive keeps the row for history, but the action is not reversible and
 	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
+	// Purge removes the agent and its data outright (best effort across
+	// databases); it archives first if needed, so the agent's authority is gone
+	// before any cleanup runs. Archive returns 409 for an already-archived
+	// agent; purge accepts any status.
+	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-	ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAgent Get Agent
 	//
@@ -8535,16 +8546,21 @@ func (c *Client) CreateAgent(ctx context.Context, body CreateAgentJSONRequestBod
 
 // ArchiveAgent Archive Agent
 //
-// Archive an agent — terminal-but-kept.
+// Archive an agent — or, with “purge=true“, hard-delete it.
 //
-// The row is retained for history, but the action is not reversible and
+// Archive keeps the row for history, but the action is not reversible and
 // the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
+// Purge removes the agent and its data outright (best effort across
+// databases); it archives first if needed, so the agent's authority is gone
+// before any cleanup runs. Archive returns 409 for an already-archived
+// agent; purge accepts any status.
+//
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-func (c *Client) ArchiveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveAgentRequest(c.Server, agentId)
+func (c *Client) ArchiveAgent(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewArchiveAgentRequest(c.Server, agentId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -13967,7 +13983,7 @@ func NewCreateAgentRequestWithBody(server string, contentType string, body io.Re
 }
 
 // NewArchiveAgentRequest constructs an http.Request for the ArchiveAgent method
-func NewArchiveAgentRequest(server string, agentId string) (*http.Request, error) {
+func NewArchiveAgentRequest(server string, agentId string, params *ArchiveAgentParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -13990,6 +14006,33 @@ func NewArchiveAgentRequest(server string, agentId string) (*http.Request, error
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Purge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "purge", *params.Purge, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
@@ -22371,17 +22414,22 @@ type ClientWithResponsesInterface interface {
 
 	// ArchiveAgentWithResponse Archive Agent
 	//
-	// Archive an agent — terminal-but-kept.
+	// Archive an agent — or, with ``purge=true``, hard-delete it.
 	//
-	// The row is retained for history, but the action is not reversible and
+	// Archive keeps the row for history, but the action is not reversible and
 	// the agent's authority is swept: permission grants, credential bindings, and
 	// OAuth consent grants are revoked. For the reversible kill switch use
 	// ``:disable`` / ``:enable`` instead.
 	//
+	// Purge removes the agent and its data outright (best effort across
+	// databases); it archives first if needed, so the agent's authority is gone
+	// before any cleanup runs. Archive returns 409 for an already-archived
+	// agent; purge accepts any status.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-	ArchiveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error)
+	ArchiveAgentWithResponse(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error)
 
 	// GetAgentWithResponse Get Agent
 	//
@@ -39549,18 +39597,23 @@ func (c *ClientWithResponses) CreateAgentWithResponse(ctx context.Context, body 
 
 // ArchiveAgentWithResponse Archive Agent
 //
-// Archive an agent — terminal-but-kept.
+// Archive an agent — or, with “purge=true“, hard-delete it.
 //
-// The row is retained for history, but the action is not reversible and
+// Archive keeps the row for history, but the action is not reversible and
 // the agent's authority is swept: permission grants, credential bindings, and
 // OAuth consent grants are revoked. For the reversible kill switch use
 // “:disable“ / “:enable“ instead.
 //
+// Purge removes the agent and its data outright (best effort across
+// databases); it archives first if needed, so the agent's authority is gone
+// before any cleanup runs. Archive returns 409 for an already-archived
+// agent; purge accepts any status.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /agents/{agent_id} (the `ArchiveAgent` operationId).
-func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error) {
-	rsp, err := c.ArchiveAgent(ctx, agentId, reqEditors...)
+func (c *ClientWithResponses) ArchiveAgentWithResponse(ctx context.Context, agentId string, params *ArchiveAgentParams, reqEditors ...RequestEditorFn) (*ArchiveAgentHTTPResp, error) {
+	rsp, err := c.ArchiveAgent(ctx, agentId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

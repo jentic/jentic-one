@@ -192,6 +192,42 @@ def test_archive_already_archived(admin_client: TestClient, test_agent_id: str) 
     assert resp.status_code == 409
 
 
+async def test_purge_agent_hard_deletes_from_any_status(
+    owner_client: TestClient, web_context: Context, archive_target_agent_id: str
+) -> None:
+    """``?purge=true`` hard-deletes a non-archived agent (204); a repeat is 404."""
+    resp = owner_client.delete(f"/agents/{archive_target_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 204
+
+    async with web_context.admin_db.session() as session:
+        assert await AgentRepository.get_by_id(session, archive_target_agent_id) is None
+        assert (
+            await ActorPermissionGrantRepository.list_for_actor(session, archive_target_agent_id)
+            == []
+        )
+        assert (
+            await AgentCredentialBindingRepository.list_for_agent(session, archive_target_agent_id)
+            == []
+        )
+
+    resp = owner_client.delete(f"/agents/{archive_target_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 404
+    assert resp.json()["type"] == "actor_not_found"
+
+
+def test_purge_archived_agent(admin_client: TestClient, test_agent_id: str) -> None:
+    """Purge also accepts an agent that is already archived."""
+    assert admin_client.delete(f"/agents/{test_agent_id}").status_code == 204
+    resp = admin_client.delete(f"/agents/{test_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 204
+    assert admin_client.get(f"/agents/{test_agent_id}").status_code == 404
+
+
+def test_purge_agent_unauthenticated(unauthed_client: TestClient, test_agent_id: str) -> None:
+    resp = unauthed_client.delete(f"/agents/{test_agent_id}", params={"purge": "true"})
+    assert resp.status_code == 401
+
+
 def test_verbs_on_archived_agent(admin_client: TestClient, test_agent_id: str) -> None:
     admin_client.delete(f"/agents/{test_agent_id}")
     for verb in ("approve", "deny", "disable", "enable"):

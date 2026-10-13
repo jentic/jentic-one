@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -170,6 +170,19 @@ class AgentRepository:
         agent.status = ActorStatus.ARCHIVED
         await session.flush()
         return agent
+
+    @staticmethod
+    async def delete(session: AsyncSession, agent_id: str) -> int:
+        """Hard-delete the agent row; returns the number of rows removed (0 or 1).
+
+        ``agent_credentials`` go with it (``ON DELETE CASCADE``) and any child
+        agent's ``parent_agent_id`` is nulled (``ON DELETE SET NULL``). Every
+        other agent-keyed row carries a plain id with no FK, so the caller
+        sweeps those explicitly.
+        """
+        result = await session.execute(delete(Agent).where(Agent.id == agent_id))
+        await session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     @staticmethod
     async def create_dcr(

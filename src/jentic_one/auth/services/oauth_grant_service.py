@@ -70,6 +70,11 @@ AGENT_TRANSFER_REVOCATION_REASON = "agent_ownership_transferred"
 #: transfer reason above.
 AGENT_ARCHIVE_REVOCATION_REASON = "agent_archived"
 
+#: The revocation cause stamped on grants swept by an agent hard delete
+#: (``DELETE /agents/{id}?purge=true``) of an agent that was not yet archived.
+#: Same cause-in-data pattern as the archive and transfer reasons above.
+AGENT_DELETE_REVOCATION_REASON = "agent_deleted"
+
 
 async def revoke_active_grants_for_agent(
     session: AsyncSession,
