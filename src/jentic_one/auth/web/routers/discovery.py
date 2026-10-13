@@ -34,6 +34,7 @@ from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 from jentic_one.shared.web.links import deployment_base_url
+from jentic_one.shared.web.openapi_responses import route_not_found
 
 router = APIRouter()
 
@@ -159,11 +160,11 @@ mcp_router = APIRouter(route_class=_McpDiscoveryRoute)
 _MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 
 _GATED_404_RESPONSE: dict[int | str, dict[str, Any]] = {
-    404: {
-        "description": "Interactive OAuth for MCP is disabled "
+    404: route_not_found(
+        "Interactive OAuth for MCP is disabled "
         "(`server.mcp.oauth.enabled=false`): the route answers the framework's "
         "plain route-not-found 404, so the gate state is unobservable."
-    }
+    )
 }
 
 

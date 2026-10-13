@@ -18,8 +18,47 @@ from __future__ import annotations
 from typing import Any
 
 from jentic.problem_details import ProblemDetail
+from pydantic import BaseModel, ConfigDict, Field
 
 PROBLEM_JSON = "application/problem+json"
+
+
+class OAuthErrorResponse(BaseModel):
+    """OAuth 2.0 error response (RFC 6749 §5.2 dialect).
+
+    Spec-facing OAuth endpoints (token, RFC 7009 revocation, RFC 7591
+    registration) answer errors in this dialect rather than RFC 9457 Problem
+    Details, because real OAuth/MCP clients parse it.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"error": "invalid_request", "error_description": "missing required parameter"}
+            ]
+        }
+    )
+
+    error: str = Field(
+        description="ASCII error code, e.g. `invalid_request`, `invalid_grant`, "
+        "`invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`."
+    )
+    error_description: str | None = Field(
+        default=None, description="Human-readable explanation of the error."
+    )
+
+
+class RouteNotFoundResponse(BaseModel):
+    """The framework's plain route-not-found body.
+
+    Config-gated routes answer this exact body when their gate is closed, so the
+    gate state is indistinguishable from a route that does not exist.
+    """
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{"detail": "Not Found"}]})
+
+    detail: str = Field(description="Always `Not Found`.")
+
 
 # Per-status canonical Problem Details, keyed by HTTP status code (as the string
 # OpenAPI uses for response keys). Consumed by the OpenAPI post-processor to add
@@ -151,3 +190,45 @@ def gone(description: str = "Gone") -> dict[int | str, dict[str, Any]]:
 def too_many_requests(description: str = "Too Many Requests") -> dict[int | str, dict[str, Any]]:
     """A 429 entry for routes with a rate limit or a quota."""
     return {429: _entry(description)}
+
+
+def problem(description: str) -> dict[str, Any]:
+    """A single Problem Details response entry with a route-specific description.
+
+    Use as a value in a ``responses={code: problem("...")}`` mapping when the
+    description is bespoke but the body is the standard RFC 9457 envelope.
+    """
+    return _entry(description)
+
+
+def oauth_error(
+    description: str,
+    *,
+    error: str = "invalid_request",
+    error_description: str = "missing required parameter",
+) -> dict[str, Any]:
+    """A response entry for the RFC 6749 §5.2 OAuth error dialect.
+
+    For spec-facing OAuth endpoints that must NOT answer Problem Details. The
+    body is documented under ``application/json``; ``error`` /
+    ``error_description`` set the example to the most representative failure
+    for this status.
+    """
+    return {
+        "description": description,
+        "model": OAuthErrorResponse,
+        "content": {
+            "application/json": {
+                "example": {"error": error, "error_description": error_description}
+            }
+        },
+    }
+
+
+def route_not_found(description: str) -> dict[str, Any]:
+    """A 404 entry for a config-gated route answering the framework's plain 404."""
+    return {
+        "description": description,
+        "model": RouteNotFoundResponse,
+        "content": {"application/json": {"example": {"detail": "Not Found"}}},
+    }

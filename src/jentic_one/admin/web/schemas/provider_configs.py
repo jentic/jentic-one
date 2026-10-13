@@ -28,10 +28,12 @@ class ProviderConfigSetRequest(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "project_id": "proj_abc123",
-                    "client_id": "client_abc123",
-                    "client_secret": "<redacted>",  # pragma: allowlist secret
-                    "environment": "production",
+                    "config": {
+                        "project_id": "proj_abc123",
+                        "client_id": "client_abc123",
+                        "client_secret": "<redacted>",  # pragma: allowlist secret
+                        "environment": "production",
+                    }
                 }
             ]
         }

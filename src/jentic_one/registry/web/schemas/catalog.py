@@ -160,12 +160,21 @@ class CatalogRefreshResponse(BaseModel):
 class PreviewParameterResponse(BaseModel):
     """A slimmed parameter in an operation preview."""
 
+    # Its ``{name, in, ...}`` shape makes OpenAPI linters treat it as a
+    # Parameter Object: a plural ``examples`` array is then misread as Example
+    # Objects (``oas3-examples-value-or-externalValue``), while no example at
+    # all trips ``params-must-include-examples``. The singular ``example``
+    # keyword satisfies both. The parent ``PreviewOperationResponse`` example
+    # keeps ``parameters`` empty for the same reason.
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
-            "examples": [
-                {"name": "limit", "in": "query", "required": False, "description": "Page size."}
-            ]
+            "example": {
+                "name": "limit",
+                "in": "query",
+                "required": False,
+                "description": "Page size.",
+            }
         },
     )
 

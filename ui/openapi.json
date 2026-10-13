@@ -3055,7 +3055,8 @@
               "active": true,
               "api": {
                 "name": "posthog-api",
-                "vendor": "posthog-com"
+                "vendor": "posthog-com",
+                "version": "1.0"
               },
               "created_at": "2026-01-15T09:31:00Z",
               "credential_id": "cred_01HZXA...",
@@ -3067,7 +3068,7 @@
               "token": "phx_…"
             },
             "warnings": [
-              "API scope 'posthog-com/posthog-api/*' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"
+              "API scope 'posthog-com/posthog-api/1.0' matches no imported API — executions using this credential will fail. Import a matching API, or delete this credential and re-create it scoped to an imported identity; imported APIs for this vendor: posthog-com/posthog-com-posthog-api (1.0)"
             ]
           }
         ],
@@ -5877,8 +5878,14 @@
         "examples": [
           {
             "active": true,
+            "active_grant_count": 0,
+            "allowed_scopes": [
+              "agents:read",
+              "credentials:read"
+            ],
             "approval_status": "approved",
             "client_id": "oc_abc123...",
+            "client_secret": "<redacted>",
             "consent_model": "user",
             "created_at": "2026-08-18T12:00:00Z",
             "created_by": "usr_abc123",
@@ -5890,7 +5897,9 @@
             ],
             "registration_source": "admin",
             "require_consent": true,
-            "token_endpoint_auth_method": "client_secret_basic"
+            "software_id": "com.example.my-app",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "updated_at": "2026-08-18T12:00:00Z"
           }
         ],
         "properties": {
@@ -6310,6 +6319,11 @@
         "examples": [
           {
             "active": true,
+            "active_grant_count": 0,
+            "allowed_scopes": [
+              "agents:read",
+              "credentials:read"
+            ],
             "approval_status": "approved",
             "client_id": "oc_abc123...",
             "consent_model": "user",
@@ -6323,7 +6337,9 @@
             ],
             "registration_source": "admin",
             "require_consent": true,
-            "token_endpoint_auth_method": "client_secret_basic"
+            "software_id": "com.example.my-app",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "updated_at": "2026-08-18T12:00:00Z"
           }
         ],
         "properties": {
@@ -6635,6 +6651,39 @@
           "confirmed_scopes"
         ],
         "title": "OAuthConfirmSessionRequest",
+        "type": "object"
+      },
+      "OAuthErrorResponse": {
+        "description": "OAuth 2.0 error response (RFC 6749 §5.2 dialect).\n\nSpec-facing OAuth endpoints (token, RFC 7009 revocation, RFC 7591\nregistration) answer errors in this dialect rather than RFC 9457 Problem\nDetails, because real OAuth/MCP clients parse it.",
+        "examples": [
+          {
+            "error": "invalid_request",
+            "error_description": "missing required parameter"
+          }
+        ],
+        "properties": {
+          "error": {
+            "description": "ASCII error code, e.g. `invalid_request`, `invalid_grant`, `invalid_client`, `unsupported_grant_type`, `invalid_client_metadata`, `slow_down`.",
+            "title": "Error",
+            "type": "string"
+          },
+          "error_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Human-readable explanation of the error.",
+            "title": "Error Description"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "OAuthErrorResponse",
         "type": "object"
       },
       "OAuthGrantAdminListResponse": {
@@ -8192,14 +8241,12 @@
       },
       "PreviewParameterResponse": {
         "description": "A slimmed parameter in an operation preview.",
-        "examples": [
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false
-          }
-        ],
+        "example": {
+          "description": "Page size.",
+          "in": "query",
+          "name": "limit",
+          "required": false
+        },
         "properties": {
           "description": {
             "description": "Parameter description (empty string when absent).",
@@ -8431,10 +8478,12 @@
         "description": "Request body for setting a provider config.\n\nFields are provider-specific and validated server-side by provider name.\nFor ``pipedream`` the recognised fields are ``project_id``, ``client_id``,\n``client_secret`` (write-only), and optional ``environment``,\n``connect_base_url``, ``expiry_skew_seconds``.",
         "examples": [
           {
-            "client_id": "client_abc123",
-            "client_secret": "<redacted>",
-            "environment": "production",
-            "project_id": "proj_abc123"
+            "config": {
+              "client_id": "client_abc123",
+              "client_secret": "<redacted>",
+              "environment": "production",
+              "project_id": "proj_abc123"
+            }
           }
         ],
         "properties": {
@@ -8804,6 +8853,71 @@
           "token"
         ],
         "title": "RevokeRequest",
+        "type": "object"
+      },
+      "RootHealthResponse": {
+        "description": "Liveness body of the canonical root ``GET /health`` probe.",
+        "examples": [
+          {
+            "status": "ok",
+            "version": "1.0.0"
+          }
+        ],
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the deployment is not entitled. Present only on the `not_entitled` body.",
+            "title": "Reason"
+          },
+          "status": {
+            "description": "`ok` while the process is serving requests. A metered marketplace deployment whose entitlement lapsed answers `not_entitled` (still HTTP 200, so orchestrators don't restart it).",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Running Jentic One release. Absent on the `not_entitled` body.",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RootHealthResponse",
+        "type": "object"
+      },
+      "RouteNotFoundResponse": {
+        "description": "The framework's plain route-not-found body.\n\nConfig-gated routes answer this exact body when their gate is closed, so the\ngate state is indistinguishable from a route that does not exist.",
+        "examples": [
+          {
+            "detail": "Not Found"
+          }
+        ],
+        "properties": {
+          "detail": {
+            "description": "Always `Not Found`.",
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RouteNotFoundResponse",
         "type": "object"
       },
       "RuleSetAttachRequest": {
@@ -10531,6 +10645,16 @@
             "description": "Bad Request"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -10633,6 +10757,16 @@
             "description": "Bad Request"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -10735,6 +10869,16 @@
             "description": "Bad Request"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -23098,7 +23242,7 @@
             }
           },
           {
-            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23111,7 +23255,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
               "title": "Poll Token"
             }
           }
@@ -23264,6 +23408,7 @@
     },
     "/connect-sessions/{session_id}/status": {
       "get": {
+        "description": "Poll the lifecycle status of a connect session.\n\nReturns the session's current ``status`` and, once it has connected, the\nresulting ``credential_id``, the account it ``connected_as``, and the\n``bound_scopes``; a failed session carries an ``error_code``. Agents and the\nSPA poll this after ``:connect`` until the status is terminal.\n\nAuth is intentionally lightweight: the caller must be authenticated with\n``credentials:connect`` or ``credentials:write``, but the real capability\nthat scopes the response is the session's ``poll_token`` (or being the\ntarget agent's owner / ``org:admin``). An agent handed the token by\n``:connect`` can poll without full session-read rights. A missing session,\na ``poll_token`` mismatch, and a caller who is neither all answer a uniform\n403, so the endpoint is not a session-id enumeration oracle.",
         "operationId": "pollConnectSessionStatus",
         "parameters": [
           {
@@ -23276,7 +23421,7 @@
             }
           },
           {
-            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23289,7 +23434,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
               "title": "Poll Token"
             }
           }
@@ -23438,7 +23583,7 @@
             }
           },
           {
-            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23451,7 +23596,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
               "title": "Poll Token"
             }
           }
@@ -23595,7 +23740,7 @@
             }
           },
           {
-            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+            "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23608,7 +23753,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin",
+              "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
               "title": "Poll Token"
             }
           }
@@ -28091,7 +28236,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RootHealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -29231,9 +29378,7 @@
                   "status": 400,
                   "title": "Bad Request",
                   "type": "bad_request"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -29242,6 +29387,16 @@
             "description": "Bad Request"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -29259,9 +29414,7 @@
                   "status": 422,
                   "title": "Unprocessable Entity",
                   "type": "validation_error"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -29278,9 +29431,7 @@
                   "status": 500,
                   "title": "Internal Server Error",
                   "type": "server_error"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -29297,9 +29448,7 @@
                   "status": 503,
                   "title": "Service Unavailable",
                   "type": "database_unavailable"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -29354,6 +29503,16 @@
             "description": "Bad Request"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -32083,6 +32242,17 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_client_metadata",
+                  "error_description": "redirect_uris: at least one redirect URI is required"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "Invalid client metadata (RFC 7591 §3.2.2): `{\"error\": \"invalid_client_metadata\", \"error_description\": \"...\"}`."
           },
           "500": {
@@ -32309,6 +32479,20 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
             "description": "Malformed, tampered, or expired approval-state blob."
           },
           "401": {
@@ -32443,6 +32627,20 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
             "description": "Malformed, tampered, or expired approval-state blob."
           },
           "422": {
@@ -32662,9 +32860,7 @@
                   "status": 400,
                   "title": "Bad Request",
                   "type": "bad_request"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -32687,9 +32883,7 @@
                   "status": 422,
                   "title": "Unprocessable Entity",
                   "type": "validation_error"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -32706,9 +32900,7 @@
                   "status": 500,
                   "title": "Internal Server Error",
                   "type": "server_error"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -32725,9 +32917,7 @@
                   "status": 503,
                   "title": "Service Unavailable",
                   "type": "database_unavailable"
-                }
-              },
-              "text/html": {
+                },
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -32980,6 +33170,20 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
             "description": "Malformed, tampered, or expired agent-status blob."
           },
           "422": {
@@ -33272,6 +33476,17 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "missing required parameter"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "Form-encoded (RFC 7009) requests only: missing `token` (RFC 6749 §5.2 dialect per RFC 7009 §2.2.1): `{\"error\": \"invalid_request\", \"error_description\": \"...\"}`."
           },
           "401": {
@@ -33292,9 +33507,30 @@
             "description": "Unauthorized"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Form-encoded (RFC 7009) requests only: interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`), so the RFC 7009 arm answers the framework's plain route-not-found 404 (gate state unobservable — same posture as the anonymous DCR door). The bearer-authenticated JSON arm is not gated."
           },
           "413": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "request body too large"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "Form-encoded (RFC 7009) requests only: declared Content-Length exceeds the 64 KiB raw-body cap (RFC 6749 §5.2 dialect)."
           },
           "422": {
@@ -33321,6 +33557,17 @@
             "description": "Unprocessable Entity"
           },
           "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "slow_down",
+                  "error_description": "rate limit exceeded, retry later"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "Form-encoded (RFC 7009) requests only: per-IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {
@@ -33391,6 +33638,20 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
             "description": "Malformed, tampered, expired, or otherwise unusable authorize state — one generic rejection, never a reason."
           },
           "401": {
@@ -33428,6 +33689,16 @@
             "description": "Forbidden"
           },
           "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Not Found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/RouteNotFoundResponse"
+                }
+              }
+            },
             "description": "Local-account login is unavailable (`auth.local_login.enabled=false`, or an external IdP is configured — `auth.idp.enabled=true` — which always wins): the route answers the framework's plain route-not-found 404, so the gate state is unobservable."
           },
           "422": {
@@ -33712,9 +33983,31 @@
             "description": "Successful Response"
           },
           "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "invalid_request",
+                  "error_description": "missing required parameter"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "RFC 6749 §5.2 error dialect (NOT platform Problem Details — this is a spec-facing endpoint real OAuth/MCP clients parse): `{\"error\": \"invalid_request\" | \"invalid_grant\" | \"invalid_client\" | \"unsupported_grant_type\", \"error_description\": \"...\"}`. `invalid_request` covers malformed/missing parameters; a revoked consent grant surfaces on the refresh arm as `invalid_grant` with `error_description: \"consent grant has been revoked\"` — clients should treat it as terminal and restart the authorization flow. A client whose authentication fails after attempting HTTP Basic (`Authorization` header, RFC 6749 §2.3.1) gets the same `invalid_client` dialect body with status 401 and a `WWW-Authenticate: Basic` challenge, per §5.2."
           },
           "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "slow_down",
+                  "error_description": "rate limit exceeded, retry later"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
             "description": "Per-client+IP rate limit exceeded (`Retry-After` header set; RFC 6749 §5.2 dialect body, `error=slow_down` per RFC 8628 §3.5)."
           },
           "500": {

@@ -130,6 +130,7 @@ from jentic_one.shared.models import ActorStatus, ActorType
 from jentic_one.shared.models.oauth_clients import OAuthClientApprovalStatus, OAuthConsentModel
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.deps import derive_origin, get_ctx
+from jentic_one.shared.web.openapi_responses import problem
 from jentic_one.shared.web.sensitive import SENSITIVE
 
 logger = structlog.get_logger(__name__)
@@ -1394,7 +1395,7 @@ async def _redeem_session_continuation(
     dependencies=[Depends(check_approval_status_rate_limit)],
     summary="Poll client approval status (approval-pending page)",
     responses={
-        400: {"description": "Malformed, tampered, or expired approval-state blob."},
+        400: problem("Malformed, tampered, or expired approval-state blob."),
     },
 )
 async def approval_status_endpoint(
@@ -1428,7 +1429,7 @@ async def approval_status_endpoint(
     "/oauth/approval/decision",
     summary="Approve or deny a pending client inline (approval-pending page)",
     responses={
-        400: {"description": "Malformed, tampered, or expired approval-state blob."},
+        400: problem("Malformed, tampered, or expired approval-state blob."),
     },
 )
 async def approval_decision_endpoint(
@@ -2593,7 +2594,7 @@ async def _approval_note_for_params(
     summary="Poll pending-agent approval status (consent awaiting page)",
     dependencies=[Depends(check_approval_status_rate_limit)],
     responses={
-        400: {"description": "Malformed, tampered, or expired agent-status blob."},
+        400: problem("Malformed, tampered, or expired agent-status blob."),
     },
 )
 async def consent_agent_status_endpoint(

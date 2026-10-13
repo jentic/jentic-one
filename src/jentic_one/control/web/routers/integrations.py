@@ -80,7 +80,11 @@ from jentic_one.shared.web.openapi_responses import (
 # or holds ``org:admin`` may act without it. Every other caller needs it.
 _POLL_TOKEN_DESCRIPTION = (
     "Opaque poll capability returned by :connect. Optional for the target "
-    "agent's owner (with credentials:write and agents:write) and org:admin"
+    "agent's owner (with credentials:write and agents:write) and org:admin. "
+    "Deliberately a query parameter: it rides the approval URL a human opens "
+    "in a browser, where a header cannot be set. It is a short-lived, "
+    "single-session capability, not a reusable credential, and it only "
+    "scopes reads/actions on that one connect session."
 )
 
 _logger = structlog.get_logger(__name__)
@@ -523,6 +527,21 @@ async def poll_connect_session_status(
     ),
     svc: ConnectSessionService = Depends(get_connect_session_service),
 ) -> StatusResponse:
+    """Poll the lifecycle status of a connect session.
+
+    Returns the session's current ``status`` and, once it has connected, the
+    resulting ``credential_id``, the account it ``connected_as``, and the
+    ``bound_scopes``; a failed session carries an ``error_code``. Agents and the
+    SPA poll this after ``:connect`` until the status is terminal.
+
+    Auth is intentionally lightweight: the caller must be authenticated with
+    ``credentials:connect`` or ``credentials:write``, but the real capability
+    that scopes the response is the session's ``poll_token`` (or being the
+    target agent's owner / ``org:admin``). An agent handed the token by
+    ``:connect`` can poll without full session-read rights. A missing session,
+    a ``poll_token`` mismatch, and a caller who is neither all answer a uniform
+    403, so the endpoint is not a session-id enumeration oracle.
+    """
     # ``get_status`` uniformly raises ``InvalidPollTokenError`` (→ 403 via
     # the registered handler) for "session missing", "poll_token mismatch"
     # and "not the owner / admin" — the uniform 403 is what closes the

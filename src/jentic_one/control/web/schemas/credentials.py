@@ -473,14 +473,14 @@ class CredentialCreateResponse(BaseModel):
                         "credential_id": "cred_01HZXA...",
                         "type": "bearer_token",
                         "name": "PostHog personal key",
-                        "api": {"vendor": "posthog-com", "name": "posthog-api", "version": None},
+                        "api": {"vendor": "posthog-com", "name": "posthog-api", "version": "1.0"},
                         "provider": "static",
                         "active": True,
                         "created_at": "2026-01-15T09:31:00Z",
                     },
                     "secret": {"token": "phx_…"},
                     "warnings": [
-                        "API scope 'posthog-com/posthog-api/*' matches no imported API — "
+                        "API scope 'posthog-com/posthog-api/1.0' matches no imported API — "
                         "executions using this credential will fail. Import a matching API, "
                         "or delete this credential and re-create it scoped to an imported "
                         "identity; imported APIs for this vendor: "

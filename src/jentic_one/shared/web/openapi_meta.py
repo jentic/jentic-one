@@ -997,25 +997,51 @@ def fastapi_metadata_kwargs(public_base_url: str = "") -> dict[str, Any]:
     }
 
 
-def _normalise_error_responses(responses: dict[str, Any]) -> None:
-    """Render error responses as ``application/problem+json`` with examples.
+_PROBLEM_DETAIL_REF = "#/components/schemas/ProblemDetail"
 
-    FastAPI emits error bodies (``model=ProblemDetail``) under
-    ``application/json``. This rewrites each 4xx/5xx response to the RFC 9457
-    media type and attaches the canonical per-status example, matching the
-    platform error contract.
+
+def _is_problem_detail_media(media: Any) -> bool:
+    return (
+        isinstance(media, dict) and (media.get("schema") or {}).get("$ref") == _PROBLEM_DETAIL_REF
+    )
+
+
+def _normalise_error_responses(responses: dict[str, Any]) -> None:
+    """Render Problem Details error responses as ``application/problem+json``.
+
+    FastAPI files an error ``model=ProblemDetail`` under the route's response
+    media type: ``application/json`` by default, but ``text/html`` for an
+    HTML-page route (``response_class=HTMLResponse``). This moves whichever
+    entry carries the ``ProblemDetail`` schema to the RFC 9457 media type and
+    attaches the canonical per-status example, matching the platform error
+    contract. Entries in another dialect (e.g. the RFC 6749 §5.2 OAuth error
+    body, or the framework's plain route-not-found body) keep their
+    ``application/json`` media type.
     """
     for code, response in responses.items():
-        if not isinstance(response, dict) or code not in STATUS_EXAMPLES:
+        if not isinstance(response, dict) or not code.startswith(("4", "5")):
             continue
         content = response.get("content")
         if not isinstance(content, dict):
             continue
-        media = content.pop("application/json", None)
-        if media is None:
-            media = content.get(PROBLEM_JSON, {})
-        if not isinstance(media, dict):
-            media = {}
+        # An error ``model=`` on an HTML-page route lands under ``text/html``;
+        # error bodies are always JSON, so fold it into ``application/json``.
+        html = content.get("text/html")
+        if isinstance(html, dict) and html.get("schema"):
+            content.pop("text/html")
+            json_media = content.setdefault("application/json", {})
+            json_media.setdefault("schema", html["schema"])
+        if code not in STATUS_EXAMPLES:
+            continue
+        problem_media_types = [mt for mt, m in content.items() if _is_problem_detail_media(m)]
+        if not problem_media_types:
+            continue
+        media = content[problem_media_types[0]]
+        for mt in problem_media_types:
+            content.pop(mt, None)
+        # A schema-less problem+json placeholder (an earlier pass, or a route
+        # that pre-declared the media type) is superseded by the real entry.
+        content.pop(PROBLEM_JSON, None)
         media["example"] = STATUS_EXAMPLES[code]
         content[PROBLEM_JSON] = media
 
