@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jentic_one.admin.core.schema.agents import Agent
+from jentic_one.admin.core.schema.audit import AuditEntry
 from jentic_one.admin.core.schema.events import Event
 from jentic_one.admin.core.schema.execution_records import ExecutionRecord
 from jentic_one.admin.core.schema.jobs import Job
@@ -198,3 +199,31 @@ def test_event_never_delegates_to_parent_actor() -> None:
 
 def test_event_admin_unrestricted() -> None:
     assert build_access_filters(_identity(permissions=["org:admin"]), Event) == []
+
+
+def test_audit_entry_scopes_to_actor_and_owned_agents() -> None:
+    """Audit log: entries the caller performed, or that one of their agents performed."""
+    identity = _identity(sub="usr_aud", permissions=["audit:read"])
+    filters = build_access_filters(identity, AuditEntry)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "audit_entries.actor_id = 'usr_aud'" in sql
+    assert "agents.owner_id = 'usr_aud'" in sql
+
+
+def test_audit_entry_never_delegates_to_parent_actor() -> None:
+    """An agent does not inherit its owner's audit entries, even with owner-read scopes."""
+    identity = _identity(
+        sub="agent_1",
+        permissions=[OWNER_AGENTS_READ, "owner:resources:read"],
+        actor_type=ActorType.AGENT,
+        parent_actor_id="user_owner",
+    )
+    filters = build_access_filters(identity, AuditEntry)
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "agent_1" in sql
+    assert "user_owner" not in sql
+
+
+def test_audit_entry_admin_unrestricted() -> None:
+    assert build_access_filters(_identity(permissions=["org:admin"]), AuditEntry) == []

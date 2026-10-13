@@ -12,6 +12,9 @@ export class AuditService {
     /**
      * List Audit Entries
      * List audit entries with optional filters.
+     *
+     * Scoped to the caller: their own entries plus those made by agents they own.
+     * ``org:admin`` sees every entry.
      * @returns AuditListResponse Successful Response
      * @throws ApiError
      */
