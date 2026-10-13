@@ -329,7 +329,22 @@ class ApiRepository:
 
     @staticmethod
     async def delete(session: AsyncSession, api_id: uuid.UUID) -> int:
+        """Delete an API and every revision under it.
+
+        Revisions are deleted explicitly *before* the ``apis`` row rather than
+        left to the ``api_revisions.api_id`` ON DELETE CASCADE. Tables that
+        hang off a revision (OSS children, and extension tables holding derived
+        per-revision data that cascade on the revision) are then cleared in
+        their own statement, before any FK on the ``apis`` row is checked.
+        Relying on the single-statement cascade fails for a table that both
+        cascades on ``revision_id`` and holds a NO ACTION FK onto ``apis``:
+        Postgres checks that FK for the ``apis`` row before the nested
+        revision -> table cascade has removed the referencing rows, so the
+        delete is refused even though nothing would be left dangling.
+        """
         await session.execute(update(Api).where(Api.id == api_id).values(current_revision_id=None))
+        await session.flush()
+        await session.execute(delete(ApiRevision).where(ApiRevision.api_id == api_id))
         await session.flush()
         result = cast(
             "CursorResult[Any]",

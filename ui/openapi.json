@@ -17157,6 +17157,40 @@
             },
             "description": "Forbidden"
           },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "The API can't be deleted because another record still references it (type `api_delete_blocked`). Nothing was deleted."
+          },
           "422": {
             "content": {
               "application/problem+json": {

@@ -442,6 +442,31 @@ describe('ApiDetailPage', () => {
 		await waitFor(() => expect(deleted).toBe('stripe/stripe-api/2024-01-01'));
 	});
 
+	it('shows why a blocked delete failed instead of a generic conflict', async () => {
+		const detail =
+			"API 'stripe/stripe-api/2024-01-01' can't be deleted because other records still reference it.";
+		worker.use(
+			http.delete('/apis/:vendor/:name/:version', () =>
+				HttpResponse.json(
+					{ type: 'api_delete_blocked', title: 'Conflict', status: 409, detail },
+					{ status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+				),
+			),
+		);
+
+		const user = userEvent.setup();
+		renderAt('/library/workspace/stripe/stripe-api/2024-01-01');
+		await screen.findByRole('heading', { name: 'Stripe' });
+		await user.click(screen.getByTestId('remove-api'));
+		const dialog = await screen.findByRole('dialog', { name: /remove api/i });
+		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
+		await user.click(within(dialog).getByRole('button', { name: /^remove api$/i }));
+
+		expect(await within(dialog).findByText(detail)).toBeInTheDocument();
+		// The dialog stays open — nothing was removed.
+		expect(screen.getByRole('dialog', { name: /remove api/i })).toBeInTheDocument();
+	});
+
 	describe('Who can use it', () => {
 		const STRIPE_CRED = makeMockCredential({
 			credential_id: 'cred_stripe_live',
