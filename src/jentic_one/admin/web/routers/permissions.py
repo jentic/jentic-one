@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path
 
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.user_service import UserService
@@ -20,6 +22,7 @@ from jentic_one.admin.web.schemas.permissions import (
 from jentic_one.admin.web.schemas.users import UserResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
@@ -53,7 +56,7 @@ async def list_permissions(
     ),
 )
 async def set_user_permissions(
-    user_id: str,
+    user_id: Annotated[str, Path(openapi_examples=ex.example(ex.USER_ID))],
     body: SetPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["users:write"]),
     perm_svc: PermissionService = Depends(get_permission_service),

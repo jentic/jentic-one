@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path
 
 from jentic_one.admin.services.provider_config_service import ProviderConfigService
 from jentic_one.admin.services.schemas.provider_configs import ProviderConfigView
@@ -14,6 +16,7 @@ from jentic_one.admin.web.schemas.provider_configs import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.openapi_responses import not_found
 
 router = APIRouter()
@@ -30,7 +33,7 @@ def _to_response(view: ProviderConfigView) -> ProviderConfigResponse:
 
 @router.put("/admin/config/providers/{name}", summary="Set a credential provider config")
 async def set_provider_config(
-    name: str,
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.PROVIDER_NAME))],
     body: ProviderConfigSetRequest,
     identity: Identity = get_current_identity(required_permissions=["config:write"]),
     svc: ProviderConfigService = Depends(get_provider_config_service),
@@ -52,7 +55,7 @@ async def set_provider_config(
     responses=not_found(),
 )
 async def get_provider_config(
-    name: str,
+    name: Annotated[str, Path(openapi_examples=ex.example(ex.PROVIDER_NAME))],
     identity: Identity = get_current_identity(required_permissions=["config:read"]),
     svc: ProviderConfigService = Depends(get_provider_config_service),
 ) -> ProviderConfigResponse:

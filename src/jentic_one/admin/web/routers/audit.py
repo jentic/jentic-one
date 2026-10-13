@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 
 from jentic_one.admin.services.audit_service import AuditService
 from jentic_one.admin.services.schemas.audit import AuditFilter, AuditView
@@ -13,6 +14,7 @@ from jentic_one.admin.web.schemas.audit import AuditListResponse, AuditResponse
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.audit import AuditTargetType
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -46,14 +48,14 @@ def _audit_response(view: AuditView) -> AuditResponse:
 async def list_audit_entries(
     identity: Identity = get_current_identity(required_permissions=["audit:read"]),
     audit_svc: AuditService = Depends(get_audit_service),
-    target_type: AuditTargetType | None = None,
-    target_id: str | None = None,
-    actor_id: str | None = None,
-    origin: str | None = None,
-    since: datetime | None = None,
-    until: datetime | None = None,
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    target_type: AuditTargetType | None = Query(default=None, openapi_examples=ex.example("agent")),
+    target_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
+    actor_id: str | None = Query(default=None, openapi_examples=ex.example(ex.AGENT_ID)),
+    origin: str | None = Query(default=None, openapi_examples=ex.example("dashboard")),
+    since: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_FROM)),
+    until: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
 ) -> AuditListResponse:
     """List audit entries with optional filters.
 
@@ -82,7 +84,7 @@ async def list_audit_entries(
 
 @router.get("/audit/{audit_id}")
 async def get_audit_entry(
-    audit_id: str,
+    audit_id: Annotated[str, Path(openapi_examples=ex.example(ex.AUDIT_ID))],
     identity: Identity = get_current_identity(required_permissions=["audit:read"]),
     audit_svc: AuditService = Depends(get_audit_service),
 ) -> AuditResponse:

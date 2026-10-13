@@ -10952,6 +10952,11 @@
         "operationId": "listActors",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -10968,6 +10973,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -11118,6 +11128,14 @@
         "parameters": [
           {
             "description": "Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).",
+            "examples": {
+              "example": {
+                "value": [
+                  "agnt_6968b3984d1c238dbe7e2e29",
+                  "usr_6968b3987ee4c3ec0b4ee3b9"
+                ]
+              }
+            },
             "in": "query",
             "name": "id",
             "required": true,
@@ -11406,6 +11424,11 @@
         "operationId": "getProviderConfig",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "pipedream"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -11567,6 +11590,11 @@
         "operationId": "setProviderConfig",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "pipedream"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -11820,6 +11848,11 @@
         "operationId": "listOauthClients",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "include_inactive",
             "required": false,
@@ -11831,6 +11864,11 @@
           },
           {
             "description": "Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.",
+            "examples": {
+              "example": {
+                "value": "pending"
+              }
+            },
             "in": "query",
             "name": "approval_status",
             "required": false,
@@ -12128,6 +12166,11 @@
         "operationId": "deactivateOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -12282,6 +12325,11 @@
         "operationId": "getOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -12443,6 +12491,11 @@
         "operationId": "updateOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -12616,6 +12669,11 @@
         "operationId": "rotateOauthClientSecret",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -12779,6 +12837,11 @@
         "operationId": "approveOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -12942,6 +13005,11 @@
         "operationId": "deleteOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -13098,6 +13166,11 @@
         "operationId": "denyOauthClient",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oac_6968b39840a935d9f7e2714b"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -13279,6 +13352,11 @@
         "parameters": [
           {
             "description": "Filter by the client's public client_id.",
+            "examples": {
+              "example": {
+                "value": "oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU"
+              }
+            },
             "in": "query",
             "name": "client_id",
             "required": false,
@@ -13297,6 +13375,11 @@
           },
           {
             "description": "Filter by bound agent.",
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "agent_id",
             "required": false,
@@ -13315,6 +13398,11 @@
           },
           {
             "description": "Filter by consenting user.",
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "query",
             "name": "user_id",
             "required": false,
@@ -13333,6 +13421,11 @@
           },
           {
             "description": "Filter by grant lifecycle state.",
+            "examples": {
+              "example": {
+                "value": "active"
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -13354,6 +13447,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -13366,6 +13464,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -13519,6 +13622,11 @@
         "operationId": "listAgents",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -13535,6 +13643,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -13547,6 +13660,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "active"
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -13843,6 +13961,11 @@
         "operationId": "archiveAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -13980,6 +14103,11 @@
         "operationId": "getAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14124,6 +14252,11 @@
         "operationId": "updateAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14280,6 +14413,11 @@
         "operationId": "getAgentApiKeyInfo",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14434,6 +14572,11 @@
         "operationId": "getAgentApiKeyHistory",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14580,6 +14723,11 @@
         "operationId": "listAgentCredentials",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14724,6 +14872,11 @@
         "operationId": "bindAgentCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14880,6 +15033,11 @@
         "operationId": "unbindAgentCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -14889,6 +15047,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -14899,6 +15062,11 @@
           },
           {
             "description": "Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.",
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "purge",
             "required": false,
@@ -15040,6 +15208,11 @@
         "operationId": "resumeAgentCredentialBinding",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -15049,6 +15222,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -15195,6 +15373,11 @@
         "operationId": "updateAgentJwks",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -15351,6 +15534,11 @@
         "operationId": "listAgentOauthGrants",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -15361,6 +15549,11 @@
           },
           {
             "description": "Filter by grant lifecycle state.",
+            "examples": {
+              "example": {
+                "value": "active"
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -15382,6 +15575,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -15394,6 +15592,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -15564,6 +15767,11 @@
         "operationId": "getAgentPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -15708,6 +15916,11 @@
         "operationId": "replaceAgentPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -15864,6 +16077,11 @@
         "operationId": "approveAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16010,6 +16228,11 @@
         "operationId": "claimAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16166,6 +16389,11 @@
         "operationId": "denyAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16322,6 +16550,11 @@
         "operationId": "disableAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16461,6 +16694,11 @@
         "operationId": "enableAgent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16600,6 +16838,11 @@
         "operationId": "generateAgentApiKey",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16746,6 +16989,11 @@
         "operationId": "revokeAgentApiKey",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -16885,6 +17133,11 @@
         "operationId": "listApis",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "query",
             "name": "vendor",
             "required": false,
@@ -16901,6 +17154,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -16917,6 +17175,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -17207,6 +17470,11 @@
         "operationId": "deleteApi",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -17216,6 +17484,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -17225,6 +17498,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -17396,6 +17674,11 @@
         "operationId": "getApi",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -17405,6 +17688,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -17414,6 +17702,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -17558,6 +17851,11 @@
         "operationId": "updateApi",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -17567,6 +17865,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -17576,6 +17879,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -17730,6 +18038,11 @@
         "operationId": "getApiSpec",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -17739,6 +18052,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -17748,6 +18066,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -17757,6 +18080,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": false
+              }
+            },
             "in": "query",
             "name": "overlays",
             "required": false,
@@ -17902,6 +18230,11 @@
         "operationId": "listApiOperations",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -17911,6 +18244,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -17920,6 +18258,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -17929,6 +18272,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -17945,6 +18293,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -18094,6 +18447,11 @@
         "operationId": "listOverlays",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -18103,6 +18461,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -18112,6 +18475,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -18121,6 +18489,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -18137,6 +18510,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -18149,6 +18527,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "confirmed"
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -18300,6 +18683,11 @@
         "operationId": "submitOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -18309,6 +18697,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -18318,6 +18711,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -18474,6 +18872,11 @@
         "operationId": "deprecateOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -18483,6 +18886,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -18492,6 +18900,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -18501,6 +18914,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "ovr_6968b398ae1c9a6e2fe6520a"
+              }
+            },
             "in": "path",
             "name": "overlay_id",
             "required": true,
@@ -18638,6 +19056,11 @@
         "operationId": "getOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -18647,6 +19070,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -18656,6 +19084,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -18665,6 +19098,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "ovr_6968b398ae1c9a6e2fe6520a"
+              }
+            },
             "in": "path",
             "name": "overlay_id",
             "required": true,
@@ -18809,6 +19247,11 @@
         "operationId": "updateOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -18818,6 +19261,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -18827,6 +19275,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -18836,6 +19289,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "ovr_6968b398ae1c9a6e2fe6520a"
+              }
+            },
             "in": "path",
             "name": "overlay_id",
             "required": true,
@@ -18992,6 +19450,11 @@
         "operationId": "confirmOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19001,6 +19464,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19010,6 +19478,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19019,6 +19492,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "ovr_6968b398ae1c9a6e2fe6520a"
+              }
+            },
             "in": "path",
             "name": "overlay_id",
             "required": true,
@@ -19175,6 +19653,11 @@
         "operationId": "rollbackOverlay",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19184,6 +19667,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19193,6 +19681,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19202,6 +19695,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "ovr_6968b398ae1c9a6e2fe6520a"
+              }
+            },
             "in": "path",
             "name": "overlay_id",
             "required": true,
@@ -19341,6 +19839,11 @@
         "operationId": "listApiRevisions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19350,6 +19853,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19359,6 +19867,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19368,6 +19881,13 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "published"
+                ]
+              }
+            },
             "in": "query",
             "name": "state",
             "required": false,
@@ -19387,6 +19907,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -19403,6 +19928,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -19550,6 +20080,11 @@
         "operationId": "deleteRevision",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19559,6 +20094,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19568,6 +20108,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19577,6 +20122,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -19714,6 +20264,11 @@
         "operationId": "getApiRevision",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19723,6 +20278,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19732,6 +20292,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19741,6 +20306,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -19885,6 +20455,11 @@
         "operationId": "getApiRevisionSpec",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -19894,6 +20469,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -19903,6 +20483,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -19912,6 +20497,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -19921,6 +20511,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": false
+              }
+            },
             "in": "query",
             "name": "overlays",
             "required": false,
@@ -20066,6 +20661,11 @@
         "operationId": "listApiRevisionOperations",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -20075,6 +20675,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -20084,6 +20689,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -20093,6 +20703,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -20102,6 +20717,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -20118,6 +20738,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -20265,6 +20890,11 @@
         "operationId": "archiveRevision",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -20274,6 +20904,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -20283,6 +20918,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -20292,6 +20932,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -20436,6 +21081,11 @@
         "operationId": "promoteRevision",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -20445,6 +21095,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -20454,6 +21109,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -20463,6 +21123,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "path",
             "name": "revision_id",
             "required": true,
@@ -20607,6 +21272,11 @@
         "operationId": "listApiSecuritySchemes",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "vendor",
             "required": true,
@@ -20616,6 +21286,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe"
+              }
+            },
             "in": "path",
             "name": "name",
             "required": true,
@@ -20625,6 +21300,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2024-04-10"
+              }
+            },
             "in": "path",
             "name": "version",
             "required": true,
@@ -20788,6 +21468,11 @@
         "operationId": "listAuditEntries",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agent"
+              }
+            },
             "in": "query",
             "name": "target_type",
             "required": false,
@@ -20804,6 +21489,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "target_id",
             "required": false,
@@ -20820,6 +21510,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "actor_id",
             "required": false,
@@ -20836,6 +21531,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "dashboard"
+              }
+            },
             "in": "query",
             "name": "origin",
             "required": false,
@@ -20852,6 +21552,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-01T00:00:00Z"
+              }
+            },
             "in": "query",
             "name": "since",
             "required": false,
@@ -20869,6 +21574,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-31T23:59:59Z"
+              }
+            },
             "in": "query",
             "name": "until",
             "required": false,
@@ -20886,6 +21596,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -20902,6 +21617,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -21051,6 +21771,11 @@
         "operationId": "getAuditEntry",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "aud_6968b3984275d71e90f7f09f"
+              }
+            },
             "in": "path",
             "name": "audit_id",
             "required": true,
@@ -21639,6 +22364,11 @@
         "operationId": "authorizeEndpoint",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "code"
+              }
+            },
             "in": "query",
             "name": "response_type",
             "required": true,
@@ -21648,6 +22378,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU"
+              }
+            },
             "in": "query",
             "name": "client_id",
             "required": true,
@@ -21657,6 +22392,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "https://client.example.com/oauth/callback"
+              }
+            },
             "in": "query",
             "name": "redirect_uri",
             "required": true,
@@ -21666,6 +22406,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+              }
+            },
             "in": "query",
             "name": "code_challenge",
             "required": true,
@@ -21675,6 +22420,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "S256"
+              }
+            },
             "in": "query",
             "name": "code_challenge_method",
             "required": true,
@@ -21684,6 +22434,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "openid"
+              }
+            },
             "in": "query",
             "name": "scope",
             "required": false,
@@ -21694,6 +22449,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "af0ifjsldkj"
+              }
+            },
             "in": "query",
             "name": "state",
             "required": false,
@@ -21710,6 +22470,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "n-0S6_WzA2Mj"
+              }
+            },
             "in": "query",
             "name": "nonce",
             "required": false,
@@ -21727,6 +22492,11 @@
           },
           {
             "description": "Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.",
+            "examples": {
+              "example": {
+                "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
+              }
+            },
             "in": "query",
             "name": "sc",
             "required": false,
@@ -21841,6 +22611,11 @@
         "operationId": "listCatalog",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "charges"
+              }
+            },
             "in": "query",
             "name": "q",
             "required": false,
@@ -21858,6 +22633,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "registered_only",
             "required": false,
@@ -21868,6 +22648,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": false
+              }
+            },
             "in": "query",
             "name": "unregistered_only",
             "required": false,
@@ -21878,6 +22663,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "outdated_only",
             "required": false,
@@ -21888,6 +22678,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "include_snoozed",
             "required": false,
@@ -21898,6 +22693,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -21914,6 +22714,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -22063,6 +22868,11 @@
         "operationId": "getCatalogEntry",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "api_id",
             "required": true,
@@ -22209,6 +23019,11 @@
         "operationId": "previewCatalogOperations",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "api_id",
             "required": true,
@@ -22218,6 +23033,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 0
+              }
+            },
             "in": "query",
             "name": "offset",
             "required": false,
@@ -22229,6 +23049,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -22241,6 +23066,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "Charges"
+              }
+            },
             "in": "query",
             "name": "tag",
             "required": false,
@@ -22257,6 +23087,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "charges"
+              }
+            },
             "in": "query",
             "name": "q",
             "required": false,
@@ -22411,6 +23246,11 @@
         "operationId": "importCatalogEntry",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "api_id",
             "required": true,
@@ -22557,6 +23397,11 @@
         "operationId": "snoozeCatalogEntry",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "api_id",
             "required": true,
@@ -22730,6 +23575,11 @@
         "operationId": "unsnoozeCatalogEntry",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "path",
             "name": "api_id",
             "required": true,
@@ -23005,6 +23855,11 @@
         "parameters": [
           {
             "description": "Filter by session state",
+            "examples": {
+              "example": {
+                "value": "polling"
+              }
+            },
             "in": "query",
             "name": "state",
             "required": false,
@@ -23029,6 +23884,11 @@
           },
           {
             "description": "Filter by vendor registry key",
+            "examples": {
+              "example": {
+                "value": "github"
+              }
+            },
             "in": "query",
             "name": "vendor",
             "required": false,
@@ -23046,6 +23906,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -23062,6 +23927,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -23211,6 +24081,11 @@
         "operationId": "getConnectSession",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -23221,6 +24096,11 @@
           },
           {
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+            "examples": {
+              "example": {
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23390,6 +24270,11 @@
         "operationId": "pollConnectSessionStatus",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -23400,6 +24285,11 @@
           },
           {
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+            "examples": {
+              "example": {
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23552,6 +24442,11 @@
         "operationId": "cancelConnectSession",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -23562,6 +24457,11 @@
           },
           {
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+            "examples": {
+              "example": {
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23709,6 +24609,11 @@
         "operationId": "confirmConnectSession",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -23719,6 +24624,11 @@
           },
           {
             "description": "Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.",
+            "examples": {
+              "example": {
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
             "in": "query",
             "name": "poll_token",
             "required": false,
@@ -23938,6 +24848,11 @@
         "operationId": "rejectConnectSession",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cs_6968b3983b8b91c75627bee5"
+              }
+            },
             "in": "path",
             "name": "session_id",
             "required": true,
@@ -24178,6 +25093,11 @@
         "operationId": "listCredentials",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -24194,6 +25114,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -24206,6 +25131,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com"
+              }
+            },
             "in": "query",
             "name": "vendor",
             "required": false,
@@ -24533,6 +25463,11 @@
         "operationId": "oauthCallback",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "SplxlOBeZQQYbYS6WxSbIA"
+              }
+            },
             "in": "query",
             "name": "code",
             "required": false,
@@ -24549,6 +25484,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "af0ifjsldkj"
+              }
+            },
             "in": "query",
             "name": "state",
             "required": false,
@@ -24565,6 +25505,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "access_denied"
+              }
+            },
             "in": "query",
             "name": "error",
             "required": false,
@@ -24813,6 +25758,11 @@
         "operationId": "deleteCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -24967,6 +25917,11 @@
         "operationId": "getCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25128,6 +26083,11 @@
         "operationId": "updateCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25328,6 +26288,11 @@
         "operationId": "listCredentialAgents",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25337,6 +26302,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -25353,6 +26323,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -25519,6 +26494,11 @@
         "operationId": "listAgentCredentialPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25528,6 +26508,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -25689,6 +26674,11 @@
         "operationId": "patchAgentCredentialPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25698,6 +26688,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -25869,6 +26864,11 @@
         "operationId": "replaceAgentCredentialPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -25878,6 +26878,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -26056,6 +27061,11 @@
         "operationId": "testAgentCredentialPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -26065,6 +27075,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -26238,6 +27253,11 @@
         "operationId": "detachAgentCredentialRuleSet",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -26247,6 +27267,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -26401,6 +27426,11 @@
         "operationId": "attachAgentCredentialRuleSet",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -26410,6 +27440,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -26576,6 +27611,11 @@
         "operationId": "connectCredential",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "path",
             "name": "credential_id",
             "required": true,
@@ -26764,6 +27804,11 @@
         "operationId": "errorPage",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "access_denied"
+              }
+            },
             "in": "query",
             "name": "error",
             "required": false,
@@ -26877,6 +27922,13 @@
         "operationId": "listEvents",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "import.completed"
+                ]
+              }
+            },
             "in": "query",
             "name": "event_type",
             "required": false,
@@ -26896,6 +27948,14 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "warning",
+                  "error"
+                ]
+              }
+            },
             "in": "query",
             "name": "severity",
             "required": false,
@@ -26915,6 +27975,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "requires_action",
             "required": false,
@@ -26931,6 +27996,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-01T00:00:00Z"
+              }
+            },
             "in": "query",
             "name": "from",
             "required": false,
@@ -26948,6 +28018,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-31T23:59:59Z"
+              }
+            },
             "in": "query",
             "name": "to",
             "required": false,
@@ -26965,6 +28040,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "4bf92f3577b34da6a3ce929d0e0e4736"
+              }
+            },
             "in": "query",
             "name": "trace_id",
             "required": false,
@@ -26981,6 +28061,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "actor_id",
             "required": false,
@@ -26997,6 +28082,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agent"
+              }
+            },
             "in": "query",
             "name": "actor_type",
             "required": false,
@@ -27013,6 +28103,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -27029,6 +28124,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -27178,6 +28278,11 @@
         "operationId": "streamEvents",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-01T00:00:00Z"
+              }
+            },
             "in": "query",
             "name": "since",
             "required": false,
@@ -27195,6 +28300,13 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "import.completed"
+                ]
+              }
+            },
             "in": "query",
             "name": "event_type",
             "required": false,
@@ -27214,6 +28326,14 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "warning",
+                  "error"
+                ]
+              }
+            },
             "in": "query",
             "name": "severity",
             "required": false,
@@ -27233,6 +28353,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "requires_action",
             "required": false,
@@ -27249,6 +28374,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "4bf92f3577b34da6a3ce929d0e0e4736"
+              }
+            },
             "in": "query",
             "name": "trace_id",
             "required": false,
@@ -27265,6 +28395,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "actor_id",
             "required": false,
@@ -27281,6 +28416,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agent"
+              }
+            },
             "in": "query",
             "name": "actor_type",
             "required": false,
@@ -27297,6 +28437,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "evt_6968b398b04f002b6dbff4d1"
+              }
+            },
             "in": "header",
             "name": "Last-Event-ID",
             "required": false,
@@ -27448,6 +28593,11 @@
         "operationId": "getEvent",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "evt_6968b398b04f002b6dbff4d1"
+              }
+            },
             "in": "path",
             "name": "event_id",
             "required": true,
@@ -27594,6 +28744,11 @@
         "operationId": "listExecutions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "tk_6968b3981ec22d56dbbc91e8"
+              }
+            },
             "in": "query",
             "name": "toolkit_id",
             "required": false,
@@ -27610,6 +28765,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "4bf92f3577b34da6a3ce929d0e0e4736"
+              }
+            },
             "in": "query",
             "name": "trace_id",
             "required": false,
@@ -27626,6 +28786,14 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "completed",
+                  "failed"
+                ]
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -27645,6 +28813,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-01T00:00:00Z"
+              }
+            },
             "in": "query",
             "name": "from",
             "required": false,
@@ -27662,6 +28835,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-31T23:59:59Z"
+              }
+            },
             "in": "query",
             "name": "to",
             "required": false,
@@ -27679,6 +28857,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com:stripe:2024-04-10"
+              }
+            },
             "in": "query",
             "name": "api",
             "required": false,
@@ -27695,6 +28878,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "actor_id",
             "required": false,
@@ -27711,6 +28899,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "dashboard"
+              }
+            },
             "in": "query",
             "name": "origin",
             "required": false,
@@ -27727,6 +28920,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -27743,6 +28941,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -27892,6 +29095,11 @@
         "operationId": "getExecution",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "exec_6968b3982706c619fe73f0cf"
+              }
+            },
             "in": "path",
             "name": "execution_id",
             "required": true,
@@ -28039,6 +29247,11 @@
         "parameters": [
           {
             "description": "Change-poll precondition: the `ETag` from a previous response (quoted, `\"<digest>\"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.",
+            "examples": {
+              "example": {
+                "value": "\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\""
+              }
+            },
             "in": "header",
             "name": "if-none-match",
             "required": false,
@@ -28236,6 +29449,11 @@
         "parameters": [
           {
             "description": "METHOD URL identifier",
+            "examples": {
+              "example": {
+                "value": "GET https://api.stripe.com/v1/charges"
+              }
+            },
             "in": "query",
             "name": "id",
             "required": false,
@@ -28254,6 +29472,11 @@
           },
           {
             "description": "Operation ID",
+            "examples": {
+              "example": {
+                "value": "listCharges"
+              }
+            },
             "in": "query",
             "name": "operation_id",
             "required": false,
@@ -28272,6 +29495,11 @@
           },
           {
             "description": "Pin to specific revision",
+            "examples": {
+              "example": {
+                "value": "3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c"
+              }
+            },
             "in": "query",
             "name": "revision_id",
             "required": false,
@@ -28289,6 +29517,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "summary"
+              }
+            },
             "in": "query",
             "name": "detail",
             "required": false,
@@ -28655,6 +29888,11 @@
         "operationId": "listJobs",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "import"
+              }
+            },
             "in": "query",
             "name": "kind",
             "required": false,
@@ -28671,6 +29909,13 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": [
+                  "running"
+                ]
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -28690,6 +29935,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-01T00:00:00Z"
+              }
+            },
             "in": "query",
             "name": "from",
             "required": false,
@@ -28707,6 +29957,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "2026-01-31T23:59:59Z"
+              }
+            },
             "in": "query",
             "name": "to",
             "required": false,
@@ -28724,6 +29979,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -28740,6 +30000,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -28889,6 +30154,11 @@
         "operationId": "getJob",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "job_6968b3985e8c9902207afaeb"
+              }
+            },
             "in": "path",
             "name": "job_id",
             "required": true,
@@ -29035,6 +30305,11 @@
         "operationId": "getJobResult",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "job_6968b3985e8c9902207afaeb"
+              }
+            },
             "in": "path",
             "name": "job_id",
             "required": true,
@@ -29179,6 +30454,11 @@
         "operationId": "cancelJob",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "job_6968b3985e8c9902207afaeb"
+              }
+            },
             "in": "path",
             "name": "job_id",
             "required": true,
@@ -29326,6 +30606,11 @@
         "parameters": [
           {
             "description": "Signed authorization-flow state (carry-through token)",
+            "examples": {
+              "example": {
+                "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
+              }
+            },
             "in": "query",
             "name": "ls",
             "required": true,
@@ -29859,6 +31144,11 @@
         "operationId": "getExecutionStats",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": 7
+              }
+            },
             "in": "query",
             "name": "days",
             "required": false,
@@ -30008,6 +31298,11 @@
         "operationId": "getUsageStats",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": 1767225600
+              }
+            },
             "in": "query",
             "name": "since",
             "required": false,
@@ -30024,6 +31319,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 1769903999
+              }
+            },
             "in": "query",
             "name": "until",
             "required": false,
@@ -30040,6 +31340,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "api"
+              }
+            },
             "in": "query",
             "name": "group_by",
             "required": false,
@@ -30056,6 +31361,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 10
+              }
+            },
             "in": "query",
             "name": "top_limit",
             "required": false,
@@ -30068,6 +31378,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "tk_6968b3981ec22d56dbbc91e8"
+              }
+            },
             "in": "query",
             "name": "toolkit_id",
             "required": false,
@@ -30084,6 +31399,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com/stripe"
+              }
+            },
             "in": "query",
             "name": "api_id",
             "required": false,
@@ -30100,6 +31420,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "query",
             "name": "agent_id",
             "required": false,
@@ -30116,6 +31441,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "completed"
+              }
+            },
             "in": "query",
             "name": "status",
             "required": false,
@@ -30269,6 +31599,11 @@
         "operationId": "listNotes",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -30285,6 +31620,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -30297,6 +31637,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "stripe.com:stripe:2024-04-10"
+              }
+            },
             "in": "query",
             "name": "api",
             "required": false,
@@ -30313,6 +31658,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "listCharges"
+              }
+            },
             "in": "query",
             "name": "operation_id",
             "required": false,
@@ -30329,6 +31679,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "exec_6968b3982706c619fe73f0cf"
+              }
+            },
             "in": "query",
             "name": "execution_id",
             "required": false,
@@ -30345,6 +31700,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "cred_6968b39855d91a3561684b32"
+              }
+            },
             "in": "query",
             "name": "credential_id",
             "required": false,
@@ -30361,6 +31721,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "usage_hint"
+              }
+            },
             "in": "query",
             "name": "type",
             "required": false,
@@ -30377,6 +31742,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "query",
             "name": "created_by",
             "required": false,
@@ -30669,6 +32039,11 @@
         "operationId": "deleteNote",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "note_6968b398edb465624291e405"
+              }
+            },
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -30678,6 +32053,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "\"3\""
+              }
+            },
             "in": "header",
             "name": "if-match",
             "required": false,
@@ -30822,6 +32202,11 @@
         "operationId": "getNote",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "note_6968b398edb465624291e405"
+              }
+            },
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -30964,6 +32349,11 @@
         "operationId": "updateNote",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "note_6968b398edb465624291e405"
+              }
+            },
             "in": "path",
             "name": "note_id",
             "required": true,
@@ -30973,6 +32363,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "\"3\""
+              }
+            },
             "in": "header",
             "name": "if-match",
             "required": false,
@@ -31135,6 +32530,11 @@
         "parameters": [
           {
             "description": "Filter by vendor slug.",
+            "examples": {
+              "example": {
+                "value": "github"
+              }
+            },
             "in": "query",
             "name": "api_vendor",
             "required": false,
@@ -31153,6 +32553,11 @@
           },
           {
             "description": "Include registrations with is_active=false in the response.",
+            "examples": {
+              "example": {
+                "value": true
+              }
+            },
             "in": "query",
             "name": "include_inactive",
             "required": false,
@@ -31165,6 +32570,11 @@
           },
           {
             "description": "Filter by OAuth flow kind.",
+            "examples": {
+              "example": {
+                "value": "authorization_code"
+              }
+            },
             "in": "query",
             "name": "flow_kind",
             "required": false,
@@ -31182,6 +32592,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -31198,6 +32613,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -31505,6 +32925,11 @@
         "operationId": "deleteOauthAppRegistration",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -31676,6 +33101,11 @@
         "operationId": "getOauthAppRegistration",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -31837,6 +33267,11 @@
         "operationId": "updateOauthAppRegistration",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -32010,6 +33445,11 @@
         "operationId": "rotateOauthAppRegistrationSecret",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
             "in": "path",
             "name": "id",
             "required": true,
@@ -32281,6 +33721,11 @@
         "operationId": "revokeOauthGrant",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "ocg_6968b3985e21c5fdf643025d"
+              }
+            },
             "in": "path",
             "name": "grant_id",
             "required": true,
@@ -32583,6 +34028,11 @@
         "parameters": [
           {
             "description": "Signed approval-state blob minted by /authorize",
+            "examples": {
+              "example": {
+                "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
+              }
+            },
             "in": "query",
             "name": "st",
             "required": true,
@@ -32692,6 +34142,11 @@
         "operationId": "authorizeOauthCallback",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "SplxlOBeZQQYbYS6WxSbIA"
+              }
+            },
             "in": "query",
             "name": "code",
             "required": true,
@@ -32701,6 +34156,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "af0ifjsldkj"
+              }
+            },
             "in": "query",
             "name": "state",
             "required": true,
@@ -32808,6 +34268,11 @@
         "parameters": [
           {
             "description": "Opaque consent-flow handle",
+            "examples": {
+              "example": {
+                "value": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              }
+            },
             "in": "query",
             "name": "ch",
             "required": true,
@@ -33126,6 +34591,11 @@
         "parameters": [
           {
             "description": "Signed agent-status blob minted by the consent flow's pending arm",
+            "examples": {
+              "example": {
+                "value": "eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592"
+              }
+            },
             "in": "query",
             "name": "st",
             "required": true,
@@ -34036,6 +35506,11 @@
         "operationId": "listPermissionRuleSets",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -34052,6 +35527,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -34361,6 +35841,11 @@
         "operationId": "deletePermissionRuleSet",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "prs_6968b3987c22b63e87e79f05"
+              }
+            },
             "in": "path",
             "name": "rule_set_id",
             "required": true,
@@ -34532,6 +36017,11 @@
         "operationId": "getPermissionRuleSet",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "prs_6968b3987c22b63e87e79f05"
+              }
+            },
             "in": "path",
             "name": "rule_set_id",
             "required": true,
@@ -34693,6 +36183,11 @@
         "operationId": "updatePermissionRuleSet",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "prs_6968b3987c22b63e87e79f05"
+              }
+            },
             "in": "path",
             "name": "rule_set_id",
             "required": true,
@@ -34866,6 +36361,11 @@
         "operationId": "replacePermissionRuleSetRules",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "prs_6968b3987c22b63e87e79f05"
+              }
+            },
             "in": "path",
             "name": "rule_set_id",
             "required": true,
@@ -35286,6 +36786,11 @@
         "operationId": "deleteRegistrationEndpoint",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -35428,6 +36933,11 @@
         "operationId": "pollStatusEndpoint",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -35551,6 +37061,11 @@
         "operationId": "updateRegistrationEndpoint",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "agnt_6968b3984d1c238dbe7e2e29"
+              }
+            },
             "in": "path",
             "name": "agent_id",
             "required": true,
@@ -35968,6 +37483,11 @@
         "operationId": "listUsers",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0="
+              }
+            },
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -35984,6 +37504,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": 25
+              }
+            },
             "in": "query",
             "name": "limit",
             "required": false,
@@ -35996,6 +37521,11 @@
             }
           },
           {
+            "examples": {
+              "example": {
+                "value": "pending"
+              }
+            },
             "in": "query",
             "name": "invite_state",
             "required": false,
@@ -36572,6 +38102,11 @@
         "operationId": "deleteUser",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -36743,6 +38278,11 @@
         "operationId": "getUser",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -36904,6 +38444,11 @@
         "operationId": "updateUser",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -37060,6 +38605,11 @@
         "operationId": "setUserPermissions",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -37250,6 +38800,11 @@
         "operationId": "disableUser",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -37423,6 +38978,11 @@
         "operationId": "enableUser",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -37562,6 +39122,11 @@
         "operationId": "reissueInvite",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "usr_6968b3987ee4c3ec0b4ee3b9"
+              }
+            },
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -38074,6 +39639,11 @@
         "operationId": "getAuthCapabilities",
         "parameters": [
           {
+            "examples": {
+              "example": {
+                "value": "github"
+              }
+            },
             "in": "path",
             "name": "vendor_key",
             "required": true,
@@ -38084,6 +39654,11 @@
           },
           {
             "description": "Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.",
+            "examples": {
+              "example": {
+                "value": "oar_6968b39821e5f89a6975f501"
+              }
+            },
             "in": "query",
             "name": "oauth_app_registration_id",
             "required": false,

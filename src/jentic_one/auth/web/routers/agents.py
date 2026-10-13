@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from jentic.problem_details import Forbidden
 
 from jentic_one.auth.services.agent_auth_service import AgentAuthService
@@ -34,6 +36,7 @@ from jentic_one.auth.web.schemas.agents import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 
 router = APIRouter()
 
@@ -77,9 +80,9 @@ async def create_agent(
 async def list_agents(
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     agent_svc: AgentService = Depends(get_agent_service),
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=200),
-    status: str | None = Query(default=None),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=50, ge=1, le=200, openapi_examples=ex.example(25)),
+    status: str | None = Query(default=None, openapi_examples=ex.example("active")),
 ) -> AgentListResponse:
     """List agents — scoped by identity via dynamic query scoping."""
     page = await agent_svc.list_agents(limit=limit, status=status, cursor=cursor, identity=identity)
@@ -92,7 +95,7 @@ async def list_agents(
 
 @router.get("/agents/{agent_id}")
 async def get_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -105,7 +108,7 @@ async def get_agent(
 
 @router.patch("/agents/{agent_id}", status_code=200)
 async def update_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: AgentPatchRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -121,7 +124,7 @@ async def update_agent(
 
 @router.post("/agents/{agent_id}:approve", status_code=200)
 async def approve_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
@@ -139,7 +142,7 @@ async def approve_agent(
 
 @router.post("/agents/{agent_id}:claim", status_code=200)
 async def claim_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: ClaimRequest,
     identity: Identity = get_current_identity(
         allow_expired_password=True, require_actor_type=ActorType.USER
@@ -170,7 +173,7 @@ async def claim_agent(
 
 @router.post("/agents/{agent_id}:deny", status_code=200)
 async def deny_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: DenyRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -187,7 +190,7 @@ async def deny_agent(
 
 @router.post("/agents/{agent_id}:disable", status_code=204)
 async def disable_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
@@ -198,7 +201,7 @@ async def disable_agent(
 
 @router.post("/agents/{agent_id}:enable", status_code=204)
 async def enable_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
@@ -209,7 +212,7 @@ async def enable_agent(
 
 @router.delete("/agents/{agent_id}", status_code=204)
 async def archive_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> Response:
@@ -226,7 +229,7 @@ async def archive_agent(
 
 @router.get("/agents/{agent_id}/permissions", operation_id="getAgentPermissions")
 async def get_agent_permissions(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentPermissionsResponse:
@@ -237,7 +240,7 @@ async def get_agent_permissions(
 
 @router.put("/agents/{agent_id}/permissions", operation_id="replaceAgentPermissions")
 async def replace_agent_permissions(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: AgentPermissionsRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -263,7 +266,7 @@ def _credential_binding_response(view: CredentialBindingView) -> CredentialBindi
 
 @router.get("/agents/{agent_id}/credentials", operation_id="listAgentCredentials")
 async def list_credentials(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     request: Request,
     identity: Identity = get_current_identity(allow_expired_password=True),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -277,7 +280,7 @@ async def list_credentials(
 
 @router.post("/agents/{agent_id}/credentials", status_code=201, operation_id="bindAgentCredential")
 async def bind_credential(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: CredentialBindRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -299,8 +302,8 @@ async def bind_credential(
     operation_id="unbindAgentCredential",
 )
 async def unbind_credential(
-    agent_id: str,
-    credential_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
     purge: bool = Query(
         default=False,
         description=(
@@ -308,6 +311,7 @@ async def unbind_credential(
             " rules survive and :resume restores access). true deletes the"
             " binding row outright, together with its inline permission rules."
         ),
+        openapi_examples=ex.example(True),
     ),
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -325,8 +329,8 @@ async def unbind_credential(
     operation_id="resumeAgentCredentialBinding",
 )
 async def resume_credential_binding(
-    agent_id: str,
-    credential_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
+    credential_id: Annotated[str, Path(openapi_examples=ex.example(ex.CREDENTIAL_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> CredentialBindingResponse:
@@ -339,7 +343,7 @@ async def resume_credential_binding(
 
 @router.post("/agents/{agent_id}:generate-api-key", status_code=200)
 async def generate_agent_api_key(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     auth_svc: AgentAuthService = Depends(get_agent_auth_service),
 ) -> ApiKeyResponse:
@@ -350,7 +354,7 @@ async def generate_agent_api_key(
 
 @router.put("/agents/{agent_id}/jwks", status_code=200)
 async def update_agent_jwks(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     body: JwksUpdateRequest,
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     agent_svc: AgentService = Depends(get_agent_service),
@@ -367,7 +371,7 @@ async def update_agent_jwks(
 
 @router.post("/agents/{agent_id}:revoke-api-key", status_code=204)
 async def revoke_agent_api_key(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:write"]),
     auth_svc: AgentAuthService = Depends(get_agent_auth_service),
 ) -> Response:
@@ -378,7 +382,7 @@ async def revoke_agent_api_key(
 
 @router.get("/agents/{agent_id}/api-key", operation_id="getAgentApiKeyInfo")
 async def get_agent_api_key_info(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     auth_svc: AgentAuthService = Depends(get_agent_auth_service),
 ) -> ApiKeyInfoResponse | None:
@@ -397,7 +401,7 @@ async def get_agent_api_key_info(
 
 @router.get("/agents/{agent_id}/api-key/history", operation_id="getAgentApiKeyHistory")
 async def get_agent_api_key_history(
-    agent_id: str,
+    agent_id: Annotated[str, Path(openapi_examples=ex.example(ex.AGENT_ID))],
     identity: Identity = get_current_identity(required_permissions=["agents:read"]),
     auth_svc: AgentAuthService = Depends(get_agent_auth_service),
 ) -> ApiKeyHistoryResponse:

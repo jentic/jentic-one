@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from jentic_one.admin.services.job_result_service import JobResultService
@@ -22,6 +23,7 @@ from jentic_one.admin.web.schemas.jobs import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import JobKind, JobStatus
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import openapi_examples as ex
 from jentic_one.shared.web.links import build_link
 
 router = APIRouter()
@@ -61,12 +63,16 @@ async def list_jobs(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
-    kind: str | None = None,
-    job_status: list[str] | None = Query(default=None, alias="status"),
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = None,
-    cursor: str | None = None,
-    limit: int = Query(default=25, ge=1, le=100),
+    kind: str | None = Query(default=None, openapi_examples=ex.example("import")),
+    job_status: list[str] | None = Query(
+        default=None, alias="status", openapi_examples=ex.example(["running"])
+    ),
+    from_: datetime | None = Query(
+        default=None, alias="from", openapi_examples=ex.example(ex.DATETIME_FROM)
+    ),
+    to: datetime | None = Query(default=None, openapi_examples=ex.example(ex.DATETIME_TO)),
+    cursor: str | None = Query(default=None, openapi_examples=ex.example(ex.CURSOR)),
+    limit: int = Query(default=25, ge=1, le=100, openapi_examples=ex.example(25)),
 ) -> JobListResponse:
     """List jobs with optional filters."""
     page = await job_svc.list_all(
@@ -85,7 +91,7 @@ async def list_jobs(
 @router.get("/jobs/{job_id}")
 async def get_job(
     request: Request,
-    job_id: str,
+    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:
@@ -96,7 +102,7 @@ async def get_job(
 
 @router.get("/jobs/{job_id}/result")
 async def get_job_result(
-    job_id: str,
+    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
     identity: Identity = get_current_identity(required_permissions=["jobs:read"]),
     result_svc: JobResultService = Depends(get_job_result_service),
 ) -> Response:
@@ -110,7 +116,7 @@ async def get_job_result(
 @router.post("/jobs/{job_id}:cancel")
 async def cancel_job(
     request: Request,
-    job_id: str,
+    job_id: Annotated[str, Path(openapi_examples=ex.example(ex.JOB_ID))],
     identity: Identity = get_current_identity(required_permissions=["jobs:write"]),
     job_svc: JobService = Depends(get_job_service),
 ) -> JobResponse:

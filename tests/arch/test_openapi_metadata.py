@@ -226,3 +226,39 @@ def test_component_schema_examples_validate(generated_control_spec: dict[str, An
             + "\n\nFix: correct the model's json_schema_extra examples (and avoid None for "
             f"required-but-nullable fields). {_GUIDE_HINT}"
         )
+
+
+@pytest.mark.arch
+def test_every_parameter_has_a_valid_example(generated_control_spec: dict[str, Any]) -> None:
+    """Every path/query/header parameter must carry an example that fits its schema.
+
+    Declare it inline with ``openapi_examples=ex.example(...)`` on the
+    ``Path``/``Query``/``Header`` marker, using the shared constants in
+    ``jentic_one.shared.web.openapi_examples``. (``examples=[...]`` is not
+    enough: FastAPI renders it inside the parameter's ``schema``, where
+    parameter-example lint rules and doc renderers do not look.)
+    """
+    schemas = (generated_control_spec.get("components") or {}).get("schemas") or {}
+    violations: list[str] = []
+    for method, path, operation in _operations(generated_control_spec):
+        for param in operation.get("parameters") or []:
+            where = f"{method} {path} [{param.get('in')}] {param.get('name')}"
+            values = [entry.get("value") for entry in (param.get("examples") or {}).values()]
+            if "example" in param:
+                values.append(param["example"])
+            if not values:
+                violations.append(f"{where}: no example")
+                continue
+            subject = dict(param.get("schema") or {})
+            subject["components"] = {"schemas": schemas}
+            validator = jsonschema.Draft202012Validator(subject)
+            for value in values:
+                for error in validator.iter_errors(value):
+                    violations.append(f"{where}: example {value!r} invalid: {error.message}")
+    if violations:
+        pytest.fail(
+            "Parameters without a valid example:\n"
+            + "\n".join(violations)
+            + "\n\nFix: add openapi_examples=ex.example(...) to the parameter, using "
+            "jentic_one.shared.web.openapi_examples. " + _GUIDE_HINT
+        )
