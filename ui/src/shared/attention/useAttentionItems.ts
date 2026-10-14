@@ -21,10 +21,10 @@
  *                                    `awaiting_app` / `polling`, collapsed per agent;
  *                                    listed only to approvers — `org:admin`, or
  *                                    `credentials:write` and `agents:write`)
- *   - agents waiting on a held call (`GET /executions/approvals?state=pending`,
- *                                    collapsed per agent; listed only to deciders —
- *                                    `jobs:write` or `org:admin` — and scoped
- *                                    server-side to the agents they review)
+ *   - agents waiting on a held call (`GET /executions/holds?state=pending`,
+ *                                    collapsed per agent; no permission gate —
+ *                                    scoped server-side to the agents the viewer
+ *                                    owns, or every agent for `org:admin`)
  *
  * Events that merely MIRROR a queue item (an agent's self-registration, a DCR
  * client's registration, a held call's approval request) are dropped — the queue row is the actionable one —

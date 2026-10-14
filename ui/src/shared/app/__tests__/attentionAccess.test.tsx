@@ -262,10 +262,9 @@ describe('Notifications — connect requests go to approvers', () => {
 	});
 });
 
-describe('Notifications — held calls go to deciders', () => {
+describe('Notifications — held calls go to whoever the server shows them to', () => {
 	const heldCall = {
 		id: 'exap_waiting',
-		job_id: 'job_waiting',
 		agent_id: 'agnt_pending_9',
 		credential_id: 'cred_1',
 		api_vendor: 'api.stripe.com',
@@ -274,41 +273,46 @@ describe('Notifications — held calls go to deciders', () => {
 		method: 'POST',
 		path: '/v1/charges',
 		state: 'pending',
+		execution_status: 'held',
 		expires_at: '2999-01-01T00:00:00Z',
 		created_at: '2026-01-01T00:00:00Z',
-		_links: { self: '/executions/approvals/exap_waiting', job: '/jobs/job_waiting' },
+		_links: {
+			self: '/executions/holds/exap_waiting',
+			withdraw: '/executions/holds/exap_waiting:withdraw',
+		},
 	};
 
+	// No jobs permission gates the read: the server scopes the list to the
+	// viewer's own agents (every agent for an org admin).
 	it.each([
-		['admin', ['org:admin'], true],
-		['jobs:write', [...MEMBER_DEFAULTS, 'jobs:write'], true],
-		['jobs:read only', MEMBER_DEFAULTS, false],
-	] as const)('%s', async (_label, permissions, listed) => {
+		['admin', ['org:admin'], [heldCall], true],
+		['member with defaults', MEMBER_DEFAULTS, [heldCall], true],
+		['member without any jobs permission', without('jobs:read'), [heldCall], true],
+		['member who owns no held call', MEMBER_DEFAULTS, [], false],
+	] as const)('%s', async (_label, permissions, rows, listed) => {
 		let reads = 0;
 		worker.use(
 			http.get('/users/me', () => HttpResponse.json(viewer(permissions))),
-			http.get('/executions/approvals', () => {
+			http.get('/executions/holds', () => {
 				reads += 1;
-				return HttpResponse.json({ data: [heldCall], has_more: false, next_cursor: null });
+				return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
 			}),
 		);
 		trackSources();
-		renderMenu({ withApprovalsProbe: listed });
+		renderMenu({ withApprovalsProbe: true });
 
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: /^Notifications/ }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 		await within(dialog).findByText('waiting-bot is waiting for approval');
+		await screen.findByTestId('approvals-settled');
+		expect(reads).toBeGreaterThan(0);
 		if (listed) {
-			await screen.findByTestId('approvals-settled');
 			expect(
 				await within(dialog).findByText(/is waiting for you to approve a call/),
 			).toBeInTheDocument();
 		} else {
-			await new Promise((r) => setTimeout(r, 300));
 			expect(within(dialog).queryByText(/is waiting for you to approve/)).toBeNull();
-			// A caller who cannot decide makes no request for them.
-			expect(reads).toBe(0);
 		}
 	});
 });

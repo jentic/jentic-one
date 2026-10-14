@@ -145,13 +145,15 @@ describe('NotificationsMenu — event access and failed sources', () => {
 			http.get('/users/me', () => HttpResponse.json(viewer(['events:read']))),
 			http.get('/events', () => new HttpResponse(null, { status: 500 })),
 			http.get('/events/stream', () => new HttpResponse(null, { status: 403 })),
+			// Held calls are read for every signed-in viewer; none wait on this one.
+			http.get('/executions/holds', () => HttpResponse.json(emptyPage)),
 		);
 		renderShell(<NotificationsMenu />);
 
 		await user.click(await screen.findByRole('button', { name: 'Notifications' }));
 		const dialog = screen.getByRole('dialog', { name: /Notifications/ });
 		expect(await within(dialog).findByText(/Couldn't load alerts/)).toBeInTheDocument();
-		expect(within(dialog).getByText('Nothing to show right now')).toBeInTheDocument();
+		expect(await within(dialog).findByText('Nothing to show right now')).toBeInTheDocument();
 		expect(within(dialog).queryByText("You're all caught up")).not.toBeInTheDocument();
 	});
 });

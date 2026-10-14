@@ -1,9 +1,9 @@
 /**
- * Pending execution approvals — the live state behind the attention inbox's
+ * Pending held executions — the live state behind the attention inbox's
  * held-call rows, the Agents page "Waiting for you" section and the
- * pending-count badges. Reads `GET /executions/approvals?state=pending`, which
- * the server scopes to the approvals the caller may review (the agent's owner,
- * or `org:admin` for every agent).
+ * pending-count badges. Reads `GET /executions/holds?state=pending`, which the
+ * server scopes to the held executions the caller may see (the agents they
+ * own, or every agent for an `org:admin`).
  *
  * Shared rather than in the Agents module because the inbox and the nav badge
  * are shell chrome; the Agents module's Approvals pages keep their own list and
@@ -11,10 +11,10 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import {
-	ExecutionApprovalsService,
 	ExecutionApprovalState,
+	HeldExecutionsService,
 	sharedQueryKeys,
-	type ExecutionApprovalResponse,
+	type HeldExecutionResponse,
 } from '@/shared/api';
 import { useCanDecideApprovals } from '@/shared/approvals/pendingApprovals';
 
@@ -42,7 +42,7 @@ const REFETCH_MS = 45_000;
 
 export interface PendingApprovals {
 	/** Still decidable (pending and not past `expires_at`), oldest first. */
-	approvals: ExecutionApprovalResponse[];
+	approvals: HeldExecutionResponse[];
 	/** True when more pending approvals exist than were read. */
 	truncated: boolean;
 }
@@ -51,16 +51,16 @@ export interface PendingApprovals {
  * Drop a pending row whose window already lapsed: the expiry sweep records it
  * shortly, and until then nobody can decide it.
  */
-function stillDecidable(approval: ExecutionApprovalResponse, now: number): boolean {
+function stillDecidable(approval: HeldExecutionResponse, now: number): boolean {
 	return Date.parse(approval.expires_at) > now;
 }
 
 export async function listPendingApprovals(): Promise<PendingApprovals> {
-	const rows: ExecutionApprovalResponse[] = [];
+	const rows: HeldExecutionResponse[] = [];
 	let cursor: string | null = null;
 	let truncated = false;
 	for (let page = 0; page < MAX_PAGES; page++) {
-		const res = await ExecutionApprovalsService.listExecutionApprovals({
+		const res = await HeldExecutionsService.listHeldExecutions({
 			state: ExecutionApprovalState.PENDING,
 			limit: PAGE_LIMIT,
 			cursor,
@@ -80,8 +80,8 @@ export async function listPendingApprovals(): Promise<PendingApprovals> {
 }
 
 /**
- * The approvals waiting on the caller. Pass `enabled: false` for a caller who
- * cannot decide them (see `useCanDecideApprovals`): no request goes out.
+ * The held calls waiting on the caller. Pass `enabled: false` until the
+ * viewer is known (see `useCanDecideApprovals`): no request goes out.
  */
 export function usePendingApprovals(options?: { enabled?: boolean }) {
 	return useQuery<PendingApprovals>({
@@ -95,8 +95,8 @@ export function usePendingApprovals(options?: { enabled?: boolean }) {
 
 /**
  * The pending-count badges' read: how many held calls wait on the viewer. Off
- * (zero, no request) for a caller who cannot decide them. Shares the one cache
- * slice with the inbox and "Waiting for you", so every count agrees.
+ * (zero, no request) until the viewer is known. Shares the one cache slice with
+ * the inbox and "Waiting for you", so every count agrees.
  */
 export function usePendingApprovalsCount(): { count: number; atLeast: boolean } {
 	const canDecide = useCanDecideApprovals();

@@ -5,6 +5,7 @@ import {
 	screen,
 	userEvent,
 	waitFor,
+	within,
 	checkA11y,
 	createErrorHandler,
 } from '@/__tests__/test-utils';
@@ -15,7 +16,11 @@ import { Toaster } from '@/shared/ui';
 import { PendingApprovalsBadge } from '@/shared/approvals';
 import ApprovalsPage from '@/modules/agents/pages/ApprovalsPage';
 import ApprovalDetailPage from '@/modules/agents/pages/ApprovalDetailPage';
-import { resetApprovalsStore } from '@/modules/agents/mocks/approvalsHandlers';
+import {
+	getMockApproval,
+	resetApprovalsStore,
+	seedMockApproval,
+} from '@/modules/agents/mocks/approvalsHandlers';
 import { isDecidable } from '@/modules/agents/lib/approvalState';
 
 function renderDetail(id: string) {
@@ -92,9 +97,13 @@ describe('Approvals pages', () => {
 
 	it('reports a decision that lost the race', async () => {
 		worker.use(
-			http.post('/executions/approvals/:id\\:decide', () =>
+			http.post('/executions/holds/:id\\:decide', () =>
 				HttpResponse.json(
-					{ status: 409, detail: "Execution approval 'exap_pending1' is already denied" },
+					{
+						type: 'held_execution_already_settled',
+						status: 409,
+						detail: "Held execution 'exap_pending1' is already denied",
+					},
 					{ status: 409 },
 				),
 			),
@@ -117,7 +126,7 @@ describe('Approvals pages', () => {
 		expect(screen.getByText(/Ask them to open this link/)).toBeInTheDocument();
 	});
 
-	it('shows a reviewer without jobs:write the held call but not the verbs', async () => {
+	it('offers the verbs to a viewer with no jobs permission', async () => {
 		worker.use(
 			http.get('/users/me', () =>
 				HttpResponse.json({
@@ -126,7 +135,7 @@ describe('Approvals pages', () => {
 					first_name: 'Owner',
 					last_name: 'User',
 					active: true,
-					permissions: ['jobs:read'],
+					permissions: ['agents:read', 'agents:write'],
 					must_change_password: false,
 					created_at: '2026-01-01T00:00:00Z',
 					updated_at: null,
@@ -139,15 +148,103 @@ describe('Approvals pages', () => {
 			</AuthProvider>,
 			{ route: '/agents/approvals/exap_pending1', path: '/agents/approvals/:id' },
 		);
-		expect(await screen.findByText(/needs the/)).toBeInTheDocument();
-		expect(screen.getByText('POST /v1/charges')).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
+		expect(await screen.findByRole('button', { name: 'Approve and run' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+		expect(screen.queryByText(/jobs:write/)).not.toBeInTheDocument();
 		await checkA11y(container);
 	});
 
+	it('explains a decision the server refuses, in place of the verbs', async () => {
+		worker.use(
+			http.post('/executions/holds/:id\\:decide', () =>
+				HttpResponse.json(
+					{
+						type: 'held_execution_decide_forbidden',
+						status: 403,
+						detail: "You may not decide held execution 'exap_pending1'",
+					},
+					{ status: 403 },
+				),
+			),
+		);
+		const { container } = renderDetail('exap_pending1');
+		await screen.findByText('POST /v1/charges');
+		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
+		expect(await screen.findByText(/can't decide it/)).toBeInTheDocument();
+		expect(screen.getByText(/Only the agent's owner or an org admin/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
+		// Nothing was decided.
+		expect(getMockApproval('exap_pending1')?.state).toBe('pending');
+		await checkA11y(container);
+	});
+
+	it('shows a pending call as held', async () => {
+		renderDetail('exap_pending1');
+		const card = await screen.findByRole('heading', { name: /Call status/ });
+		expect(card).toHaveTextContent('Held');
+		expect(screen.getByText(/held until someone approves or denies it/)).toBeInTheDocument();
+		expect(screen.queryByRole('list', { name: 'Call progress' })).not.toBeInTheDocument();
+	});
+
+	it('moves an approved call to queued and follows it through its steps', async () => {
+		renderDetail('exap_pending1');
+		await screen.findByText('POST /v1/charges');
+		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
+		const progress = await screen.findByRole('list', { name: 'Call progress' });
+		const current = within(progress)
+			.getAllByRole('listitem')
+			.find((li) => li.getAttribute('aria-current') === 'step');
+		expect(current).toHaveTextContent('Approved');
+		expect(screen.getByText(/queued to run/)).toBeInTheDocument();
+		// No record before the call runs.
+		expect(screen.queryByRole('link', { name: /View execution/ })).not.toBeInTheDocument();
+	});
+
+	it.each([
+		['running', 'Running', /The call is running/],
+		['completed', 'Completed', /ran and completed/],
+		['failed', 'Failed', /ran and failed/],
+		['cancelled', 'Cancelled', /cancelled before it finished/],
+	] as const)('shows an approved %s call', async (status, label, sentence) => {
+		// The record exists once the call has run to completion or failure.
+		const ran = status === 'completed' || status === 'failed';
+		const row = seedMockApproval({
+			state: 'approved',
+			execution_status: status,
+			execution_id: ran ? 'exec_ran_1' : null,
+			decided_at: new Date().toISOString(),
+			decided_by: 'usr_owner',
+		});
+		const { container } = renderDetail(row.id);
+		const progress = await screen.findByRole('list', { name: 'Call progress' });
+		const current = within(progress)
+			.getAllByRole('listitem')
+			.find((li) => li.getAttribute('aria-current') === 'step');
+		expect(current).toHaveTextContent(label);
+		expect(screen.getByText(sentence)).toBeInTheDocument();
+		const record = screen.queryByRole('link', { name: 'View execution exec_ran_1' });
+		if (ran) {
+			expect(record).toHaveAttribute('href', '/monitor?show=calls&execution_id=exec_ran_1');
+		} else {
+			expect(record).not.toBeInTheDocument();
+		}
+		// A held call never links its job.
+		expect(screen.queryByRole('link', { name: /job/i })).not.toBeInTheDocument();
+		await checkA11y(container);
+	});
+
+	it('says a denied call does not run, without a progress trail', async () => {
+		renderDetail('exap_denied1');
+		expect(
+			await screen.findByText('The call was denied and does not run.'),
+		).toBeInTheDocument();
+		expect(screen.queryByRole('list', { name: 'Call progress' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: /View execution/ })).not.toBeInTheDocument();
+	});
+
 	it('surfaces a load failure', async () => {
-		worker.use(createErrorHandler('get', '/executions/approvals/:id', { status: 500 }));
+		worker.use(createErrorHandler('get', '/executions/holds/:id', { status: 500 }));
 		renderDetail('exap_pending1');
 		expect(await screen.findByText('Failed to load approval')).toBeInTheDocument();
 	});

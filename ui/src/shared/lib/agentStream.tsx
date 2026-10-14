@@ -94,8 +94,8 @@ export type StreamTokens = {
 	// `oauth_client_id` data key (the token-lineage join key).
 	oauth_client_id?: string;
 	grant_id?: string;
-	/** Execution-approval events carry the approval id (the review page key). */
-	approval_id?: string;
+	/** Execution-approval events carry the held execution id (the review page key). */
+	held_execution_id?: string;
 	// Connect-session events (`connect_session.created`) carry the session id,
 	// which opens the agent's connect request for approval.
 	session_id?: string;
@@ -327,8 +327,8 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 		// registration/approval pair (distinct clients → distinct rows).
 		t.tokens.grant_id ??
 		t.tokens.oauth_client_id ??
-		// Distinct approvals from one agent stay distinct rows.
-		t.tokens.approval_id ??
+		// Distinct held calls from one agent stay distinct rows.
+		t.tokens.held_execution_id ??
 		// Distinct registering agents still get distinct rows.
 		t.tokens.agent_id ??
 		t.tokens.trace_id ??
@@ -401,10 +401,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		// picked up by the shared field above).
 		oauth_client_id: stringField(data, 'oauth_client_id'),
 		grant_id: stringField(data, 'grant_id'),
-		// Execution-approval events name the approval in `data.approval_id`; the
-		// requested event's `review_url` ends in the same id.
-		approval_id:
-			stringField(data, 'approval_id') ?? idFromLink(stringField(data, 'review_url')),
+		// Execution-approval events name the held execution in
+		// `data.held_execution_id`; the requested event's `review_url` ends in
+		// the same id.
+		held_execution_id:
+			stringField(data, 'held_execution_id') ?? idFromLink(stringField(data, 'review_url')),
 		session_id: stringField(data, 'session_id'),
 	};
 	const kind = kindForType(e.type);
@@ -1143,20 +1144,20 @@ const NAV = {
 	// approve/deny verbs for a pending DCR registration live. Static target:
 	// the queue tab lists every pending client.
 	oauthQueue: () => '/settings?tab=queue',
-	// An execution approval's review page (approve/deny for a held call), a
-	// subsection of Agents — the shape of `ROUTE_PATHS.approval`, inlined like
+	// A held execution's review page (approve/deny, and where the call stands),
+	// a subsection of Agents — the shape of `ROUTE_PATHS.approval`, inlined like
 	// `agent` above.
 	approval: (ev: StreamEvent) =>
-		ev.tokens.approval_id
-			? `/agents/approvals/${encodeURIComponent(ev.tokens.approval_id)}`
+		ev.tokens.held_execution_id
+			? `/agents/approvals/${encodeURIComponent(ev.tokens.held_execution_id)}`
 			: null,
 };
 
 /**
  * True for `execution.approval_requested`, the event a held call raises. Its
  * `execution_id` names a record that exists only once the call runs (never,
- * for a denied, expired or withdrawn call), so the event links to the
- * approval instead of the execution.
+ * for a denied, expired or withdrawn call), so the event links to the held
+ * execution's review page instead of the execution.
  */
 export function isApprovalRequestEvent(ev: Pick<StreamEvent, 'type'>): boolean {
 	return ev.type === 'execution.approval_requested';
@@ -1173,15 +1174,17 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		// A DCR registration that landed pending links to the Settings approval
 		// queue, which lists the clients still awaiting a decision.
 		actions.push({ kind: 'view_oauth_queue', label: 'View queue', href: NAV.oauthQueue });
-	} else if (isApprovalRequestEvent(ev) && ev.requiresAction && ev.tokens.approval_id) {
+	} else if (isApprovalRequestEvent(ev) && ev.requiresAction && ev.tokens.held_execution_id) {
 		// A held call awaiting a decision links to its review page, where
 		// approve/deny lives.
 		actions.push({ kind: 'view_approval', label: 'Review', href: NAV.approval });
 	}
 	// A deep-link into the underlying record, when the event references one.
-	if (isApprovalRequestEvent(ev)) {
-		// The held call has no execution record yet; the approval is the record.
-		if (ev.tokens.approval_id && !actions.some((a) => a.kind === 'view_approval')) {
+	if (isApprovalEvent(ev)) {
+		// A held call's record is its review page: it shows where the call
+		// stands and links the execution record once the call has run. Its job
+		// is never offered.
+		if (ev.tokens.held_execution_id && !actions.some((a) => a.kind === 'view_approval')) {
 			actions.push({ kind: 'view_approval', label: 'View approval', href: NAV.approval });
 		}
 	} else if (ev.tokens.execution_id || (ev.kind === 'execution' && ev.tokens.trace_id)) {
@@ -1258,9 +1261,9 @@ export function buildTraceBundle(
 export function primaryDestinationFor(ev: StreamEvent): string | null {
 	switch (ev.kind) {
 		case 'execution':
-			// Approval events open the approval: a held call that never runs
-			// (denied, expired, withdrawn) has no execution record.
-			if (isApprovalEvent(ev)) return NAV.approval(ev) ?? NAV.job(ev);
+			// Approval events open the held call's review page: a call that never
+			// runs (denied, expired, withdrawn) has no execution record.
+			if (isApprovalEvent(ev)) return NAV.approval(ev);
 			return NAV.execution(ev);
 		case 'import':
 			return NAV.job(ev) ?? NAV.trace(ev);

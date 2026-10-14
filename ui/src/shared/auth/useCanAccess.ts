@@ -21,7 +21,7 @@ export const AGENTS_READ = 'agents:read';
 export const AGENTS_WRITE = 'agents:write';
 /** Read the async job queue (`GET /jobs`). */
 export const JOBS_READ = 'jobs:read';
-/** Cancel jobs and decide execution approvals (`POST /executions/approvals/{id}:decide`). */
+/** Cancel jobs (`POST /jobs/{id}:cancel`). */
 export const JOBS_WRITE = 'jobs:write';
 /** Read the audit log (`GET /audit`). */
 export const AUDIT_READ = 'audit:read';

@@ -10,8 +10,9 @@ import { provisionAdminOwnedAgent, type AgentIdentity } from './agent-flow';
  * Notifications inbox, the Agents page "Waiting for you" section and the
  * pending-count badges — and clear every one of those signals once the hold
  * settles: approved (the agent reads the result), denied with a reason, or
- * expired by the worker's sweep. A viewer who cannot decide it sees none of
- * them.
+ * expired by the worker's sweep. A viewer the server does not show it to (not
+ * the agent's owner, not an org admin) sees none of them, whatever their jobs
+ * permissions.
  *
  * Needs the ask-tier stack (app + standalone broker + recorded upstream), not
  * the plain `make start-app` boot, so it skips unless ASK_E2E_BROKER_URL and
@@ -50,9 +51,31 @@ const ASK_RULES = [
 ];
 
 interface Held {
-	approvalId: string;
-	jobId: string;
+	heldExecutionId: string;
 	reviewPath: string;
+}
+
+/** Poll a held execution until its `execution_status` is one of `statuses`. */
+async function waitHeld(
+	request: APIRequestContext,
+	heldExecutionId: string,
+	statuses: string[],
+	timeoutMs = 60_000,
+): Promise<Record<string, unknown>> {
+	const deadline = Date.now() + timeoutMs;
+	let held: Record<string, unknown> = {};
+	while (Date.now() < deadline) {
+		const res = await request.get(`/executions/holds/${heldExecutionId}`, {
+			headers: authHeaders(),
+		});
+		expect(res.ok(), `GET /executions/holds/${heldExecutionId}: ${res.status()}`).toBeTruthy();
+		held = await res.json();
+		if (statuses.includes(String(held.execution_status))) return held;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(
+		`held execution ${heldExecutionId} never reached ${statuses.join('/')}; last ${String(held.execution_status)}`,
+	);
 }
 
 async function waitJob(
@@ -144,10 +167,9 @@ async function hold(
 	expect(res.status(), `expected a 202 hold: ${await res.text()}`).toBe(202);
 	const body = await res.json();
 	expect(body.status).toBe('held');
-	const reviewUrl = new URL(body.approval.review_url as string);
+	const reviewUrl = new URL(body.review_url as string);
 	return {
-		approvalId: body.approval.id as string,
-		jobId: body.job_id as string,
+		heldExecutionId: body.held_execution_id as string,
 		// The SPA path behind the router basename.
 		reviewPath: reviewUrl.pathname,
 	};
@@ -222,14 +244,18 @@ test('a held call shows in the inbox, the badge and Waiting for you, and approvi
 	await page.getByRole('button', { name: 'Approve and run' }).click();
 	await expect(page.getByText('Outcome')).toBeVisible();
 
-	// The agent gets its result.
-	const job = await waitJob(request, held.jobId, ['completed', 'failed']);
-	expect(job.status).toBe('completed');
-	const result = await request.get(`/jobs/${held.jobId}/result`, {
+	// The review page follows the call to its outcome and links the record.
+	await expect(page.getByRole('link', { name: /^View execution/ })).toBeVisible({
+		timeout: 60_000,
+	});
+
+	// The agent gets its result: the upstream response itself.
+	const settled = await waitHeld(request, held.heldExecutionId, ['completed', 'failed']);
+	expect(settled.execution_status).toBe('completed');
+	const result = await request.get(`/executions/holds/${held.heldExecutionId}/result`, {
 		headers: { authorization: `Bearer ${agent.accessToken}` },
 	});
 	expect(result.ok(), await result.text()).toBeTruthy();
-	expect((await result.json()).http_status).toBe(200);
 
 	await page.goto('/app/agents');
 	await expectSignalsClear(page, agent.name);
@@ -250,11 +276,14 @@ test('denying with a reason from the review_url clears the signals and tells the
 	// The badge settles on the review page itself, without a reload.
 	await expect(signals(page, agent.name).navBadge).toHaveCount(0);
 
-	await waitJob(request, held.jobId, ['failed']);
-	const result = await request.get(`/jobs/${held.jobId}/result`, { headers: authHeaders() });
+	await waitHeld(request, held.heldExecutionId, ['failed']);
+	const result = await request.get(`/executions/holds/${held.heldExecutionId}/result`, {
+		headers: authHeaders(),
+	});
 	const problem = await result.json();
 	expect(problem.type).toBe('approval_denied');
 	expect(String(problem.detail)).toContain('not this order');
+	expect(problem.held_execution?.id).toBe(held.heldExecutionId);
 
 	await page.goto('/app/agents');
 	await expectSignalsClear(page, agent.name);
@@ -267,24 +296,22 @@ test('an expired hold clears the signals without a reload', async ({ page, reque
 	const held = await hold(request, agent, 'GET', '/items?limit=3');
 	await expectSignalsShown(page, agent.name);
 
-	await waitJob(request, held.jobId, ['failed'], (TTL_S + 180) * 1000);
-	const approval = await (
-		await request.get(`/executions/approvals/${held.approvalId}`, { headers: authHeaders() })
-	).json();
-	expect(approval.state).toBe('expired');
+	const expired = await waitHeld(request, held.heldExecutionId, ['failed'], (TTL_S + 180) * 1000);
+	expect(expired.state).toBe('expired');
 	await expectSignalsClear(page, agent.name, 60_000);
 });
 
-test('a viewer who cannot decide the held call sees none of the signals', async ({
+test('a viewer the server does not show the held call to sees none of the signals', async ({
 	browser,
 	request,
 }) => {
 	const held = await hold(request, agent, 'GET', '/items?limit=4');
 	const password = 'User-Passw0rd-123!'; // pragma: allowlist secret
-	// A member without jobs:write may read jobs but not decide; one with it but
-	// not owning the agent is outside the list's reviewer scoping.
+	// Neither member owns the agent, so the server's scoping leaves the held
+	// call out of their list — with or without jobs permissions, which play no
+	// part.
 	for (const permissions of [
-		['agents:read', 'jobs:read', 'events:read'],
+		['agents:read', 'events:read'],
 		['agents:read', 'jobs:read', 'jobs:write', 'events:read'],
 	]) {
 		const email = `ask-ui-viewer-${uniqueSuffix()}@ask-e2e.test`;
@@ -306,18 +333,12 @@ test('a viewer who cannot decide the held call sees none of the signals', async 
 		] as const);
 		const viewer = await context.newPage();
 		// Give the sources their first read before asserting the absence: the
-		// agents list always, the approvals list only for a viewer who may decide
-		// (the live event stream never lets the network go idle).
+		// agents list and the held-executions list (the live event stream never
+		// lets the network go idle).
 		const firstReads = [
 			viewer.waitForResponse((r) => new URL(r.url()).pathname === '/agents' && r.ok()),
+			viewer.waitForResponse((r) => new URL(r.url()).pathname === '/executions/holds'),
 		];
-		if (permissions.includes('jobs:write')) {
-			firstReads.push(
-				viewer.waitForResponse(
-					(r) => new URL(r.url()).pathname === '/executions/approvals',
-				),
-			);
-		}
 		await viewer.goto('/app/agents');
 		await expect(viewer.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
 		await Promise.all(firstReads);
@@ -330,7 +351,7 @@ test('a viewer who cannot decide the held call sees none of the signals', async 
 	}
 
 	// Leave nothing pending for later runs.
-	const denied = await request.post(`/executions/approvals/${held.approvalId}:decide`, {
+	const denied = await request.post(`/executions/holds/${held.heldExecutionId}:decide`, {
 		headers: authHeaders(),
 		data: { decision: 'deny', reason: 'e2e cleanup' },
 	});

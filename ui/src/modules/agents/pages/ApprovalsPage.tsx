@@ -1,8 +1,9 @@
 /**
  * Approvals list page — `/app/agents/approvals`, a subsection of Agents.
  *
- * Lists the execution approvals the signed-in reviewer may see (the agent's
- * owner, or an org admin), pending first by default. A row opens the detail.
+ * Lists the held executions the signed-in user may see (`GET /executions/holds`:
+ * the agents they own, or every agent for an org admin), pending first by
+ * default. A row opens the review page.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -23,11 +24,11 @@ import { ApprovalStateBadge } from '@/modules/agents/components/approvals/Approv
 import { ApprovalsHelp } from '@/modules/agents/components/approvals/ApprovalsHelp';
 import { APPROVAL_STATE_OPTIONS } from '@/modules/agents/lib/approvalState';
 import type {
-	ExecutionApprovalResponse,
+	HeldExecutionResponse,
 	ListApprovalsParams,
 } from '@/modules/agents/api/approvals-client';
 
-const COLUMNS: Column<ExecutionApprovalResponse>[] = [
+const COLUMNS: Column<HeldExecutionResponse>[] = [
 	{
 		key: 'state',
 		header: 'State',

@@ -1,11 +1,14 @@
 /**
  * Approval detail page — `/app/agents/approvals/:id`, a subsection of Agents.
  *
- * The review page an agent's held call links to. Shows who filed it (agent and
- * owner), the matched rule, and the exact request that runs if approved
- * (method, URL, body). A pending, unexpired approval can be approved or denied;
- * a decided one is read-only. The page needs the reviewer's own sign-in; a
- * signed-in user who is not a reviewer for this approval is told who is.
+ * The review page an agent's held call links to (`GET /executions/holds/{id}`).
+ * Shows who filed it (agent and owner), the matched rule, the exact request
+ * that runs if approved (method, URL, body), and where the call stands (held,
+ * approved, running, its outcome) with the execution record once it has run.
+ * A pending, unexpired held execution offers Approve and Deny to anyone who
+ * can see it; the server decides who may act (the agent's owner or an org
+ * admin) and a refused decision (403) is explained in place. A decided one is
+ * read-only. A signed-in user who cannot see it (404) is told who can.
  */
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
@@ -24,15 +27,16 @@ import {
 	Textarea,
 } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
-import { JOBS_WRITE, useCanAccess } from '@/shared/auth';
 import {
 	ApprovalDecision,
 	ApprovalsApiError,
+	HELD_EXECUTION_ERRORS,
 	useApproval,
 	useDecideApproval,
 } from '@/modules/agents/api/approvals-hooks';
 import { ApprovalStateBadge } from '@/modules/agents/components/approvals/ApprovalStateBadge';
 import { ApprovalsHelp } from '@/modules/agents/components/approvals/ApprovalsHelp';
+import { CallStatusCard } from '@/modules/agents/components/approvals/CallStatusCard';
 import { isDecidable } from '@/modules/agents/lib/approvalState';
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -66,15 +70,17 @@ export default function ApprovalDetailPage() {
 	const decide = useDecideApproval();
 
 	const decidable = approval ? isDecidable(approval.state, approval.expires_at) : false;
-	// Deciding takes `jobs:write` (org admins hold it); a reviewer without it
-	// still sees the held call but not the verbs.
-	const canDecide = useCanAccess(JOBS_WRITE);
 	const notReviewer = error instanceof ApprovalsApiError && error.status === 404;
+	// The server decides who may act; a viewer it refuses (403) sees why in
+	// place of the verbs.
+	const decideForbidden =
+		decide.error instanceof ApprovalsApiError &&
+		(decide.error.status === 403 || decide.error.is(HELD_EXECUTION_ERRORS.decideForbidden));
 
 	function handleDecide(decision: ApprovalDecision) {
 		if (!id) return;
 		decide.mutate(
-			{ approvalId: id, body: { decision, reason: reason || null } },
+			{ heldExecutionId: id, body: { decision, reason: reason || null } },
 			{ onSuccess: () => setReason('') },
 		);
 	}
@@ -221,16 +227,24 @@ export default function ApprovalDetailPage() {
 						</CardBody>
 					</Card>
 
-					{decidable && !canDecide ? (
+					<CallStatusCard
+						state={
+							approval.state === 'pending' && !decidable ? 'expired' : approval.state
+						}
+						executionStatus={approval.execution_status}
+						executionId={approval.execution_id}
+						executionLink={approval._links.execution}
+					/>
+
+					{decidable && decideForbidden ? (
 						<Card>
 							<CardHeader>
 								<CardTitle>Decision</CardTitle>
 							</CardHeader>
 							<CardBody>
-								<p className="text-muted-foreground text-sm">
-									Approving or denying a held call needs the{' '}
-									<strong>jobs:write</strong> permission. Ask an org admin to
-									decide it.
+								<p role="alert" className="text-muted-foreground text-sm">
+									You can see this call but can&apos;t decide it. Only the
+									agent&apos;s owner or an org admin can approve or deny it.
 								</p>
 							</CardBody>
 						</Card>

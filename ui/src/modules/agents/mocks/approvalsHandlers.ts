@@ -1,12 +1,17 @@
 /**
  * Approvals MSW handlers + in-memory store.
  *
- * Mirrors the backend execution-approvals surface and its response codes:
+ * Mirrors the backend held-executions surface and its response codes:
  *
- *   GET  /executions/approvals             → 200 page (`?state=` filters)
- *   GET  /executions/approvals/{id}        → 200 detail | 404 (not a reviewer / missing)
- *   POST /executions/approvals/{id}:decide → 200 updated row | 409 not pending | 422 bad decision
- *   POST /executions/approvals/{id}:withdraw → 200 withdrawn row | 409 not pending
+ *   GET  /executions/holds              → 200 page (`?state=` filters)
+ *   GET  /executions/holds/{id}         → 200 detail | 404 `held_execution_not_found`
+ *   POST /executions/holds/{id}:decide  → 200 updated row | 409 `held_execution_already_settled`
+ *                                         | 422 bad decision
+ *   POST /executions/holds/{id}:withdraw → 200 withdrawn row | 409 `held_execution_already_settled`
+ *
+ * The store keeps each row's `job_id` to stand in for the backend's join; it
+ * never reaches the wire. Approving moves `execution_status` to `queued`;
+ * denying to `failed`; withdrawing to `cancelled`.
  *
  * Registered additively in src/mocks/handlers.ts.
  */
@@ -27,6 +32,7 @@ interface ApprovalRow {
 	path: string;
 	matched_rule_id: string | null;
 	state: string;
+	execution_status: string | null;
 	expires_at: string;
 	decided_at: string | null;
 	decided_by: string | null;
@@ -57,6 +63,7 @@ function seed(): ApprovalRow[] {
 			path: '/v1/charges',
 			matched_rule_id: 'apr_hold_posts',
 			state: 'pending',
+			execution_status: 'held',
 			expires_at: hours(23),
 			decided_at: null,
 			decided_by: null,
@@ -87,6 +94,7 @@ function seed(): ApprovalRow[] {
 			path: '/v1/refunds',
 			matched_rule_id: 'apr_hold_posts',
 			state: 'denied',
+			execution_status: 'failed',
 			expires_at: hours(20),
 			decided_at: hours(-2),
 			decided_by: 'usr_owner',
@@ -135,6 +143,7 @@ export function seedMockApproval(overrides: Partial<ApprovalRow> = {}): Approval
 		path: '/v1/charges',
 		matched_rule_id: 'apr_hold_posts',
 		state: 'pending',
+		execution_status: 'held',
 		expires_at: hours(23),
 		decided_at: null,
 		decided_by: null,
@@ -155,32 +164,59 @@ export function getMockApproval(id: string): ApprovalRow | undefined {
 	return store.find((r) => r.id === id);
 }
 
+/** Execution statuses with a result to collect. */
+const FINISHED = new Set(['completed', 'failed']);
+
 function links(row: ApprovalRow) {
-	return { self: `/executions/approvals/${row.id}`, job: `/jobs/${row.job_id}` };
+	return {
+		self: `/executions/holds/${row.id}`,
+		result: FINISHED.has(row.execution_status ?? '')
+			? `/executions/holds/${row.id}/result`
+			: null,
+		withdraw: row.state === 'pending' ? `/executions/holds/${row.id}:withdraw` : null,
+		// The hold's `execution_id` is set once the approved call runs.
+		execution: row.execution_id ? `/executions/${row.execution_id}` : null,
+	};
 }
 
-function listView(row: ApprovalRow) {
-	const { agent_name: _n, agent_owner_id: _o, request: _r, ...rest } = row;
+function detailView(row: ApprovalRow) {
+	const { job_id: _j, ...rest } = row;
 	return { ...rest, _links: links(row) };
 }
 
+function listView(row: ApprovalRow) {
+	const { agent_name: _n, agent_owner_id: _o, request: _r, ...rest } = detailView(row);
+	return rest;
+}
+
+function alreadySettled(row: ApprovalRow) {
+	return HttpResponse.json(
+		{
+			type: 'held_execution_already_settled',
+			status: 409,
+			detail: `Held execution '${row.id}' is already ${row.state}`,
+		},
+		{ status: 409 },
+	);
+}
+
 export const approvalsHandlers = [
-	http.get('/executions/approvals', ({ request }) => {
+	http.get('/executions/holds', ({ request }) => {
 		const state = new URL(request.url).searchParams.get('state');
 		const data = store.filter((r) => !state || r.state === state).map(listView);
 		return HttpResponse.json({ data, has_more: false, next_cursor: null });
 	}),
-	http.get('/executions/approvals/:id', ({ params }) => {
+	http.get('/executions/holds/:id', ({ params }) => {
 		const row = store.find((r) => r.id === params.id);
 		if (!row) {
 			return HttpResponse.json(
-				{ type: 'execution_approval_not_found', status: 404, detail: 'not found' },
+				{ type: 'held_execution_not_found', status: 404, detail: 'not found' },
 				{ status: 404 },
 			);
 		}
-		return HttpResponse.json({ ...row, _links: links(row) });
+		return HttpResponse.json(detailView(row));
 	}),
-	http.post('/executions/approvals/:id\\:decide', async ({ params, request }) => {
+	http.post('/executions/holds/:id\\:decide', async ({ params, request }) => {
 		const row = store.find((r) => r.id === params.id);
 		if (!row) return HttpResponse.json({ status: 404 }, { status: 404 });
 		const body = (await request.json()) as { decision?: string; reason?: string | null };
@@ -188,35 +224,23 @@ export const approvalsHandlers = [
 			return HttpResponse.json({ status: 422, detail: 'invalid decision' }, { status: 422 });
 		}
 		if (row.state !== 'pending') {
-			return HttpResponse.json(
-				{
-					type: 'execution_approval_already_decided',
-					status: 409,
-					detail: `Execution approval '${row.id}' is already ${row.state}`,
-				},
-				{ status: 409 },
-			);
+			return alreadySettled(row);
 		}
 		row.state = body.decision === 'approve' ? 'approved' : 'denied';
+		row.execution_status = body.decision === 'approve' ? 'queued' : 'failed';
 		row.decided_at = new Date().toISOString();
 		row.decided_by = 'usr_owner';
 		row.decision_reason = body.reason ?? null;
 		return HttpResponse.json(listView(row));
 	}),
-	http.post('/executions/approvals/:id\\:withdraw', ({ params }) => {
+	http.post('/executions/holds/:id\\:withdraw', ({ params }) => {
 		const row = store.find((r) => r.id === params.id);
 		if (!row) return HttpResponse.json({ status: 404 }, { status: 404 });
 		if (row.state !== 'pending') {
-			return HttpResponse.json(
-				{
-					type: 'execution_approval_already_decided',
-					status: 409,
-					detail: `Execution approval '${row.id}' is already ${row.state}`,
-				},
-				{ status: 409 },
-			);
+			return alreadySettled(row);
 		}
 		row.state = 'withdrawn';
+		row.execution_status = 'cancelled';
 		row.updated_at = new Date().toISOString();
 		return HttpResponse.json(listView(row));
 	}),

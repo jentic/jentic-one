@@ -85,12 +85,11 @@ let credentialRows: unknown[];
 let approvalRows: ReturnType<typeof heldCall>[];
 let requiresActionEvents: EventResponse[];
 
-/** A pending execution approval: an agent's call an Ask rule holds. */
+/** A pending held execution: an agent's call an Ask rule holds. */
 function heldCall(overrides: Record<string, unknown> = {}) {
 	const id = (overrides.id as string | undefined) ?? 'exap_1';
 	return {
 		id,
-		job_id: `job_${id}`,
 		agent_id: 'agnt_scout',
 		credential_id: 'cred_stripe',
 		api_vendor: 'api.stripe.com',
@@ -101,6 +100,7 @@ function heldCall(overrides: Record<string, unknown> = {}) {
 		path: '/v1/charges',
 		matched_rule_id: 'apr_1',
 		state: 'pending',
+		execution_status: 'held',
 		expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
 		decided_at: null,
 		decided_by: null,
@@ -109,7 +109,7 @@ function heldCall(overrides: Record<string, unknown> = {}) {
 		execution_id: null,
 		created_at: new Date(Date.now() - 15 * 60_000).toISOString(),
 		updated_at: null,
-		_links: { self: `/executions/approvals/${id}`, job: `/jobs/job_${id}` },
+		_links: { self: `/executions/holds/${id}`, withdraw: `/executions/holds/${id}:withdraw` },
 		...overrides,
 	};
 }
@@ -123,7 +123,7 @@ beforeEach(() => {
 	approvalRows = [];
 	requiresActionEvents = [failure];
 	worker.use(
-		http.get('/executions/approvals', ({ request }) => {
+		http.get('/executions/holds', ({ request }) => {
 			const state = new URL(request.url).searchParams.get('state');
 			return HttpResponse.json(page(approvalRows.filter((r) => !state || r.state === state)));
 		}),
@@ -341,7 +341,7 @@ describe('NotificationsMenu', () => {
 					summary: 'Agent agnt_scout wants to POST /v1/charges',
 					created_at: new Date(Date.now() - 60_000).toISOString(),
 					requires_action: true,
-					data: { approval_id: 'exap_new', agent_id: 'agnt_scout' },
+					data: { held_execution_id: 'exap_new', agent_id: 'agnt_scout' },
 				},
 			];
 			const user = userEvent.setup();

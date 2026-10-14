@@ -2438,30 +2438,28 @@ describe('AgentsPage — held calls waiting on the viewer', () => {
 		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
 	});
 
-	it('shows nothing — and reads nothing — for a viewer who cannot decide held calls', async () => {
+	it('lists held calls to a viewer with no jobs permission', async () => {
 		seedMockApproval();
-		let reads = 0;
-		worker.use(
-			http.get('/executions/approvals', () => {
-				reads += 1;
-				return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
-			}),
-		);
-		seedViewer(['agents:read', 'agents:write', 'jobs:read']);
-		renderPage('/', { withAuth: true });
-		await screen.findAllByText('inbox-triage-bot');
-		await new Promise((r) => setTimeout(r, 300));
-		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Approvals' })).toBeInTheDocument();
-		expect(reads).toBe(0);
-	});
-
-	it('lists held calls to a viewer holding jobs:write', async () => {
-		seedMockApproval();
-		seedViewer(['agents:read', 'agents:write', 'jobs:read', 'jobs:write']);
+		seedViewer(['agents:read', 'agents:write']);
 		renderPage('/', { withAuth: true });
 		expect(await waitingSection()).toHaveTextContent(
 			'wants to make a call to api.stripe.com/payments',
 		);
+	});
+
+	it('shows nothing when the server shows the viewer no held call', async () => {
+		let reads = 0;
+		worker.use(
+			http.get('/executions/holds', () => {
+				reads += 1;
+				return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
+			}),
+		);
+		seedViewer(['agents:read', 'agents:write', 'jobs:read', 'jobs:write']);
+		renderPage('/', { withAuth: true });
+		await screen.findAllByText('inbox-triage-bot');
+		await waitFor(() => expect(reads).toBeGreaterThan(0));
+		expect(screen.queryByRole('region', { name: 'Waiting for you' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Approvals' })).toBeInTheDocument();
 	});
 });
