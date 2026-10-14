@@ -280,11 +280,21 @@ async def _get_result(env: CallEnv, **extra: Any) -> Any:
     )
 
 
-async def test_get_execution_result_without_wait_polls_once(
+async def test_get_execution_result_waits_by_default(
+    job_polls: Callable[[list[str]], list[str]],
+) -> None:
+    """With no timeout it waits (up to 30 s) and answers once the call finishes."""
+    polled = job_polls(["held", "completed"])
+    payload = _json(await _get_result(_env()))
+    assert payload["status"] == "completed"
+    assert polled == ["exap_1", "exap_1"]
+
+
+async def test_get_execution_result_timeout_zero_polls_once(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held", "completed"])
-    payload = _json(await _get_result(_env()))
+    payload = _json(await _get_result(_env(), timeout=0))
     assert payload["status"] == "held"
     assert polled == ["exap_1"]
 
@@ -293,7 +303,7 @@ async def test_get_execution_result_wait_returns_early_once_terminal(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held", "queued", "completed"])
-    payload = _json(await _get_result(_env(), wait=30_000))
+    payload = _json(await _get_result(_env(), timeout=60))
     assert payload["status"] == "completed"
     assert polled == ["exap_1", "exap_1", "exap_1"]
 
@@ -302,7 +312,7 @@ async def test_get_execution_result_negative_wait_answers_at_once(
     job_polls: Callable[[list[str]], list[str]],
 ) -> None:
     polled = job_polls(["held"])
-    payload = _json(await _get_result(_env(), wait=-5))
+    payload = _json(await _get_result(_env(), timeout=-5))
     assert payload["status"] == "held"
     assert polled == ["exap_1"]
 
@@ -313,7 +323,9 @@ async def test_get_execution_result_job_id_polls_the_job(
     """An async (non-held) execution still polls by its job id."""
     polled = job_polls(["completed"])
     payload = _json(
-        await dispatch_mcp_tool_call(_env(), "get_execution_result", {"job_id": "job_async1"})
+        await dispatch_mcp_tool_call(
+            _env(), "get_execution_result", {"job_id": "job_async1", "timeout": 0}
+        )
     )
     assert payload["job_id"] == "job_async1"
     assert polled == ["job_async1"]

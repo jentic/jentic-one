@@ -30,6 +30,7 @@ import time
 import uuid as uuid_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -119,7 +120,11 @@ from jentic_one.shared.catalog.protocols import (
     SecuritySchemesLookupProtocol,
 )
 from jentic_one.shared.context import Context
-from jentic_one.shared.jobs.hold import HELD_AGENT_DIRECTIVE
+from jentic_one.shared.jobs.hold import (
+    HELD_AGENT_DIRECTIVE,
+    STILL_HELD_AGENT_DIRECTIVE,
+    review_page_path,
+)
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.pagination import InvalidCursorError, InvalidSearchCursorError
 from jentic_one.shared.redaction import redact_value
@@ -1211,11 +1216,13 @@ def _header_kvs(obj: dict[str, Any] | None) -> list[tuple[str, str]]:
 _GET_EXECUTION_RESULT_PARAMS = [
     ParamSpec("held_execution_id", "string", ("held_execution",)),
     ParamSpec("job_id", "string", ("id", "job")),
-    ParamSpec("wait", "int"),
+    ParamSpec("timeout", "int"),
 ]
 
-#: Cap on get_execution_result's ``wait``, in milliseconds (Go: ``maxPollWaitMillis``).
-MAX_POLL_WAIT_MS = 30_000
+#: get_execution_result's ``timeout`` in seconds when the caller sets none, and
+#: its cap (Go: ``defaultPollTimeoutSeconds`` / ``maxPollTimeoutSeconds``).
+DEFAULT_POLL_TIMEOUT_SECONDS = 30
+MAX_POLL_TIMEOUT_SECONDS = 60
 
 
 async def handle_get_execution_result(
@@ -1224,9 +1231,9 @@ async def handle_get_execution_result(
     """Poll a held execution, or an async execution's job (Go: ``handleGetExecutionResult``).
 
     ``held_execution_id`` (from a held 202) reads through the held execution
-    itself; ``job_id`` (from an async 202) reads the job. ``wait`` absent or
-    zero polls once and answers at once; otherwise it re-polls until the call
-    has finished or ``wait`` milliseconds (capped at ``MAX_POLL_WAIT_MS``) lapse.
+    itself; ``job_id`` (from an async 202) reads the job. It re-polls until the
+    call has finished or ``timeout`` seconds lapse — 30 when absent, capped at
+    60; ``0`` polls once and answers at once.
     """
     args = normalize_tool_args(arguments, _GET_EXECUTION_RESULT_PARAMS)
     held_execution_id = args.get("held_execution_id", "")
@@ -1236,14 +1243,16 @@ async def handle_get_execution_result(
             'get_execution_result requires exactly one of "held_execution_id" (from a held '
             '202 execute response) or "job_id" (aliases: "id", "job"; from an async one)'
         )
-    wait_ms = min(max(int(args.get("wait", 0)), 0), MAX_POLL_WAIT_MS)
+    timeout = min(
+        max(int(args.get("timeout", DEFAULT_POLL_TIMEOUT_SECONDS)), 0), MAX_POLL_TIMEOUT_SECONDS
+    )
     if held_execution_id:
         poll = _held_poller(env)
         target = held_execution_id
     else:
         poll = _poller(env)
         target = job_id
-    return tool_result(env.ctx, await _poll_until_finished(poll, target, wait_ms / 1000))
+    return tool_result(env.ctx, await _poll_until_finished(poll, target, float(timeout)))
 
 
 async def _poll_until_finished(
@@ -1264,11 +1273,14 @@ async def _poll_until_finished(
 async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> dict[str, Any]:
     """The poll payload for one held execution.
 
-    ``{held_execution_id, state, status, execution_id?, result?}`` — ``state``
-    is the decision, ``status`` where the call stands, and the result rides
-    once the call has finished: the upstream response, or the problem
-    explaining why it never ran. Needs no ``jobs:*`` permission: visibility is
-    the held execution's own (the filing agent, its owner, or ``org:admin``).
+    ``{held_execution_id, state, status, review_url, expires_at,
+    execution_id?, result?, agent_directive?}`` — ``state`` is the decision,
+    ``status`` where the call stands, and the result rides once the call has
+    finished: the upstream response, or the problem explaining why it never
+    ran. Every poll names the held execution and its review page; until the
+    call has finished it also carries the directive to show that page again.
+    Needs no ``jobs:*`` permission: visibility is the held execution's own (the
+    filing agent, its owner, or ``org:admin``).
     """
     _require_db(env.ctx, "admin", "held execution polling")
     svc = ExecutionApprovalService(env.ctx)
@@ -1287,9 +1299,14 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
         "held_execution_id": view.id,
         "state": view.state,
         "status": view.execution_status,
+        "review_url": env.base_url.rstrip("/") + review_page_path(view.id),
+        "expires_at": _rfc3339(view.expires_at),
     }
     if view.execution_id:
         payload["execution_id"] = view.execution_id
+    if view.execution_status not in approvals.TERMINAL_JOB_STATUSES:
+        payload["agent_directive"] = STILL_HELD_AGENT_DIRECTIVE
+        return payload
     if view.execution_status in (_JOB_COMPLETED, _JOB_FAILED):
         try:
             result = await svc.get_result(held_execution_id, identity=env.identity)
@@ -1302,6 +1319,12 @@ async def held_execution_poll_payload(env: CallEnv, held_execution_id: str) -> d
             return payload
         _attach_result_view(result, payload)
     return payload
+
+
+def _rfc3339(when: datetime) -> str:
+    """UTC RFC 3339 with ``Z`` and no trailing fraction zeros (Go: ``time.RFC3339Nano``)."""
+    text = when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f").rstrip("0").rstrip(".")
+    return f"{text}Z"
 
 
 def _held_poller(env: CallEnv) -> Callable[[str], Awaitable[dict[str, Any]]]:

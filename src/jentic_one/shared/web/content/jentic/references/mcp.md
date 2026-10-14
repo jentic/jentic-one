@@ -177,14 +177,15 @@ an async execution or a tracked import returns a **job envelope**
 **show the user its `review_url`** — a reviewer signs in there to approve or
 deny it — and end your turn so the user sees the link. **Do not call
 `get_execution_result` until the user replies**; then call it **once** with
-the `held_execution_id` and `wait: 30000` (milliseconds); it returns early once
-the call has finished (`completed`, `failed`, `cancelled`). If it is still
-held, tell the user it is waiting for approval and end your turn again. A
+the `held_execution_id`; it waits up to 30 seconds by default (`timeout`, in
+seconds, max 60) and returns early once the call has finished (`completed`,
+`failed`, `cancelled`). If it is still held, the answer repeats the
+`review_url`: show the user the link again and end your turn again. A
 `failed` held call carries the permission-denied problem (denied or expired)
 as its result. A tracked import is polled the same way with its `job_id`:
 
 ```
-get_execution_result {"held_execution_id": "<id from the held response>", "wait": 30000}
+get_execution_result {"held_execution_id": "<id from the held response>", "timeout": 60}
 get_execution_result {"job_id": "<id from an async or import response>"}
 ```
 

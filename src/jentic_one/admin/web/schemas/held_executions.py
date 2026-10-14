@@ -55,6 +55,10 @@ class HeldExecutionResponse(BaseModel):
         "`running`, and `completed`, `failed` or `cancelled`.",
     )
     expires_at: datetime = Field(description="When a pending held execution expires undecided.")
+    review_url: str = Field(
+        description="Review page a signed-in reviewer opens to approve or deny the call. "
+        "Carries no credential."
+    )
     decided_at: datetime | None = Field(default=None, description="When it left `pending`.")
     decided_by: str | None = Field(default=None, description="Reviewer who decided it.")
     decision_reason: str | None = Field(default=None, description="Reviewer's reason.")

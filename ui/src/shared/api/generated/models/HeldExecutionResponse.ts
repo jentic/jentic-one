@@ -78,6 +78,10 @@ export type HeldExecutionResponse = {
      */
     path: string;
     /**
+     * Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+     */
+    review_url: string;
+    /**
      * The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
      */
     state: ExecutionApprovalState;

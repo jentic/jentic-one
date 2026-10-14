@@ -181,7 +181,11 @@ function links(row: ApprovalRow) {
 
 function detailView(row: ApprovalRow) {
 	const { job_id: _j, ...rest } = row;
-	return { ...rest, _links: links(row) };
+	return {
+		...rest,
+		review_url: `${window.location.origin}/app/agents/approvals/${row.id}`,
+		_links: links(row),
+	};
 }
 
 function listView(row: ApprovalRow) {

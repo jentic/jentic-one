@@ -3264,6 +3264,10 @@ components:
           - $ref: '#/components/schemas/HeldRequestResponse'
           - type: 'null'
           description: The held call.
+        review_url:
+          description: Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+          title: Review Url
+          type: string
         state:
           $ref: '#/components/schemas/ExecutionApprovalState'
           description: 'The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.'
@@ -3291,6 +3295,7 @@ components:
       - path
       - state
       - expires_at
+      - review_url
       - created_at
       - _links
       title: HeldExecutionDetailResponse
@@ -3442,6 +3447,10 @@ components:
           description: Upstream path of the held call.
           title: Path
           type: string
+        review_url:
+          description: Review page a signed-in reviewer opens to approve or deny the call. Carries no credential.
+          title: Review Url
+          type: string
         state:
           $ref: '#/components/schemas/ExecutionApprovalState'
           description: 'The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.'
@@ -3469,6 +3478,7 @@ components:
       - path
       - state
       - expires_at
+      - review_url
       - created_at
       - _links
       title: HeldExecutionResponse

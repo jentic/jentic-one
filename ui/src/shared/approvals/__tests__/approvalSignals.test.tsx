@@ -37,6 +37,7 @@ function heldCall(overrides: Partial<HeldExecutionResponse> = {}): HeldExecution
 		state: 'pending' as HeldExecutionResponse['state'],
 		execution_status: 'held',
 		expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+		review_url: `https://jentic.example/app/agents/approvals/${id}`,
 		created_at: new Date(Date.now() - 60_000).toISOString(),
 		_links: { self: `/executions/holds/${id}`, withdraw: `/executions/holds/${id}:withdraw` },
 		...overrides,

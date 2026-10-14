@@ -31,7 +31,7 @@ from jentic_one.admin.web.schemas.held_executions import (
     HeldRequestResponse,
 )
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.jobs.hold import PROBLEM_CONTENT_TYPE
+from jentic_one.shared.jobs.hold import PROBLEM_CONTENT_TYPE, review_page_path
 from jentic_one.shared.models.execution_approvals import ExecutionApprovalState
 from jentic_one.shared.models.jobs import JobStatus
 from jentic_one.shared.web import get_current_identity
@@ -56,6 +56,8 @@ def _fields(view: ExecutionApprovalView, request: Request) -> dict[str, object]:
     base = f"/executions/holds/{view.id}"
     return {
         **view.model_dump(exclude={"job_id"}),
+        # The review page is served under /app beside this API, on the same origin.
+        "review_url": build_link(request, review_page_path(view.id)),
         "links": HeldExecutionLinksResponse(
             self_link=build_link(request, base),
             result=(

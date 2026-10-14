@@ -82,11 +82,14 @@ credential itself.
 
 `jentic execute` prints the held envelope as its data, shows the review link
 on stderr and exits **3** (`TIMEOUT_PENDING`).
-`jentic holds wait <held_execution_id>` then waits for the decision and prints the outcome exactly as `execute`
-prints a call that ran at once: the upstream response (exit 0) or the denial
-or expiry (exit 2). `jentic execute --wait [--timeout 10m]` does both in one
-command. Neither re-sends the call; either exits 3 again if the call is still
-held when the timeout lapses.
+`jentic executions poll <held_execution_id> [--timeout 30s]` then waits for the
+decision and prints the outcome exactly as `execute` prints a call that ran at
+once: the upstream response (exit 0) or the denial or expiry (exit 2).
+`jentic execute --wait [--timeout 30s]` does both in one command. `--timeout`
+defaults to 30 seconds and accepts up to 5 minutes (`90s`, `2m`, or bare
+seconds); `0` checks once. Neither re-sends the call. If the call is still held
+when the timeout lapses, either exits 3 again and prints the
+`held_execution_id`, the `review_url` and the command to poll again.
 
 ### Over MCP (`/mcp` and `jentic mcp`)
 
@@ -96,11 +99,13 @@ Both MCP servers relay the held envelope unchanged, so the agent gets the same
 - **Every client** gets the held result at once from `execute`. The directive
   asks the agent to show the user the review link and end its turn, then —
   once the user replies — call `get_execution_result` with the
-  `held_execution_id` and `wait: 30000`.
-- **`get_execution_result`** takes an optional `wait` in milliseconds
-  (0–30000): the server re-polls the held execution and returns as soon as the
-  call has finished, or where it stands when the wait lapses. Omit it to read
-  the status at once.
+  `held_execution_id`.
+- **`get_execution_result`** takes an optional `timeout` in seconds (default
+  30, maximum 60; `0` checks once): the server re-polls the held execution and
+  returns as soon as the call has finished, or where it stands when the timeout
+  lapses. Every answer names the `held_execution_id`, the `review_url` and
+  `expires_at`; one that comes back before the call has finished also carries
+  an `agent_directive` to show the user the review link again and end the turn.
 - **Clients declaring URL-mode elicitation** (`elicitation.url`) are instead
   asked to open the review page for the user. The client's accept only means
   the link was opened — it never decides the approval. The retry reads the

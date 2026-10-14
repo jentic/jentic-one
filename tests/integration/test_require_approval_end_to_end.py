@@ -46,6 +46,7 @@ from jentic_one.shared.broker.protocols import RuleVerdict
 from jentic_one.shared.config import WorkerConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry, JobResultPayload
+from jentic_one.shared.jobs.hold import STILL_HELD_AGENT_DIRECTIVE
 from jentic_one.shared.jobs.worker import WorkerLoop
 from jentic_one.shared.models import (
     ActorStatus,
@@ -233,7 +234,14 @@ async def test_approved_call_runs_once_and_its_result_reaches_the_agent(
     # poll answers "held".
     handler = _RecordingHandler()
     assert await _worker(ctx, handler)._tick() is False
-    assert (await _mcp_result(ctx, parties.agent, held_id))["status"] == JobStatus.HELD
+    pending = await _mcp_result(ctx, parties.agent, held_id, timeout=0)
+    assert pending["status"] == JobStatus.HELD
+    # A poll that answers before the call has finished still names the held
+    # execution and its review page, and tells the agent to show it again.
+    assert pending["held_execution_id"] == held_id
+    assert pending["review_url"].endswith(f"/app/agents/approvals/{held_id}")
+    assert pending["expires_at"]
+    assert pending["agent_directive"] == STILL_HELD_AGENT_DIRECTIVE
 
     async with _admin_client(ctx, parties.owner) as client:
         decided = await client.post(
@@ -254,9 +262,11 @@ async def test_approved_call_runs_once_and_its_result_reaches_the_agent(
     assert held.json()["execution_status"] == JobStatus.COMPLETED
     assert result.status_code == 200, result.text
 
-    polled = await _mcp_result(ctx, parties.agent, held_id, wait=30_000)
+    polled = await _mcp_result(ctx, parties.agent, held_id, timeout=60)
     assert polled["status"] == JobStatus.COMPLETED
     assert "result" in polled
+    assert polled["review_url"].endswith(f"/app/agents/approvals/{held_id}")
+    assert "agent_directive" not in polled
 
 
 async def test_denied_call_never_runs_and_the_agent_reads_the_denial(
@@ -277,6 +287,7 @@ async def test_denied_call_never_runs_and_the_agent_reads_the_denial(
     assert await _worker(ctx, handler)._tick() is False
     assert handler.calls == 0
 
-    polled = await _mcp_result(ctx, parties.agent, held_id)
+    polled = await _mcp_result(ctx, parties.agent, held_id, timeout=0)
     assert polled["status"] == JobStatus.FAILED
+    assert polled["held_execution_id"] == held_id
     assert polled["result"]["status"] == 403

@@ -58,9 +58,22 @@ HELD_AGENT_DIRECTIVE = (
     "This call needs human approval. Most important: show the user the review_url, "
     "since they cannot approve it without that link, and end your turn so they see it. "
     "Do not call get_execution_result until the user replies; then call it once with "
-    "held_execution_id and wait: 30000. If it is still held, tell the user it is waiting for "
-    "approval and end your turn again. Do not re-send the call."
+    "held_execution_id. It waits up to 30 seconds by default (timeout, max 60). If it is "
+    "still held, show the user the review_url again and end your turn again. Do not "
+    "re-send the call."
 )
+
+#: What the agent is told when a poll answers before the call has finished.
+STILL_HELD_AGENT_DIRECTIVE = (
+    "This call is still waiting on human approval. Show the user the review_url again "
+    "and end your turn. When they reply, call get_execution_result once with this "
+    "held_execution_id. Do not re-send the call."
+)
+
+
+def review_page_path(held_execution_id: str) -> str:
+    """The web UI's review page for one held execution, relative to the UI origin."""
+    return f"/app/agents/approvals/{held_execution_id}"
 
 
 class PendingApprovalLimitError(Exception):
