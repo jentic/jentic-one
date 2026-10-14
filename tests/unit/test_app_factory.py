@@ -89,9 +89,13 @@ def test_combined_app_unified_openapi_spec(ctx: Context) -> None:
     app = create_combined_app(ctx, ["registry", "admin", "control"])
     spec = app.openapi()
     paths = spec["paths"]
-    assert "/registry/health" in paths
+    # The root probe and the admin probe (the SPA's setup gate reads its
+    # response model) are documented; the other per-surface probes are served
+    # but schema-hidden so the spec has one canonical liveness check.
+    assert "/health" in paths
     assert "/admin/health" in paths
-    assert "/control/health" in paths
+    assert "/registry/health" not in paths
+    assert "/control/health" not in paths
 
 
 def test_auth_surface_in_surface_modules() -> None:

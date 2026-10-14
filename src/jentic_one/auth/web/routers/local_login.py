@@ -391,6 +391,7 @@ def _render_login_page(
 
 @router.get(
     "/login",
+    include_in_schema=False,
     operation_id="loginPage",
     summary="Local-account login form (authorization flow)",
     response_class=HTMLResponse,
@@ -447,6 +448,7 @@ async def login_page(
 
 @router.post(
     "/login",
+    include_in_schema=False,
     operation_id="loginSubmit",
     summary="Local-account login submit (authorization flow)",
     response_model=None,
@@ -648,6 +650,7 @@ async def check_session_continue_rate_limit(
 
 @router.post(
     "/oauth/session/continue",
+    include_in_schema=False,
     operation_id="sessionContinueEndpoint",
     summary="Exchange a live platform session for an authorize continuation",
     responses={

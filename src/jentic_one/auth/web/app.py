@@ -53,7 +53,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     # Tags are assigned centrally by the OpenAPI tag resolver (see
     # shared/web/openapi_meta.resolve_tag), so no coarse include-level tags here.
     return [
-        (make_health_router("auth"), "/auth", []),
+        (make_health_router("auth", include_in_schema=False), "/auth", []),
         (discovery.router, "", []),
         # /mcp-scoped OAuth discovery: RFC 8414 + RFC 9728 docs,
         # the root protected-resource alias, and the /mcp 401 challenge. All

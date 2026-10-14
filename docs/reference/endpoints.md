@@ -28,7 +28,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **181**._
+_Total endpoints: **165**._
 
 
 ## Agent-facing (typically an agent) (32)
@@ -111,7 +111,7 @@ _Total endpoints: **181**._
 | GET | `/vendors` | `capabilities:read` | agent | List verified vendors |
 | GET | `/vendors/{vendor_key}/auth-capabilities` | `capabilities:read` | agent | Get a vendor's OAuth flows and scopes |
 
-## Operator-facing (typically a human operator / admin) (46)
+## Operator-facing (typically a human operator / admin) (45)
 
 
 ### `actors`
@@ -183,12 +183,6 @@ _Total endpoints: **181**._
 |---|---|---|---|---|
 | GET | `/monitoring/executions` | `org:admin` | operator | Get Execution Stats |
 | GET | `/monitoring/usage` | `org:admin` | operator | Get Usage Stats |
-
-### `oauth`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/oauth/session/continue` | _any authenticated_ | operator | Exchange a live platform session for an authorize continuation |
 
 ### `oauth-app-registrations`
 
@@ -386,18 +380,8 @@ _Total endpoints: **181**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (30)
+## Public (unauthenticated) (15)
 
-
-### `.well-known`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/.well-known/jwks.json` | _public — no auth_ | — | JSON Web Key Set |
-| GET | `/.well-known/oauth-authorization-server` | _public — no auth_ | — | OAuth authorization server metadata |
-| GET | `/.well-known/oauth-authorization-server/mcp` | _public — no auth_ | — | Get OAuth authorization server metadata for MCP clients |
-| GET | `/.well-known/oauth-protected-resource` | _public — no auth_ | — | Get MCP protected resource metadata (root fallback) |
-| GET | `/.well-known/oauth-protected-resource/mcp` | _public — no auth_ | — | OAuth protected resource metadata for the MCP resource |
 
 ### `admin`
 
@@ -409,27 +393,8 @@ _Total endpoints: **181**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/auth/health` | _public — no auth_ | — | Auth health |
 | GET | `/auth/idp` | _public — no auth_ | — | External IdP login descriptor |
 | POST | `/auth/login` | _public — no auth_ | — | Log in |
-
-### `authorize`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/authorize` | _public — no auth_ | — | Authorize Endpoint |
-
-### `control`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/control/health` | _public — no auth_ | — | Control health |
-
-### `credentials`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/credentials/oauth/callback` | _public — no auth_ | — | OAuth connect callback |
 
 ### `error`
 
@@ -449,21 +414,11 @@ _Total endpoints: **181**._
 |---|---|---|---|---|
 | GET | `/instance` | _public — no auth_ | — | Backend identity |
 
-### `login`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/login` | _public — no auth_ | — | Local-account login form (authorization flow) |
-| POST | `/login` | _public — no auth_ | — | Local-account login submit (authorization flow) |
-
 ### `oauth`
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/oauth/approval/status` | _public — no auth_ | — | Poll client approval status (approval-pending page) |
-| GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
-| GET | `/oauth/consent` | _public — no auth_ | — | Consent Page |
-| POST | `/oauth/consent` | _public — no auth_ | — | Consent Submit |
 | POST | `/oauth/consent/agent` | _public — no auth_ | — | Create the consenting user's first agent inline (consent page) |
 | GET | `/oauth/consent/agent/status` | _public — no auth_ | — | Poll pending-agent approval status (consent awaiting page) |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
@@ -485,12 +440,6 @@ _Total endpoints: **181**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | POST | `/register` | _public — no auth_ | — | Register Endpoint |
-
-### `registry`
-
-| Method | Path | Permission(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/registry/health` | _public — no auth_ | — | Registry health |
 
 ### `users:create-admin`
 

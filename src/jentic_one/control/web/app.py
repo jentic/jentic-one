@@ -53,7 +53,7 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
     # Tags are assigned centrally by the OpenAPI tag resolver (see
     # shared/web/openapi_meta.resolve_tag), so no coarse include-level tags here.
     return [
-        (make_health_router("control"), "/control", []),
+        (make_health_router("control", include_in_schema=False), "/control", []),
         (credentials.router, "", []),
         (mcp.router, "", []),
         (vendors.router, "", []),

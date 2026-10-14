@@ -57,6 +57,7 @@ def _get_publisher(config: AuthConfig) -> CachedJWKSPublisher:
 
 @router.get(
     "/.well-known/oauth-authorization-server",
+    include_in_schema=False,
     summary="OAuth authorization server metadata",
 )
 async def oauth_authorization_server(
@@ -99,7 +100,7 @@ async def oauth_authorization_server(
     }
 
 
-@router.get("/.well-known/jwks.json", summary="JSON Web Key Set")
+@router.get("/.well-known/jwks.json", summary="JSON Web Key Set", include_in_schema=False)
 async def jwks(ctx: Context = Depends(get_ctx)) -> dict[str, Any]:
     """Return the JWKS document with the active public signing keys (ES256)."""
     return _get_publisher(ctx.config.auth).get_jwks()
@@ -213,6 +214,7 @@ def _mcp_protected_resource_document(base: str) -> dict[str, Any]:
 
 @mcp_router.get(
     "/.well-known/oauth-authorization-server/mcp",
+    include_in_schema=False,
     summary="Get OAuth authorization server metadata for MCP clients",
     responses=_GATED_404_RESPONSE,
 )
@@ -237,6 +239,7 @@ async def mcp_oauth_authorization_server(
 
 @mcp_router.get(
     _MCP_PRM_PATH,
+    include_in_schema=False,
     summary="OAuth protected resource metadata for the MCP resource",
     responses=_GATED_404_RESPONSE,
 )
@@ -255,6 +258,7 @@ async def mcp_oauth_protected_resource(
 
 @mcp_router.get(
     "/.well-known/oauth-protected-resource",
+    include_in_schema=False,
     # MCP-specific operation_id: the body is the /mcp resource's document, so
     # don't squat the generic root-doc name (a future root PRM for a non-MCP
     # resource should get `oauthProtectedResource`, not fight this alias for it).

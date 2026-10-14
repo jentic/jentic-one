@@ -1149,7 +1149,12 @@ def _render_approval_pending_page(
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
-@router.get("/authorize", dependencies=[Depends(check_rate_limit)], response_model=None)
+@router.get(
+    "/authorize",
+    dependencies=[Depends(check_rate_limit)],
+    response_model=None,
+    include_in_schema=False,
+)
 async def authorize_endpoint(
     request: Request,
     response_type: str = Query(
@@ -1517,6 +1522,7 @@ async def approval_decision_endpoint(
 
 @router.get(
     "/oauth/callback",
+    include_in_schema=False,
     operation_id="authorizeOauthCallback",
     name="authorize_oauth_callback",
     dependencies=[Depends(check_rate_limit)],
@@ -2021,7 +2027,12 @@ def _render_agent_options(
     return "\n".join(blocks)
 
 
-@router.get("/oauth/consent", response_class=HTMLResponse, dependencies=[Depends(check_rate_limit)])
+@router.get(
+    "/oauth/consent",
+    response_class=HTMLResponse,
+    dependencies=[Depends(check_rate_limit)],
+    include_in_schema=False,
+)
 async def consent_page(
     request: Request,
     ch: str = Query(
@@ -2211,7 +2222,7 @@ async def _render_agent_consent_page(
     return HTMLResponse(content=html, headers=CONSENT_SECURITY_HEADERS)
 
 
-@router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)])
+@router.post("/oauth/consent", dependencies=[Depends(check_rate_limit)], include_in_schema=False)
 async def consent_submit(
     request: Request,
     consent_token: str = Form(

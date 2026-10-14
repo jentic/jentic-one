@@ -36,8 +36,12 @@ class RootHealthResponse(BaseModel):
     )
 
 
-def make_health_router(surface: str) -> APIRouter:
-    """Build a minimal ``/health`` router reporting the given surface name."""
+def make_health_router(surface: str, *, include_in_schema: bool = True) -> APIRouter:
+    """Build a minimal ``/health`` router reporting the given surface name.
+
+    ``include_in_schema=False`` keeps a per-surface probe out of the combined
+    control-plane spec, where the root ``GET /health`` is the documented probe.
+    """
     router = APIRouter()
 
     @router.get(
@@ -45,6 +49,7 @@ def make_health_router(surface: str) -> APIRouter:
         operation_id=f"{surface}Health",
         summary=f"{surface.capitalize()} health",
         tags=["System"],
+        include_in_schema=include_in_schema,
     )
     async def health() -> dict[str, str]:
         """Return service health status for this surface.
