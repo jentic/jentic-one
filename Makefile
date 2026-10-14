@@ -180,6 +180,7 @@ start-control: ## Start control surface standalone
 # and the web UI live on the combined app at :8000. Point the broker's
 # absolute links (async-job and held-call `_links`, the approval `review_url`)
 # there; its own request origin would name the broker instead.
+# scripts/start-local.sh sets the same broker env for `start-local`.
 LOCAL_BROKER_ENV := JENTIC__APPS=broker JENTIC__SERVER__PORT=8100 \
 	JENTIC__BROKER__JOBS_API_BASE_URL=http://127.0.0.1:8000
 
@@ -188,10 +189,7 @@ start-broker: ## Start broker surface standalone on :8100 (runs alongside start-
 
 start-local: ## Start the combined app (:8000) and the broker (:8100) together for local testing
 	@echo "==> combined app → http://127.0.0.1:8000   broker → http://127.0.0.1:8100 (Ctrl-C stops both)"
-	@trap 'kill 0' INT TERM EXIT; \
-		$(MAKE) start-app & \
-		$(LOCAL_BROKER_ENV) uv run python -m jentic_one & \
-		wait
+	@scripts/start-local.sh
 
 migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/local-sqlite.yaml)
 	@mkdir -p .data
