@@ -47,7 +47,7 @@ export type OAuthClientCreateResponse = {
      */
     description: (string | null);
     /**
-     * Internal ID (ksuid).
+     * Record ID of the OAuth client (`oac_…`), not its public `client_id`.
      */
     id: string;
     /**

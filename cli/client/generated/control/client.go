@@ -4630,7 +4630,7 @@ type OAuthClientCreateResponse struct {
 	// Examples: Billing assistant production deployment
 	Description *string `json:"description"`
 
-	// Id Internal ID (ksuid).
+	// Id Record ID of the OAuth client (`oac_…`), not its public `client_id`.
 	//
 	// Examples: oac_6968b39840a935d9f7e2714b
 	Id string `json:"id"`
@@ -4855,7 +4855,7 @@ type OAuthClientResponse struct {
 	// Examples: Billing assistant production deployment
 	Description *string `json:"description"`
 
-	// Id Internal ID (ksuid).
+	// Id Record ID of the OAuth client (`oac_…`), not its public `client_id`.
 	//
 	// Examples: oac_6968b39840a935d9f7e2714b
 	Id string `json:"id"`
@@ -8235,6 +8235,10 @@ func (t ConfirmConnectSessionJSONBody) AsOAuthConfirmSessionRequest() (OAuthConf
 // FromOAuthConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided OAuthConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromOAuthConfirmSessionRequest(v OAuthConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"oauth"}`))
 	t.union = b
 	return err
 }
@@ -8242,6 +8246,10 @@ func (t *ConfirmConnectSessionJSONBody) FromOAuthConfirmSessionRequest(v OAuthCo
 // MergeOAuthConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided OAuthConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeOAuthConfirmSessionRequest(v OAuthConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"oauth"}`))
 	if err != nil {
 		return err
 	}
@@ -8261,6 +8269,10 @@ func (t ConfirmConnectSessionJSONBody) AsApiKeyConfirmSessionRequest() (ApiKeyCo
 // FromApiKeyConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ApiKeyConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromApiKeyConfirmSessionRequest(v ApiKeyConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"api_key"}`))
 	t.union = b
 	return err
 }
@@ -8268,6 +8280,10 @@ func (t *ConfirmConnectSessionJSONBody) FromApiKeyConfirmSessionRequest(v ApiKey
 // MergeApiKeyConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ApiKeyConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeApiKeyConfirmSessionRequest(v ApiKeyConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"api_key"}`))
 	if err != nil {
 		return err
 	}
@@ -8287,6 +8303,10 @@ func (t ConfirmConnectSessionJSONBody) AsBearerConfirmSessionRequest() (BearerCo
 // FromBearerConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided BearerConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromBearerConfirmSessionRequest(v BearerConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"bearer"}`))
 	t.union = b
 	return err
 }
@@ -8294,6 +8314,10 @@ func (t *ConfirmConnectSessionJSONBody) FromBearerConfirmSessionRequest(v Bearer
 // MergeBearerConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided BearerConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeBearerConfirmSessionRequest(v BearerConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"bearer"}`))
 	if err != nil {
 		return err
 	}
@@ -8313,6 +8337,10 @@ func (t ConfirmConnectSessionJSONBody) AsBasicConfirmSessionRequest() (BasicConf
 // FromBasicConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided BasicConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromBasicConfirmSessionRequest(v BasicConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"basic"}`))
 	t.union = b
 	return err
 }
@@ -8320,6 +8348,10 @@ func (t *ConfirmConnectSessionJSONBody) FromBasicConfirmSessionRequest(v BasicCo
 // MergeBasicConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided BasicConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeBasicConfirmSessionRequest(v BasicConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"basic"}`))
 	if err != nil {
 		return err
 	}
@@ -8339,6 +8371,10 @@ func (t ConfirmConnectSessionJSONBody) AsOwnOAuthClientConfirmSessionRequest() (
 // FromOwnOAuthClientConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided OwnOAuthClientConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromOwnOAuthClientConfirmSessionRequest(v OwnOAuthClientConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"own_oauth_client"}`))
 	t.union = b
 	return err
 }
@@ -8346,6 +8382,10 @@ func (t *ConfirmConnectSessionJSONBody) FromOwnOAuthClientConfirmSessionRequest(
 // MergeOwnOAuthClientConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided OwnOAuthClientConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeOwnOAuthClientConfirmSessionRequest(v OwnOAuthClientConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"own_oauth_client"}`))
 	if err != nil {
 		return err
 	}
@@ -8365,6 +8405,10 @@ func (t ConfirmConnectSessionJSONBody) AsExistingCredentialConfirmSessionRequest
 // FromExistingCredentialConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ExistingCredentialConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromExistingCredentialConfirmSessionRequest(v ExistingCredentialConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"existing_credential"}`))
 	t.union = b
 	return err
 }
@@ -8372,6 +8416,10 @@ func (t *ConfirmConnectSessionJSONBody) FromExistingCredentialConfirmSessionRequ
 // MergeExistingCredentialConfirmSessionRequest performs a merge with any union data inside the ConfirmConnectSessionJSONBody, using the provided ExistingCredentialConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) MergeExistingCredentialConfirmSessionRequest(v ExistingCredentialConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"existing_credential"}`))
 	if err != nil {
 		return err
 	}
@@ -8391,6 +8439,10 @@ func (t ConfirmConnectSessionJSONBody) AsReauthorizeConfirmSessionRequest() (Rea
 // FromReauthorizeConfirmSessionRequest overwrites any union data inside the ConfirmConnectSessionJSONBody as the provided ReauthorizeConfirmSessionRequest
 func (t *ConfirmConnectSessionJSONBody) FromReauthorizeConfirmSessionRequest(v ReauthorizeConfirmSessionRequest) error {
 	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
 	t.union = b
 	return err
 }
@@ -8401,10 +8453,47 @@ func (t *ConfirmConnectSessionJSONBody) MergeReauthorizeConfirmSessionRequest(v 
 	if err != nil {
 		return err
 	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"reauthorize"}`))
+	if err != nil {
+		return err
+	}
 
 	merged, err := runtime.JSONMerge(t.union, b)
 	t.union = merged
 	return err
+}
+
+func (t ConfirmConnectSessionJSONBody) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ConfirmConnectSessionJSONBody) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "api_key":
+		return t.AsApiKeyConfirmSessionRequest()
+	case "basic":
+		return t.AsBasicConfirmSessionRequest()
+	case "bearer":
+		return t.AsBearerConfirmSessionRequest()
+	case "existing_credential":
+		return t.AsExistingCredentialConfirmSessionRequest()
+	case "oauth":
+		return t.AsOAuthConfirmSessionRequest()
+	case "own_oauth_client":
+		return t.AsOwnOAuthClientConfirmSessionRequest()
+	case "reauthorize":
+		return t.AsReauthorizeConfirmSessionRequest()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
 }
 
 func (t ConfirmConnectSessionJSONBody) MarshalJSON() ([]byte, error) {

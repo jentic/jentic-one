@@ -142,7 +142,10 @@ class OAuthClientResponse(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [_OAUTH_CLIENT_EXAMPLE]})
 
-    id: str = Field(description="Internal ID (ksuid).", examples=[ex.OAUTH_CLIENT_RECORD_ID])
+    id: str = Field(
+        description="Record ID of the OAuth client (`oac_…`), not its public `client_id`.",
+        examples=[ex.OAUTH_CLIENT_RECORD_ID],
+    )
     client_id: str = Field(
         description="Public client identifier used in OAuth flows.",
         examples=[ex.OAUTH_PUBLIC_CLIENT_ID],

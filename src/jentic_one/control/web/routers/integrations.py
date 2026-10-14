@@ -446,7 +446,15 @@ async def confirm_connect_session(
         ),
     ],
     request: Request,
-    body: Annotated[ConfirmSessionRequest, Body()],
+    body: Annotated[
+        ConfirmSessionRequest,
+        Body(
+            description=(
+                "How to complete the session, selected by `kind`. A body without `kind` "
+                "is the `oauth` variant."
+            )
+        ),
+    ],
     poll_token: str | None = Query(
         default=None,
         description=_POLL_TOKEN_DESCRIPTION,
