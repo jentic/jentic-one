@@ -3,14 +3,14 @@ exit: 3
 {
   "body": {
     "_links": {
-      "result": "https://console.example/executions/holds/exap_held1/result",
-      "self": "https://console.example/executions/holds/exap_held1",
-      "withdraw": "https://console.example/executions/holds/exap_held1:withdraw"
+      "result": "https://console.example/executions/holds/held_held1/result",
+      "self": "https://console.example/executions/holds/held_held1",
+      "withdraw": "https://console.example/executions/holds/held_held1:withdraw"
     },
     "agent_directive": "This call needs human approval.",
     "expires_at": "2026-10-10T12:00:00Z",
-    "held_execution_id": "exap_held1",
-    "review_url": "https://console.example/app/agents/approvals/exap_held1",
+    "held_execution_id": "held_held1",
+    "review_url": "https://console.example/app/agents/approvals/held_held1",
     "status": "held"
   },
   "headers": {
@@ -23,9 +23,9 @@ exit: 3
 }
 --- stderr ---
 Held — this call needs human approval before it runs:
-  held execution: exap_held1
+  held execution: held_held1
   Show the user this link; they approve or deny the call there.
-  open: https://console.example/app/agents/approvals/exap_held1
+  open: https://console.example/app/agents/approvals/held_held1
   expires: 2026-10-10T12:00:00Z
-  then: jentic executions poll exap_held1 (do not re-send the call)
-{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/exap_held1) — they approve or deny the call there — and end your turn. When they reply, run `jentic executions poll exap_held1` once for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"exap_held1","next_command":"jentic executions poll exap_held1","review_url":"https://console.example/app/agents/approvals/exap_held1"},"error":"the call is held for human approval (held execution exap_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}
+  then: jentic executions poll held_held1 (do not re-send the call)
+{"actionable_step":"Show the user the review_url (https://console.example/app/agents/approvals/held_held1) — they approve or deny the call there — and end your turn. When they reply, run `jentic executions poll held_held1` once for the result. Do not re-send the call.","details":{"expires_at":"2026-10-10T12:00:00Z","held_execution_id":"held_held1","next_command":"jentic executions poll held_held1","review_url":"https://console.example/app/agents/approvals/held_held1"},"error":"the call is held for human approval (held execution held_held1); it has not run","error_code":"TIMEOUT_PENDING","schema_version":"1"}

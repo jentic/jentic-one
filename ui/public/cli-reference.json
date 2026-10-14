@@ -1946,7 +1946,7 @@
               "use": "poll \u003cheld_execution_id\u003e",
               "short": "Collect a held execution's outcome, waiting up to --timeout",
               "long": "poll reads a held execution — a call the broker held for human\napproval — and, while it has not finished, re-reads it for up to\n--timeout (default 30s, max 5m; 0 checks once). A finished call prints\nexactly as `jentic execute` prints a call that ran at once: the upstream\nresponse (exit 0, even an upstream 4xx/5xx), or the denial when a\nreviewer denied the call or it expired undecided (exit 2). A call still\nheld prints its held_execution_id, review_url and this command again\n(exit 3): show the user the link, end your turn, and poll once more when\nthey reply. It never re-sends the call.\n\n--timeout takes a duration (30s, 1m) or a number of seconds (30).\n\nExit codes:\n  0 — the call ran; the upstream response is the data\n  1 — local/transport failure, or the run got no upstream answer\n  2 — the call never ran (denied, expired, withdrawn, refused at run\n      time), an unknown held execution id, or a result past retention\n  3 — still held, queued or running when --timeout lapsed (TIMEOUT_PENDING)",
-              "example": "  jentic executions poll exap_2mXk... --json\n  jentic executions poll exap_2mXk... --timeout 2m\n  jentic executions poll exap_2mXk... --timeout 0",
+              "example": "  jentic executions poll held_2mXk... --json\n  jentic executions poll held_2mXk... --timeout 2m\n  jentic executions poll held_2mXk... --timeout 0",
               "flags": [
                 {
                   "name": "context",

@@ -91,7 +91,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
     async with ctx.admin_db.transaction() as session:
         owner = await UserRepository.create(
             session,
-            email="exap-owner@test.local",
+            email="held-owner@test.local",
             first_name="Ex",
             last_name="Owner",
             invite_state=InviteState.REDEEMED,
@@ -99,7 +99,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
         )
         agent = await AgentRepository.create(
             session,
-            name="exap-agent",
+            name="held-agent",
             owner_id=owner.id,
             registered_by=owner.id,
             created_by=owner.id,
@@ -107,7 +107,7 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
         )
         orphan = await AgentRepository.create(
             session,
-            name="exap-orphan",
+            name="held-orphan",
             owner_id=owner.id,
             registered_by=owner.id,
             created_by=owner.id,
@@ -118,9 +118,9 @@ async def actors(integration_context: Context) -> AsyncGenerator[_Actors, None]:
         await session.execute(update(Agent).where(Agent.id == orphan_id).values(owner_id=None))
     yield _Actors(
         # No jobs:* permissions anywhere: the held executions surface needs none.
-        owner=Identity(sub=owner_id, email="exap-owner@test.local", permissions=[]),
-        outsider=Identity(sub="usr_exap_outsider", permissions=[]),
-        admin=Identity(sub="usr_exap_admin", permissions=["org:admin"]),
+        owner=Identity(sub=owner_id, email="held-owner@test.local", permissions=[]),
+        outsider=Identity(sub="usr_held_outsider", permissions=[]),
+        admin=Identity(sub="usr_held_admin", permissions=["org:admin"]),
         agent=Identity(
             sub=agent_id,
             permissions=[],
@@ -154,8 +154,8 @@ async def _hold(
             session,
             agent_id=agent.sub,
             actor_type=agent.actor_type.value,
-            credential_id="cred_exap",
-            matched_rule_id="apr_exap",
+            credential_id="cred_held",
+            matched_rule_id="apr_held",
             api_vendor="api.example.com",
             api_name="payments",
             api_version="1",
@@ -213,7 +213,7 @@ async def test_file_hold_writes_a_held_job_and_pending_approval(
     assert set(job.payload or {}) == {ENCRYPTED_PAYLOAD_KEY}
     approval = await _approval(ctx, hold.approval_id)
     assert approval.state == "pending"
-    assert approval.matched_rule_id == "apr_exap"
+    assert approval.matched_rule_id == "apr_held"
     assert approval.execution_id is None
     assert approval.expires_at > datetime.now(UTC) + timedelta(minutes=59)
 
@@ -493,9 +493,9 @@ async def test_detail_shows_the_agent_owner_and_the_held_request(
     ctx = integration_context
     hold = await _hold(ctx, actors.agent)
     detail = await ExecutionApprovalService(ctx).get(hold.approval_id, identity=actors.owner)
-    assert detail.agent_name == "exap-agent"
+    assert detail.agent_name == "held-agent"
     assert detail.agent_owner_id == actors.owner.sub
-    assert detail.matched_rule_id == "apr_exap"
+    assert detail.matched_rule_id == "apr_held"
     assert detail.request is not None
     assert detail.request.method == "POST"
     assert detail.request.url == "https://api.example.com/v1/charges?expand=all"
@@ -585,7 +585,7 @@ async def test_only_the_filing_identity_may_withdraw(
         with pytest.raises(ExecutionApprovalNotFoundError):
             await svc.withdraw(hold.approval_id, identity=caller)
     with pytest.raises(ExecutionApprovalNotFoundError):
-        await svc.withdraw("exap_missing", identity=actors.agent)
+        await svc.withdraw("held_missing", identity=actors.agent)
     assert (await _approval(ctx, hold.approval_id)).state == "pending"
     assert (await _job(ctx, hold.job_id)).status == JobStatus.HELD
 

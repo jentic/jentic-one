@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column(
             "id",
             sa.String(30),
-            server_default=sa.func.generate_ksuid("exap") if pg else None,
+            server_default=sa.func.generate_ksuid("held") if pg else None,
             nullable=False,
         ),
         sa.Column("job_id", sa.String(30), nullable=False),

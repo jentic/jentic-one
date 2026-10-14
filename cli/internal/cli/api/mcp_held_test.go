@@ -13,18 +13,18 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const heldBrokerBody = `{"status":"held","held_execution_id":"exap_9",` +
-	`"review_url":"https://jentic.example/app/agents/approvals/exap_9","expires_at":"2026-10-07T00:00:00Z",` +
-	`"agent_directive":"` + heldAgentDirective + `","_links":{"self":"https://jentic.example/executions/holds/exap_9",` +
-	`"result":"https://jentic.example/executions/holds/exap_9/result",` +
-	`"withdraw":"https://jentic.example/executions/holds/exap_9:withdraw"}}`
+const heldBrokerBody = `{"status":"held","held_execution_id":"held_9",` +
+	`"review_url":"https://jentic.example/app/agents/approvals/held_9","expires_at":"2026-10-07T00:00:00Z",` +
+	`"agent_directive":"` + heldAgentDirective + `","_links":{"self":"https://jentic.example/executions/holds/held_9",` +
+	`"result":"https://jentic.example/executions/holds/held_9/result",` +
+	`"withdraw":"https://jentic.example/executions/holds/held_9:withdraw"}}`
 
-const mcpReviewURL = "https://jentic.example/app/agents/approvals/exap_9"
+const mcpReviewURL = "https://jentic.example/app/agents/approvals/held_9"
 
 // heldServers starts one httptest server answering as both the broker (any
 // path outside /executions/holds and /jobs → the held 202) and the control
-// plane: /executions/holds/exap_9 walks the given execution statuses (state
-// "pending" while held, then "denied"), /executions/holds/exap_9/result
+// plane: /executions/holds/held_9 walks the given execution statuses (state
+// "pending" while held, then "denied"), /executions/holds/held_9/result
 // answers a denial problem. /jobs is counted and refused — a held call is
 // never read through it.
 func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
@@ -33,7 +33,7 @@ func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.In
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/executions/holds/exap_9":
+		case r.URL.Path == "/executions/holds/held_9":
 			i := int(polls.Add(1)) - 1
 			if i >= len(statuses) {
 				i = len(statuses) - 1
@@ -46,13 +46,13 @@ func heldServers(t *testing.T, statuses ...string) (*httptest.Server, *atomic.In
 			if statuses[i] == "" {
 				review = ""
 			}
-			_, _ = io.WriteString(w, `{"id":"exap_9","state":"`+state+`","execution_status":"`+statuses[i]+`",`+
+			_, _ = io.WriteString(w, `{"id":"held_9","state":"`+state+`","execution_status":"`+statuses[i]+`",`+
 				`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+review+
 				`"method":"POST","path":"/v1/charges","expires_at":"2026-10-07T00:00:00Z",`+
-				`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/exap_9"}}`)
-		case r.URL.Path == "/executions/holds/exap_9/result":
+				`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/held_9"}}`)
+		case r.URL.Path == "/executions/holds/held_9/result":
 			w.Header().Set("Content-Type", "application/problem+json")
-			_, _ = io.WriteString(w, `{"type":"approval_denied","status":403,"held_execution":{"id":"exap_9","state":"denied"}}`)
+			_, _ = io.WriteString(w, `{"type":"approval_denied","status":403,"held_execution":{"id":"held_9","state":"denied"}}`)
 		case strings.HasPrefix(r.URL.Path, "/jobs/"):
 			t.Errorf("unexpected %s: a held call is never read through /jobs", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -99,7 +99,7 @@ func TestMCPExecuteHeld_HeldEnvelopeAtOnce(t *testing.T) {
 	if body["agent_directive"] != heldAgentDirective {
 		t.Errorf("directive = %v, want the broker's held directive verbatim", body["agent_directive"])
 	}
-	if body["review_url"] != "https://jentic.example/app/agents/approvals/exap_9" || body["held_execution_id"] != "exap_9" {
+	if body["review_url"] != "https://jentic.example/app/agents/approvals/held_9" || body["held_execution_id"] != "held_9" {
 		t.Errorf("body = %v, want the held execution id and review_url", body)
 	}
 	if _, ok := body["job_id"]; ok {
@@ -132,7 +132,7 @@ func TestMCPExecuteHeld_URLElicitationRoundTrip(t *testing.T) {
 		t.Fatalf("handleExecute: %v", err)
 	}
 	ir, ok := res.InputRequests[reviewInputKey].(*mcp.ElicitParams)
-	if !ok || ir.Mode != "url" || ir.URL != "https://jentic.example/app/agents/approvals/exap_9" {
+	if !ok || ir.Mode != "url" || ir.URL != "https://jentic.example/app/agents/approvals/held_9" {
 		t.Fatalf("input requests = %#v, want one URL elicitation of the review page", res.InputRequests)
 	}
 	if !strings.Contains(ir.Message, "POST /v1/charges") || res.RequestState == "" {
@@ -146,12 +146,12 @@ func TestMCPExecuteHeld_URLElicitationRoundTrip(t *testing.T) {
 		t.Fatalf("retry: err=%v", err)
 	}
 	body, _ := decodeToolJSON(t, again)["body"].(map[string]any)
-	if body["status"] != "held" || body["held_execution_id"] != "exap_9" ||
-		body["review_url"] != "https://jentic.example/app/agents/approvals/exap_9" ||
+	if body["status"] != "held" || body["held_execution_id"] != "held_9" ||
+		body["review_url"] != "https://jentic.example/app/agents/approvals/held_9" ||
 		body["expires_at"] != "2026-10-07T00:00:00Z" || body["agent_directive"] != heldAgentDirective {
 		t.Errorf("retry body = %v, want the still-held envelope", body)
 	}
-	if links, _ := body["_links"].(map[string]any); links["result"] != "https://jentic.example/executions/holds/exap_9/result" {
+	if links, _ := body["_links"].(map[string]any); links["result"] != "https://jentic.example/executions/holds/held_9/result" {
 		t.Errorf("retry _links = %v, want the broker's links", body["_links"])
 	}
 	if executes.Load() != 1 {
@@ -163,7 +163,7 @@ func TestMCPExecuteHeld_ForgedRequestStateIsRefused(t *testing.T) {
 	srv, executes, _ := heldServers(t, "held")
 	s := heldTestServer(t)
 	good, err := sealHeldState(heldState{
-		HeldExecutionID: "exap_9", Agent: "someone-else@test", ReviewURL: "https://jentic.example/r",
+		HeldExecutionID: "held_9", Agent: "someone-else@test", ReviewURL: "https://jentic.example/r",
 		Exp: time.Now().Add(time.Minute).Unix(),
 	})
 	if err != nil {
@@ -210,7 +210,7 @@ func TestMCPExecuteHeld_URLElicitationRetryReturnsTheFinishedResult(t *testing.T
 	}
 	payload := decodeToolJSON(t, again)
 	result, _ := payload["result"].(map[string]any)
-	if payload["held_execution_id"] != "exap_9" || payload["state"] != "denied" || payload["status"] != "failed" ||
+	if payload["held_execution_id"] != "held_9" || payload["state"] != "denied" || payload["status"] != "failed" ||
 		result["type"] != "approval_denied" {
 		t.Errorf("retry payload = %v, want the finished hold with its denial problem", payload)
 	}
@@ -223,7 +223,7 @@ func TestMCPGetExecutionResult_ZeroTimeoutPollsOnce(t *testing.T) {
 	srv, _, polls := heldServers(t, "held", "completed")
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":0}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}
@@ -248,7 +248,7 @@ func TestMCPGetExecutionResult_HeldPayloadKeys(t *testing.T) {
 			srv, _, _ := heldServers(t, tc.status)
 			s := heldTestServer(t)
 			res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-				callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+				callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":0}`))
 			if err != nil || res.IsError {
 				t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 			}
@@ -284,7 +284,7 @@ func TestMCPGetExecutionResult_NoReviewURLFromAnOlderServerIsOmitted(t *testing.
 	srv, _, _ := heldServers(t, "")
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":0}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}
@@ -297,13 +297,13 @@ func TestMCPGetExecutionResult_TimeoutReturnsEarlyOnceFinished(t *testing.T) {
 	srv, _, polls := heldServers(t, "held", "queued", "failed")
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtxWithBroker(srv.URL, srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution":"exap_9","timeout":60}`))
+		callToolRequest("get_execution_result", `{"held_execution":"held_9","timeout":60}`))
 	if err != nil || res.IsError {
 		t.Fatalf("get_execution_result: err=%v result=%s", err, toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	result, _ := payload["result"].(map[string]any)
-	if payload["status"] != "failed" || payload["held_execution_id"] != "exap_9" || result["type"] != "approval_denied" ||
+	if payload["status"] != "failed" || payload["held_execution_id"] != "held_9" || result["type"] != "approval_denied" ||
 		polls.Load() != 3 {
 		t.Fatalf("payload=%v polls=%d, want the failed hold and its problem after three polls", payload, polls.Load())
 	}
@@ -317,7 +317,7 @@ func TestMCPGetExecutionResult_NegativeTimeoutAnswersAtOnce(t *testing.T) {
 	s := heldTestServer(t)
 	ctx := activeCtxWithBroker(srv.URL, srv.URL)
 	res, err := s.handleGetExecutionResult(ctx,
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":-5}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":-5}`))
 	if err != nil || res.IsError || polls.Load() != 1 {
 		t.Fatalf("negative timeout: err=%v polls=%d, want one poll and an immediate answer", err, polls.Load())
 	}
@@ -347,7 +347,7 @@ func TestPollTimeout(t *testing.T) {
 
 func TestMCPGetExecutionResult_RequiresExactlyOneID(t *testing.T) {
 	s := heldTestServer(t)
-	for _, args := range []string{`{}`, `{"held_execution_id":"exap_9","job_id":"job_9"}`, `{"timeout":10}`} {
+	for _, args := range []string{`{}`, `{"held_execution_id":"held_9","job_id":"job_9"}`, `{"timeout":10}`} {
 		if _, err := s.handleGetExecutionResult(activeCtx("http://127.0.0.1:1"),
 			callToolRequest("get_execution_result", args)); err == nil ||
 			!strings.Contains(err.Error(), "exactly one of") {
@@ -365,22 +365,22 @@ func TestMCPGetExecutionResult_TransportErrorKeepsTheHeldExecution(t *testing.T)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"exap_9","state":"pending","execution_status":"held",`+
+		_, _ = io.WriteString(w, `{"id":"held_9","state":"pending","execution_status":"held",`+
 			`"agent_id":"agt_1","api_vendor":"v","api_name":"n","api_version":"1","credential_id":"cred_1",`+
 			`"review_url":"`+mcpReviewURL+`","method":"POST","path":"/v1/charges","expires_at":"2026-10-07T00:00:00Z",`+
-			`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/exap_9"}}`)
+			`"created_at":"2026-10-06T12:00:00Z","_links":{"self":"/executions/holds/held_9"}}`)
 	}))
 	t.Cleanup(srv.Close)
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtx(srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":5}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":5}`))
 	if err != nil || !res.IsError {
 		t.Fatalf("want a soft error, got err=%v result=%s", err, toolResultText(res))
 	}
 	payload := decodeToolJSON(t, res)
 	details, _ := payload["details"].(map[string]any)
 	if payload["error_code"] != "TRANSPORT_ERROR" || payload["next_tool"] != "get_execution_result" ||
-		payload["retryable"] != true || details["held_execution_id"] != "exap_9" || details["review_url"] != mcpReviewURL {
+		payload["retryable"] != true || details["held_execution_id"] != "held_9" || details["review_url"] != mcpReviewURL {
 		t.Errorf("payload = %v", payload)
 	}
 }
@@ -388,13 +388,13 @@ func TestMCPGetExecutionResult_TransportErrorKeepsTheHeldExecution(t *testing.T)
 func TestMCPGetExecutionResult_TransportErrorOnTheFirstReadNamesTheID(t *testing.T) {
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtx("http://127.0.0.1:1"),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_9","timeout":0}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_9","timeout":0}`))
 	if err != nil || !res.IsError {
 		t.Fatalf("want a soft error, got err=%v", err)
 	}
 	payload := decodeToolJSON(t, res)
 	details, _ := payload["details"].(map[string]any)
-	if details["held_execution_id"] != "exap_9" {
+	if details["held_execution_id"] != "held_9" {
 		t.Errorf("payload = %v, want the held execution named", payload)
 	}
 	if _, ok := details["review_url"]; ok {
@@ -411,7 +411,7 @@ func TestMCPGetExecutionResult_UnknownHeldExecutionIsResolveFailed(t *testing.T)
 	t.Cleanup(srv.Close)
 	s := heldTestServer(t)
 	res, err := s.handleGetExecutionResult(activeCtx(srv.URL),
-		callToolRequest("get_execution_result", `{"held_execution_id":"exap_gone"}`))
+		callToolRequest("get_execution_result", `{"held_execution_id":"held_gone"}`))
 	if err != nil || !res.IsError {
 		t.Fatalf("want a soft error, got err=%v", err)
 	}

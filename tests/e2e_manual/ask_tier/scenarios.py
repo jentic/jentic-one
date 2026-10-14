@@ -312,7 +312,7 @@ def s01_hold_approve_result(w: World, o: Outcome) -> None:
     reset_upstream(w.env)
     held = cli_hold(w.cli, f"GET:{w.env.upstream}/items", "--query", "limit=10")
     hid = held["held_execution_id"]
-    expect(hid.startswith("exap_"), "held_execution_id", held)
+    expect(hid.startswith("held_"), "held_execution_id", held)
     expect("job_id" not in held and "approval" not in held, "no job_id or approval object", held)
     expect(held["review_url"].endswith(f"/app/agents/approvals/{hid}"), "review_url", held)
     links = held["_links"]

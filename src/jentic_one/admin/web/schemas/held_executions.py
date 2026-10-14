@@ -33,7 +33,7 @@ class HeldExecutionLinksResponse(BaseModel):
 class HeldExecutionResponse(BaseModel):
     """A call held for a human decision, and where it stands."""
 
-    id: str = Field(description="Held execution id (`exap_…`).")
+    id: str = Field(description="Held execution id (`held_…`).")
     agent_id: str = Field(description="The agent whose call was held.")
     credential_id: str = Field(description="The credential selected when the call was held.")
     api_vendor: str = Field(description="Vendor of the API called.")

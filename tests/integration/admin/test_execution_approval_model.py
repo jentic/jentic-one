@@ -72,7 +72,7 @@ async def test_execution_approval_round_trip(
                 select(ExecutionApproval).where(ExecutionApproval.id == approval_id)
             )
         ).scalar_one()
-    assert loaded.id.startswith("exap_")
+    assert loaded.id.startswith("held_")
     assert loaded.state == "pending"
     assert loaded.job_id == job_id
     assert loaded.matched_rule_id == "apr_1"

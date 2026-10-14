@@ -412,18 +412,18 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			wireEvent({
 				event_id: 'evt_held',
 				type: 'execution.approval_requested',
-				data: { held_execution_id: 'exap_1' },
+				data: { held_execution_id: 'held_1' },
 			}),
 		);
-		expect(ev.tokens.held_execution_id).toBe('exap_1');
+		expect(ev.tokens.held_execution_id).toBe('held_1');
 		const fromUrl = adaptEvent(
 			wireEvent({
 				event_id: 'evt_held2',
 				type: 'execution.approval_requested',
-				data: { review_url: 'http://127.0.0.1:8000/app/agents/approvals/exap_2' },
+				data: { review_url: 'http://127.0.0.1:8000/app/agents/approvals/held_2' },
 			}),
 		);
-		expect(fromUrl.tokens.held_execution_id).toBe('exap_2');
+		expect(fromUrl.tokens.held_execution_id).toBe('held_2');
 	});
 
 	it('inlineActionsFor offers Review (never View execution) for an approval request', () => {
@@ -433,7 +433,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			severity: 'warning',
 			requiresAction: true,
 			tokens: {
-				held_execution_id: 'exap_1',
+				held_execution_id: 'held_1',
 				execution_id: 'exec_held',
 				job_id: 'job_held',
 				trace_id: 'a'.repeat(32),
@@ -442,8 +442,8 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const actions = inlineActionsFor(ev);
 		expect(actions.map((a) => a.kind)).toEqual(['view_approval']);
 		expect(actions[0]?.label).toBe('Review');
-		expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/exap_1');
-		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
+		expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/held_1');
+		expect(primaryDestinationFor(ev)).toBe('/agents/approvals/held_1');
 	});
 
 	it('routes decided/withdrawn/expired approval events to the review page, never the job', () => {
@@ -455,12 +455,12 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			const ev = makeEvent({
 				type,
 				kind: 'execution',
-				tokens: { held_execution_id: 'exap_1', job_id: 'job_held', execution_id: 'exec_1' },
+				tokens: { held_execution_id: 'held_1', job_id: 'job_held', execution_id: 'exec_1' },
 			});
 			const actions = inlineActionsFor(ev);
 			expect(actions.map((a) => a.kind)).toEqual(['view_approval']);
-			expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/exap_1');
-			expect(primaryDestinationFor(ev)).toBe('/agents/approvals/exap_1');
+			expect(actions[0]?.href?.(ev)).toBe('/agents/approvals/held_1');
+			expect(primaryDestinationFor(ev)).toBe('/agents/approvals/held_1');
 			// Without a held execution id there is no record to open: never the job.
 			const bare = makeEvent({ type, kind: 'execution', tokens: { job_id: 'job_held' } });
 			expect(inlineActionsFor(bare)).toEqual([]);
@@ -471,11 +471,11 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 	it('buildGroupKey keeps distinct approvals from one agent apart', () => {
 		const a = makeEvent({
 			type: 'execution.approval_requested',
-			tokens: { held_execution_id: 'exap_1', agent_id: 'agt_1' },
+			tokens: { held_execution_id: 'held_1', agent_id: 'agt_1' },
 		});
 		const b = makeEvent({
 			type: 'execution.approval_requested',
-			tokens: { held_execution_id: 'exap_2', agent_id: 'agt_1' },
+			tokens: { held_execution_id: 'held_2', agent_id: 'agt_1' },
 		});
 		expect(buildGroupKeyForTest(a)).not.toBe(buildGroupKeyForTest(b));
 	});
@@ -807,9 +807,9 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 								job: '/jobs/job_held',
 							},
 							data: {
-								held_execution_id: 'exap_1',
+								held_execution_id: 'held_1',
 								agent_id: 'agnt_1',
-								review_url: 'http://127.0.0.1:8000/app/agents/approvals/exap_1',
+								review_url: 'http://127.0.0.1:8000/app/agents/approvals/held_1',
 							},
 						}),
 					],
@@ -823,7 +823,7 @@ describe('AgentRail — shell-mounted Activity surface', () => {
 		expect(screen.queryByRole('button', { name: 'View execution' })).not.toBeInTheDocument();
 		await user.click(review);
 		await waitFor(() =>
-			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/exap_1'),
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/held_1'),
 		);
 	});
 

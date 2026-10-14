@@ -313,7 +313,7 @@ describe('Notifications — connect requests go to approvers', () => {
 
 describe('Notifications — held calls go to whoever the server shows them to', () => {
 	const heldCall = {
-		id: 'exap_waiting',
+		id: 'held_waiting',
 		agent_id: 'agnt_pending_9',
 		credential_id: 'cred_1',
 		api_vendor: 'api.stripe.com',
@@ -326,8 +326,8 @@ describe('Notifications — held calls go to whoever the server shows them to', 
 		expires_at: '2999-01-01T00:00:00Z',
 		created_at: '2026-01-01T00:00:00Z',
 		_links: {
-			self: '/executions/holds/exap_waiting',
-			withdraw: '/executions/holds/exap_waiting:withdraw',
+			self: '/executions/holds/held_waiting',
+			withdraw: '/executions/holds/held_waiting:withdraw',
 		},
 	};
 

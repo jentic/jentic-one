@@ -1160,7 +1160,7 @@ func (s *mcpServer) executeToolSpecs() []mcpToolSpec {
 					"held_execution_id. Pass job_id instead for an asynchronous 202 that is not held: returns " +
 					"{job_id, kind, status, ...} and, once \"completed\", the result document. NEVER re-send the " +
 					"execute while a call is pending; approval happens out-of-band and re-sending duplicates the " +
-					`call. Example: {"held_execution_id": "exap_abc123"}.`,
+					`call. Example: {"held_execution_id": "held_abc123"}.`,
 				InputSchema: getExecutionResultSchema,
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			},

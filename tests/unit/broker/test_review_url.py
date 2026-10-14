@@ -50,8 +50,8 @@ def test_review_url_roots_on_the_admin_api_origin(
         broker={"jobs_api_base_url": "http://127.0.0.1:8000/"},
         server={"public_base_url": "https://broker.example.com"},
     )
-    assert _review_url(ctx, _broker_request(), "exap_1") == (
-        "http://127.0.0.1:8000/app/agents/approvals/exap_1"
+    assert _review_url(ctx, _broker_request(), "held_1") == (
+        "http://127.0.0.1:8000/app/agents/approvals/held_1"
     )
 
 
@@ -61,8 +61,8 @@ def test_review_url_falls_back_to_the_public_base_url(
     ctx = _ctx(
         tmp_path, sample_config_dict, server={"public_base_url": "https://jentic.example.com"}
     )
-    assert _review_url(ctx, _broker_request(), "exap_1") == (
-        "https://jentic.example.com/app/agents/approvals/exap_1"
+    assert _review_url(ctx, _broker_request(), "held_1") == (
+        "https://jentic.example.com/app/agents/approvals/held_1"
     )
 
 
@@ -70,8 +70,8 @@ def test_review_url_uses_the_request_origin_when_nothing_is_configured(
     tmp_path: Path, sample_config_dict: dict[str, Any]
 ) -> None:
     ctx = _ctx(tmp_path, sample_config_dict)
-    assert _review_url(ctx, _broker_request(), "exap_1") == (
-        "http://127.0.0.1:8100/app/agents/approvals/exap_1"
+    assert _review_url(ctx, _broker_request(), "held_1") == (
+        "http://127.0.0.1:8100/app/agents/approvals/held_1"
     )
 
 

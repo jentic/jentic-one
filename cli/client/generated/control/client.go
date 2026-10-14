@@ -2802,7 +2802,7 @@ type HeldExecutionDetailResponse struct {
 	// ExpiresAt When a pending held execution expires undecided.
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// Id Held execution id (`exap_…`).
+	// Id Held execution id (`held_…`).
 	Id string `json:"id"`
 
 	// MatchedRuleId The require-approval permission rule that held the call.
@@ -2899,7 +2899,7 @@ type HeldExecutionResponse struct {
 	// ExpiresAt When a pending held execution expires undecided.
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// Id Held execution id (`exap_…`).
+	// Id Held execution id (`held_…`).
 	Id string `json:"id"`
 
 	// MatchedRuleId The require-approval permission rule that held the call.

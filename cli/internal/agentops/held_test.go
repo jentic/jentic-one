@@ -7,9 +7,9 @@ import (
 )
 
 func TestParseHeld(t *testing.T) {
-	held := `{"status":"held","held_execution_id":"exap_1","review_url":"http://ui/r","expires_at":"x",` +
-		`"agent_directive":"d","_links":{"self":"http://ui/executions/holds/exap_1",` +
-		`"result":"http://ui/executions/holds/exap_1/result","withdraw":"http://ui/executions/holds/exap_1:withdraw"}}`
+	held := `{"status":"held","held_execution_id":"held_1","review_url":"http://ui/r","expires_at":"x",` +
+		`"agent_directive":"d","_links":{"self":"http://ui/executions/holds/held_1",` +
+		`"result":"http://ui/executions/holds/held_1/result","withdraw":"http://ui/executions/holds/held_1:withdraw"}}`
 	cases := []struct {
 		name   string
 		status int
@@ -18,7 +18,7 @@ func TestParseHeld(t *testing.T) {
 	}{
 		{"the held envelope", http.StatusAccepted, held, true},
 		{"a plain respond-async job", http.StatusAccepted, `{"job_id":"job_1","status":"queued"}`, false},
-		{"held without a review link", http.StatusAccepted, `{"status":"held","held_execution_id":"exap_1"}`, false},
+		{"held without a review link", http.StatusAccepted, `{"status":"held","held_execution_id":"held_1"}`, false},
 		{"held without an id", http.StatusAccepted, `{"status":"held","review_url":"http://ui/r"}`, false},
 		{"held but not a 202", http.StatusOK, held, false},
 		{"not JSON", http.StatusAccepted, `held`, false},
@@ -29,8 +29,8 @@ func TestParseHeld(t *testing.T) {
 			if ok != tc.want {
 				t.Fatalf("ParseHeld = %v, want %v", ok, tc.want)
 			}
-			if ok && (h.HeldExecutionID != "exap_1" || h.ReviewURL != "http://ui/r" ||
-				h.Links.Result != "http://ui/executions/holds/exap_1/result") {
+			if ok && (h.HeldExecutionID != "held_1" || h.ReviewURL != "http://ui/r" ||
+				h.Links.Result != "http://ui/executions/holds/held_1/result") {
 				t.Errorf("held = %+v", h)
 			}
 		})

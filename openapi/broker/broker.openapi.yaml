@@ -805,13 +805,13 @@ components:
           type: string
           description: The held execution.
           examples:
-            - exap_abc123
+            - held_abc123
         review_url:
           type: string
           format: uri
           description: Review page; the reviewer signs in to decide. Carries no credential.
           examples:
-            - https://your-instance.example/app/agents/approvals/exap_abc123
+            - https://your-instance.example/app/agents/approvals/held_abc123
         expires_at:
           type: string
           format: date-time
@@ -827,19 +827,19 @@ components:
               type: string
               description: The held execution — its decision and where the call stands.
               examples:
-                - https://control.your-instance.example/executions/holds/exap_abc123
+                - https://control.your-instance.example/executions/holds/held_abc123
             result:
               type: string
               description: The call's outcome, once it has finished.
               examples:
-                - https://control.your-instance.example/executions/holds/exap_abc123/result
+                - https://control.your-instance.example/executions/holds/held_abc123/result
             withdraw:
               type: string
               description: |
                 `POST` here to withdraw the call before it is decided (only
                 the agent that made the call may). The call never runs.
               examples:
-                - https://control.your-instance.example/executions/holds/exap_abc123:withdraw
+                - https://control.your-instance.example/executions/holds/held_abc123:withdraw
     HealthResponse:
       type: object
       title: HealthResponse
@@ -1027,8 +1027,8 @@ components:
               summary: Call held for human approval by a require-approval rule.
               value:
                 status: held
-                held_execution_id: exap_abc123
-                review_url: https://your-instance.example/app/agents/approvals/exap_abc123
+                held_execution_id: held_abc123
+                review_url: https://your-instance.example/app/agents/approvals/held_abc123
                 expires_at: "2026-10-06T12:00:00Z"
                 agent_directive: >-
                   This call needs human approval. Most important: show the user the review_url,
@@ -1038,9 +1038,9 @@ components:
                   still held, show the user the review_url again and end your turn again. Do not
                   re-send the call.
                 _links:
-                  self: https://control.your-instance.example/executions/holds/exap_abc123
-                  result: https://control.your-instance.example/executions/holds/exap_abc123/result
-                  withdraw: https://control.your-instance.example/executions/holds/exap_abc123:withdraw
+                  self: https://control.your-instance.example/executions/holds/held_abc123
+                  result: https://control.your-instance.example/executions/holds/held_abc123/result
+                  withdraw: https://control.your-instance.example/executions/holds/held_abc123:withdraw
     BadRequest:
       description: |
         Request rejected before reaching the upstream — malformed JSON,

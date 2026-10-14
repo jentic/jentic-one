@@ -195,14 +195,14 @@
                 "summary": "Call held for human approval by a require-approval rule.",
                 "value": {
                   "_links": {
-                    "result": "https://control.your-instance.example/executions/holds/exap_abc123/result",
-                    "self": "https://control.your-instance.example/executions/holds/exap_abc123",
-                    "withdraw": "https://control.your-instance.example/executions/holds/exap_abc123:withdraw"
+                    "result": "https://control.your-instance.example/executions/holds/held_abc123/result",
+                    "self": "https://control.your-instance.example/executions/holds/held_abc123",
+                    "withdraw": "https://control.your-instance.example/executions/holds/held_abc123:withdraw"
                   },
                   "agent_directive": "This call needs human approval. Most important: show the user the review_url, since they cannot approve it without that link, and end your turn so they see it. Do not call get_execution_result until the user replies; then call it once with held_execution_id. It waits up to 30 seconds (timeout, at most 30). If it is still held, show the user the review_url again and end your turn again. Do not re-send the call.",
                   "expires_at": "2026-10-06T12:00:00Z",
-                  "held_execution_id": "exap_abc123",
-                  "review_url": "https://your-instance.example/app/agents/approvals/exap_abc123",
+                  "held_execution_id": "held_abc123",
+                  "review_url": "https://your-instance.example/app/agents/approvals/held_abc123",
                   "status": "held"
                 }
               },
@@ -561,21 +561,21 @@
               "result": {
                 "description": "The call's outcome, once it has finished.",
                 "examples": [
-                  "https://control.your-instance.example/executions/holds/exap_abc123/result"
+                  "https://control.your-instance.example/executions/holds/held_abc123/result"
                 ],
                 "type": "string"
               },
               "self": {
                 "description": "The held execution — its decision and where the call stands.",
                 "examples": [
-                  "https://control.your-instance.example/executions/holds/exap_abc123"
+                  "https://control.your-instance.example/executions/holds/held_abc123"
                 ],
                 "type": "string"
               },
               "withdraw": {
                 "description": "`POST` here to withdraw the call before it is decided (only\nthe agent that made the call may). The call never runs.\n",
                 "examples": [
-                  "https://control.your-instance.example/executions/holds/exap_abc123:withdraw"
+                  "https://control.your-instance.example/executions/holds/held_abc123:withdraw"
                 ],
                 "type": "string"
               }
@@ -599,14 +599,14 @@
           "held_execution_id": {
             "description": "The held execution.",
             "examples": [
-              "exap_abc123"
+              "held_abc123"
             ],
             "type": "string"
           },
           "review_url": {
             "description": "Review page; the reviewer signs in to decide. Carries no credential.",
             "examples": [
-              "https://your-instance.example/app/agents/approvals/exap_abc123"
+              "https://your-instance.example/app/agents/approvals/held_abc123"
             ],
             "format": "uri",
             "type": "string"

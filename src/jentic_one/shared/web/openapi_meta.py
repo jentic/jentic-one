@@ -485,7 +485,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "Executions held for human approval. When a call matches a permission rule with "
             "`effect: require-approval`, the broker does not run it: it answers `202` with a "
-            "held execution (`exap_…`) and a review link. A reviewer, the agent's owner or any "
+            "held execution (`held_…`) and a review link. A reviewer, the agent's owner or any "
             "`org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.\n\n"
             "An approved call runs once; `GET /executions/holds/{id}` reports where it stands and "
             "`GET /executions/holds/{id}/result` returns the call's execution document, or the problem "

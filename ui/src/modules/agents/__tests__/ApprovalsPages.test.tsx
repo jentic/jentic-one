@@ -53,7 +53,7 @@ describe('Approvals pages', () => {
 	});
 
 	it('shows the agent, owner, matched rule and the held request body', async () => {
-		const { container } = renderDetail('exap_pending1');
+		const { container } = renderDetail('held_pending1');
 		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
 		expect(screen.getByText('usr_owner')).toBeInTheDocument();
 		expect(screen.getByText('apr_hold_posts')).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe('Approvals pages', () => {
 	it('approves a pending approval with the approve decision and reason', async () => {
 		// The mock store answers 422 to anything but approve/deny and records
 		// the decision, so the outcome card proves what was sent.
-		renderDetail('exap_pending1');
+		renderDetail('held_pending1');
 		await screen.findByText('POST /v1/charges');
 		await userEvent.type(screen.getByLabelText('Reason (optional)'), 'looks right');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
@@ -84,7 +84,7 @@ describe('Approvals pages', () => {
 				<PendingApprovalsBadge />
 				<ApprovalDetailPage />
 			</>,
-			{ route: '/agents/approvals/exap_pending1', path: '/agents/approvals/:id' },
+			{ route: '/agents/approvals/held_pending1', path: '/agents/approvals/:id' },
 		);
 		expect(await screen.findByLabelText('1 call awaiting your approval')).toBeInTheDocument();
 		await userEvent.type(screen.getByLabelText('Reason (optional)'), 'not this one');
@@ -102,26 +102,26 @@ describe('Approvals pages', () => {
 					{
 						type: 'held_execution_already_settled',
 						status: 409,
-						detail: "Held execution 'exap_pending1' is already denied",
+						detail: "Held execution 'held_pending1' is already denied",
 					},
 					{ status: 409 },
 				),
 			),
 		);
-		renderDetail('exap_pending1');
+		renderDetail('held_pending1');
 		await screen.findByText('POST /v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
 		expect(await screen.findByText(/already denied/)).toBeInTheDocument();
 	});
 
 	it('shows a decided approval read-only', async () => {
-		renderDetail('exap_denied1');
+		renderDetail('held_denied1');
 		expect(await screen.findByText('Not this customer')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
 	});
 
 	it('tells a non-reviewer who can review instead of showing the approval', async () => {
-		renderDetail('exap_someone_else');
+		renderDetail('held_someone_else');
 		expect(await screen.findByText("You can't review this approval")).toBeInTheDocument();
 		expect(screen.getByText(/Ask them to open this link/)).toBeInTheDocument();
 	});
@@ -146,7 +146,7 @@ describe('Approvals pages', () => {
 			<AuthProvider>
 				<ApprovalDetailPage />
 			</AuthProvider>,
-			{ route: '/agents/approvals/exap_pending1', path: '/agents/approvals/:id' },
+			{ route: '/agents/approvals/held_pending1', path: '/agents/approvals/:id' },
 		);
 		expect(await screen.findByRole('button', { name: 'Approve and run' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
@@ -161,13 +161,13 @@ describe('Approvals pages', () => {
 					{
 						type: 'held_execution_decide_forbidden',
 						status: 403,
-						detail: "You may not decide held execution 'exap_pending1'",
+						detail: "You may not decide held execution 'held_pending1'",
 					},
 					{ status: 403 },
 				),
 			),
 		);
-		const { container } = renderDetail('exap_pending1');
+		const { container } = renderDetail('held_pending1');
 		await screen.findByText('POST /v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
 		expect(await screen.findByText(/can't decide it/)).toBeInTheDocument();
@@ -175,12 +175,12 @@ describe('Approvals pages', () => {
 		expect(screen.queryByRole('button', { name: 'Approve and run' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Deny' })).not.toBeInTheDocument();
 		// Nothing was decided.
-		expect(getMockApproval('exap_pending1')?.state).toBe('pending');
+		expect(getMockApproval('held_pending1')?.state).toBe('pending');
 		await checkA11y(container);
 	});
 
 	it('shows a pending call as held', async () => {
-		renderDetail('exap_pending1');
+		renderDetail('held_pending1');
 		const card = await screen.findByRole('heading', { name: /Call status/ });
 		expect(card).toHaveTextContent('Held');
 		expect(screen.getByText(/held until someone approves or denies it/)).toBeInTheDocument();
@@ -188,7 +188,7 @@ describe('Approvals pages', () => {
 	});
 
 	it('moves an approved call to queued and follows it through its steps', async () => {
-		renderDetail('exap_pending1');
+		renderDetail('held_pending1');
 		await screen.findByText('POST /v1/charges');
 		await userEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
 		const progress = await screen.findByRole('list', { name: 'Call progress' });
@@ -235,7 +235,7 @@ describe('Approvals pages', () => {
 	});
 
 	it('says a denied call does not run, without a progress trail', async () => {
-		renderDetail('exap_denied1');
+		renderDetail('held_denied1');
 		expect(
 			await screen.findByText('The call was denied and does not run.'),
 		).toBeInTheDocument();
@@ -245,7 +245,7 @@ describe('Approvals pages', () => {
 
 	it('surfaces a load failure', async () => {
 		worker.use(createErrorHandler('get', '/executions/holds/:id', { status: 500 }));
-		renderDetail('exap_pending1');
+		renderDetail('held_pending1');
 		expect(await screen.findByText('Failed to load approval')).toBeInTheDocument();
 	});
 });

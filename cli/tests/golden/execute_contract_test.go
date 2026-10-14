@@ -165,30 +165,30 @@ func TestGolden_ExecuteContract(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Preference-Applied", "respond-async")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"status":"held","held_execution_id":"exap_held1",` +
-			`"review_url":"https://console.example/app/agents/approvals/exap_held1",` +
+		_, _ = w.Write([]byte(`{"status":"held","held_execution_id":"held_held1",` +
+			`"review_url":"https://console.example/app/agents/approvals/held_held1",` +
 			`"expires_at":"2026-10-10T12:00:00Z","agent_directive":"This call needs human approval.",` +
-			`"_links":{"self":"https://console.example/executions/holds/exap_held1",` +
-			`"result":"https://console.example/executions/holds/exap_held1/result",` +
-			`"withdraw":"https://console.example/executions/holds/exap_held1:withdraw"}}`))
+			`"_links":{"self":"https://console.example/executions/holds/held_held1",` +
+			`"result":"https://console.example/executions/holds/held_held1/result",` +
+			`"withdraw":"https://console.example/executions/holds/held_held1:withdraw"}}`))
 	}
 	// The held execution's control-plane routes once a reviewer denied it:
 	// the call failed and its result is the approval_denied problem.
 	holdsDenied := func(w http.ResponseWriter, r *http.Request) {
 		w.Header()["Date"] = nil
-		if r.URL.Path == "/executions/holds/exap_held1/result" {
+		if r.URL.Path == "/executions/holds/held_held1/result" {
 			w.Header().Set("Content-Type", "application/problem+json")
 			_, _ = w.Write([]byte(`{"type":"approval_denied","title":"Execution approval denied","status":403,` +
 				`"detail":"A reviewer denied this held execution: not today","error_origin":"broker",` +
-				`"held_execution":{"id":"exap_held1","state":"denied"}}`))
+				`"held_execution":{"id":"held_held1","state":"denied"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"exap_held1","state":"denied","execution_status":"failed",` +
+		_, _ = w.Write([]byte(`{"id":"held_held1","state":"denied","execution_status":"failed",` +
 			`"agent_id":"agt_1","api_vendor":"example.com","api_name":"orders","api_version":"1",` +
 			`"credential_id":"cred_1","method":"POST","path":"/v1/orders","execution_id":"exec_held1",` +
 			`"expires_at":"2026-10-10T12:00:00Z","created_at":"2026-10-09T12:00:00Z",` +
-			`"_links":{"self":"/executions/holds/exap_held1","result":"/executions/holds/exap_held1/result"}}`))
+			`"_links":{"self":"/executions/holds/held_held1","result":"/executions/holds/held_held1/result"}}`))
 	}
 
 	cases := []struct {

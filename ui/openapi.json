@@ -4752,7 +4752,7 @@
             "type": "string"
           },
           "id": {
-            "description": "Held execution id (`exap_…`).",
+            "description": "Held execution id (`held_…`).",
             "title": "Id",
             "type": "string"
           },
@@ -5051,7 +5051,7 @@
             "type": "string"
           },
           "id": {
-            "description": "Held execution id (`exap_…`).",
+            "description": "Held execution id (`held_…`).",
             "title": "Id",
             "type": "string"
           },
@@ -31576,7 +31576,7 @@
             "examples": {
               "example": {
                 "summary": "Example path value for `held_execution_id`",
-                "value": "exap_6968b398a1c4e2d07b5f93c6"
+                "value": "held_6968b398a1c4e2d07b5f93c6"
               }
             },
             "in": "path",
@@ -31749,7 +31749,7 @@
             "examples": {
               "example": {
                 "summary": "Example path value for `held_execution_id`",
-                "value": "exap_6968b398a1c4e2d07b5f93c6"
+                "value": "held_6968b398a1c4e2d07b5f93c6"
               }
             },
             "in": "path",
@@ -31937,7 +31937,7 @@
             "examples": {
               "example": {
                 "summary": "Example path value for `held_execution_id`",
-                "value": "exap_6968b398a1c4e2d07b5f93c6"
+                "value": "held_6968b398a1c4e2d07b5f93c6"
               }
             },
             "in": "path",
@@ -32138,7 +32138,7 @@
             "examples": {
               "example": {
                 "summary": "Example path value for `held_execution_id`",
-                "value": "exap_6968b398a1c4e2d07b5f93c6"
+                "value": "held_6968b398a1c4e2d07b5f93c6"
               }
             },
             "in": "path",
@@ -43477,7 +43477,7 @@
       "name": "Jobs"
     },
     {
-      "description": "Executions held for human approval. When a call matches a permission rule with `effect: require-approval`, the broker does not run it: it answers `202` with a held execution (`exap_…`) and a review link. A reviewer, the agent's owner or any `org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.\n\nAn approved call runs once; `GET /executions/holds/{id}` reports where it stands and `GET /executions/holds/{id}/result` returns the call's execution document, or the problem explaining why it never ran (denied, expired or refused at run time). A held execution nobody decides expires after the configured window. Agents may never decide; the agent that filed one may withdraw it. Each caller sees only the held executions it may review or filed.",
+      "description": "Executions held for human approval. When a call matches a permission rule with `effect: require-approval`, the broker does not run it: it answers `202` with a held execution (`held_…`) and a review link. A reviewer, the agent's owner or any `org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.\n\nAn approved call runs once; `GET /executions/holds/{id}` reports where it stands and `GET /executions/holds/{id}/result` returns the call's execution document, or the problem explaining why it never ran (denied, expired or refused at run time). A held execution nobody decides expires after the configured window. Agents may never decide; the agent that filed one may withdraw it. Each caller sees only the held executions it may review or filed.",
       "name": "Held Executions"
     },
     {

@@ -24,7 +24,7 @@ import {
 const page = <T,>(data: T[]) => ({ data, has_more: false, next_cursor: null });
 
 function heldCall(overrides: Partial<HeldExecutionResponse> = {}): HeldExecutionResponse {
-	const id = overrides.id ?? 'exap_1';
+	const id = overrides.id ?? 'held_1';
 	return {
 		id,
 		agent_id: 'agnt_a',
@@ -60,7 +60,7 @@ describe('groupApprovalsByAgent', () => {
 		const one = heldCall();
 		expect(describeHeldCall(one)).toBe('POST /v1/charges on api.stripe.com/payments');
 		expect(summariseHeldCalls([one])).toBe('a call to api.stripe.com/payments');
-		expect(summariseHeldCalls([one, heldCall({ id: 'exap_2' })])).toBe('2 calls');
+		expect(summariseHeldCalls([one, heldCall({ id: 'held_2' })])).toBe('2 calls');
 	});
 });
 
@@ -98,10 +98,10 @@ describe('held-call signals settle on approval events', () => {
 	/** Stands in for Monitor's held-job slice under the shared root. */
 	function JobProbe() {
 		useQuery({
-			queryKey: [...sharedQueryKeys.monitorJobRoot, 'job_exap_1'],
+			queryKey: [...sharedQueryKeys.monitorJobRoot, 'job_held_1'],
 			queryFn: async () => {
 				jobReads += 1;
-				return { job_id: 'job_exap_1' };
+				return { job_id: 'job_held_1' };
 			},
 			staleTime: Infinity,
 		});
@@ -138,11 +138,11 @@ describe('held-call signals settle on approval events', () => {
 			event_id: `evt_${type}`,
 			type,
 			severity: 'info',
-			summary: 'Held execution exap_1 settled',
+			summary: 'Held execution held_1 settled',
 			created_at: new Date().toISOString(),
 			requires_action: false,
-			job_id: 'job_exap_1',
-			data: { held_execution_id: 'exap_1', agent_id: 'agnt_a' },
+			job_id: 'job_held_1',
+			data: { held_execution_id: 'held_1', agent_id: 'agnt_a' },
 		};
 		act(() =>
 			push?.(`event: ${type}\nid: ${event.event_id}\ndata: ${JSON.stringify(event)}\n\n`),
@@ -178,7 +178,7 @@ describe('the pending-count badge', () => {
 			http.get('/executions/holds', ({ request }) => {
 				reads += 1;
 				expect(new URL(request.url).searchParams.get('state')).toBe('pending');
-				return HttpResponse.json(page([heldCall(), heldCall({ id: 'exap_2' })]));
+				return HttpResponse.json(page([heldCall(), heldCall({ id: 'held_2' })]));
 			}),
 		);
 		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

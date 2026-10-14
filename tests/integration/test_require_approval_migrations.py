@@ -175,7 +175,7 @@ async def test_admin_round_trip_cancels_held_jobs(
         admin_db,
         "INSERT INTO execution_approvals (id, job_id, agent_id, credential_id, api_vendor,"
         " api_name, api_version, method, path, request_fingerprint, state, expires_at)"
-        " VALUES ('exap_mrt', 'job_mrt_held', 'agnt_mrt', 'cred_mrt', 'v', 'n', '1', 'GET',"
+        " VALUES ('held_mrt', 'job_mrt_held', 'agnt_mrt', 'cred_mrt', 'v', 'n', '1', 'GET',"
         " '/x', 'fp_mrt', 'pending', CURRENT_TIMESTAMP)",
     )
 

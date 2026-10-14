@@ -58,7 +58,7 @@ class HeldExecutionAcceptedResponse(BaseModel):
     """
 
     status: Literal["held"] = "held"
-    held_execution_id: str = Field(description="Held execution id (`exap_…`).")
+    held_execution_id: str = Field(description="Held execution id (`held_…`).")
     review_url: str = Field(
         description="Review page a signed-in reviewer opens to approve or deny the call."
     )

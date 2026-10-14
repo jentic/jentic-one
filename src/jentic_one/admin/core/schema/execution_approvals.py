@@ -51,8 +51,8 @@ class ExecutionApproval(AuditableMixin, AdminBase):
     id: Mapped[str] = mapped_column(
         String(30),
         primary_key=True,
-        default=lambda: generate_ksuid("exap"),
-        server_default=func.generate_ksuid("exap"),
+        default=lambda: generate_ksuid("held"),
+        server_default=func.generate_ksuid("held"),
     )
     job_id: Mapped[str] = mapped_column(
         String(30),

@@ -58,7 +58,7 @@ export type HeldExecutionResponse = {
      */
     expires_at: string;
     /**
-     * Held execution id (`exap_…`).
+     * Held execution id (`held_…`).
      */
     id: string;
     /**

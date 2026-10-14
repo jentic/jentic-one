@@ -87,7 +87,7 @@ let requiresActionEvents: EventResponse[];
 
 /** A pending held execution: an agent's call an Ask rule holds. */
 function heldCall(overrides: Record<string, unknown> = {}) {
-	const id = (overrides.id as string | undefined) ?? 'exap_1';
+	const id = (overrides.id as string | undefined) ?? 'held_1';
 	return {
 		id,
 		agent_id: 'agnt_scout',
@@ -373,10 +373,10 @@ describe('NotificationsMenu', () => {
 		it("collapses an agent's held calls into one approval row linking to the oldest", async () => {
 			approvalRows = [
 				heldCall({
-					id: 'exap_new',
+					id: 'held_new',
 					created_at: new Date(Date.now() - 60_000).toISOString(),
 				}),
-				heldCall({ id: 'exap_old', path: '/v1/refunds' }),
+				heldCall({ id: 'held_old', path: '/v1/refunds' }),
 			];
 			// The request event mirrors the live row; the row wins, so it is not
 			// listed (or counted) twice.
@@ -390,7 +390,7 @@ describe('NotificationsMenu', () => {
 					summary: 'Agent agnt_scout wants to POST /v1/charges',
 					created_at: new Date(Date.now() - 60_000).toISOString(),
 					requires_action: true,
-					data: { held_execution_id: 'exap_new', agent_id: 'agnt_scout' },
+					data: { held_execution_id: 'held_new', agent_id: 'agnt_scout' },
 				},
 			];
 			const user = userEvent.setup();
@@ -406,14 +406,14 @@ describe('NotificationsMenu', () => {
 			const item = row.closest('li')!;
 			expect(item).toHaveTextContent('2 held calls');
 			await user.click(within(item).getByRole('link', { name: 'Review' }));
-			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/exap_old');
+			expect(screen.getByTestId('location')).toHaveTextContent('/agents/approvals/held_old');
 		});
 
 		it('names a single held call and drops one whose window lapsed', async () => {
 			approvalRows = [
 				heldCall(),
 				heldCall({
-					id: 'exap_lapsed',
+					id: 'held_lapsed',
 					agent_id: 'agnt_other',
 					expires_at: new Date(Date.now() - 60_000).toISOString(),
 				}),

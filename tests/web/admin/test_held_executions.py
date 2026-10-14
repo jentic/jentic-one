@@ -20,7 +20,7 @@ from tests.web.conftest import noop_lifespan
 
 pytestmark = pytest.mark.integration
 
-_MISSING = "exap_web_missing"
+_MISSING = "held_web_missing"
 
 
 def _client(ctx: Context, identity: Identity) -> TestClient:

@@ -44,9 +44,9 @@ func newExecutionsPollCmd(app *app) *cobra.Command {
 			"  2 — the call never ran (denied, expired, withdrawn, refused at run\n" +
 			"      time), an unknown held execution id, or a result past retention\n" +
 			"  3 — still held, queued or running when --timeout lapsed (TIMEOUT_PENDING)",
-		Example: "  jentic executions poll exap_2mXk... --json\n" +
-			"  jentic executions poll exap_2mXk... --timeout 2m\n" +
-			"  jentic executions poll exap_2mXk... --timeout 0",
+		Example: "  jentic executions poll held_2mXk... --json\n" +
+			"  jentic executions poll held_2mXk... --timeout 2m\n" +
+			"  jentic executions poll held_2mXk... --timeout 0",
 		Args: exactNamedArgs("<held_execution_id>", "held_execution_id"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.followHeld(cmd, opts, &heldRef{ID: args[0]}, nil)

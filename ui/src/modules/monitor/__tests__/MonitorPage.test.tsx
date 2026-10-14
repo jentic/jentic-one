@@ -397,7 +397,7 @@ describe('MonitorPage', () => {
 								job: '/jobs/job_held_1',
 							},
 							created_at: new Date().toISOString(),
-							data: { held_execution_id: 'exap_held_1', agent_id: 'agnt_1' },
+							data: { held_execution_id: 'held_held_1', agent_id: 'agnt_1' },
 							detail: null,
 							event_id: 'evt_held_1',
 							requires_action: true,
@@ -420,7 +420,7 @@ describe('MonitorPage', () => {
 
 		await waitFor(() =>
 			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/exap_held_1',
+				'/agents/approvals/held_held_1',
 			),
 		);
 		expect(currentParams().get('execution_id')).toBeNull();
@@ -650,12 +650,12 @@ describe('MonitorPage', () => {
 						{
 							_links: { self: '/events/evt_decided_1', job: '/jobs/job_held_1' },
 							created_at: new Date().toISOString(),
-							data: { held_execution_id: 'exap_held_1', agent_id: 'agnt_1' },
+							data: { held_execution_id: 'held_held_1', agent_id: 'agnt_1' },
 							detail: null,
 							event_id: 'evt_decided_1',
 							requires_action: false,
 							severity: 'info',
-							summary: 'Held call exap_held_1 approved',
+							summary: 'Held call held_held_1 approved',
 							trace_id: null,
 							type: 'execution.approval_decided',
 						},
@@ -668,11 +668,11 @@ describe('MonitorPage', () => {
 		renderMonitor('/app/monitor?view=activity');
 
 		await user.click(
-			await screen.findByRole('link', { name: /Held call exap_held_1 approved/ }),
+			await screen.findByRole('link', { name: /Held call held_held_1 approved/ }),
 		);
 		await waitFor(() =>
 			expect(screen.getByTestId('location-path')).toHaveTextContent(
-				'/agents/approvals/exap_held_1',
+				'/agents/approvals/held_held_1',
 			),
 		);
 		expect(currentParams().get('job_id')).toBeNull();

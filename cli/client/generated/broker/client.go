@@ -140,19 +140,19 @@ type HeldExecutionAcceptedResponse struct {
 	UnderscoreLinks struct {
 		// Result The call's outcome, once it has finished.
 		//
-		// Examples: https://control.your-instance.example/executions/holds/exap_abc123/result
+		// Examples: https://control.your-instance.example/executions/holds/held_abc123/result
 		Result string `json:"result"`
 
 		// Self The held execution — its decision and where the call stands.
 		//
-		// Examples: https://control.your-instance.example/executions/holds/exap_abc123
+		// Examples: https://control.your-instance.example/executions/holds/held_abc123
 		Self string `json:"self"`
 
 		// Withdraw `POST` here to withdraw the call before it is decided (only
 		// the agent that made the call may). The call never runs.
 		//
 		//
-		// Examples: https://control.your-instance.example/executions/holds/exap_abc123:withdraw
+		// Examples: https://control.your-instance.example/executions/holds/held_abc123:withdraw
 		Withdraw string `json:"withdraw"`
 	} `json:"_links"`
 
@@ -164,12 +164,12 @@ type HeldExecutionAcceptedResponse struct {
 
 	// HeldExecutionId The held execution.
 	//
-	// Examples: exap_abc123
+	// Examples: held_abc123
 	HeldExecutionId string `json:"held_execution_id"`
 
 	// ReviewUrl Review page; the reviewer signs in to decide. Carries no credential.
 	//
-	// Examples: https://your-instance.example/app/agents/approvals/exap_abc123
+	// Examples: https://your-instance.example/app/agents/approvals/held_abc123
 	ReviewUrl string `json:"review_url"`
 
 	// Status Always `held`.

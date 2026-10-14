@@ -43,15 +43,15 @@ def test_non_json_body_is_fingerprinted_verbatim() -> None:
 
 
 def test_denied_and_expired_problems_are_permission_denied() -> None:
-    denied = approval_denied_problem("exap_1", "too risky")
+    denied = approval_denied_problem("held_1", "too risky")
     assert denied["status"] == 403
     assert denied["type"] == APPROVAL_DENIED_TYPE
-    assert denied["held_execution"] == {"id": "exap_1", "state": "denied"}
+    assert denied["held_execution"] == {"id": "held_1", "state": "denied"}
     assert "too risky" in denied["detail"]
-    expired = approval_expired_problem("exap_1")
+    expired = approval_expired_problem("held_1")
     assert expired["status"] == 403
     assert expired["type"] == APPROVAL_EXPIRED_TYPE
-    assert approval_resume_failed_problem("exap_1")["held_execution"]["state"] == "approved"
+    assert approval_resume_failed_problem("held_1")["held_execution"]["state"] == "approved"
 
 
 def test_query_string_is_part_of_the_fingerprint() -> None:

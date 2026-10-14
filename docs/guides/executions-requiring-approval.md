@@ -38,14 +38,14 @@ A held call answers **202 Accepted** with the held envelope:
 ```json
 {
   "status": "held",
-  "held_execution_id": "exap_…",
-  "review_url": "https://<host>/app/agents/approvals/exap_…",
+  "held_execution_id": "held_…",
+  "review_url": "https://<host>/app/agents/approvals/held_…",
   "expires_at": "…",
   "agent_directive": "This call needs human approval. …",
   "_links": {
-    "self": "https://<host>/executions/holds/exap_…",
-    "result": "https://<host>/executions/holds/exap_…/result",
-    "withdraw": "https://<host>/executions/holds/exap_…:withdraw"
+    "self": "https://<host>/executions/holds/held_…",
+    "result": "https://<host>/executions/holds/held_…/result",
+    "withdraw": "https://<host>/executions/holds/held_…:withdraw"
   }
 }
 ```

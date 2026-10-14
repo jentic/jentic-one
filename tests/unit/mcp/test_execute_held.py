@@ -33,14 +33,14 @@ from jentic_one.shared.models import ActorType
 _KEY = base64.b64encode(b"k" * 32).decode()
 _ENVELOPE = {
     "status": "held",
-    "held_execution_id": "exap_1",
-    "review_url": "https://jentic.example/app/agents/approvals/exap_1",
+    "held_execution_id": "held_1",
+    "review_url": "https://jentic.example/app/agents/approvals/held_1",
     "expires_at": "2026-10-07T00:00:00Z",
     "agent_directive": HELD_AGENT_DIRECTIVE,
     "_links": {
-        "self": "https://jentic.example/executions/holds/exap_1",
-        "result": "https://jentic.example/executions/holds/exap_1/result",
-        "withdraw": "https://jentic.example/executions/holds/exap_1:withdraw",
+        "self": "https://jentic.example/executions/holds/held_1",
+        "result": "https://jentic.example/executions/holds/held_1/result",
+        "withdraw": "https://jentic.example/executions/holds/held_1:withdraw",
     },
 }
 
@@ -185,10 +185,10 @@ async def test_url_elicitation_client_gets_an_input_required_result(
     request = result.input_requests[approvals.REVIEW_INPUT_KEY]
     assert isinstance(request, mcp_types.ElicitRequest)
     assert isinstance(request.params, mcp_types.ElicitRequestURLParams)
-    assert request.params.url == "https://jentic.example/app/agents/approvals/exap_1"
+    assert request.params.url == "https://jentic.example/app/agents/approvals/held_1"
     assert "POST /v1/charges" in request.params.message
     assert result.request_state
-    assert "exap_1" not in result.request_state
+    assert "held_1" not in result.request_state
 
 
 async def test_url_elicitation_retry_reads_the_held_execution_and_never_resends(
@@ -212,7 +212,7 @@ async def test_url_elicitation_retry_reads_the_held_execution_and_never_resends(
     still = await _execute(replace(env, request_state=first.request_state))
     held = _json(still)
     assert held["body"]["status"] == "held"
-    assert held["body"]["held_execution_id"] == "exap_1"
+    assert held["body"]["held_execution_id"] == "held_1"
     assert held["body"]["review_url"] == _ENVELOPE["review_url"]
     assert held["body"]["agent_directive"] == HELD_AGENT_DIRECTIVE
     assert len(held_broker) == 1
@@ -276,7 +276,7 @@ async def test_a_legacy_wire_client_declaring_url_elicitation_gets_the_held_resu
 
 async def _get_result(env: CallEnv, **extra: Any) -> Any:
     return await dispatch_mcp_tool_call(
-        env, "get_execution_result", {"held_execution_id": "exap_1", **extra}
+        env, "get_execution_result", {"held_execution_id": "held_1", **extra}
     )
 
 
@@ -287,7 +287,7 @@ async def test_get_execution_result_waits_by_default(
     polled = job_polls(["held", "completed"])
     payload = _json(await _get_result(_env()))
     assert payload["status"] == "completed"
-    assert polled == ["exap_1", "exap_1"]
+    assert polled == ["held_1", "held_1"]
 
 
 async def test_get_execution_result_timeout_zero_polls_once(
@@ -296,7 +296,7 @@ async def test_get_execution_result_timeout_zero_polls_once(
     polled = job_polls(["held", "completed"])
     payload = _json(await _get_result(_env(), timeout=0))
     assert payload["status"] == "held"
-    assert polled == ["exap_1"]
+    assert polled == ["held_1"]
 
 
 async def test_get_execution_result_wait_returns_early_once_terminal(
@@ -305,7 +305,7 @@ async def test_get_execution_result_wait_returns_early_once_terminal(
     polled = job_polls(["held", "queued", "completed"])
     payload = _json(await _get_result(_env(), timeout=30))
     assert payload["status"] == "completed"
-    assert polled == ["exap_1", "exap_1", "exap_1"]
+    assert polled == ["held_1", "held_1", "held_1"]
 
 
 async def test_get_execution_result_negative_wait_answers_at_once(
@@ -314,7 +314,7 @@ async def test_get_execution_result_negative_wait_answers_at_once(
     polled = job_polls(["held"])
     payload = _json(await _get_result(_env(), timeout=-5))
     assert payload["status"] == "held"
-    assert polled == ["exap_1"]
+    assert polled == ["held_1"]
 
 
 async def test_get_execution_result_job_id_polls_the_job(
@@ -333,7 +333,7 @@ async def test_get_execution_result_job_id_polls_the_job(
 
 @pytest.mark.parametrize(
     "arguments",
-    [{}, {"held_execution_id": "exap_1", "job_id": "job_async1"}],
+    [{}, {"held_execution_id": "held_1", "job_id": "job_async1"}],
 )
 async def test_get_execution_result_requires_exactly_one_id(
     job_polls: Callable[[list[str]], list[str]], arguments: dict[str, Any]

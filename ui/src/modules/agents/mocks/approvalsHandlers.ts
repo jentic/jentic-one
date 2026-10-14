@@ -49,7 +49,7 @@ const hours = (n: number) => new Date(Date.now() + n * 3_600_000).toISOString();
 function seed(): ApprovalRow[] {
 	return [
 		{
-			id: 'exap_pending1',
+			id: 'held_pending1',
 			job_id: 'job_pending1',
 			agent_id: 'agnt_scout',
 			agent_name: 'scout',
@@ -80,7 +80,7 @@ function seed(): ApprovalRow[] {
 			},
 		},
 		{
-			id: 'exap_denied1',
+			id: 'held_denied1',
 			job_id: 'job_denied1',
 			agent_id: 'agnt_scout',
 			agent_name: 'scout',
@@ -127,7 +127,7 @@ let nextId = 1;
  * caller's agent id defaults to the composed agents store's `agnt_active_1`.
  */
 export function seedMockApproval(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
-	const id = overrides.id ?? `exap_seeded_${nextId++}`;
+	const id = overrides.id ?? `held_seeded_${nextId++}`;
 	const row: ApprovalRow = {
 		id,
 		job_id: `job_${id}`,

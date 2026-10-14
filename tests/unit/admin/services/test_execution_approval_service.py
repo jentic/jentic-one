@@ -24,7 +24,7 @@ async def test_decide_refuses_agent_callers_whatever_their_scopes(permissions: l
     svc = object.__new__(ExecutionApprovalService)
     agent = Identity(sub="agnt_1", permissions=permissions, actor_type=ActorType.AGENT)
     with pytest.raises(ExecutionApprovalForbiddenError):
-        await svc.decide("exap_001", DecideInput(decision=ApprovalDecision.APPROVE), identity=agent)
+        await svc.decide("held_001", DecideInput(decision=ApprovalDecision.APPROVE), identity=agent)
 
 
 def test_decide_input_accepts_only_approve_or_deny() -> None:
