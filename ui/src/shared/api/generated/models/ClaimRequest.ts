@@ -6,6 +6,9 @@
  * Request body for claiming ownership of a self-registered agent.
  */
 export type ClaimRequest = {
+    /**
+     * Single-use claim token returned when the agent self-registered.
+     */
     token: string;
 };
 

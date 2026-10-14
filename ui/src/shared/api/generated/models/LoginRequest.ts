@@ -6,7 +6,13 @@
  * Credentials for login.
  */
 export type LoginRequest = {
+    /**
+     * Email address of the user.
+     */
     email: string;
+    /**
+     * The user's password.
+     */
     password: string;
 };
 

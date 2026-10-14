@@ -57,7 +57,13 @@ export class OAuthService {
          * Filter by grant lifecycle state.
          */
         status?: ('active' | 'revoked' | null),
+        /**
+         * Maximum number of grants to return (1-200, default 50).
+         */
         limit?: number,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
     }): CancelablePromise<OAuthGrantAdminListResponse> {
         return __request(OpenAPI, {
@@ -101,13 +107,37 @@ export class OAuthService {
         nonce,
         sc,
     }: {
+        /**
+         * OAuth response type; only `code` is supported.
+         */
         responseType: string,
+        /**
+         * Client ID of the application requesting authorization.
+         */
         clientId: string,
+        /**
+         * Where to send the result; must be a redirect URI allowed for the client.
+         */
         redirectUri: string,
+        /**
+         * PKCE code challenge derived from the client's code verifier.
+         */
         codeChallenge: string,
+        /**
+         * PKCE challenge method; only `S256` is supported.
+         */
         codeChallengeMethod: string,
+        /**
+         * Space-separated scopes requested; must stay within the client's allowed scopes.
+         */
         scope?: string,
+        /**
+         * Opaque client value returned unchanged on the redirect back to the client.
+         */
         state?: (string | null),
+        /**
+         * OpenID Connect nonce to bind the ID token to the client's session.
+         */
         nonce?: (string | null),
         /**
          * Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
@@ -145,6 +175,9 @@ export class OAuthService {
     public static errorPage({
         error = 'unknown_error',
     }: {
+        /**
+         * Error code to display; returned as-is in the response body.
+         */
         error?: string,
     }): CancelablePromise<Record<string, string>> {
         return __request(OpenAPI, {
@@ -218,6 +251,9 @@ export class OAuthService {
     public static loginSubmit({
         formData,
     }: {
+        /**
+         * Request payload for the `loginSubmit` operation.
+         */
         formData: Body_loginSubmit,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -249,6 +285,9 @@ export class OAuthService {
     public static revokeOauthGrant({
         grantId,
     }: {
+        /**
+         * ID of the OAuth grant.
+         */
         grantId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -286,6 +325,22 @@ export class OAuthService {
     public static approvalDecisionEndpoint({
         requestBody,
     }: {
+        /**
+         * Inline admin approve/deny posted from the approval-pending page.
+         *
+         * ``state`` is the signed approval-state blob minted by ``/authorize`` for
+         * this exact authorize request — the decision endpoint never accepts a bare
+         * ``client_id``.
+         *
+         * ``state`` is deliberately NOT marked x-sensitive: the CLI's GEN-21
+         * redaction backstop unions every sensitive field's BARE name globally, and
+         * "state" is generic enough to redact unrelated CLI output (e.g. the MCP
+         * session-diagnosis ``state`` field). The blob is not a lasting bearer
+         * credential — it is HMAC-signed, purpose-discriminated, TTL'd (600 s), and
+         * the decision endpoint additionally requires an authenticated admin with
+         * ``oauth-clients:write`` — so global redaction buys nothing worth that
+         * collision.
+         */
         requestBody: OAuthApprovalDecisionRequest,
     }): CancelablePromise<OAuthApprovalStatusResponse> {
         return __request(OpenAPI, {
@@ -348,7 +403,13 @@ export class OAuthService {
         code,
         state,
     }: {
+        /**
+         * Authorization code issued by the external identity provider.
+         */
         code: string,
+        /**
+         * Signed authorization-flow state that `/authorize` sent to the provider.
+         */
         state: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -413,6 +474,9 @@ export class OAuthService {
     public static consentSubmit({
         formData,
     }: {
+        /**
+         * Request payload for the `consentSubmit` operation.
+         */
         formData: Body_consentSubmit,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -466,6 +530,9 @@ export class OAuthService {
     public static consentAgentCreate({
         formData,
     }: {
+        /**
+         * Request payload for the `consentAgentCreate` operation.
+         */
         formData: Body_consentAgentCreate,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -541,6 +608,9 @@ export class OAuthService {
     public static introspectEndpoint({
         requestBody,
     }: {
+        /**
+         * Introspection endpoint request (RFC 7662) — JSON or form-encoded.
+         */
         requestBody: {
             token: string;
             token_type_hint?: (string | null);
@@ -597,6 +667,16 @@ export class OAuthService {
     public static revokeEndpoint({
         requestBody,
     }: {
+        /**
+         * Revocation endpoint request (RFC 7009) — JSON or form-encoded.
+         *
+         * ``token`` is required either way. ``token_type_hint``
+         * (``access_token``/``refresh_token``) is a lookup-order optimization only —
+         * the server falls through both types regardless (RFC 7009 §2.1).
+         * ``client_id`` belongs to the form-encoded public-client arm (G11): the
+         * secret-less client's lineage binding; ignored on the bearer-authenticated
+         * JSON arm, where the platform identity scopes the revocation instead.
+         */
         requestBody: RevokeRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -643,6 +723,20 @@ export class OAuthService {
     public static sessionContinueEndpoint({
         requestBody,
     }: {
+        /**
+         * Front-channel session-continue exchange posted from the login page.
+         *
+         * ``state`` is the signed ``login``-purpose carry-through token (``ls``)
+         * minted by rung 3 of ``flow.resolve_identity_gate`` for this exact
+         * authorize request — the exchange never accepts bare flow parameters, so a
+         * caller cannot probe arbitrary client ids through it.
+         *
+         * ``state`` is deliberately NOT marked x-sensitive, for the same reason as
+         * ``OAuthApprovalDecisionRequest.state``: the CLI's redaction backstop
+         * unions bare field names globally, and the blob is not a lasting bearer
+         * credential (HMAC-signed, purpose-discriminated, TTL'd; the endpoint
+         * additionally requires an authenticated platform user).
+         */
         requestBody: OAuthSessionContinueRequest,
     }): CancelablePromise<OAuthSessionContinueResponse> {
         return __request(OpenAPI, {
@@ -679,6 +773,9 @@ export class OAuthService {
     public static tokenEndpoint({
         requestBody,
     }: {
+        /**
+         * Token endpoint request — accepts both JSON and form-encoded (RFC 6749).
+         */
         requestBody: {
             assertion?: (string | null);
             client_id?: (string | null);

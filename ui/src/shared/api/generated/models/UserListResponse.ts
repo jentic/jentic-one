@@ -7,8 +7,17 @@ import type { UserResponse } from './UserResponse';
  * Paginated list of users.
  */
 export type UserListResponse = {
+    /**
+     * The page of users.
+     */
     data: Array<UserResponse>;
+    /**
+     * Whether more results exist after this page.
+     */
     has_more: boolean;
+    /**
+     * Cursor for the next page; null when there are no more results.
+     */
     next_cursor?: (string | null);
 };
 

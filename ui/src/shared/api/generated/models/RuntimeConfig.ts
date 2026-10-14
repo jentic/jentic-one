@@ -6,7 +6,13 @@
  * Optional per-upstream-call overrides.
  */
 export type RuntimeConfig = {
+    /**
+     * Header overrides for upstream calls.
+     */
     headers?: (Record<string, string> | null);
+    /**
+     * Query-parameter overrides for upstream calls.
+     */
     query_params?: (Record<string, string> | null);
 };
 

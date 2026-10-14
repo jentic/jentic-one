@@ -6,7 +6,13 @@
  * Request body for initiating a credential connect flow.
  */
 export type ConnectRequestBody = {
+    /**
+     * Additional provider-specific connect parameters.
+     */
     extra?: Record<string, string>;
+    /**
+     * OAuth scopes to request.
+     */
     scopes?: Array<string>;
 };
 

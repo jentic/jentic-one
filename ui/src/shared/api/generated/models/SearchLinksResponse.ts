@@ -6,6 +6,9 @@
  * Hypermedia links for a search result row.
  */
 export type SearchLinksResponse = {
+    /**
+     * URL of the operation's full detail via `GET /inspect`.
+     */
     inspect: string;
 };
 

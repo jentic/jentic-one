@@ -24,13 +24,37 @@ export class NotesService {
         type,
         createdBy,
     }: {
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of notes to return (1-200).
+         */
         limit?: number,
+        /**
+         * Only return notes attached to APIs matching `vendor[:name[:version]]`.
+         */
         api?: (string | null),
+        /**
+         * Only return notes attached to this operation.
+         */
         operationId?: (string | null),
+        /**
+         * Only return notes attached to this execution.
+         */
         executionId?: (string | null),
+        /**
+         * Only return notes attached to this credential.
+         */
         credentialId?: (string | null),
+        /**
+         * Only return notes of this type.
+         */
         type?: (string | null),
+        /**
+         * Only return notes created by this actor ID.
+         */
         createdBy?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -65,6 +89,9 @@ export class NotesService {
     public static createNote({
         requestBody,
     }: {
+        /**
+         * Payload for creating a new note.
+         */
         requestBody: NoteCreateRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -92,7 +119,13 @@ export class NotesService {
         noteId,
         ifMatch,
     }: {
+        /**
+         * ID of the note.
+         */
         noteId: string,
+        /**
+         * Expected note revision (the `ETag` value); the request fails with 412 if the note has changed.
+         */
         ifMatch?: (string | null),
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -123,6 +156,9 @@ export class NotesService {
     public static getNote({
         noteId,
     }: {
+        /**
+         * ID of the note.
+         */
         noteId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -152,8 +188,17 @@ export class NotesService {
         requestBody,
         ifMatch,
     }: {
+        /**
+         * ID of the note.
+         */
         noteId: string,
+        /**
+         * Payload for updating an existing note (partial).
+         */
         requestBody: NoteUpdateRequest,
+        /**
+         * Expected note revision (the `ETag` value); the request fails with 412 if the note has changed.
+         */
         ifMatch?: (string | null),
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

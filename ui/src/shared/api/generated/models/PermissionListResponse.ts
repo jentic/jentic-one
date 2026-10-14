@@ -7,6 +7,9 @@ import type { PermissionResponse } from './PermissionResponse';
  * List of available permissions.
  */
 export type PermissionListResponse = {
+    /**
+     * The permissions in the catalogue.
+     */
     data: Array<PermissionResponse>;
 };
 

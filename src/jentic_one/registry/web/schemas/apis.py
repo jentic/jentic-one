@@ -103,10 +103,12 @@ class ApiImportResponse(BaseModel):
 class ApiReferenceResponse(BaseModel):
     """Core API identifier triple plus derived host."""
 
-    vendor: str
-    name: str
-    version: str
-    host: str | None
+    vendor: str = Field(description="Registry vendor of the API.")
+    name: str = Field(description="Registry name of the API.")
+    version: str = Field(description="Registry version of the API.")
+    host: str | None = Field(
+        description="Host the API is served from, derived from its spec; null if it declares none."
+    )
 
 
 class ApiLinksResponse(BaseModel):

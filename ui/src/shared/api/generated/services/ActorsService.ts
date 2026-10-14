@@ -25,7 +25,13 @@ export class ActorsService {
         cursor,
         limit = 1000,
     }: {
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of actors to return (1-5000, default 1000).
+         */
         limit?: number,
     }): CancelablePromise<ActorListResponse> {
         return __request(OpenAPI, {

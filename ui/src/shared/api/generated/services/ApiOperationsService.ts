@@ -27,10 +27,25 @@ export class ApiOperationsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of operations to return (1-200).
+         */
         limit?: number,
     }): CancelablePromise<OperationSummaryListResponse> {
         return __request(OpenAPI, {
@@ -74,11 +89,29 @@ export class ApiOperationsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of operations to return (1-200).
+         */
         limit?: number,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

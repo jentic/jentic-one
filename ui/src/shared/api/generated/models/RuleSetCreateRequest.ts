@@ -7,6 +7,9 @@ import type { PermissionRuleSchema } from './PermissionRuleSchema';
  * Create a shared permission rule set (theme 5 phase 1, Q-04).
  */
 export type RuleSetCreateRequest = {
+    /**
+     * Optional free-text description of the set.
+     */
     description?: (string | null);
     /**
      * Unique human-readable name.

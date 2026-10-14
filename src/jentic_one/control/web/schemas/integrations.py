@@ -42,6 +42,8 @@ class VendorAuthCapabilitiesResponse(BaseModel):
 
 
 class VendorSummaryResponse(BaseModel):
+    """A vendor, or one admin registration for it, that the caller can connect to."""
+
     # Stable per-row UI key. For admin-registered rows this is the
     # ``oar_...`` registration id; for platform-shipped config entries it
     # is the vendor slug. Lets the picker render one card per registration
@@ -106,6 +108,8 @@ class VendorSummaryResponse(BaseModel):
 
 
 class VendorListResponse(BaseModel):
+    """The vendors the caller can connect a credential for."""
+
     data: list[VendorSummaryResponse] = Field(description="The connectable vendors.")
 
 
@@ -125,6 +129,8 @@ class ApiTargetRequest(BaseModel):
 
 
 class IntegrationsConnectRequest(BaseModel):
+    """Start connecting a credential for a vendor or a registry API."""
+
     # Reject unknown fields: a misspelt ``oauth_app_registration_id`` must not
     # silently fall through to unpinned source resolution.
     model_config = ConfigDict(extra="forbid")

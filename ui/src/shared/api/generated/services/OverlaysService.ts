@@ -31,11 +31,29 @@ export class OverlaysService {
         limit = 50,
         status,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of overlays to return (1-200).
+         */
         limit?: number,
+        /**
+         * Only return overlays in this status: `pending`, `confirmed` or `deprecated`.
+         */
         status?: (string | null),
     }): CancelablePromise<OverlayListResponse> {
         return __request(OpenAPI, {
@@ -81,9 +99,21 @@ export class OverlaysService {
         version,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Payload for submitting a new overlay.
+         */
         requestBody: OverlaySubmitRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -123,9 +153,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -159,9 +201,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -209,10 +263,25 @@ export class OverlaysService {
         overlayId,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
+        /**
+         * Payload for updating an existing overlay.
+         */
         requestBody: OverlayUpdateRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -260,10 +329,25 @@ export class OverlaysService {
         overlayId,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
+        /**
+         * Payload for confirming an overlay.
+         */
         requestBody: OverlayConfirmRequest,
     }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
@@ -311,9 +395,21 @@ export class OverlaysService {
         version,
         overlayId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the overlay.
+         */
         overlayId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {

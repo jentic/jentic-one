@@ -53,6 +53,9 @@ export class VendorsService {
         vendorKey,
         oauthAppRegistrationId,
     }: {
+        /**
+         * Vendor registry key.
+         */
         vendorKey: string,
         /**
          * Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.

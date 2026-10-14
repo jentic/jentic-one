@@ -40,7 +40,13 @@ export class IntegrationsService {
          * Filter by vendor registry key
          */
         vendor?: (string | null),
+        /**
+         * Opaque cursor from a previous page's next_cursor; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of sessions to return (1-200, default 50).
+         */
         limit?: number,
     }): CancelablePromise<ConnectSessionListResponse> {
         return __request(OpenAPI, {
@@ -80,6 +86,9 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
@@ -129,6 +138,9 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
@@ -176,6 +188,9 @@ export class IntegrationsService {
         sessionId,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
@@ -225,7 +240,13 @@ export class IntegrationsService {
         requestBody,
         pollToken,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
+        /**
+         * Request payload for the `confirmConnectSession` operation.
+         */
         requestBody: (OAuthConfirmSessionRequest | ApiKeyConfirmSessionRequest | BearerConfirmSessionRequest | BasicConfirmSessionRequest | OwnOAuthClientConfirmSessionRequest | ExistingCredentialConfirmSessionRequest | ReauthorizeConfirmSessionRequest),
         /**
          * Opaque poll capability returned by :connect. Optional for the target agent's owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.
@@ -272,6 +293,9 @@ export class IntegrationsService {
     public static rejectConnectSession({
         sessionId,
     }: {
+        /**
+         * ID of the connect session.
+         */
         sessionId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -307,6 +331,9 @@ export class IntegrationsService {
     public static integrationsConnect({
         requestBody,
     }: {
+        /**
+         * Start connecting a credential for a vendor or a registry API.
+         */
         requestBody: IntegrationsConnectRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

@@ -26,8 +26,17 @@ export class ApIsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Only return APIs from this vendor.
+         */
         vendor?: (string | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of APIs to return (1-200).
+         */
         limit?: number,
     }): CancelablePromise<ApiListResponse> {
         return __request(OpenAPI, {
@@ -57,6 +66,9 @@ export class ApIsService {
     public static importApis({
         requestBody,
     }: {
+        /**
+         * Wrapper for a batch of import sources.
+         */
         requestBody: ApiImportRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -85,8 +97,17 @@ export class ApIsService {
         name,
         version,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -120,8 +141,17 @@ export class ApIsService {
         name,
         version,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
     }): CancelablePromise<ApiResponse> {
         return __request(OpenAPI, {
@@ -154,9 +184,21 @@ export class ApIsService {
         version,
         requestBody,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Partial update payload for an API's presentation fields.
+         */
         requestBody: ApiUpdateRequest,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -201,11 +243,29 @@ export class ApIsService {
         cursor,
         limit = 50,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Only return revisions in these states; repeat to match several.
+         */
         state?: (Array<string> | null),
+        /**
+         * Opaque cursor from a previous page's `next_cursor`; omit for the first page.
+         */
         cursor?: (string | null),
+        /**
+         * Maximum number of revisions to return (1-200).
+         */
         limit?: number,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -247,9 +307,21 @@ export class ApIsService {
         version,
         revisionId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
     }): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -289,9 +361,21 @@ export class ApIsService {
         version,
         revisionId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -331,9 +415,21 @@ export class ApIsService {
         version,
         revisionId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -373,9 +469,21 @@ export class ApIsService {
         version,
         revisionId,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -408,8 +516,17 @@ export class ApIsService {
         name,
         version,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
     }): CancelablePromise<SecuritySchemeListResponse> {
         return __request(OpenAPI, {

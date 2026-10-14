@@ -18,9 +18,21 @@ export class ApiSpecService {
         version,
         overlays = true,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
+         */
         overlays?: boolean,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
@@ -64,10 +76,25 @@ export class ApiSpecService {
         revisionId,
         overlays = true,
     }: {
+        /**
+         * Vendor of the API.
+         */
         vendor: string,
+        /**
+         * Name of the API.
+         */
         name: string,
+        /**
+         * Version of the API.
+         */
         version: string,
+        /**
+         * ID of the API revision.
+         */
         revisionId: string,
+        /**
+         * Reserved for applying overlays at read time; currently has no effect, as confirmed overlays are already part of the stored document.
+         */
         overlays?: boolean,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {

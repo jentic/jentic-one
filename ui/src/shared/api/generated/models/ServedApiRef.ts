@@ -12,8 +12,17 @@
  * ``/me`` web schema use ONE model instead of two identical copies.
  */
 export type ServedApiRef = {
+    /**
+     * Name of the served API; null means every API of the vendor.
+     */
     api_name?: (string | null);
+    /**
+     * Vendor of the served API.
+     */
     api_vendor: string;
+    /**
+     * Version of the served API; null means every version.
+     */
     api_version?: (string | null);
 };
 

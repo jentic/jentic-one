@@ -38,6 +38,9 @@ export class ConfigurationService {
     public static getProviderConfig({
         name,
     }: {
+        /**
+         * Provider name, e.g. `pipedream`.
+         */
         name: string,
     }): CancelablePromise<ProviderConfigResponse> {
         return __request(OpenAPI, {
@@ -72,7 +75,18 @@ export class ConfigurationService {
         name,
         requestBody,
     }: {
+        /**
+         * Provider name, e.g. `pipedream`.
+         */
         name: string,
+        /**
+         * Request body for setting a provider config.
+         *
+         * Fields are provider-specific and validated server-side by provider name.
+         * For ``pipedream`` the recognised fields are ``project_id``, ``client_id``,
+         * ``client_secret`` (write-only), and optional ``environment``,
+         * ``connect_base_url``, ``expiry_skew_seconds``.
+         */
         requestBody: ProviderConfigSetRequest,
     }): CancelablePromise<ProviderConfigResponse> {
         return __request(OpenAPI, {

@@ -1152,7 +1152,9 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
                 _summarise_parameter_examples(operation)
+                _describe_request_body(operation, components.get("schemas", {}))
             _summarise_path_item(path_item)
+            _describe_path_item(path_item)
 
         app.openapi_schema = schema
         return schema
@@ -1189,3 +1191,43 @@ def _summarise_path_item(path_item: dict[str, Any]) -> None:
     ]
     if summaries:
         path_item["summary"] = "; ".join(summaries)
+
+
+def _describe_path_item(path_item: dict[str, Any]) -> None:
+    """Set the path item's ``description`` to a method-by-method index.
+
+    The joined ``summary`` says what the path offers; the description adds which
+    HTTP method does what (``"`GET`: List agents. `POST`: Register agent."``),
+    so a reader of the path alone can pick the right operation.
+    """
+    if path_item.get("description"):
+        return
+    entries = [
+        f"`{method.upper()}`: {op['summary'].rstrip('.')}."
+        for method, op in path_item.items()
+        if method.lower() in _HTTP_METHODS and isinstance(op, dict) and op.get("summary")
+    ]
+    if entries:
+        path_item["description"] = " ".join(entries)
+
+
+def _describe_request_body(operation: dict[str, Any], schemas: dict[str, Any]) -> None:
+    """Give the operation's ``requestBody`` a ``description``.
+
+    FastAPI never emits one. Prefer the body model's own description (its
+    docstring, already public on the component); otherwise fall back to naming
+    the operation the payload is for.
+    """
+    body = operation.get("requestBody")
+    if not isinstance(body, dict) or body.get("description"):
+        return
+    for media in (body.get("content") or {}).values():
+        schema = media.get("schema") or {}
+        ref = schema.get("$ref", "")
+        target = schemas.get(ref.rsplit("/", 1)[-1], {}) if ref else schema
+        if target.get("description"):
+            body["description"] = target["description"]
+            return
+    op_id = operation.get("operationId")
+    if op_id:
+        body["description"] = f"Request payload for the `{op_id}` operation."
