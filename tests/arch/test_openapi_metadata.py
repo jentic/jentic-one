@@ -25,6 +25,7 @@ from typing import Any
 import jsonschema
 import pytest
 
+from jentic_one.shared.auth.permission_catalog import ALL_PERMISSIONS, OIDC_PASSTHROUGH_SCOPES
 from jentic_one.shared.web.openapi_meta import OPENAPI_TAGS
 
 _HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
@@ -348,11 +349,6 @@ def test_oauth2_scheme_matches_the_authorization_server(
     permission added to the catalogue must appear here — which it does by
     construction; this pins that nobody hard-codes a divergent list.
     """
-    from jentic_one.shared.auth.permission_catalog import (
-        ALL_PERMISSIONS,
-        OIDC_PASSTHROUGH_SCOPES,
-    )
-
     scheme = generated_control_spec["components"]["securitySchemes"]["OAuth2"]
     flow = scheme["flows"]["authorizationCode"]
     assert flow["authorizationUrl"] == "/authorize"
