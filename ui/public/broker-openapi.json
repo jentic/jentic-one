@@ -701,6 +701,21 @@
     "schemas": {
       "AgentDirective": {
         "description": "Machine-actionable recovery instruction embedded in a Broker\nproblem body. The fixed `strategy` vocabulary lets an agent\nhard-code its recovery loop — e.g. on `wait` sleep\n`parameters.retry_after_seconds`; on `modify_headers` add\n`parameters.headers` and retry once; on `prompt_human` stop and\nrelay `human_readable_instruction` to the user.\n",
+        "examples": [
+          {
+            "human_readable_instruction": "Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).",
+            "parameters": {
+              "candidates": [
+                "cred_01HXAMPLE7Q2",
+                "cred_01HXAMPLE9K4"
+              ],
+              "headers": {
+                "Jentic-Credential-Id": "cred_01HXAMPLE7Q2"
+              }
+            },
+            "strategy": "modify_headers"
+          }
+        ],
         "properties": {
           "human_readable_instruction": {
             "description": "Plain-language instruction an agent can relay to a human or follow itself.",
@@ -712,6 +727,13 @@
           "parameters": {
             "additionalProperties": true,
             "description": "Strategy-specific inputs (e.g. `headers` for `modify_headers`,\n`retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`\nfor `prompt_human`). Empty when the strategy needs none.\n",
+            "examples": [
+              {
+                "headers": {
+                  "Jentic-Credential-Id": "cred_01HXAMPLE7Q2"
+                }
+              }
+            ],
             "type": "object"
           },
           "strategy": {
@@ -740,9 +762,22 @@
       },
       "AsyncQueuedResponse": {
         "description": "Returned as the `202` body on async executions. The Broker\ndoes not expose a polling surface of its own; `_links.self`\nis an absolute URL into the platform's control plane, where\nthe queued work surfaces as a `kind: execution` job. Poll\nthat URL for status, and follow its `_links.result` to\ncollect the upstream response body once `status` is\n`completed`.\n",
+        "examples": [
+          {
+            "_links": {
+              "self": "https://control.your-instance.example/jobs/job_abc123"
+            },
+            "job_id": "job_abc123"
+          }
+        ],
         "properties": {
           "_links": {
             "description": "HAL-style link relations for the queued job. `self` always\npoints at the control-plane job record; the broker does\nnot expose its own polling surface.\n",
+            "examples": [
+              {
+                "self": "https://control.your-instance.example/jobs/job_abc123"
+              }
+            ],
             "properties": {
               "self": {
                 "description": "Absolute URL of the control-plane job record. Poll this for status and result links.",
@@ -789,6 +824,16 @@
               },
               "candidates": {
                 "description": "The caller's own credentials that matched ambiguously\n(`ambiguous_credential_binding`, `ambiguous_credential`) or\nthat a credential-selection header failed to match\n(`credential_id_not_found`, `credential_name_not_found`).\nPick one and resend with `Jentic-Credential-Id`.\n",
+                "examples": [
+                  [
+                    {
+                      "created_at": "2026-09-01T00:00:00Z",
+                      "id": "cred_01HXAMPLE7Q2",
+                      "last4": "7Q2a",
+                      "name": "github-work"
+                    }
+                  ]
+                ],
                 "items": {
                   "$ref": "#/components/schemas/CredentialCandidate"
                 },
@@ -817,10 +862,28 @@
           }
         ],
         "description": "RFC 9457 Problem Details body for every Broker error. Extends the\nshared Jentic `ProblemDetails` schema with the Broker's\nagent-recovery members: `error_origin` says *who* failed, and\n`agent_directive` (when present) is a machine-actionable recovery\ninstruction an agent can follow without parsing prose. `title`\nrepeats `detail` on Broker-originated errors.\n",
+        "examples": [
+          {
+            "detail": "No credential binding for this API",
+            "error_origin": "broker",
+            "instance": "/api.example.com/v1/users",
+            "status": 403,
+            "title": "No credential binding for this API",
+            "type": "no_credential_binding"
+          }
+        ],
         "title": "BrokerProblem"
       },
       "CredentialCandidate": {
         "description": "One of the caller's own credentials, distinguishable even when names\ncollide. Holds no secret material — `last4` is the last four\ncharacters of the credential **id**.\n",
+        "examples": [
+          {
+            "created_at": "2026-09-01T00:00:00Z",
+            "id": "cred_01HXAMPLE7Q2",
+            "last4": "7Q2a",
+            "name": "github-work"
+          }
+        ],
         "properties": {
           "created_at": {
             "description": "When the credential was created, to tell same-named candidates apart.",
@@ -865,6 +928,13 @@
       },
       "HealthResponse": {
         "description": "Body returned by `GET /health` while the Broker process is\nserving requests. Intentionally minimal — clients treat `200` +\n`status: ok` as the green signal; the body is informational.\n",
+        "examples": [
+          {
+            "status": "ok",
+            "surface": "broker",
+            "version": "0.42.2"
+          }
+        ],
         "properties": {
           "reason": {
             "description": "Why the deployment is not entitled. Present only on the `not_entitled` body.",
@@ -908,6 +978,12 @@
       },
       "ReadinessResponse": {
         "description": "Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the\ninstance is below the saturation threshold; `status: unready` (HTTP\n`503`) means in-flight load is at/near the admission cap and the load\nbalancer should drain this instance. `saturation` is the current\nin-flight count as a fraction of the configured cap.\n",
+        "examples": [
+          {
+            "saturation": 0.12,
+            "status": "ready"
+          }
+        ],
         "properties": {
           "reason": {
             "description": "Why the instance is unready (present only on `unready`).",
@@ -1105,6 +1181,14 @@
         "requestBody": {
           "content": {
             "*/*": {
+              "examples": {
+                "delete_reason": {
+                  "summary": "Optional body some upstreams accept on delete, forwarded as-is.",
+                  "value": {
+                    "reason": "duplicate"
+                  }
+                }
+              },
               "schema": {}
             }
           },
@@ -1343,6 +1427,15 @@
         "requestBody": {
           "content": {
             "*/*": {
+              "examples": {
+                "update_issue": {
+                  "summary": "Partial-update body for the upstream resource, forwarded as-is.",
+                  "value": {
+                    "state": "closed",
+                    "state_reason": "completed"
+                  }
+                }
+              },
               "schema": {}
             }
           },
@@ -1404,6 +1497,18 @@
         "requestBody": {
           "content": {
             "*/*": {
+              "examples": {
+                "create_pet": {
+                  "summary": "JSON body for the upstream's create operation, forwarded as-is.",
+                  "value": {
+                    "name": "Rex",
+                    "photoUrls": [
+                      "https://example.com/rex.jpg"
+                    ],
+                    "status": "available"
+                  }
+                }
+              },
               "schema": {}
             }
           },
@@ -1465,6 +1570,19 @@
         "requestBody": {
           "content": {
             "*/*": {
+              "examples": {
+                "replace_pet": {
+                  "summary": "Full replacement body for the upstream resource, forwarded as-is.",
+                  "value": {
+                    "id": 10,
+                    "name": "Rex",
+                    "photoUrls": [
+                      "https://example.com/rex.jpg"
+                    ],
+                    "status": "sold"
+                  }
+                }
+              },
               "schema": {}
             }
           },

@@ -333,6 +333,14 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              create_pet:
+                summary: JSON body for the upstream's create operation, forwarded as-is.
+                value:
+                  name: Rex
+                  photoUrls:
+                    - https://example.com/rex.jpg
+                  status: available
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -375,6 +383,15 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              replace_pet:
+                summary: Full replacement body for the upstream resource, forwarded as-is.
+                value:
+                  id: 10
+                  name: Rex
+                  photoUrls:
+                    - https://example.com/rex.jpg
+                  status: sold
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -417,6 +434,12 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              update_issue:
+                summary: Partial-update body for the upstream resource, forwarded as-is.
+                value:
+                  state: closed
+                  state_reason: completed
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -461,6 +484,11 @@ paths:
         content:
           "*/*":
             schema: {}
+            examples:
+              delete_reason:
+                summary: Optional body some upstreams accept on delete, forwarded as-is.
+                value:
+                  reason: duplicate
       responses:
         "200":
           $ref: "#/components/responses/ExecuteSync"
@@ -754,6 +782,13 @@ components:
         `agent_directive` (when present) is a machine-actionable recovery
         instruction an agent can follow without parsing prose. `title`
         repeats `detail` on Broker-originated errors.
+      examples:
+        - type: no_credential_binding
+          title: No credential binding for this API
+          status: 403
+          detail: No credential binding for this API
+          error_origin: broker
+          instance: /api.example.com/v1/users
       allOf:
         - $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
         - type: object
@@ -779,6 +814,11 @@ components:
                 that a credential-selection header failed to match
                 (`credential_id_not_found`, `credential_name_not_found`).
                 Pick one and resend with `Jentic-Credential-Id`.
+              examples:
+                - - id: cred_01HXAMPLE7Q2
+                    name: github-work
+                    last4: 7Q2a
+                    created_at: "2026-09-01T00:00:00Z"
               items:
                 $ref: "#/components/schemas/CredentialCandidate"
             intent_id:
@@ -799,6 +839,17 @@ components:
         `parameters.retry_after_seconds`; on `modify_headers` add
         `parameters.headers` and retry once; on `prompt_human` stop and
         relay `human_readable_instruction` to the user.
+      examples:
+        - strategy: modify_headers
+          parameters:
+            candidates: [cred_01HXAMPLE7Q2, cred_01HXAMPLE9K4]
+            headers:
+              Jentic-Credential-Id: cred_01HXAMPLE7Q2
+          human_readable_instruction: >-
+            Multiple bound credentials cover this API. Resend the same request
+            with the Jentic-Credential-Id header set to one of the ids in
+            parameters.candidates (Jentic-Credential-Name also works when names
+            are unique).
       required:
         - strategy
         - parameters
@@ -817,6 +868,9 @@ components:
             Strategy-specific inputs (e.g. `headers` for `modify_headers`,
             `retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`
             for `prompt_human`). Empty when the strategy needs none.
+          examples:
+            - headers:
+                Jentic-Credential-Id: cred_01HXAMPLE7Q2
         human_readable_instruction:
           type: string
           description: Plain-language instruction an agent can relay to a human or follow itself.
@@ -829,6 +883,11 @@ components:
         One of the caller's own credentials, distinguishable even when names
         collide. Holds no secret material — `last4` is the last four
         characters of the credential **id**.
+      examples:
+        - id: cred_01HXAMPLE7Q2
+          name: github-work
+          last4: 7Q2a
+          created_at: "2026-09-01T00:00:00Z"
       required:
         - id
         - name
@@ -867,6 +926,10 @@ components:
         that URL for status, and follow its `_links.result` to
         collect the upstream response body once `status` is
         `completed`.
+      examples:
+        - job_id: job_abc123
+          _links:
+            self: https://control.your-instance.example/jobs/job_abc123
       required:
         - job_id
         - _links
@@ -885,6 +948,8 @@ components:
             HAL-style link relations for the queued job. `self` always
             points at the control-plane job record; the broker does
             not expose its own polling surface.
+          examples:
+            - self: https://control.your-instance.example/jobs/job_abc123
           required:
             - self
           properties:
@@ -902,6 +967,10 @@ components:
         Body returned by `GET /health` while the Broker process is
         serving requests. Intentionally minimal — clients treat `200` +
         `status: ok` as the green signal; the body is informational.
+      examples:
+        - status: ok
+          surface: broker
+          version: "0.42.2" # x-release-please-version
       required:
         - status
       properties:
@@ -942,6 +1011,9 @@ components:
         `503`) means in-flight load is at/near the admission cap and the load
         balancer should drain this instance. `saturation` is the current
         in-flight count as a fraction of the configured cap.
+      examples:
+        - status: ready
+          saturation: 0.12
       required:
         - status
       properties:

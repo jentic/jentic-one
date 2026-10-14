@@ -282,6 +282,11 @@ def test_broker_spec_version_tracks_release() -> None:
         "broker HealthResponse.version example must track the release version "
         "(it carries an x-release-please-version marker)."
     )
+    health_schema_examples = spec["components"]["schemas"]["HealthResponse"]["examples"]
+    assert all(ex["version"] == release for ex in health_schema_examples), (
+        "broker HealthResponse schema-level example version must track the release "
+        "version (it carries an x-release-please-version marker)."
+    )
     ok_200 = spec["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]
     assert ok_200["examples"]["healthy"]["value"]["version"] == release, (
         "broker GET /health `healthy` example version must track the release version "

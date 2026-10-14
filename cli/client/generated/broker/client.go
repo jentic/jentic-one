@@ -124,6 +124,8 @@ func (e ReadinessResponseStatus) Valid() bool {
 // `parameters.retry_after_seconds`; on `modify_headers` add
 // `parameters.headers` and retry once; on `prompt_human` stop and
 // relay `human_readable_instruction` to the user.
+//
+// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
 type AgentDirective struct {
 	// HumanReadableInstruction Plain-language instruction an agent can relay to a human or follow itself.
 	//
@@ -133,6 +135,9 @@ type AgentDirective struct {
 	// Parameters Strategy-specific inputs (e.g. `headers` for `modify_headers`,
 	// `retry_after_seconds` for `wait`, `intent_id` / `provisioning_url`
 	// for `prompt_human`). Empty when the strategy needs none.
+	//
+	//
+	// Examples: {"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}}
 	Parameters map[string]interface{} `json:"parameters"`
 
 	// Strategy Recovery strategy the agent should apply.
@@ -153,10 +158,15 @@ type AgentDirectiveStrategy string
 // that URL for status, and follow its `_links.result` to
 // collect the upstream response body once `status` is
 // `completed`.
+//
+// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123"}
 type AsyncQueuedResponse struct {
 	// UnderscoreLinks HAL-style link relations for the queued job. `self` always
 	// points at the control-plane job record; the broker does
 	// not expose its own polling surface.
+	//
+	//
+	// Examples: {"self":"https://control.your-instance.example/jobs/job_abc123"}
 	UnderscoreLinks struct {
 		// Self Absolute URL of the control-plane job record. Poll this for status and result links.
 		//
@@ -183,6 +193,9 @@ type BrokerProblem struct {
 	// `parameters.retry_after_seconds`; on `modify_headers` add
 	// `parameters.headers` and retry once; on `prompt_human` stop and
 	// relay `human_readable_instruction` to the user.
+	//
+	//
+	// Examples: {"human_readable_instruction":"Multiple bound credentials cover this API. Resend the same request with the Jentic-Credential-Id header set to one of the ids in parameters.candidates (Jentic-Credential-Name also works when names are unique).","parameters":{"candidates":["cred_01HXAMPLE7Q2","cred_01HXAMPLE9K4"],"headers":{"Jentic-Credential-Id":"cred_01HXAMPLE7Q2"}},"strategy":"modify_headers"}
 	AgentDirective *AgentDirective `json:"agent_directive,omitempty"`
 
 	// Candidates The caller's own credentials that matched ambiguously
@@ -190,6 +203,9 @@ type BrokerProblem struct {
 	// that a credential-selection header failed to match
 	// (`credential_id_not_found`, `credential_name_not_found`).
 	// Pick one and resend with `Jentic-Credential-Id`.
+	//
+	//
+	// Examples: [{"created_at":"2026-09-01T00:00:00Z","id":"cred_01HXAMPLE7Q2","last4":"7Q2a","name":"github-work"}]
 	Candidates *[]CredentialCandidate `json:"candidates,omitempty"`
 
 	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
@@ -259,6 +275,8 @@ type BrokerProblemErrorOrigin string
 // CredentialCandidate One of the caller's own credentials, distinguishable even when names
 // collide. Holds no secret material — `last4` is the last four
 // characters of the credential **id**.
+//
+// Examples: {"created_at":"2026-09-01T00:00:00Z","id":"cred_01HXAMPLE7Q2","last4":"7Q2a","name":"github-work"}
 type CredentialCandidate struct {
 	// CreatedAt When the credential was created, to tell same-named candidates apart.
 	//
@@ -284,6 +302,8 @@ type CredentialCandidate struct {
 // HealthResponse Body returned by `GET /health` while the Broker process is
 // serving requests. Intentionally minimal — clients treat `200` +
 // `status: ok` as the green signal; the body is informational.
+//
+// Examples: {"status":"ok","surface":"broker","version":"0.42.2"}
 type HealthResponse struct {
 	// Reason Why the deployment is not entitled. Present only on the `not_entitled` body.
 	//
@@ -325,6 +345,8 @@ type HealthResponseStatus string
 // `503`) means in-flight load is at/near the admission cap and the load
 // balancer should drain this instance. `saturation` is the current
 // in-flight count as a fraction of the configured cap.
+//
+// Examples: {"saturation":0.12,"status":"ready"}
 type ReadinessResponse struct {
 	// Reason Why the instance is unready (present only on `unready`).
 	//
@@ -386,6 +408,8 @@ type UpstreamUrl = string
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type BadRequest = BrokerProblem
 
 // Conflict RFC 9457 Problem Details body for every Broker error. Extends the
@@ -394,6 +418,8 @@ type BadRequest = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Conflict = BrokerProblem
 
 // CredentialNotProvisioned RFC 9457 Problem Details body for every Broker error. Extends the
@@ -402,6 +428,8 @@ type Conflict = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type CredentialNotProvisioned = BrokerProblem
 
 // Default RFC 9457 Problem Details body for every Broker error. Extends the
@@ -410,6 +438,8 @@ type CredentialNotProvisioned = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Default = BrokerProblem
 
 // ExecuteAsync Returned as the `202` body on async executions. The Broker
@@ -419,6 +449,8 @@ type Default = BrokerProblem
 // that URL for status, and follow its `_links.result` to
 // collect the upstream response body once `status` is
 // `completed`.
+//
+// Examples: {"_links":{"self":"https://control.your-instance.example/jobs/job_abc123"},"job_id":"job_abc123"}
 type ExecuteAsync = AsyncQueuedResponse
 
 // Forbidden RFC 9457 Problem Details body for every Broker error. Extends the
@@ -427,6 +459,8 @@ type ExecuteAsync = AsyncQueuedResponse
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Forbidden = BrokerProblem
 
 // NotFound RFC 9457 Problem Details body for every Broker error. Extends the
@@ -435,6 +469,8 @@ type Forbidden = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type NotFound = BrokerProblem
 
 // PayloadTooLarge RFC 9457 Problem Details body for every Broker error. Extends the
@@ -443,6 +479,8 @@ type NotFound = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type PayloadTooLarge = BrokerProblem
 
 // ServerError RFC 9457 Problem Details body for every Broker error. Extends the
@@ -451,6 +489,8 @@ type PayloadTooLarge = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ServerError = BrokerProblem
 
 // ServiceUnavailable RFC 9457 Problem Details body for every Broker error. Extends the
@@ -459,6 +499,8 @@ type ServerError = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ServiceUnavailable = BrokerProblem
 
 // TooManyRequests RFC 9457 Problem Details body for every Broker error. Extends the
@@ -467,6 +509,8 @@ type ServiceUnavailable = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type TooManyRequests = BrokerProblem
 
 // Unauthorized RFC 9457 Problem Details body for every Broker error. Extends the
@@ -475,6 +519,8 @@ type TooManyRequests = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type Unauthorized = BrokerProblem
 
 // ValidationError RFC 9457 Problem Details body for every Broker error. Extends the
@@ -483,6 +529,8 @@ type Unauthorized = BrokerProblem
 // `agent_directive` (when present) is a machine-actionable recovery
 // instruction an agent can follow without parsing prose. `title`
 // repeats `detail` on Broker-originated errors.
+//
+// Examples: {"detail":"No credential binding for this API","error_origin":"broker","instance":"/api.example.com/v1/users","status":403,"title":"No credential binding for this API","type":"no_credential_binding"}
 type ValidationError = BrokerProblem
 
 // ExecuteDeleteParams defines parameters for ExecuteDelete.
