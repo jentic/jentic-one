@@ -2,12 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ExecutionApprovalResponse } from './ExecutionApprovalResponse';
+import type { HeldExecutionResponse } from './HeldExecutionResponse';
 /**
- * A page of execution approvals.
+ * A page of held executions.
  */
-export type ExecutionApprovalListResponse = {
-    data: Array<ExecutionApprovalResponse>;
+export type HeldExecutionListResponse = {
+    data: Array<HeldExecutionResponse>;
     has_more: boolean;
     next_cursor?: (string | null);
 };

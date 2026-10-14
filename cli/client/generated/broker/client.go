@@ -37,13 +37,13 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for HeldExecutionResponseStatus.
+// Defines values for HeldExecutionAcceptedResponseStatus.
 const (
-	Held HeldExecutionResponseStatus = "held"
+	Held HeldExecutionAcceptedResponseStatus = "held"
 )
 
-// Valid indicates whether the value is a known member of the HeldExecutionResponseStatus enum.
-func (e HeldExecutionResponseStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the HeldExecutionAcceptedResponseStatus enum.
+func (e HeldExecutionAcceptedResponseStatus) Valid() bool {
 	switch e {
 	case Held:
 		return true
@@ -126,60 +126,58 @@ type HealthResponse struct {
 // Examples: pass
 type HealthResponseStatus string
 
-// HeldExecutionResponse Returned as the `202` body when the call matches a permission rule
-// with `effect: require-approval`. The call has not run: it waits as
-// a `held` job until a reviewer (the agent's owner or an `org:admin`)
-// approves or denies it on `approval.review_url`, or the approval
-// expires. Poll `_links.self` until the job is terminal — `completed`
-// (it ran), `failed` (denied, expired, or the run failed; the result is
-// the problem body) or `cancelled` (withdrawn by the calling agent).
-// To abandon the call, `POST` to `_links.withdraw`
-// (`/executions/approvals/{approval.id}:withdraw`); `POST
-// /jobs/{id}:cancel` refuses a held job. Never re-send the call: an
-// identical call while one is pending joins the same job.
-type HeldExecutionResponse struct {
+// HeldExecutionAcceptedResponse Returned as the `202` body when the call matches a permission rule
+// with `effect: require-approval`. The call has not run: it waits
+// until a reviewer (the agent's owner or an `org:admin`) approves or
+// denies it on `review_url`, or it expires. Follow `_links.self`
+// (`/executions/holds/{held_execution_id}`) to see where it stands;
+// once it has finished, `_links.result` returns the upstream response,
+// or the problem explaining why it never ran (denied, expired, or
+// refused at run time). To abandon the call, `POST` to
+// `_links.withdraw`. Never re-send the call: an identical call while
+// one is pending joins the same held execution.
+type HeldExecutionAcceptedResponse struct {
 	UnderscoreLinks struct {
-		// Self Control-plane job record to poll.
+		// Result The call's outcome, once it has finished.
 		//
-		// Examples: https://control.your-instance.example/jobs/job_abc123
+		// Examples: https://control.your-instance.example/executions/holds/exap_abc123/result
+		Result string `json:"result"`
+
+		// Self The held execution — its decision and where the call stands.
+		//
+		// Examples: https://control.your-instance.example/executions/holds/exap_abc123
 		Self string `json:"self"`
 
-		// Withdraw `POST` here to withdraw the approval and cancel the held job
-		// (only the agent that made the call may). The call never runs.
+		// Withdraw `POST` here to withdraw the call before it is decided (only
+		// the agent that made the call may). The call never runs.
 		//
 		//
-		// Examples: https://control.your-instance.example/executions/approvals/exap_abc123:withdraw
+		// Examples: https://control.your-instance.example/executions/holds/exap_abc123:withdraw
 		Withdraw string `json:"withdraw"`
 	} `json:"_links"`
 
 	// AgentDirective What the calling agent should do next.
 	AgentDirective string `json:"agent_directive"`
-	Approval       struct {
-		// ExpiresAt When the approval expires undecided and the job fails.
-		ExpiresAt time.Time `json:"expires_at"`
 
-		// Id Approval id.
-		//
-		// Examples: exap_abc123
-		Id string `json:"id"`
+	// ExpiresAt When the call expires undecided and fails.
+	ExpiresAt time.Time `json:"expires_at"`
 
-		// ReviewUrl Review page; the reviewer signs in to decide. Carries no credential.
-		//
-		// Examples: https://your-instance.example/app/agents/approvals/exap_abc123
-		ReviewUrl string `json:"review_url"`
-	} `json:"approval"`
-
-	// JobId The held job. Matches the `job_id` reported by the control plane.
+	// HeldExecutionId The held execution.
 	//
-	// Examples: job_abc123
-	JobId string `json:"job_id"`
+	// Examples: exap_abc123
+	HeldExecutionId string `json:"held_execution_id"`
+
+	// ReviewUrl Review page; the reviewer signs in to decide. Carries no credential.
+	//
+	// Examples: https://your-instance.example/app/agents/approvals/exap_abc123
+	ReviewUrl string `json:"review_url"`
 
 	// Status Always `held`.
-	Status HeldExecutionResponseStatus `json:"status"`
+	Status HeldExecutionAcceptedResponseStatus `json:"status"`
 }
 
-// HeldExecutionResponseStatus Always `held`.
-type HeldExecutionResponseStatus string
+// HeldExecutionAcceptedResponseStatus Always `held`.
+type HeldExecutionAcceptedResponseStatus string
 
 // ReadinessResponse Body returned by `GET /ready`. `status: ready` (HTTP `200`) means the
 // instance is below the saturation threshold; `status: unready` (HTTP
@@ -1157,22 +1155,22 @@ func (t *ExecuteAsync) MergeAsyncQueuedResponse(v AsyncQueuedResponse) error {
 	return err
 }
 
-// AsHeldExecutionResponse returns the union data inside the ExecuteAsync as a HeldExecutionResponse
-func (t ExecuteAsync) AsHeldExecutionResponse() (HeldExecutionResponse, error) {
-	var body HeldExecutionResponse
+// AsHeldExecutionAcceptedResponse returns the union data inside the ExecuteAsync as a HeldExecutionAcceptedResponse
+func (t ExecuteAsync) AsHeldExecutionAcceptedResponse() (HeldExecutionAcceptedResponse, error) {
+	var body HeldExecutionAcceptedResponse
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromHeldExecutionResponse overwrites any union data inside the ExecuteAsync as the provided HeldExecutionResponse
-func (t *ExecuteAsync) FromHeldExecutionResponse(v HeldExecutionResponse) error {
+// FromHeldExecutionAcceptedResponse overwrites any union data inside the ExecuteAsync as the provided HeldExecutionAcceptedResponse
+func (t *ExecuteAsync) FromHeldExecutionAcceptedResponse(v HeldExecutionAcceptedResponse) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeHeldExecutionResponse performs a merge with any union data inside the ExecuteAsync, using the provided HeldExecutionResponse
-func (t *ExecuteAsync) MergeHeldExecutionResponse(v HeldExecutionResponse) error {
+// MergeHeldExecutionAcceptedResponse performs a merge with any union data inside the ExecuteAsync, using the provided HeldExecutionAcceptedResponse
+func (t *ExecuteAsync) MergeHeldExecutionAcceptedResponse(v HeldExecutionAcceptedResponse) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

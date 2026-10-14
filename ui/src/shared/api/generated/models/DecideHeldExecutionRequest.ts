@@ -4,9 +4,9 @@
 /* eslint-disable */
 import type { ApprovalDecision } from './ApprovalDecision';
 /**
- * Approve or deny a pending execution approval.
+ * Approve or deny a pending held execution.
  */
-export type DecideRequest = {
+export type DecideHeldExecutionRequest = {
     /**
      * `approve` releases the call; `deny` fails it.
      */

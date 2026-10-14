@@ -28,10 +28,10 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the permission family. They are **not** an enforced restriction: access is gated by the **permission**, not the actor kind, so any actor holding the required permission can call the endpoint.
 
-_Total endpoints: **185**._
+_Total endpoints: **186**._
 
 
-## Agent-facing (typically an agent) (35)
+## Agent-facing (typically an agent) (32)
 
 
 ### `apis`
@@ -82,9 +82,6 @@ _Total endpoints: **185**._
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/executions` | `executions:read` | agent | List Executions |
-| GET | `/executions/approvals` | `jobs:read` | agent | List execution approvals |
-| GET | `/executions/approvals/{approval_id}` | `jobs:read` | agent | Get an execution approval |
-| POST | `/executions/approvals/{approval_id}:withdraw` | `jobs:read` | agent | Withdraw a held execution |
 | GET | `/executions/{execution_id}` | `executions:read` | agent | Get Execution |
 
 ### `inspect`
@@ -218,7 +215,7 @@ _Total endpoints: **185**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (74)
+## Any authenticated actor (78)
 
 
 ### `actors`
@@ -301,7 +298,11 @@ _Total endpoints: **185**._
 
 | Method | Path | Permission(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/executions/approvals/{approval_id}:decide` | `jobs:write` | any | Approve or deny an execution approval |
+| GET | `/executions/holds` | _any authenticated_ | any | List held executions |
+| GET | `/executions/holds/{held_execution_id}` | _any authenticated_ | any | Get a held execution |
+| GET | `/executions/holds/{held_execution_id}/result` | _any authenticated_ | any | Get a held execution's result |
+| POST | `/executions/holds/{held_execution_id}:decide` | _any authenticated_ | any | Approve or deny a held execution |
+| POST | `/executions/holds/{held_execution_id}:withdraw` | _any authenticated_ | any | Withdraw a held execution |
 
 ### `governed-hosts`
 

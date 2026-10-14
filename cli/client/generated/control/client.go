@@ -525,6 +525,66 @@ func (e GroupBy) Valid() bool {
 	}
 }
 
+// Defines values for HeldExecutionDetailResponseExecutionStatus.
+const (
+	HeldExecutionDetailResponseExecutionStatusCancelled HeldExecutionDetailResponseExecutionStatus = "cancelled"
+	HeldExecutionDetailResponseExecutionStatusCompleted HeldExecutionDetailResponseExecutionStatus = "completed"
+	HeldExecutionDetailResponseExecutionStatusFailed    HeldExecutionDetailResponseExecutionStatus = "failed"
+	HeldExecutionDetailResponseExecutionStatusHeld      HeldExecutionDetailResponseExecutionStatus = "held"
+	HeldExecutionDetailResponseExecutionStatusQueued    HeldExecutionDetailResponseExecutionStatus = "queued"
+	HeldExecutionDetailResponseExecutionStatusRunning   HeldExecutionDetailResponseExecutionStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the HeldExecutionDetailResponseExecutionStatus enum.
+func (e HeldExecutionDetailResponseExecutionStatus) Valid() bool {
+	switch e {
+	case HeldExecutionDetailResponseExecutionStatusCancelled:
+		return true
+	case HeldExecutionDetailResponseExecutionStatusCompleted:
+		return true
+	case HeldExecutionDetailResponseExecutionStatusFailed:
+		return true
+	case HeldExecutionDetailResponseExecutionStatusHeld:
+		return true
+	case HeldExecutionDetailResponseExecutionStatusQueued:
+		return true
+	case HeldExecutionDetailResponseExecutionStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HeldExecutionResponseExecutionStatus.
+const (
+	HeldExecutionResponseExecutionStatusCancelled HeldExecutionResponseExecutionStatus = "cancelled"
+	HeldExecutionResponseExecutionStatusCompleted HeldExecutionResponseExecutionStatus = "completed"
+	HeldExecutionResponseExecutionStatusFailed    HeldExecutionResponseExecutionStatus = "failed"
+	HeldExecutionResponseExecutionStatusHeld      HeldExecutionResponseExecutionStatus = "held"
+	HeldExecutionResponseExecutionStatusQueued    HeldExecutionResponseExecutionStatus = "queued"
+	HeldExecutionResponseExecutionStatusRunning   HeldExecutionResponseExecutionStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the HeldExecutionResponseExecutionStatus enum.
+func (e HeldExecutionResponseExecutionStatus) Valid() bool {
+	switch e {
+	case HeldExecutionResponseExecutionStatusCancelled:
+		return true
+	case HeldExecutionResponseExecutionStatusCompleted:
+		return true
+	case HeldExecutionResponseExecutionStatusFailed:
+		return true
+	case HeldExecutionResponseExecutionStatusHeld:
+		return true
+	case HeldExecutionResponseExecutionStatusQueued:
+		return true
+	case HeldExecutionResponseExecutionStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InstanceIdentityResponseBackend.
 const (
 	Local  InstanceIdentityResponseBackend = "local"
@@ -1908,10 +1968,10 @@ type DailyExecutionBucket struct {
 	Total   int    `json:"total"`
 }
 
-// DecideRequest Approve or deny a pending execution approval.
+// DecideHeldExecutionRequest Approve or deny a pending held execution.
 //
 // Examples: {"decision":"deny","reason":"Not this account"}
-type DecideRequest struct {
+type DecideHeldExecutionRequest struct {
 	// Decision `approve` releases the call; `deny` fails it.
 	Decision ApprovalDecision `json:"decision"`
 
@@ -2019,163 +2079,6 @@ type EventResponse struct {
 // EventSeverity Severity level for platform events.
 type EventSeverity string
 
-// ExecutionApprovalDetailResponse An approval with the agent context and the held request a reviewer decides on.
-type ExecutionApprovalDetailResponse struct {
-	// UnderscoreLinks HAL-style links for an execution approval.
-	UnderscoreLinks ExecutionApprovalLinksResponse `json:"_links"`
-
-	// AgentId The agent whose call was held.
-	AgentId string `json:"agent_id"`
-
-	// AgentName Display name of the agent.
-	AgentName *string `json:"agent_name,omitempty"`
-
-	// AgentOwnerId The agent's owner; null for an ownerless agent (admin-only).
-	AgentOwnerId *string `json:"agent_owner_id,omitempty"`
-
-	// ApiName Name of the API called.
-	ApiName string `json:"api_name"`
-
-	// ApiVendor Vendor of the API called.
-	ApiVendor string `json:"api_vendor"`
-
-	// ApiVersion Version of the API called.
-	ApiVersion string `json:"api_version"`
-
-	// CreatedAt When the call was held.
-	CreatedAt time.Time `json:"created_at"`
-
-	// CredentialId The credential selected when the call was held.
-	CredentialId string `json:"credential_id"`
-
-	// DecidedAt When it left `pending`.
-	DecidedAt *time.Time `json:"decided_at,omitempty"`
-
-	// DecidedBy Reviewer who decided it.
-	DecidedBy *string `json:"decided_by,omitempty"`
-
-	// DecisionReason Reviewer's reason.
-	DecisionReason *string `json:"decision_reason,omitempty"`
-
-	// ExecutionId Execution record written once the approved job ran.
-	ExecutionId *string `json:"execution_id,omitempty"`
-
-	// ExpiresAt When a pending approval expires undecided.
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// Id Approval id (`exap_…`).
-	Id string `json:"id"`
-
-	// JobId The held execution job.
-	JobId string `json:"job_id"`
-
-	// MatchedRuleId The require-approval permission rule that held the call.
-	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
-
-	// Method HTTP method of the held call.
-	Method string `json:"method"`
-
-	// OperationId Resolved OpenAPI operation id.
-	OperationId *string `json:"operation_id,omitempty"`
-
-	// Path Upstream path of the held call.
-	Path string `json:"path"`
-
-	// Request The held call.
-	Request *HeldRequestResponse `json:"request,omitempty"`
-
-	// State Approval state.
-	State ExecutionApprovalState `json:"state"`
-
-	// TraceId Trace id of the held call.
-	TraceId *string `json:"trace_id,omitempty"`
-
-	// UpdatedAt Last change.
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-}
-
-// ExecutionApprovalLinksResponse HAL-style links for an execution approval.
-type ExecutionApprovalLinksResponse struct {
-	// Job The held execution job to poll for the outcome.
-	Job string `json:"job"`
-
-	// Self This approval.
-	Self string `json:"self"`
-}
-
-// ExecutionApprovalListResponse A page of execution approvals.
-type ExecutionApprovalListResponse struct {
-	Data       []ExecutionApprovalResponse `json:"data"`
-	HasMore    bool                        `json:"has_more"`
-	NextCursor *string                     `json:"next_cursor,omitempty"`
-}
-
-// ExecutionApprovalResponse A held execution waiting on (or settled by) a human decision.
-type ExecutionApprovalResponse struct {
-	// UnderscoreLinks HAL-style links for an execution approval.
-	UnderscoreLinks ExecutionApprovalLinksResponse `json:"_links"`
-
-	// AgentId The agent whose call was held.
-	AgentId string `json:"agent_id"`
-
-	// ApiName Name of the API called.
-	ApiName string `json:"api_name"`
-
-	// ApiVendor Vendor of the API called.
-	ApiVendor string `json:"api_vendor"`
-
-	// ApiVersion Version of the API called.
-	ApiVersion string `json:"api_version"`
-
-	// CreatedAt When the call was held.
-	CreatedAt time.Time `json:"created_at"`
-
-	// CredentialId The credential selected when the call was held.
-	CredentialId string `json:"credential_id"`
-
-	// DecidedAt When it left `pending`.
-	DecidedAt *time.Time `json:"decided_at,omitempty"`
-
-	// DecidedBy Reviewer who decided it.
-	DecidedBy *string `json:"decided_by,omitempty"`
-
-	// DecisionReason Reviewer's reason.
-	DecisionReason *string `json:"decision_reason,omitempty"`
-
-	// ExecutionId Execution record written once the approved job ran.
-	ExecutionId *string `json:"execution_id,omitempty"`
-
-	// ExpiresAt When a pending approval expires undecided.
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// Id Approval id (`exap_…`).
-	Id string `json:"id"`
-
-	// JobId The held execution job.
-	JobId string `json:"job_id"`
-
-	// MatchedRuleId The require-approval permission rule that held the call.
-	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
-
-	// Method HTTP method of the held call.
-	Method string `json:"method"`
-
-	// OperationId Resolved OpenAPI operation id.
-	OperationId *string `json:"operation_id,omitempty"`
-
-	// Path Upstream path of the held call.
-	Path string `json:"path"`
-
-	// State Approval state.
-	State ExecutionApprovalState `json:"state"`
-
-	// TraceId Trace id of the held call.
-	TraceId *string `json:"trace_id,omitempty"`
-
-	// UpdatedAt Last change.
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-}
-
 // ExecutionApprovalState Lifecycle of an execution approval; every state but “pending“ is terminal.
 type ExecutionApprovalState string
 
@@ -2278,6 +2181,175 @@ type HealthResponse struct {
 	Surface       string  `json:"surface"`
 }
 
+// HeldExecutionDetailResponse A held execution with the agent context and the held request a reviewer decides on.
+type HeldExecutionDetailResponse struct {
+	// UnderscoreLinks HAL-style links for a held execution.
+	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
+
+	// AgentId The agent whose call was held.
+	AgentId string `json:"agent_id"`
+
+	// AgentName Display name of the agent.
+	AgentName *string `json:"agent_name,omitempty"`
+
+	// AgentOwnerId The agent's owner; null for an ownerless agent (admin-only).
+	AgentOwnerId *string `json:"agent_owner_id,omitempty"`
+
+	// ApiName Name of the API called.
+	ApiName string `json:"api_name"`
+
+	// ApiVendor Vendor of the API called.
+	ApiVendor string `json:"api_vendor"`
+
+	// ApiVersion Version of the API called.
+	ApiVersion string `json:"api_version"`
+
+	// CreatedAt When the call was held.
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId The credential selected when the call was held.
+	CredentialId string `json:"credential_id"`
+
+	// DecidedAt When it left `pending`.
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+
+	// DecidedBy Reviewer who decided it.
+	DecidedBy *string `json:"decided_by,omitempty"`
+
+	// DecisionReason Reviewer's reason.
+	DecisionReason *string `json:"decision_reason,omitempty"`
+
+	// ExecutionId Execution record written once the approved call ran.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// ExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+	ExecutionStatus *HeldExecutionDetailResponseExecutionStatus `json:"execution_status,omitempty"`
+
+	// ExpiresAt When a pending held execution expires undecided.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Id Held execution id (`exap_…`).
+	Id string `json:"id"`
+
+	// MatchedRuleId The require-approval permission rule that held the call.
+	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
+
+	// Method HTTP method of the held call.
+	Method string `json:"method"`
+
+	// OperationId Resolved OpenAPI operation id.
+	OperationId *string `json:"operation_id,omitempty"`
+
+	// Path Upstream path of the held call.
+	Path string `json:"path"`
+
+	// Request The held call.
+	Request *HeldRequestResponse `json:"request,omitempty"`
+
+	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
+	State ExecutionApprovalState `json:"state"`
+
+	// TraceId Trace id of the held call.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// UpdatedAt Last change.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// HeldExecutionDetailResponseExecutionStatus defines model for HeldExecutionDetailResponse.ExecutionStatus.
+type HeldExecutionDetailResponseExecutionStatus string
+
+// HeldExecutionLinksResponse HAL-style links for a held execution.
+type HeldExecutionLinksResponse struct {
+	// Execution The execution record, once the approved call has run.
+	Execution *string `json:"execution,omitempty"`
+
+	// Result The call's result: the upstream response, or why it never ran. Present once the call has finished.
+	Result *string `json:"result,omitempty"`
+
+	// Self This held execution.
+	Self string `json:"self"`
+
+	// Withdraw Withdraw the held call. Present while it is pending.
+	Withdraw *string `json:"withdraw,omitempty"`
+}
+
+// HeldExecutionListResponse A page of held executions.
+type HeldExecutionListResponse struct {
+	Data       []HeldExecutionResponse `json:"data"`
+	HasMore    bool                    `json:"has_more"`
+	NextCursor *string                 `json:"next_cursor,omitempty"`
+}
+
+// HeldExecutionResponse A call held for a human decision, and where it stands.
+type HeldExecutionResponse struct {
+	// UnderscoreLinks HAL-style links for a held execution.
+	UnderscoreLinks HeldExecutionLinksResponse `json:"_links"`
+
+	// AgentId The agent whose call was held.
+	AgentId string `json:"agent_id"`
+
+	// ApiName Name of the API called.
+	ApiName string `json:"api_name"`
+
+	// ApiVendor Vendor of the API called.
+	ApiVendor string `json:"api_vendor"`
+
+	// ApiVersion Version of the API called.
+	ApiVersion string `json:"api_version"`
+
+	// CreatedAt When the call was held.
+	CreatedAt time.Time `json:"created_at"`
+
+	// CredentialId The credential selected when the call was held.
+	CredentialId string `json:"credential_id"`
+
+	// DecidedAt When it left `pending`.
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+
+	// DecidedBy Reviewer who decided it.
+	DecidedBy *string `json:"decided_by,omitempty"`
+
+	// DecisionReason Reviewer's reason.
+	DecisionReason *string `json:"decision_reason,omitempty"`
+
+	// ExecutionId Execution record written once the approved call ran.
+	ExecutionId *string `json:"execution_id,omitempty"`
+
+	// ExecutionStatus Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+	ExecutionStatus *HeldExecutionResponseExecutionStatus `json:"execution_status,omitempty"`
+
+	// ExpiresAt When a pending held execution expires undecided.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Id Held execution id (`exap_…`).
+	Id string `json:"id"`
+
+	// MatchedRuleId The require-approval permission rule that held the call.
+	MatchedRuleId *string `json:"matched_rule_id,omitempty"`
+
+	// Method HTTP method of the held call.
+	Method string `json:"method"`
+
+	// OperationId Resolved OpenAPI operation id.
+	OperationId *string `json:"operation_id,omitempty"`
+
+	// Path Upstream path of the held call.
+	Path string `json:"path"`
+
+	// State The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
+	State ExecutionApprovalState `json:"state"`
+
+	// TraceId Trace id of the held call.
+	TraceId *string `json:"trace_id,omitempty"`
+
+	// UpdatedAt Last change.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// HeldExecutionResponseExecutionStatus defines model for HeldExecutionResponse.ExecutionStatus.
+type HeldExecutionResponseExecutionStatus string
+
 // HeldRequestResponse The held call exactly as it runs if approved (credentials are injected at run time).
 type HeldRequestResponse struct {
 	// Body Request body, if any.
@@ -2361,7 +2433,6 @@ type InviteState string
 
 // JobLinksResponse Hypermedia links for a job.
 type JobLinksResponse struct {
-	Approval  *string `json:"approval,omitempty"`
 	Execution *string `json:"execution,omitempty"`
 	Result    *string `json:"result,omitempty"`
 	Self      string  `json:"self"`
@@ -2378,16 +2449,13 @@ type JobListResponse struct {
 type JobResponse struct {
 	// UnderscoreLinks Hypermedia links for a job.
 	UnderscoreLinks JobLinksResponse `json:"_links"`
-
-	// ApprovalId The execution approval a require-approval hold filed for this job.
-	ApprovalId  *string    `json:"approval_id,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	Error       *string    `json:"error,omitempty"`
-	ExecutionId *string    `json:"execution_id,omitempty"`
-	JobId       string     `json:"job_id"`
-	Kind        string     `json:"kind"`
-	Status      string     `json:"status"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	Error           *string          `json:"error,omitempty"`
+	ExecutionId     *string          `json:"execution_id,omitempty"`
+	JobId           string           `json:"job_id"`
+	Kind            string           `json:"kind"`
+	Status          string           `json:"status"`
+	UpdatedAt       *time.Time       `json:"updated_at,omitempty"`
 }
 
 // JwksUpdateRequest Request body for updating an agent's JWKS (public keys).
@@ -4112,8 +4180,8 @@ type ListExecutionsParams struct {
 	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// ListExecutionApprovalsParams defines parameters for ListExecutionApprovals.
-type ListExecutionApprovalsParams struct {
+// ListHeldExecutionsParams defines parameters for ListHeldExecutions.
+type ListHeldExecutionsParams struct {
 	State   *ExecutionApprovalState `form:"state,omitempty" json:"state,omitempty"`
 	AgentId *string                 `form:"agent_id,omitempty" json:"agent_id,omitempty"`
 	Cursor  *string                 `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -4381,8 +4449,8 @@ type AttachAgentCredentialRuleSetJSONRequestBody = RuleSetAttachRequest
 // ConnectCredentialJSONRequestBody defines body for ConnectCredential for application/json ContentType.
 type ConnectCredentialJSONRequestBody = ConnectRequestBody
 
-// DecideExecutionApprovalJSONRequestBody defines body for DecideExecutionApproval for application/json ContentType.
-type DecideExecutionApprovalJSONRequestBody = DecideRequest
+// DecideHeldExecutionJSONRequestBody defines body for DecideHeldExecution for application/json ContentType.
+type DecideHeldExecutionJSONRequestBody = DecideHeldExecutionRequest
 
 // IntegrationsConnectJSONRequestBody defines body for IntegrationsConnect for application/json ContentType.
 type IntegrationsConnectJSONRequestBody = IntegrationsConnectRequest
@@ -6898,68 +6966,80 @@ type ClientInterface interface {
 	// Corresponds with GET /executions (the `ListExecutions` operationId).
 	ListExecutions(ctx context.Context, params *ListExecutionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListExecutionApprovals List execution approvals
+	// ListHeldExecutions List held executions
 	//
-	// List the approvals the caller may review, newest first.
+	// List the held executions the caller may see, newest first.
 	//
-	// ``org:admin`` sees every approval; a user sees approvals for agents they
-	// own; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or
-	// ``agent_id``.
+	// ``org:admin`` sees every one; a user sees those filed by agents they own;
+	// an agent sees its own. Filter by ``state`` (e.g. ``pending``) or ``agent_id``.
 	//
-	// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
-	ListExecutionApprovals(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /executions/holds (the `ListHeldExecutions` operationId).
+	ListHeldExecutions(ctx context.Context, params *ListHeldExecutionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetExecutionApproval Get an execution approval
+	// GetHeldExecution Get a held execution
 	//
-	// One approval with its agent, owner, matched rule and the held request body.
+	// One held execution: its decision, where the call stands, and the held request.
 	//
-	// An approval outside the caller's reviewer visibility answers ``404``.
+	// ``execution_status`` follows the call from ``held`` to its outcome; once it
+	// has finished, ``_links.result`` returns that outcome. A held execution
+	// outside the caller's visibility answers ``404``.
 	//
-	// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
-	GetExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /executions/holds/{held_execution_id} (the `GetHeldExecution` operationId).
+	GetHeldExecution(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DecideExecutionApprovalWithBody Approve or deny an execution approval
+	// GetHeldExecutionResult Get a held execution's result
 	//
-	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	// The finished call's outcome: the upstream response, or why it never ran.
 	//
-	// ``approve`` releases the held job to the worker, which re-authorizes and
-	// runs it once; ``deny`` fails the job with a permission-denied result. The
-	// first decision wins: deciding an approval that is no longer pending (or
-	// has expired) answers ``409``. An agent caller is always refused (``403``),
-	// whatever its scopes.
+	// A call that ran returns its execution document — ``execution_id``,
+	// ``status``, ``http_status``, ``duration_ms`` and the upstream body as
+	// ``body_b64`` — as JSON. A call that never ran (denied, expired, or refused
+	// at run time) returns the ``application/problem+json`` body explaining why.
+	// Before the call has finished this answers ``409``; past its retention
+	// window, ``410``.
+	//
+	// Corresponds with GET /executions/holds/{held_execution_id}/result (the `GetHeldExecutionResult` operationId).
+	GetHeldExecutionResult(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DecideHeldExecutionWithBody Approve or deny a held execution
+	//
+	// Decide a pending held execution — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the call, which is re-authorized and run once; ``deny``
+	// fails it with a permission-denied result. The first decision wins: deciding
+	// one that is no longer pending (or has expired) answers ``409``. An agent
+	// caller is always refused (``403``), whatever its permissions.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-	DecideExecutionApprovalWithBody(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+	DecideHeldExecutionWithBody(ctx context.Context, heldExecutionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DecideExecutionApproval Approve or deny an execution approval
+	// DecideHeldExecution Approve or deny a held execution
 	//
-	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	// Decide a pending held execution — the agent's owner or an ``org:admin`` only.
 	//
-	// ``approve`` releases the held job to the worker, which re-authorizes and
-	// runs it once; ``deny`` fails the job with a permission-denied result. The
-	// first decision wins: deciding an approval that is no longer pending (or
-	// has expired) answers ``409``. An agent caller is always refused (``403``),
-	// whatever its scopes.
+	// ``approve`` releases the call, which is re-authorized and run once; ``deny``
+	// fails it with a permission-denied result. The first decision wins: deciding
+	// one that is no longer pending (or has expired) answers ``409``. An agent
+	// caller is always refused (``403``), whatever its permissions.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-	DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+	DecideHeldExecution(ctx context.Context, heldExecutionId string, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// WithdrawExecutionApproval Withdraw a held execution
+	// WithdrawHeldExecution Withdraw a held execution
 	//
-	// Abandon a held execution — the identity that filed the hold only.
+	// Abandon a held execution — the agent that filed it only.
 	//
-	// The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
-	// never runs and no result is written. Any other caller gets ``404``, as if
-	// the approval did not exist; an approval that is no longer pending (decided,
-	// expired or already withdrawn) answers ``409``. It acts only on held
-	// executions: owners and admins use ``:decide`` with ``deny`` instead.
+	// The call becomes ``withdrawn`` and never runs; no result is written. Any
+	// other caller gets ``404``, as if it did not exist; one that is no longer
+	// pending (decided, expired or already withdrawn) answers ``409``. Owners and
+	// admins use ``:decide`` with ``deny`` instead.
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
-	WithdrawExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
+	WithdrawHeldExecution(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetExecution Get Execution
 	//
@@ -7077,20 +7157,17 @@ type ClientInterface interface {
 
 	// GetJobResult Get Job Result
 	//
-	// Get the result of a completed job, or the problem body of a failed execution.
-	//
-	// Polymorphic by kind. A held execution that was denied or expired is
-	// ``failed`` with a permission-denied problem as its result.
+	// Get the result of a completed job — polymorphic by kind.
 	//
 	// Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 	GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CancelJob Cancel Job
 	//
-	// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+	// Cancel an active job.
 	//
-	// A held execution answers ``409``: it awaits its approval and settles only through
-	// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
+	// A held execution answers ``409``: it settles only through its hold (decide,
+	// withdraw or expiry), never by cancelling the job.
 	//
 	// Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 	CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10997,17 +11074,16 @@ func (c *Client) ListExecutions(ctx context.Context, params *ListExecutionsParam
 	return c.Client.Do(req)
 }
 
-// ListExecutionApprovals List execution approvals
+// ListHeldExecutions List held executions
 //
-// List the approvals the caller may review, newest first.
+// List the held executions the caller may see, newest first.
 //
-// “org:admin“ sees every approval; a user sees approvals for agents they
-// own; an agent sees its own. Filter by “state“ (e.g. “pending“) or
-// “agent_id“.
+// “org:admin“ sees every one; a user sees those filed by agents they own;
+// an agent sees its own. Filter by “state“ (e.g. “pending“) or “agent_id“.
 //
-// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
-func (c *Client) ListExecutionApprovals(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListExecutionApprovalsRequest(c.Server, params)
+// Corresponds with GET /executions/holds (the `ListHeldExecutions` operationId).
+func (c *Client) ListHeldExecutions(ctx context.Context, params *ListHeldExecutionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListHeldExecutionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -11018,15 +11094,17 @@ func (c *Client) ListExecutionApprovals(ctx context.Context, params *ListExecuti
 	return c.Client.Do(req)
 }
 
-// GetExecutionApproval Get an execution approval
+// GetHeldExecution Get a held execution
 //
-// One approval with its agent, owner, matched rule and the held request body.
+// One held execution: its decision, where the call stands, and the held request.
 //
-// An approval outside the caller's reviewer visibility answers “404“.
+// “execution_status“ follows the call from “held“ to its outcome; once it
+// has finished, “_links.result“ returns that outcome. A held execution
+// outside the caller's visibility answers “404“.
 //
-// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
-func (c *Client) GetExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetExecutionApprovalRequest(c.Server, approvalId)
+// Corresponds with GET /executions/holds/{held_execution_id} (the `GetHeldExecution` operationId).
+func (c *Client) GetHeldExecution(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHeldExecutionRequest(c.Server, heldExecutionId)
 	if err != nil {
 		return nil, err
 	}
@@ -11037,21 +11115,44 @@ func (c *Client) GetExecutionApproval(ctx context.Context, approvalId string, re
 	return c.Client.Do(req)
 }
 
-// DecideExecutionApprovalWithBody Approve or deny an execution approval
+// GetHeldExecutionResult Get a held execution's result
 //
-// Decide a pending approval — the agent's owner or an “org:admin“ only.
+// The finished call's outcome: the upstream response, or why it never ran.
 //
-// “approve“ releases the held job to the worker, which re-authorizes and
-// runs it once; “deny“ fails the job with a permission-denied result. The
-// first decision wins: deciding an approval that is no longer pending (or
-// has expired) answers “409“. An agent caller is always refused (“403“),
-// whatever its scopes.
+// A call that ran returns its execution document — “execution_id“,
+// “status“, “http_status“, “duration_ms“ and the upstream body as
+// “body_b64“ — as JSON. A call that never ran (denied, expired, or refused
+// at run time) returns the “application/problem+json“ body explaining why.
+// Before the call has finished this answers “409“; past its retention
+// window, “410“.
+//
+// Corresponds with GET /executions/holds/{held_execution_id}/result (the `GetHeldExecutionResult` operationId).
+func (c *Client) GetHeldExecutionResult(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHeldExecutionResultRequest(c.Server, heldExecutionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DecideHeldExecutionWithBody Approve or deny a held execution
+//
+// Decide a pending held execution — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the call, which is re-authorized and run once; “deny“
+// fails it with a permission-denied result. The first decision wins: deciding
+// one that is no longer pending (or has expired) answers “409“. An agent
+// caller is always refused (“403“), whatever its permissions.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-func (c *Client) DecideExecutionApprovalWithBody(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDecideExecutionApprovalRequestWithBody(c.Server, approvalId, contentType, body)
+// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+func (c *Client) DecideHeldExecutionWithBody(ctx context.Context, heldExecutionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideHeldExecutionRequestWithBody(c.Server, heldExecutionId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11062,21 +11163,20 @@ func (c *Client) DecideExecutionApprovalWithBody(ctx context.Context, approvalId
 	return c.Client.Do(req)
 }
 
-// DecideExecutionApproval Approve or deny an execution approval
+// DecideHeldExecution Approve or deny a held execution
 //
-// Decide a pending approval — the agent's owner or an “org:admin“ only.
+// Decide a pending held execution — the agent's owner or an “org:admin“ only.
 //
-// “approve“ releases the held job to the worker, which re-authorizes and
-// runs it once; “deny“ fails the job with a permission-denied result. The
-// first decision wins: deciding an approval that is no longer pending (or
-// has expired) answers “409“. An agent caller is always refused (“403“),
-// whatever its scopes.
+// “approve“ releases the call, which is re-authorized and run once; “deny“
+// fails it with a permission-denied result. The first decision wins: deciding
+// one that is no longer pending (or has expired) answers “409“. An agent
+// caller is always refused (“403“), whatever its permissions.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-func (c *Client) DecideExecutionApproval(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDecideExecutionApprovalRequest(c.Server, approvalId, body)
+// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+func (c *Client) DecideHeldExecution(ctx context.Context, heldExecutionId string, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDecideHeldExecutionRequest(c.Server, heldExecutionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11087,19 +11187,18 @@ func (c *Client) DecideExecutionApproval(ctx context.Context, approvalId string,
 	return c.Client.Do(req)
 }
 
-// WithdrawExecutionApproval Withdraw a held execution
+// WithdrawHeldExecution Withdraw a held execution
 //
-// Abandon a held execution — the identity that filed the hold only.
+// Abandon a held execution — the agent that filed it only.
 //
-// The approval becomes “withdrawn“ and its held job “cancelled“; the call
-// never runs and no result is written. Any other caller gets “404“, as if
-// the approval did not exist; an approval that is no longer pending (decided,
-// expired or already withdrawn) answers “409“. It acts only on held
-// executions: owners and admins use “:decide“ with “deny“ instead.
+// The call becomes “withdrawn“ and never runs; no result is written. Any
+// other caller gets “404“, as if it did not exist; one that is no longer
+// pending (decided, expired or already withdrawn) answers “409“. Owners and
+// admins use “:decide“ with “deny“ instead.
 //
-// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
-func (c *Client) WithdrawExecutionApproval(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWithdrawExecutionApprovalRequest(c.Server, approvalId)
+// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
+func (c *Client) WithdrawHeldExecution(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWithdrawHeldExecutionRequest(c.Server, heldExecutionId)
 	if err != nil {
 		return nil, err
 	}
@@ -11316,10 +11415,7 @@ func (c *Client) GetJob(ctx context.Context, jobId string, reqEditors ...Request
 
 // GetJobResult Get Job Result
 //
-// Get the result of a completed job, or the problem body of a failed execution.
-//
-// Polymorphic by kind. A held execution that was denied or expired is
-// “failed“ with a permission-denied problem as its result.
+// Get the result of a completed job — polymorphic by kind.
 //
 // Corresponds with GET /jobs/{job_id}/result (the `GetJobResult` operationId).
 func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -11336,10 +11432,10 @@ func (c *Client) GetJobResult(ctx context.Context, jobId string, reqEditors ...R
 
 // CancelJob Cancel Job
 //
-// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+// Cancel an active job.
 //
-// A held execution answers “409“: it awaits its approval and settles only through
-// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
+// A held execution answers “409“: it settles only through its hold (decide,
+// withdraw or expiry), never by cancelling the job.
 //
 // Corresponds with POST /jobs/{job_id}:cancel (the `CancelJob` operationId).
 func (c *Client) CancelJob(ctx context.Context, jobId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -19236,8 +19332,8 @@ func NewListExecutionsRequest(server string, params *ListExecutionsParams) (*htt
 	return req, nil
 }
 
-// NewListExecutionApprovalsRequest constructs an http.Request for the ListExecutionApprovals method
-func NewListExecutionApprovalsRequest(server string, params *ListExecutionApprovalsParams) (*http.Request, error) {
+// NewListHeldExecutionsRequest constructs an http.Request for the ListHeldExecutions method
+func NewListHeldExecutionsRequest(server string, params *ListHeldExecutionsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -19245,7 +19341,7 @@ func NewListExecutionApprovalsRequest(server string, params *ListExecutionApprov
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/executions/approvals")
+	operationPath := fmt.Sprintf("/executions/holds")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -19326,13 +19422,13 @@ func NewListExecutionApprovalsRequest(server string, params *ListExecutionApprov
 	return req, nil
 }
 
-// NewGetExecutionApprovalRequest constructs an http.Request for the GetExecutionApproval method
-func NewGetExecutionApprovalRequest(server string, approvalId string) (*http.Request, error) {
+// NewGetHeldExecutionRequest constructs an http.Request for the GetHeldExecution method
+func NewGetHeldExecutionRequest(server string, heldExecutionId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "held_execution_id", heldExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -19342,7 +19438,7 @@ func NewGetExecutionApprovalRequest(server string, approvalId string) (*http.Req
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/executions/approvals/%s", pathParam0)
+	operationPath := fmt.Sprintf("/executions/holds/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -19360,24 +19456,13 @@ func NewGetExecutionApprovalRequest(server string, approvalId string) (*http.Req
 	return req, nil
 }
 
-// NewDecideExecutionApprovalRequest calls the generic DecideExecutionApproval builder with application/json body
-func NewDecideExecutionApprovalRequest(server string, approvalId string, body DecideExecutionApprovalJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewDecideExecutionApprovalRequestWithBody(server, approvalId, "application/json", bodyReader)
-}
-
-// NewDecideExecutionApprovalRequestWithBody constructs an http.Request for the DecideExecutionApproval method, with any body, and a specified content type
-func NewDecideExecutionApprovalRequestWithBody(server string, approvalId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewGetHeldExecutionResultRequest constructs an http.Request for the GetHeldExecutionResult method
+func NewGetHeldExecutionResultRequest(server string, heldExecutionId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "held_execution_id", heldExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -19387,7 +19472,52 @@ func NewDecideExecutionApprovalRequestWithBody(server string, approvalId string,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/executions/approvals/%s:decide", pathParam0)
+	operationPath := fmt.Sprintf("/executions/holds/%s/result", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDecideHeldExecutionRequest calls the generic DecideHeldExecution builder with application/json body
+func NewDecideHeldExecutionRequest(server string, heldExecutionId string, body DecideHeldExecutionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDecideHeldExecutionRequestWithBody(server, heldExecutionId, "application/json", bodyReader)
+}
+
+// NewDecideHeldExecutionRequestWithBody constructs an http.Request for the DecideHeldExecution method, with any body, and a specified content type
+func NewDecideHeldExecutionRequestWithBody(server string, heldExecutionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "held_execution_id", heldExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/executions/holds/%s:decide", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -19407,13 +19537,13 @@ func NewDecideExecutionApprovalRequestWithBody(server string, approvalId string,
 	return req, nil
 }
 
-// NewWithdrawExecutionApprovalRequest constructs an http.Request for the WithdrawExecutionApproval method
-func NewWithdrawExecutionApprovalRequest(server string, approvalId string) (*http.Request, error) {
+// NewWithdrawHeldExecutionRequest constructs an http.Request for the WithdrawHeldExecution method
+func NewWithdrawHeldExecutionRequest(server string, heldExecutionId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "approval_id", approvalId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "held_execution_id", heldExecutionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -19423,7 +19553,7 @@ func NewWithdrawExecutionApprovalRequest(server string, approvalId string) (*htt
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/executions/approvals/%s:withdraw", pathParam0)
+	operationPath := fmt.Sprintf("/executions/holds/%s:withdraw", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -24241,74 +24371,88 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /executions (the `ListExecutions` operationId).
 	ListExecutionsWithResponse(ctx context.Context, params *ListExecutionsParams, reqEditors ...RequestEditorFn) (*ListExecutionsHTTPResp, error)
 
-	// ListExecutionApprovalsWithResponse List execution approvals
+	// ListHeldExecutionsWithResponse List held executions
 	//
-	// List the approvals the caller may review, newest first.
+	// List the held executions the caller may see, newest first.
 	//
-	// ``org:admin`` sees every approval; a user sees approvals for agents they
-	// own; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or
-	// ``agent_id``.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
-	ListExecutionApprovalsWithResponse(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*ListExecutionApprovalsHTTPResp, error)
-
-	// GetExecutionApprovalWithResponse Get an execution approval
-	//
-	// One approval with its agent, owner, matched rule and the held request body.
-	//
-	// An approval outside the caller's reviewer visibility answers ``404``.
+	// ``org:admin`` sees every one; a user sees those filed by agents they own;
+	// an agent sees its own. Filter by ``state`` (e.g. ``pending``) or ``agent_id``.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
-	GetExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*GetExecutionApprovalHTTPResp, error)
+	// Corresponds with GET /executions/holds (the `ListHeldExecutions` operationId).
+	ListHeldExecutionsWithResponse(ctx context.Context, params *ListHeldExecutionsParams, reqEditors ...RequestEditorFn) (*ListHeldExecutionsHTTPResp, error)
 
-	// DecideExecutionApprovalWithBodyWithResponse Approve or deny an execution approval
+	// GetHeldExecutionWithResponse Get a held execution
 	//
-	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	// One held execution: its decision, where the call stands, and the held request.
 	//
-	// ``approve`` releases the held job to the worker, which re-authorizes and
-	// runs it once; ``deny`` fails the job with a permission-denied result. The
-	// first decision wins: deciding an approval that is no longer pending (or
-	// has expired) answers ``409``. An agent caller is always refused (``403``),
-	// whatever its scopes.
+	// ``execution_status`` follows the call from ``held`` to its outcome; once it
+	// has finished, ``_links.result`` returns that outcome. A held execution
+	// outside the caller's visibility answers ``404``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /executions/holds/{held_execution_id} (the `GetHeldExecution` operationId).
+	GetHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*GetHeldExecutionHTTPResp, error)
+
+	// GetHeldExecutionResultWithResponse Get a held execution's result
+	//
+	// The finished call's outcome: the upstream response, or why it never ran.
+	//
+	// A call that ran returns its execution document — ``execution_id``,
+	// ``status``, ``http_status``, ``duration_ms`` and the upstream body as
+	// ``body_b64`` — as JSON. A call that never ran (denied, expired, or refused
+	// at run time) returns the ``application/problem+json`` body explaining why.
+	// Before the call has finished this answers ``409``; past its retention
+	// window, ``410``.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /executions/holds/{held_execution_id}/result (the `GetHeldExecutionResult` operationId).
+	GetHeldExecutionResultWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*GetHeldExecutionResultHTTPResp, error)
+
+	// DecideHeldExecutionWithBodyWithResponse Approve or deny a held execution
+	//
+	// Decide a pending held execution — the agent's owner or an ``org:admin`` only.
+	//
+	// ``approve`` releases the call, which is re-authorized and run once; ``deny``
+	// fails it with a permission-denied result. The first decision wins: deciding
+	// one that is no longer pending (or has expired) answers ``409``. An agent
+	// caller is always refused (``403``), whatever its permissions.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-	DecideExecutionApprovalWithBodyWithResponse(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+	DecideHeldExecutionWithBodyWithResponse(ctx context.Context, heldExecutionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideHeldExecutionHTTPResp, error)
 
-	// DecideExecutionApprovalWithResponse Approve or deny an execution approval
+	// DecideHeldExecutionWithResponse Approve or deny a held execution
 	//
-	// Decide a pending approval — the agent's owner or an ``org:admin`` only.
+	// Decide a pending held execution — the agent's owner or an ``org:admin`` only.
 	//
-	// ``approve`` releases the held job to the worker, which re-authorizes and
-	// runs it once; ``deny`` fails the job with a permission-denied result. The
-	// first decision wins: deciding an approval that is no longer pending (or
-	// has expired) answers ``409``. An agent caller is always refused (``403``),
-	// whatever its scopes.
+	// ``approve`` releases the call, which is re-authorized and run once; ``deny``
+	// fails it with a permission-denied result. The first decision wins: deciding
+	// one that is no longer pending (or has expired) answers ``409``. An agent
+	// caller is always refused (``403``), whatever its permissions.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-	DecideExecutionApprovalWithResponse(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+	DecideHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideHeldExecutionHTTPResp, error)
 
-	// WithdrawExecutionApprovalWithResponse Withdraw a held execution
+	// WithdrawHeldExecutionWithResponse Withdraw a held execution
 	//
-	// Abandon a held execution — the identity that filed the hold only.
+	// Abandon a held execution — the agent that filed it only.
 	//
-	// The approval becomes ``withdrawn`` and its held job ``cancelled``; the call
-	// never runs and no result is written. Any other caller gets ``404``, as if
-	// the approval did not exist; an approval that is no longer pending (decided,
-	// expired or already withdrawn) answers ``409``. It acts only on held
-	// executions: owners and admins use ``:decide`` with ``deny`` instead.
+	// The call becomes ``withdrawn`` and never runs; no result is written. Any
+	// other caller gets ``404``, as if it did not exist; one that is no longer
+	// pending (decided, expired or already withdrawn) answers ``409``. Owners and
+	// admins use ``:decide`` with ``deny`` instead.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
-	WithdrawExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*WithdrawExecutionApprovalHTTPResp, error)
+	// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
+	WithdrawHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*WithdrawHeldExecutionHTTPResp, error)
 
 	// GetExecutionWithResponse Get Execution
 	//
@@ -24440,10 +24584,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetJobResultWithResponse Get Job Result
 	//
-	// Get the result of a completed job, or the problem body of a failed execution.
-	//
-	// Polymorphic by kind. A held execution that was denied or expired is
-	// ``failed`` with a permission-denied problem as its result.
+	// Get the result of a completed job — polymorphic by kind.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -24452,10 +24593,10 @@ type ClientWithResponsesInterface interface {
 
 	// CancelJobWithResponse Cancel Job
 	//
-	// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+	// Cancel an active job.
 	//
-	// A held execution answers ``409``: it awaits its approval and settles only through
-	// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
+	// A held execution answers ``409``: it settles only through its hold (decide,
+	// withdraw or expiry), never by cancelling the job.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -34381,11 +34522,11 @@ func (r ListExecutionsHTTPResp) ContentType() string {
 	return ""
 }
 
-type ListExecutionApprovalsHTTPResp struct {
+type ListHeldExecutionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ExecutionApprovalListResponse
+	JSON200 *HeldExecutionListResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -34401,47 +34542,47 @@ type ListExecutionApprovalsHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListExecutionApprovalsHTTPResp) GetJSON200() *ExecutionApprovalListResponse {
+func (r ListHeldExecutionsHTTPResp) GetJSON200() *HeldExecutionListResponse {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r ListExecutionApprovalsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r ListHeldExecutionsHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r ListExecutionApprovalsHTTPResp) GetBody() []byte {
+func (r ListHeldExecutionsHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListExecutionApprovalsHTTPResp) Status() string {
+func (r ListHeldExecutionsHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -34449,7 +34590,7 @@ func (r ListExecutionApprovalsHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListExecutionApprovalsHTTPResp) StatusCode() int {
+func (r ListHeldExecutionsHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -34457,108 +34598,18 @@ func (r ListExecutionApprovalsHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListExecutionApprovalsHTTPResp) ContentType() string {
+func (r ListHeldExecutionsHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type GetExecutionApprovalHTTPResp struct {
+type GetHeldExecutionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ExecutionApprovalDetailResponse
-	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
-	ApplicationproblemJSON400 *ProblemDetail
-	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationproblemJSON401 *ProblemDetail
-	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationproblemJSON403 *ProblemDetail
-	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
-	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
-	ApplicationproblemJSON422 *ProblemDetail
-	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
-	ApplicationproblemJSON500 *ProblemDetail
-	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
-	ApplicationproblemJSON503 *ProblemDetail
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalDetailResponse {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
-	return r.ApplicationproblemJSON400
-}
-
-// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
-	return r.ApplicationproblemJSON401
-}
-
-// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
-	return r.ApplicationproblemJSON403
-}
-
-// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
-	return r.ApplicationproblemJSON404
-}
-
-// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
-	return r.ApplicationproblemJSON422
-}
-
-// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
-	return r.ApplicationproblemJSON500
-}
-
-// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r GetExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
-	return r.ApplicationproblemJSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r GetExecutionApprovalHTTPResp) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetExecutionApprovalHTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetExecutionApprovalHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetExecutionApprovalHTTPResp) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DecideExecutionApprovalHTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ExecutionApprovalResponse
+	JSON200 *HeldExecutionDetailResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -34567,8 +34618,6 @@ type DecideExecutionApprovalHTTPResp struct {
 	ApplicationproblemJSON403 *ProblemDetail
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *ProblemDetail
-	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *ProblemDetail
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -34578,57 +34627,52 @@ type DecideExecutionApprovalHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DecideExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalResponse {
+func (r GetHeldExecutionHTTPResp) GetJSON200() *HeldExecutionDetailResponse {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
 	return r.ApplicationproblemJSON404
 }
 
-// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
-	return r.ApplicationproblemJSON409
-}
-
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r DecideExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r GetHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r DecideExecutionApprovalHTTPResp) GetBody() []byte {
+func (r GetHeldExecutionHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r DecideExecutionApprovalHTTPResp) Status() string {
+func (r GetHeldExecutionHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -34636,7 +34680,7 @@ func (r DecideExecutionApprovalHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DecideExecutionApprovalHTTPResp) StatusCode() int {
+func (r GetHeldExecutionHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -34644,18 +34688,18 @@ func (r DecideExecutionApprovalHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DecideExecutionApprovalHTTPResp) ContentType() string {
+func (r GetHeldExecutionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type WithdrawExecutionApprovalHTTPResp struct {
+type GetHeldExecutionResultHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ExecutionApprovalResponse
+	JSON200 *interface{}
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -34675,57 +34719,57 @@ type WithdrawExecutionApprovalHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetJSON200() *ExecutionApprovalResponse {
+func (r GetHeldExecutionResultHTTPResp) GetJSON200() *interface{} {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
 	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
 	return r.ApplicationproblemJSON401
 }
 
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
 }
 
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
 	return r.ApplicationproblemJSON404
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
 	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
 	return r.ApplicationproblemJSON422
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
 	return r.ApplicationproblemJSON500
 }
 
 // GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
-func (r WithdrawExecutionApprovalHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+func (r GetHeldExecutionResultHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
 	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r WithdrawExecutionApprovalHTTPResp) GetBody() []byte {
+func (r GetHeldExecutionResultHTTPResp) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r WithdrawExecutionApprovalHTTPResp) Status() string {
+func (r GetHeldExecutionResultHTTPResp) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -34733,7 +34777,7 @@ func (r WithdrawExecutionApprovalHTTPResp) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r WithdrawExecutionApprovalHTTPResp) StatusCode() int {
+func (r GetHeldExecutionResultHTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -34741,7 +34785,201 @@ func (r WithdrawExecutionApprovalHTTPResp) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r WithdrawExecutionApprovalHTTPResp) ContentType() string {
+func (r GetHeldExecutionResultHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DecideHeldExecutionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HeldExecutionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DecideHeldExecutionHTTPResp) GetJSON200() *HeldExecutionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DecideHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DecideHeldExecutionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DecideHeldExecutionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DecideHeldExecutionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DecideHeldExecutionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WithdrawHeldExecutionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HeldExecutionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WithdrawHeldExecutionHTTPResp) GetJSON200() *HeldExecutionResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON404() *ProblemDetail {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON409() *ProblemDetail {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r WithdrawHeldExecutionHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r WithdrawHeldExecutionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WithdrawHeldExecutionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WithdrawHeldExecutionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WithdrawHeldExecutionHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -42499,103 +42737,123 @@ func (c *ClientWithResponses) ListExecutionsWithResponse(ctx context.Context, pa
 	return ParseListExecutionsHTTPResp(rsp)
 }
 
-// ListExecutionApprovalsWithResponse List execution approvals
+// ListHeldExecutionsWithResponse List held executions
 //
-// List the approvals the caller may review, newest first.
+// List the held executions the caller may see, newest first.
 //
-// “org:admin“ sees every approval; a user sees approvals for agents they
-// own; an agent sees its own. Filter by “state“ (e.g. “pending“) or
-// “agent_id“.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /executions/approvals (the `ListExecutionApprovals` operationId).
-func (c *ClientWithResponses) ListExecutionApprovalsWithResponse(ctx context.Context, params *ListExecutionApprovalsParams, reqEditors ...RequestEditorFn) (*ListExecutionApprovalsHTTPResp, error) {
-	rsp, err := c.ListExecutionApprovals(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListExecutionApprovalsHTTPResp(rsp)
-}
-
-// GetExecutionApprovalWithResponse Get an execution approval
-//
-// One approval with its agent, owner, matched rule and the held request body.
-//
-// An approval outside the caller's reviewer visibility answers “404“.
+// “org:admin“ sees every one; a user sees those filed by agents they own;
+// an agent sees its own. Filter by “state“ (e.g. “pending“) or “agent_id“.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /executions/approvals/{approval_id} (the `GetExecutionApproval` operationId).
-func (c *ClientWithResponses) GetExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*GetExecutionApprovalHTTPResp, error) {
-	rsp, err := c.GetExecutionApproval(ctx, approvalId, reqEditors...)
+// Corresponds with GET /executions/holds (the `ListHeldExecutions` operationId).
+func (c *ClientWithResponses) ListHeldExecutionsWithResponse(ctx context.Context, params *ListHeldExecutionsParams, reqEditors ...RequestEditorFn) (*ListHeldExecutionsHTTPResp, error) {
+	rsp, err := c.ListHeldExecutions(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetExecutionApprovalHTTPResp(rsp)
+	return ParseListHeldExecutionsHTTPResp(rsp)
 }
 
-// DecideExecutionApprovalWithBodyWithResponse Approve or deny an execution approval
+// GetHeldExecutionWithResponse Get a held execution
 //
-// Decide a pending approval — the agent's owner or an “org:admin“ only.
+// One held execution: its decision, where the call stands, and the held request.
 //
-// “approve“ releases the held job to the worker, which re-authorizes and
-// runs it once; “deny“ fails the job with a permission-denied result. The
-// first decision wins: deciding an approval that is no longer pending (or
-// has expired) answers “409“. An agent caller is always refused (“403“),
-// whatever its scopes.
+// “execution_status“ follows the call from “held“ to its outcome; once it
+// has finished, “_links.result“ returns that outcome. A held execution
+// outside the caller's visibility answers “404“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /executions/holds/{held_execution_id} (the `GetHeldExecution` operationId).
+func (c *ClientWithResponses) GetHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*GetHeldExecutionHTTPResp, error) {
+	rsp, err := c.GetHeldExecution(ctx, heldExecutionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHeldExecutionHTTPResp(rsp)
+}
+
+// GetHeldExecutionResultWithResponse Get a held execution's result
+//
+// The finished call's outcome: the upstream response, or why it never ran.
+//
+// A call that ran returns its execution document — “execution_id“,
+// “status“, “http_status“, “duration_ms“ and the upstream body as
+// “body_b64“ — as JSON. A call that never ran (denied, expired, or refused
+// at run time) returns the “application/problem+json“ body explaining why.
+// Before the call has finished this answers “409“; past its retention
+// window, “410“.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /executions/holds/{held_execution_id}/result (the `GetHeldExecutionResult` operationId).
+func (c *ClientWithResponses) GetHeldExecutionResultWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*GetHeldExecutionResultHTTPResp, error) {
+	rsp, err := c.GetHeldExecutionResult(ctx, heldExecutionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHeldExecutionResultHTTPResp(rsp)
+}
+
+// DecideHeldExecutionWithBodyWithResponse Approve or deny a held execution
+//
+// Decide a pending held execution — the agent's owner or an “org:admin“ only.
+//
+// “approve“ releases the call, which is re-authorized and run once; “deny“
+// fails it with a permission-denied result. The first decision wins: deciding
+// one that is no longer pending (or has expired) answers “409“. An agent
+// caller is always refused (“403“), whatever its permissions.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-func (c *ClientWithResponses) DecideExecutionApprovalWithBodyWithResponse(ctx context.Context, approvalId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error) {
-	rsp, err := c.DecideExecutionApprovalWithBody(ctx, approvalId, contentType, body, reqEditors...)
+// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+func (c *ClientWithResponses) DecideHeldExecutionWithBodyWithResponse(ctx context.Context, heldExecutionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DecideHeldExecutionHTTPResp, error) {
+	rsp, err := c.DecideHeldExecutionWithBody(ctx, heldExecutionId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDecideExecutionApprovalHTTPResp(rsp)
+	return ParseDecideHeldExecutionHTTPResp(rsp)
 }
 
-// DecideExecutionApprovalWithResponse Approve or deny an execution approval
+// DecideHeldExecutionWithResponse Approve or deny a held execution
 //
-// Decide a pending approval — the agent's owner or an “org:admin“ only.
+// Decide a pending held execution — the agent's owner or an “org:admin“ only.
 //
-// “approve“ releases the held job to the worker, which re-authorizes and
-// runs it once; “deny“ fails the job with a permission-denied result. The
-// first decision wins: deciding an approval that is no longer pending (or
-// has expired) answers “409“. An agent caller is always refused (“403“),
-// whatever its scopes.
+// “approve“ releases the call, which is re-authorized and run once; “deny“
+// fails it with a permission-denied result. The first decision wins: deciding
+// one that is no longer pending (or has expired) answers “409“. An agent
+// caller is always refused (“403“), whatever its permissions.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /executions/approvals/{approval_id}:decide (the `DecideExecutionApproval` operationId).
-func (c *ClientWithResponses) DecideExecutionApprovalWithResponse(ctx context.Context, approvalId string, body DecideExecutionApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideExecutionApprovalHTTPResp, error) {
-	rsp, err := c.DecideExecutionApproval(ctx, approvalId, body, reqEditors...)
+// Corresponds with POST /executions/holds/{held_execution_id}:decide (the `DecideHeldExecution` operationId).
+func (c *ClientWithResponses) DecideHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, body DecideHeldExecutionJSONRequestBody, reqEditors ...RequestEditorFn) (*DecideHeldExecutionHTTPResp, error) {
+	rsp, err := c.DecideHeldExecution(ctx, heldExecutionId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDecideExecutionApprovalHTTPResp(rsp)
+	return ParseDecideHeldExecutionHTTPResp(rsp)
 }
 
-// WithdrawExecutionApprovalWithResponse Withdraw a held execution
+// WithdrawHeldExecutionWithResponse Withdraw a held execution
 //
-// Abandon a held execution — the identity that filed the hold only.
+// Abandon a held execution — the agent that filed it only.
 //
-// The approval becomes “withdrawn“ and its held job “cancelled“; the call
-// never runs and no result is written. Any other caller gets “404“, as if
-// the approval did not exist; an approval that is no longer pending (decided,
-// expired or already withdrawn) answers “409“. It acts only on held
-// executions: owners and admins use “:decide“ with “deny“ instead.
+// The call becomes “withdrawn“ and never runs; no result is written. Any
+// other caller gets “404“, as if it did not exist; one that is no longer
+// pending (decided, expired or already withdrawn) answers “409“. Owners and
+// admins use “:decide“ with “deny“ instead.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /executions/approvals/{approval_id}:withdraw (the `WithdrawExecutionApproval` operationId).
-func (c *ClientWithResponses) WithdrawExecutionApprovalWithResponse(ctx context.Context, approvalId string, reqEditors ...RequestEditorFn) (*WithdrawExecutionApprovalHTTPResp, error) {
-	rsp, err := c.WithdrawExecutionApproval(ctx, approvalId, reqEditors...)
+// Corresponds with POST /executions/holds/{held_execution_id}:withdraw (the `WithdrawHeldExecution` operationId).
+func (c *ClientWithResponses) WithdrawHeldExecutionWithResponse(ctx context.Context, heldExecutionId string, reqEditors ...RequestEditorFn) (*WithdrawHeldExecutionHTTPResp, error) {
+	rsp, err := c.WithdrawHeldExecution(ctx, heldExecutionId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseWithdrawExecutionApprovalHTTPResp(rsp)
+	return ParseWithdrawHeldExecutionHTTPResp(rsp)
 }
 
 // GetExecutionWithResponse Get Execution
@@ -42782,10 +43040,7 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobId stri
 
 // GetJobResultWithResponse Get Job Result
 //
-// Get the result of a completed job, or the problem body of a failed execution.
-//
-// Polymorphic by kind. A held execution that was denied or expired is
-// “failed“ with a permission-denied problem as its result.
+// Get the result of a completed job — polymorphic by kind.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -42800,10 +43055,10 @@ func (c *ClientWithResponses) GetJobResultWithResponse(ctx context.Context, jobI
 
 // CancelJobWithResponse Cancel Job
 //
-// Cancel a queued, running or held job; an already-terminal job is returned unchanged.
+// Cancel an active job.
 //
-// A held execution answers “409“: it awaits its approval and settles only through
-// it (a reviewer's decision, the filing agent's withdrawal, or expiry).
+// A held execution answers “409“: it settles only through its hold (decide,
+// withdraw or expiry), never by cancelling the job.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -51735,22 +51990,22 @@ func ParseListExecutionsHTTPResp(rsp *http.Response) (*ListExecutionsHTTPResp, e
 	return response, nil
 }
 
-// ParseListExecutionApprovalsHTTPResp parses an HTTP response from a ListExecutionApprovalsWithResponse call
-func ParseListExecutionApprovalsHTTPResp(rsp *http.Response) (*ListExecutionApprovalsHTTPResp, error) {
+// ParseListHeldExecutionsHTTPResp parses an HTTP response from a ListHeldExecutionsWithResponse call
+func ParseListHeldExecutionsHTTPResp(rsp *http.Response) (*ListHeldExecutionsHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListExecutionApprovalsHTTPResp{
+	response := &ListHeldExecutionsHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ExecutionApprovalListResponse
+		var dest HeldExecutionListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -51803,22 +52058,22 @@ func ParseListExecutionApprovalsHTTPResp(rsp *http.Response) (*ListExecutionAppr
 	return response, nil
 }
 
-// ParseGetExecutionApprovalHTTPResp parses an HTTP response from a GetExecutionApprovalWithResponse call
-func ParseGetExecutionApprovalHTTPResp(rsp *http.Response) (*GetExecutionApprovalHTTPResp, error) {
+// ParseGetHeldExecutionHTTPResp parses an HTTP response from a GetHeldExecutionWithResponse call
+func ParseGetHeldExecutionHTTPResp(rsp *http.Response) (*GetHeldExecutionHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetExecutionApprovalHTTPResp{
+	response := &GetHeldExecutionHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ExecutionApprovalDetailResponse
+		var dest HeldExecutionDetailResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -51878,22 +52133,22 @@ func ParseGetExecutionApprovalHTTPResp(rsp *http.Response) (*GetExecutionApprova
 	return response, nil
 }
 
-// ParseDecideExecutionApprovalHTTPResp parses an HTTP response from a DecideExecutionApprovalWithResponse call
-func ParseDecideExecutionApprovalHTTPResp(rsp *http.Response) (*DecideExecutionApprovalHTTPResp, error) {
+// ParseGetHeldExecutionResultHTTPResp parses an HTTP response from a GetHeldExecutionResultWithResponse call
+func ParseGetHeldExecutionResultHTTPResp(rsp *http.Response) (*GetHeldExecutionResultHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DecideExecutionApprovalHTTPResp{
+	response := &GetHeldExecutionResultHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ExecutionApprovalResponse
+		var dest interface{}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -51960,22 +52215,104 @@ func ParseDecideExecutionApprovalHTTPResp(rsp *http.Response) (*DecideExecutionA
 	return response, nil
 }
 
-// ParseWithdrawExecutionApprovalHTTPResp parses an HTTP response from a WithdrawExecutionApprovalWithResponse call
-func ParseWithdrawExecutionApprovalHTTPResp(rsp *http.Response) (*WithdrawExecutionApprovalHTTPResp, error) {
+// ParseDecideHeldExecutionHTTPResp parses an HTTP response from a DecideHeldExecutionWithResponse call
+func ParseDecideHeldExecutionHTTPResp(rsp *http.Response) (*DecideHeldExecutionHTTPResp, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &WithdrawExecutionApprovalHTTPResp{
+	response := &DecideHeldExecutionHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ExecutionApprovalResponse
+		var dest HeldExecutionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWithdrawHeldExecutionHTTPResp parses an HTTP response from a WithdrawHeldExecutionWithResponse call
+func ParseWithdrawHeldExecutionHTTPResp(rsp *http.Response) (*WithdrawHeldExecutionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WithdrawHeldExecutionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HeldExecutionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

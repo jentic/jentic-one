@@ -3435,9 +3435,9 @@
         "title": "DailyExecutionBucket",
         "type": "object"
       },
-      "DecideRequest": {
+      "DecideHeldExecutionRequest": {
         "additionalProperties": false,
-        "description": "Approve or deny a pending execution approval.",
+        "description": "Approve or deny a pending held execution.",
         "examples": [
           {
             "decision": "deny",
@@ -3466,7 +3466,7 @@
         "required": [
           "decision"
         ],
-        "title": "DecideRequest",
+        "title": "DecideHeldExecutionRequest",
         "type": "object"
       },
       "DenyRequest": {
@@ -3875,463 +3875,6 @@
         ],
         "title": "EventSeverity",
         "type": "string"
-      },
-      "ExecutionApprovalDetailResponse": {
-        "description": "An approval with the agent context and the held request a reviewer decides on.",
-        "properties": {
-          "_links": {
-            "$ref": "#/components/schemas/ExecutionApprovalLinksResponse"
-          },
-          "agent_id": {
-            "description": "The agent whose call was held.",
-            "title": "Agent Id",
-            "type": "string"
-          },
-          "agent_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Display name of the agent.",
-            "title": "Agent Name"
-          },
-          "agent_owner_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The agent's owner; null for an ownerless agent (admin-only).",
-            "title": "Agent Owner Id"
-          },
-          "api_name": {
-            "description": "Name of the API called.",
-            "title": "Api Name",
-            "type": "string"
-          },
-          "api_vendor": {
-            "description": "Vendor of the API called.",
-            "title": "Api Vendor",
-            "type": "string"
-          },
-          "api_version": {
-            "description": "Version of the API called.",
-            "title": "Api Version",
-            "type": "string"
-          },
-          "created_at": {
-            "description": "When the call was held.",
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "credential_id": {
-            "description": "The credential selected when the call was held.",
-            "title": "Credential Id",
-            "type": "string"
-          },
-          "decided_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When it left `pending`.",
-            "title": "Decided At"
-          },
-          "decided_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Reviewer who decided it.",
-            "title": "Decided By"
-          },
-          "decision_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Reviewer's reason.",
-            "title": "Decision Reason"
-          },
-          "execution_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution record written once the approved job ran.",
-            "title": "Execution Id"
-          },
-          "expires_at": {
-            "description": "When a pending approval expires undecided.",
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
-          "id": {
-            "description": "Approval id (`exap_…`).",
-            "title": "Id",
-            "type": "string"
-          },
-          "job_id": {
-            "description": "The held execution job.",
-            "title": "Job Id",
-            "type": "string"
-          },
-          "matched_rule_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The require-approval permission rule that held the call.",
-            "title": "Matched Rule Id"
-          },
-          "method": {
-            "description": "HTTP method of the held call.",
-            "title": "Method",
-            "type": "string"
-          },
-          "operation_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Resolved OpenAPI operation id.",
-            "title": "Operation Id"
-          },
-          "path": {
-            "description": "Upstream path of the held call.",
-            "title": "Path",
-            "type": "string"
-          },
-          "request": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/HeldRequestResponse"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The held call."
-          },
-          "state": {
-            "$ref": "#/components/schemas/ExecutionApprovalState",
-            "description": "Approval state."
-          },
-          "trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Trace id of the held call.",
-            "title": "Trace Id"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Last change.",
-            "title": "Updated At"
-          }
-        },
-        "required": [
-          "id",
-          "job_id",
-          "agent_id",
-          "credential_id",
-          "api_vendor",
-          "api_name",
-          "api_version",
-          "method",
-          "path",
-          "state",
-          "expires_at",
-          "created_at",
-          "_links"
-        ],
-        "title": "ExecutionApprovalDetailResponse",
-        "type": "object"
-      },
-      "ExecutionApprovalLinksResponse": {
-        "description": "HAL-style links for an execution approval.",
-        "properties": {
-          "job": {
-            "description": "The held execution job to poll for the outcome.",
-            "title": "Job",
-            "type": "string"
-          },
-          "self": {
-            "description": "This approval.",
-            "title": "Self",
-            "type": "string"
-          }
-        },
-        "required": [
-          "self",
-          "job"
-        ],
-        "title": "ExecutionApprovalLinksResponse",
-        "type": "object"
-      },
-      "ExecutionApprovalListResponse": {
-        "description": "A page of execution approvals.",
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/ExecutionApprovalResponse"
-            },
-            "title": "Data",
-            "type": "array"
-          },
-          "has_more": {
-            "title": "Has More",
-            "type": "boolean"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          }
-        },
-        "required": [
-          "data",
-          "has_more"
-        ],
-        "title": "ExecutionApprovalListResponse",
-        "type": "object"
-      },
-      "ExecutionApprovalResponse": {
-        "description": "A held execution waiting on (or settled by) a human decision.",
-        "properties": {
-          "_links": {
-            "$ref": "#/components/schemas/ExecutionApprovalLinksResponse"
-          },
-          "agent_id": {
-            "description": "The agent whose call was held.",
-            "title": "Agent Id",
-            "type": "string"
-          },
-          "api_name": {
-            "description": "Name of the API called.",
-            "title": "Api Name",
-            "type": "string"
-          },
-          "api_vendor": {
-            "description": "Vendor of the API called.",
-            "title": "Api Vendor",
-            "type": "string"
-          },
-          "api_version": {
-            "description": "Version of the API called.",
-            "title": "Api Version",
-            "type": "string"
-          },
-          "created_at": {
-            "description": "When the call was held.",
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "credential_id": {
-            "description": "The credential selected when the call was held.",
-            "title": "Credential Id",
-            "type": "string"
-          },
-          "decided_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "When it left `pending`.",
-            "title": "Decided At"
-          },
-          "decided_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Reviewer who decided it.",
-            "title": "Decided By"
-          },
-          "decision_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Reviewer's reason.",
-            "title": "Decision Reason"
-          },
-          "execution_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Execution record written once the approved job ran.",
-            "title": "Execution Id"
-          },
-          "expires_at": {
-            "description": "When a pending approval expires undecided.",
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          },
-          "id": {
-            "description": "Approval id (`exap_…`).",
-            "title": "Id",
-            "type": "string"
-          },
-          "job_id": {
-            "description": "The held execution job.",
-            "title": "Job Id",
-            "type": "string"
-          },
-          "matched_rule_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The require-approval permission rule that held the call.",
-            "title": "Matched Rule Id"
-          },
-          "method": {
-            "description": "HTTP method of the held call.",
-            "title": "Method",
-            "type": "string"
-          },
-          "operation_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Resolved OpenAPI operation id.",
-            "title": "Operation Id"
-          },
-          "path": {
-            "description": "Upstream path of the held call.",
-            "title": "Path",
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/ExecutionApprovalState",
-            "description": "Approval state."
-          },
-          "trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Trace id of the held call.",
-            "title": "Trace Id"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Last change.",
-            "title": "Updated At"
-          }
-        },
-        "required": [
-          "id",
-          "job_id",
-          "agent_id",
-          "credential_id",
-          "api_vendor",
-          "api_name",
-          "api_version",
-          "method",
-          "path",
-          "state",
-          "expires_at",
-          "created_at",
-          "_links"
-        ],
-        "title": "ExecutionApprovalResponse",
-        "type": "object"
       },
       "ExecutionApprovalState": {
         "description": "Lifecycle of an execution approval; every state but ``pending`` is terminal.",
@@ -4753,6 +4296,521 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "HeldExecutionDetailResponse": {
+        "description": "A held execution with the agent context and the held request a reviewer decides on.",
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/HeldExecutionLinksResponse"
+          },
+          "agent_id": {
+            "description": "The agent whose call was held.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Display name of the agent.",
+            "title": "Agent Name"
+          },
+          "agent_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's owner; null for an ownerless agent (admin-only).",
+            "title": "Agent Owner Id"
+          },
+          "api_name": {
+            "description": "Name of the API called.",
+            "title": "Api Name",
+            "type": "string"
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "description": "Version of the API called.",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the call was held.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "The credential selected when the call was held.",
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it left `pending`.",
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer who decided it.",
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer's reason.",
+            "title": "Decision Reason"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution record written once the approved call ran.",
+            "title": "Execution Id"
+          },
+          "execution_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held",
+                  "queued",
+                  "running",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.",
+            "title": "Execution Status"
+          },
+          "expires_at": {
+            "description": "When a pending held execution expires undecided.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Held execution id (`exap_…`).",
+            "title": "Id",
+            "type": "string"
+          },
+          "matched_rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The require-approval permission rule that held the call.",
+            "title": "Matched Rule Id"
+          },
+          "method": {
+            "description": "HTTP method of the held call.",
+            "title": "Method",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved OpenAPI operation id.",
+            "title": "Operation Id"
+          },
+          "path": {
+            "description": "Upstream path of the held call.",
+            "title": "Path",
+            "type": "string"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HeldRequestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The held call."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "description": "The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`."
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trace id of the held call.",
+            "title": "Trace Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last change.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "credential_id",
+          "api_vendor",
+          "api_name",
+          "api_version",
+          "method",
+          "path",
+          "state",
+          "expires_at",
+          "created_at",
+          "_links"
+        ],
+        "title": "HeldExecutionDetailResponse",
+        "type": "object"
+      },
+      "HeldExecutionLinksResponse": {
+        "description": "HAL-style links for a held execution.",
+        "properties": {
+          "execution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The execution record, once the approved call has run.",
+            "title": "Execution"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The call's result: the upstream response, or why it never ran. Present once the call has finished.",
+            "title": "Result"
+          },
+          "self": {
+            "description": "This held execution.",
+            "title": "Self",
+            "type": "string"
+          },
+          "withdraw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Withdraw the held call. Present while it is pending.",
+            "title": "Withdraw"
+          }
+        },
+        "required": [
+          "self"
+        ],
+        "title": "HeldExecutionLinksResponse",
+        "type": "object"
+      },
+      "HeldExecutionListResponse": {
+        "description": "A page of held executions.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/HeldExecutionResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "title": "HeldExecutionListResponse",
+        "type": "object"
+      },
+      "HeldExecutionResponse": {
+        "description": "A call held for a human decision, and where it stands.",
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/HeldExecutionLinksResponse"
+          },
+          "agent_id": {
+            "description": "The agent whose call was held.",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "api_name": {
+            "description": "Name of the API called.",
+            "title": "Api Name",
+            "type": "string"
+          },
+          "api_vendor": {
+            "description": "Vendor of the API called.",
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "description": "Version of the API called.",
+            "title": "Api Version",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the call was held.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "The credential selected when the call was held.",
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it left `pending`.",
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer who decided it.",
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reviewer's reason.",
+            "title": "Decision Reason"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Execution record written once the approved call ran.",
+            "title": "Execution Id"
+          },
+          "execution_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "held",
+                  "queued",
+                  "running",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.",
+            "title": "Execution Status"
+          },
+          "expires_at": {
+            "description": "When a pending held execution expires undecided.",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Held execution id (`exap_…`).",
+            "title": "Id",
+            "type": "string"
+          },
+          "matched_rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The require-approval permission rule that held the call.",
+            "title": "Matched Rule Id"
+          },
+          "method": {
+            "description": "HTTP method of the held call.",
+            "title": "Method",
+            "type": "string"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resolved OpenAPI operation id.",
+            "title": "Operation Id"
+          },
+          "path": {
+            "description": "Upstream path of the held call.",
+            "title": "Path",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionApprovalState",
+            "description": "The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`."
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trace id of the held call.",
+            "title": "Trace Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last change.",
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "credential_id",
+          "api_vendor",
+          "api_name",
+          "api_version",
+          "method",
+          "path",
+          "state",
+          "expires_at",
+          "created_at",
+          "_links"
+        ],
+        "title": "HeldExecutionResponse",
+        "type": "object"
+      },
       "HeldRequestResponse": {
         "description": "The held call exactly as it runs if approved (credentials are injected at run time).",
         "properties": {
@@ -5063,17 +5121,6 @@
       "JobLinksResponse": {
         "description": "Hypermedia links for a job.",
         "properties": {
-          "approval": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Approval"
-          },
           "execution": {
             "anyOf": [
               {
@@ -5145,18 +5192,6 @@
         "properties": {
           "_links": {
             "$ref": "#/components/schemas/JobLinksResponse"
-          },
-          "approval_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The execution approval a require-approval hold filed for this job.",
-            "title": "Approval Id"
           },
           "created_at": {
             "format": "date-time",
@@ -28266,10 +28301,10 @@
         ]
       }
     },
-    "/executions/approvals": {
+    "/executions/holds": {
       "get": {
-        "description": "List the approvals the caller may review, newest first.\n\n``org:admin`` sees every approval; a user sees approvals for agents they\nown; an agent sees its own. Filter by ``state`` (e.g. ``pending``) or\n``agent_id``.",
-        "operationId": "listExecutionApprovals",
+        "description": "List the held executions the caller may see, newest first.\n\n``org:admin`` sees every one; a user sees those filed by agents they own;\nan agent sees its own. Filter by ``state`` (e.g. ``pending``) or ``agent_id``.",
+        "operationId": "listHeldExecutions",
         "parameters": [
           {
             "in": "query",
@@ -28337,7 +28372,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExecutionApprovalListResponse"
+                  "$ref": "#/components/schemas/HeldExecutionListResponse"
                 }
               }
             },
@@ -28457,23 +28492,23 @@
             "BearerAuth": []
           }
         ],
-        "summary": "List execution approvals",
+        "summary": "List held executions",
         "tags": [
-          "Execution Approvals"
+          "Held Executions"
         ]
       }
     },
-    "/executions/approvals/{approval_id}": {
+    "/executions/holds/{held_execution_id}": {
       "get": {
-        "description": "One approval with its agent, owner, matched rule and the held request body.\n\nAn approval outside the caller's reviewer visibility answers ``404``.",
-        "operationId": "getExecutionApproval",
+        "description": "One held execution: its decision, where the call stands, and the held request.\n\n``execution_status`` follows the call from ``held`` to its outcome; once it\nhas finished, ``_links.result`` returns that outcome. A held execution\noutside the caller's visibility answers ``404``.",
+        "operationId": "getHeldExecution",
         "parameters": [
           {
             "in": "path",
-            "name": "approval_id",
+            "name": "held_execution_id",
             "required": true,
             "schema": {
-              "title": "Approval Id",
+              "title": "Held Execution Id",
               "type": "string"
             }
           }
@@ -28483,7 +28518,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExecutionApprovalDetailResponse"
+                  "$ref": "#/components/schemas/HeldExecutionDetailResponse"
                 }
               }
             },
@@ -28620,23 +28655,201 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Get an execution approval",
+        "summary": "Get a held execution",
         "tags": [
-          "Execution Approvals"
+          "Held Executions"
         ]
       }
     },
-    "/executions/approvals/{approval_id}:decide": {
-      "post": {
-        "description": "Decide a pending approval — the agent's owner or an ``org:admin`` only.\n\n``approve`` releases the held job to the worker, which re-authorizes and\nruns it once; ``deny`` fails the job with a permission-denied result. The\nfirst decision wins: deciding an approval that is no longer pending (or\nhas expired) answers ``409``. An agent caller is always refused (``403``),\nwhatever its scopes.",
-        "operationId": "decideExecutionApproval",
+    "/executions/holds/{held_execution_id}/result": {
+      "get": {
+        "description": "The finished call's outcome: the upstream response, or why it never ran.\n\nA call that ran returns its execution document — ``execution_id``,\n``status``, ``http_status``, ``duration_ms`` and the upstream body as\n``body_b64`` — as JSON. A call that never ran (denied, expired, or refused\nat run time) returns the ``application/problem+json`` body explaining why.\nBefore the call has finished this answers ``409``; past its retention\nwindow, ``410``.",
+        "operationId": "getHeldExecutionResult",
         "parameters": [
           {
             "in": "path",
-            "name": "approval_id",
+            "name": "held_execution_id",
             "required": true,
             "schema": {
-              "title": "Approval Id",
+              "title": "Held Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The requested resource does not exist or is not visible to you.",
+                  "instance": "/example/path",
+                  "status": 404,
+                  "title": "Not Found",
+                  "type": "not_found"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request conflicts with the current state of the resource.",
+                  "instance": "/example/path",
+                  "status": 409,
+                  "title": "Conflict",
+                  "type": "conflict"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get a held execution's result",
+        "tags": [
+          "Held Executions"
+        ]
+      }
+    },
+    "/executions/holds/{held_execution_id}:decide": {
+      "post": {
+        "description": "Decide a pending held execution — the agent's owner or an ``org:admin`` only.\n\n``approve`` releases the call, which is re-authorized and run once; ``deny``\nfails it with a permission-denied result. The first decision wins: deciding\none that is no longer pending (or has expired) answers ``409``. An agent\ncaller is always refused (``403``), whatever its permissions.",
+        "operationId": "decideHeldExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "held_execution_id",
+            "required": true,
+            "schema": {
+              "title": "Held Execution Id",
               "type": "string"
             }
           }
@@ -28645,7 +28858,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DecideRequest"
+                "$ref": "#/components/schemas/DecideHeldExecutionRequest"
               }
             }
           },
@@ -28656,7 +28869,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExecutionApprovalResponse"
+                  "$ref": "#/components/schemas/HeldExecutionResponse"
                 }
               }
             },
@@ -28810,23 +29023,23 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Approve or deny an execution approval",
+        "summary": "Approve or deny a held execution",
         "tags": [
-          "Execution Approvals"
+          "Held Executions"
         ]
       }
     },
-    "/executions/approvals/{approval_id}:withdraw": {
+    "/executions/holds/{held_execution_id}:withdraw": {
       "post": {
-        "description": "Abandon a held execution — the identity that filed the hold only.\n\nThe approval becomes ``withdrawn`` and its held job ``cancelled``; the call\nnever runs and no result is written. Any other caller gets ``404``, as if\nthe approval did not exist; an approval that is no longer pending (decided,\nexpired or already withdrawn) answers ``409``. It acts only on held\nexecutions: owners and admins use ``:decide`` with ``deny`` instead.",
-        "operationId": "withdrawExecutionApproval",
+        "description": "Abandon a held execution — the agent that filed it only.\n\nThe call becomes ``withdrawn`` and never runs; no result is written. Any\nother caller gets ``404``, as if it did not exist; one that is no longer\npending (decided, expired or already withdrawn) answers ``409``. Owners and\nadmins use ``:decide`` with ``deny`` instead.",
+        "operationId": "withdrawHeldExecution",
         "parameters": [
           {
             "in": "path",
-            "name": "approval_id",
+            "name": "held_execution_id",
             "required": true,
             "schema": {
-              "title": "Approval Id",
+              "title": "Held Execution Id",
               "type": "string"
             }
           }
@@ -28836,7 +29049,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExecutionApprovalResponse"
+                  "$ref": "#/components/schemas/HeldExecutionResponse"
                 }
               }
             },
@@ -28992,7 +29205,7 @@
         ],
         "summary": "Withdraw a held execution",
         "tags": [
-          "Execution Approvals"
+          "Held Executions"
         ]
       }
     },
@@ -30139,7 +30352,7 @@
     },
     "/jobs/{job_id}/result": {
       "get": {
-        "description": "Get the result of a completed job, or the problem body of a failed execution.\n\nPolymorphic by kind. A held execution that was denied or expired is\n``failed`` with a permission-denied problem as its result.",
+        "description": "Get the result of a completed job — polymorphic by kind.",
         "operationId": "getJobResult",
         "parameters": [
           {
@@ -30283,7 +30496,7 @@
     },
     "/jobs/{job_id}:cancel": {
       "post": {
-        "description": "Cancel a queued, running or held job; an already-terminal job is returned unchanged.\n\nA held execution answers ``409``: it awaits its approval and settles only through\nit (a reviewer's decision, the filing agent's withdrawal, or expiry).",
+        "description": "Cancel an active job.\n\nA held execution answers ``409``: it settles only through its hold (decide,\nwithdraw or expiry), never by cancelling the job.",
         "operationId": "cancelJob",
         "parameters": [
           {
@@ -39288,8 +39501,8 @@
       "name": "Jobs"
     },
     {
-      "description": "Human-approval gate for held broker executions. When a permission rule carries `effect: require-approval`, the broker enqueues the job in a `held` state and files an `ExecutionApproval` row. A reviewer — the invoking agent's owner or any `org:admin` — calls `POST /executions/approvals/{id}:decide` to approve or deny.\n\nApprove flips the held job to `queued` so the worker picks it up; deny marks it `failed` with a permission-denied result body. Unreviewed approvals expire automatically after the configured TTL. The invoking agent (or any `AGENT` actor) may never decide; decisions are always human-authenticated.",
-      "name": "Execution Approvals"
+      "description": "Executions held for human approval. When a call matches a permission rule with `effect: require-approval`, the broker does not run it: it answers `202` with a held execution (`exap_…`) and a review link. A reviewer, the agent's owner or any `org:admin`, calls `POST /executions/holds/{id}:decide` to approve or deny it.\n\nAn approved call runs once; `GET /executions/holds/{id}` reports where it stands and `GET /executions/holds/{id}/result` returns the call's execution document, or the problem explaining why it never ran (denied, expired or refused at run time). A held execution nobody decides expires after the configured window. Agents may never decide; the agent that filed one may withdraw it. Each caller sees only the held executions it may review or filed.",
+      "name": "Held Executions"
     },
     {
       "description": "Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter. An event is visible only to the actor it names (`actor_id`), to the subject it is about (for example the owner of the credential or the agent concerned), to the human owner of either when that is an agent, and to `org:admin`; system events with no subject are visible only to `org:admin`. To any other caller an event is indistinguishable from a missing one (`404`).",
@@ -39387,7 +39600,7 @@
         "Actors",
         "Permissions",
         "Executions",
-        "Execution Approvals",
+        "Held Executions",
         "Jobs",
         "Events",
         "Audit",

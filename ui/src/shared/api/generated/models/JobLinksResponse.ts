@@ -6,7 +6,6 @@
  * Hypermedia links for a job.
  */
 export type JobLinksResponse = {
-    approval?: (string | null);
     execution?: (string | null);
     result?: (string | null);
     self: string;

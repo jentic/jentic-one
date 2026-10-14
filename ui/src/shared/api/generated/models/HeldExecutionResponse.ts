@@ -2,13 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ExecutionApprovalLinksResponse } from './ExecutionApprovalLinksResponse';
 import type { ExecutionApprovalState } from './ExecutionApprovalState';
+import type { HeldExecutionLinksResponse } from './HeldExecutionLinksResponse';
 /**
- * A held execution waiting on (or settled by) a human decision.
+ * A call held for a human decision, and where it stands.
  */
-export type ExecutionApprovalResponse = {
-    _links: ExecutionApprovalLinksResponse;
+export type HeldExecutionResponse = {
+    _links: HeldExecutionLinksResponse;
     /**
      * The agent whose call was held.
      */
@@ -46,21 +46,21 @@ export type ExecutionApprovalResponse = {
      */
     decision_reason?: (string | null);
     /**
-     * Execution record written once the approved job ran.
+     * Execution record written once the approved call ran.
      */
     execution_id?: (string | null);
     /**
-     * When a pending approval expires undecided.
+     * Where the held call stands: `held` until decided, then `queued`, `running`, and `completed`, `failed` or `cancelled`.
+     */
+    execution_status?: ('held' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | null);
+    /**
+     * When a pending held execution expires undecided.
      */
     expires_at: string;
     /**
-     * Approval id (`exap_…`).
+     * Held execution id (`exap_…`).
      */
     id: string;
-    /**
-     * The held execution job.
-     */
-    job_id: string;
     /**
      * The require-approval permission rule that held the call.
      */
@@ -78,7 +78,7 @@ export type ExecutionApprovalResponse = {
      */
     path: string;
     /**
-     * Approval state.
+     * The decision: `pending` until a reviewer acts, then `approved`, `denied`, `expired` or `withdrawn`.
      */
     state: ExecutionApprovalState;
     /**

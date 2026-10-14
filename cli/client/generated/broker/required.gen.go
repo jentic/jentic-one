@@ -11,7 +11,7 @@ package broker
 
 func (AsyncQueuedResponse) RequiredFields() []string { return []string{"_links", "job_id"} }
 func (HealthResponse) RequiredFields() []string      { return []string{"status"} }
-func (HeldExecutionResponse) RequiredFields() []string {
-	return []string{"_links", "agent_directive", "approval", "job_id", "status"}
+func (HeldExecutionAcceptedResponse) RequiredFields() []string {
+	return []string{"_links", "agent_directive", "expires_at", "held_execution_id", "review_url", "status"}
 }
 func (ReadinessResponse) RequiredFields() []string { return []string{"status"} }
