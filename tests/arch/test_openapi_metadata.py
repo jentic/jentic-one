@@ -262,3 +262,32 @@ def test_every_parameter_has_a_valid_example(generated_control_spec: dict[str, A
             + "\n\nFix: add openapi_examples=ex.example(...) to the parameter, using "
             "jentic_one.shared.web.openapi_examples. " + _GUIDE_HINT
         )
+
+
+@pytest.mark.arch
+def test_every_parameter_example_has_a_summary(generated_control_spec: dict[str, Any]) -> None:
+    """Every parameter example carries a ``summary`` (scored by API linters).
+
+    ``openapi_examples.example()`` labels the canonical constants and the
+    generator labels the rest from the parameter, so this only fails if that
+    post-processing is bypassed.
+    """
+    missing = [
+        f"{method} {path} [{param.get('in')}] {param.get('name')}: {name}"
+        for method, path, operation in _operations(generated_control_spec)
+        for param in operation.get("parameters") or []
+        for name, entry in (param.get("examples") or {}).items()
+        if not entry.get("summary")
+    ]
+    assert not missing, "Parameter examples without a summary:\n" + "\n".join(missing)
+
+
+@pytest.mark.arch
+def test_every_path_item_has_a_summary(generated_control_spec: dict[str, Any]) -> None:
+    """Every path item carries the path-level ``summary`` built from its operations."""
+    missing = [
+        path
+        for path, item in (generated_control_spec.get("paths") or {}).items()
+        if not item.get("summary")
+    ]
+    assert not missing, "Path items without a summary:\n" + "\n".join(missing)

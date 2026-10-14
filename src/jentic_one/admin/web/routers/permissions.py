@@ -28,12 +28,19 @@ from jentic_one.shared.web.openapi_responses import conflict, not_found, with_re
 router = APIRouter()
 
 
-@router.get("/permissions")
+@router.get("/permissions", summary="List the permission catalogue")
 async def list_permissions(
     identity: Identity = get_current_identity(),
     perm_svc: PermissionService = Depends(get_permission_service),
 ) -> PermissionListResponse:
-    """List the permission catalogue visible to the caller."""
+    """List every permission, flagged with whether the caller may grant it to an agent.
+
+    Each entry gives the permission `name`, a `description`, the permissions
+    it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+    `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+    `org:admin` is listed only to callers who hold it. Use it to build an
+    agent permission picker. Any signed-in caller may call it.
+    """
     entries = await perm_svc.list_catalogue(identity.sub)
     return PermissionListResponse(
         data=[

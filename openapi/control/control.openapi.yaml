@@ -7117,6 +7117,7 @@ paths:
       summary: JSON Web Key Set
       tags:
       - Discovery
+    summary: JSON Web Key Set
   /.well-known/oauth-authorization-server:
     get:
       description: Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms).
@@ -7162,17 +7163,21 @@ paths:
       summary: OAuth authorization server metadata
       tags:
       - Discovery
+    summary: OAuth authorization server metadata
   /.well-known/oauth-authorization-server/mcp:
     get:
       description: |-
-        RFC 8414 metadata for the path-scoped issuer `{base}/mcp`.
+        Tell an MCP client how to register and obtain tokens for `{base}/mcp`.
 
-        RFC 8414 §3.1 path insertion: this is the metadata URL clients derive for
-        the issuer `{base}/mcp` named by the protected-resource document. It
-        advertises the anonymous OAuth-client registration door (`/oauth-clients`)
-        and the public-client profile (`none` + PKCE S256) — the root document is a
-        separate, unchanged surface whose `registration_endpoint` remains the agent
-        `/register`.
+        Returns RFC 8414 authorization server metadata for the issuer `{base}/mcp`
+        — the URL an MCP client derives from the protected-resource document
+        (RFC 8414 §3.1). It lists the authorization, token and revocation
+        endpoints, the anonymous client registration endpoint (`/oauth-clients`),
+        the MCP tool scopes, and the public client profile: no client secret
+        (`none`) with PKCE `S256`. It differs from the root
+        `/.well-known/oauth-authorization-server` document, whose
+        `registration_endpoint` is the agent `/register`. Returns 404 when
+        interactive OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
       operationId: mcpOauthAuthorizationServer
       responses:
         '200':
@@ -7220,32 +7225,22 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
       security: []
-      summary: OAuth authorization server metadata for the MCP resource
+      summary: Get OAuth authorization server metadata for MCP clients
       tags:
       - Discovery
+    summary: Get OAuth authorization server metadata for MCP clients
   /.well-known/oauth-protected-resource:
     get:
       description: |-
-        Root-path alias of the MCP protected-resource document.
+        Serve the MCP protected-resource document at the root well-known path.
 
-        Compatibility fallback for clients that probe the root
-        `/.well-known/oauth-protected-resource` instead of following the 401's
-        `resource_metadata` pointer (the documented Claude Code behaviour). Safe
-        because this deployment has exactly one OAuth-protected resource, so the
-        root and path-scoped documents are the same body.
-
-        Two acknowledged trades:
-
-        - RFC 9728 §3 says this well-known path corresponds to resource identifier
-          ``{base}`` (no path), and §3.3 has clients validate ``resource`` against
-          the resource they queried. This body claims ``resource={base}/mcp`` — a
-          strict path-deriving validator would reject it, but Claude's fallback
-          validates against the MCP server URL (``{base}/mcp``), which is exactly
-          what the alias exists to satisfy. That is the intended trade.
-        - The alias squats the deployment's only root PRM slot: a future non-MCP
-          protected resource at ``{base}`` cannot get its own root document
-          without breaking this fallback. The mounted MCP app must re-confirm the
-          "exactly one OAuth-protected resource" premise before adding one.
+        Returns the same RFC 9728 body as
+        `/.well-known/oauth-protected-resource/mcp`: the resource `{base}/mcp`,
+        its authorization server, and the MCP tool scopes. It exists for clients
+        (such as Claude Code) that probe this root path instead of following the
+        `resource_metadata` pointer in a 401. That is safe while this deployment
+        has exactly one OAuth-protected resource. Returns 404 when interactive
+        OAuth for MCP is disabled (`server.mcp.oauth.enabled=false`).
       operationId: mcpOauthProtectedResourceRootAlias
       responses:
         '200':
@@ -7293,9 +7288,10 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
       security: []
-      summary: OAuth protected resource metadata (root alias for the MCP resource)
+      summary: Get MCP protected resource metadata (root fallback)
       tags:
       - Discovery
+    summary: Get MCP protected resource metadata (root fallback)
   /.well-known/oauth-protected-resource/mcp:
     get:
       description: |-
@@ -7354,19 +7350,23 @@ paths:
       summary: OAuth protected resource metadata for the MCP resource
       tags:
       - Discovery
+    summary: OAuth protected resource metadata for the MCP resource
   /actors:
     get:
       description: |-
-        List actors (users and agents) for UI cache hydration.
+        List users and agents with the minimal fields needed to label them.
 
-        Scoped to the caller: org admins list everyone. Anyone else lists only
-        themselves and the agents they may see (their own agents, or with
-        ``owner:agents:read`` their owner's agents). Use ``GET /actors/lookup``
-        to label other ids.
+        Each entry gives `id`, `actor_type` (`user` or `agent`), display `name`
+        and `active`. Requires `users:read`. Results are scoped to the caller:
+        `org:admin` lists everyone; anyone else lists only themselves and the
+        agents they may see (their own, or with `owner:agents:read` their owner's
+        agents). Cursor-paginated (`cursor`, `limit`). To label specific ids you
+        already hold, use `GET /actors/lookup`.
       operationId: listActors
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -7378,6 +7378,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -7449,27 +7450,31 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Actors
+      summary: List users and agents
       tags:
       - Actors
+    summary: List users and agents
   /actors/lookup:
     get:
       description: |-
-        Resolve user and agent ids to display names for any signed-in caller.
+        Resolve user and agent ids to display names.
 
-        Returns only ``id``, ``actor_type``, ``name`` and ``active`` for the ids
-        asked for, so a caller without ``users:read`` can label the owners,
-        approvers and actors it already sees by id. Users resolve for any caller;
-        agents only when the caller may see them (its own agents, itself, or with
-        ``owner:agents:read`` its owner's agents; every agent for ``org:admin``).
-        Ids that match no visible user or agent are left out of the response
-        rather than reported as errors. Listing the whole directory stays behind
-        ``users:read`` on ``GET /actors``.
+        Pass each id as a repeated `id` parameter. Returns `id`, `actor_type`,
+        `name` and `active` for each id the caller may see. Any signed-in caller
+        may call it, so a UI can label the owners, approvers and actors it
+        already holds by id without `users:read`.
+
+        Users resolve for every caller. Agents resolve only when visible to the
+        caller: itself, its own agents, its owner's agents with
+        `owner:agents:read`, or every agent for `org:admin`. Ids that match no
+        visible actor are silently left out rather than reported as errors.
+        Listing the whole directory needs `users:read` on `GET /actors`.
       operationId: lookupActors
       parameters:
       - description: Actor id to resolve; repeat the parameter for several ids (at most 100 per call, each at most 64 characters).
         examples:
           example:
+            summary: Example query value for `id`
             value:
             - agnt_6968b3984d1c238dbe7e2e29
             - usr_6968b3987ee4c3ec0b4ee3b9
@@ -7539,6 +7544,7 @@ paths:
       summary: Resolve actor names by id
       tags:
       - Actors
+    summary: Resolve actor names by id
   /admin/config/providers:
     get:
       description: List all stored provider configs, with secret fields redacted.
@@ -7597,6 +7603,7 @@ paths:
       summary: List credential provider configs
       tags:
       - Configuration
+    summary: List credential provider configs
   /admin/config/providers/{name}:
     get:
       description: Get a stored provider config by name, with secret fields redacted.
@@ -7604,6 +7611,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential provider name
             value: pipedream
         in: path
         name: name
@@ -7689,6 +7697,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential provider name
             value: pipedream
         in: path
         name: name
@@ -7756,6 +7765,7 @@ paths:
       summary: Set a credential provider config
       tags:
       - Configuration
+    summary: Set a credential provider config; Get a credential provider config
   /admin/health:
     get:
       description: Return admin service health status.
@@ -7799,6 +7809,7 @@ paths:
       summary: Health
       tags:
       - System
+    summary: Health
   /admin/oauth-clients:
     get:
       description: List all registered OAuth clients, optionally filtered by approval status.
@@ -7806,6 +7817,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `include_inactive`
             value: true
         in: query
         name: include_inactive
@@ -7817,6 +7829,7 @@ paths:
       - description: 'Filter by approval lifecycle state: pending, approved, or denied. Filtering on pending or denied implies include_inactive=true — those rows are always inactive until approved.'
         examples:
           example:
+            summary: Example query value for `approval_status`
             value: pending
         in: query
         name: approval_status
@@ -7948,6 +7961,7 @@ paths:
       summary: Register OAuth client
       tags:
       - OAuth Clients
+    summary: Register OAuth client; List OAuth clients
   /admin/oauth-clients/{id}:
     delete:
       description: |-
@@ -7960,6 +7974,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8030,6 +8045,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8104,6 +8120,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8178,6 +8195,7 @@ paths:
       summary: Update OAuth client
       tags:
       - OAuth Clients
+    summary: Get OAuth client; Update OAuth client; Disable OAuth client
   /admin/oauth-clients/{id}/rotate-secret:
     post:
       description: |-
@@ -8188,6 +8206,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8256,6 +8275,7 @@ paths:
       summary: Rotate client secret
       tags:
       - OAuth Clients
+    summary: Rotate client secret
   /admin/oauth-clients/{id}:approve:
     post:
       description: |-
@@ -8267,6 +8287,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8335,6 +8356,7 @@ paths:
       summary: Approve OAuth client
       tags:
       - OAuth Clients
+    summary: Approve OAuth client
   /admin/oauth-clients/{id}:delete:
     post:
       description: |-
@@ -8351,6 +8373,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8415,6 +8438,7 @@ paths:
       summary: Delete OAuth client
       tags:
       - OAuth Clients
+    summary: Delete OAuth client
   /admin/oauth-clients/{id}:deny:
     post:
       description: |-
@@ -8425,6 +8449,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth client record ID
             value: oac_6968b39840a935d9f7e2714b
         in: path
         name: id
@@ -8501,6 +8526,7 @@ paths:
       summary: Deny OAuth client
       tags:
       - OAuth Clients
+    summary: Deny OAuth client
   /admin/oauth-grants:
     get:
       description: |-
@@ -8519,6 +8545,7 @@ paths:
       - description: Filter by the client's public client_id.
         examples:
           example:
+            summary: Public OAuth client_id
             value: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         in: query
         name: client_id
@@ -8532,6 +8559,7 @@ paths:
       - description: Filter by bound agent.
         examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: agent_id
@@ -8545,6 +8573,7 @@ paths:
       - description: Filter by consenting user.
         examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: query
         name: user_id
@@ -8558,6 +8587,7 @@ paths:
       - description: Filter by grant lifecycle state.
         examples:
           example:
+            summary: Example query value for `status`
             value: active
         in: query
         name: status
@@ -8573,6 +8603,7 @@ paths:
           title: Status
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -8585,6 +8616,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -8648,13 +8680,23 @@ paths:
       summary: List OAuth grants
       tags:
       - OAuth
+    summary: List OAuth grants
   /agents:
     get:
-      description: List agents — scoped by identity via dynamic query scoping.
+      description: |-
+        List the agents the caller can see, newest first.
+
+        Visibility is scoped to the caller: `org:admin` sees every agent; anyone
+        else sees the agents they own. An agent caller also sees itself, and with
+        `owner:agents:read` its owner's agents. Filter by lifecycle `status`
+        (`pending`, `active`, `rejected`, `disabled`, `archived`). Results are
+        cursor-paginated: pass `next_cursor` from the previous page as `cursor`
+        while `has_more` is true.
       operationId: listAgents
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -8666,6 +8708,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -8678,6 +8721,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Example query value for `status`
             value: active
         in: query
         name: status
@@ -8738,11 +8782,23 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Agents
+      summary: List visible agents
       tags:
       - Agents
     post:
-      description: Create a new agent manually.
+      description: |-
+        Create an agent owned by the caller.
+
+        The agent is `active` immediately and owned by the caller. Supply `name`
+        (required), an optional `description`, and optional `permissions`. When
+        `permissions` is omitted the agent gets the default agent permission set.
+        When supplied, every permission must be one the caller may grant (see
+        `grantable_by_caller` on `GET /permissions`); otherwise the request fails
+        with 403 (`agent_permission_not_grantable`). Returns the created agent.
+
+        The agent has no way to authenticate yet. Follow up with
+        `POST /agents/{agent_id}:generate-api-key` (or `PUT /agents/{agent_id}/jwks`
+        for JWT-bearer), and bind credentials with `POST /agents/{agent_id}/credentials`.
       operationId: createAgent
       requestBody:
         content:
@@ -8801,9 +8857,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Create Agent
+      summary: Create an agent
       tags:
       - Agents
+    summary: Create an agent; List visible agents
   /agents/{agent_id}:
     delete:
       description: |-
@@ -8822,6 +8879,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -8832,6 +8890,7 @@ paths:
       - description: 'Default false: the agent is archived (terminal-but-kept; its row stays for history). true hard-deletes the agent from any status, together with its tokens, consent grants, permission grants and rules, bindings and connect sessions, and cancels its queued and running jobs. History (audit entries, events, execution records, finished jobs, notes) and the credentials it created are kept; once the agent is gone that history is visible to org:admin only.'
         examples:
           example:
+            summary: Example query value for `purge`
             value: true
         in: query
         name: purge
@@ -8892,11 +8951,18 @@ paths:
       tags:
       - Agents
     get:
-      description: Get agent by ID — requires agents:read or self-read.
+      description: |-
+        Get one agent's profile and lifecycle state.
+
+        Returns the agent's name, description, owner, `status`, approval or
+        denial details, and whether it currently has an API key (`has_api_key`).
+        Readable by the agent itself, its owner, and `org:admin`; an agent outside
+        the caller's visibility answers 404.
       operationId: getAgent
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -8955,15 +9021,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent
+      summary: Get an agent
       tags:
       - Agents
     patch:
-      description: Partially update an agent — name, description, or owner_id.
+      description: |-
+        Partially update an agent's `name`, `description` or `owner_id`.
+
+        Only the fields present in the body change; an empty body returns the
+        agent unchanged. Allowed for the agent's owner or an `org:admin` (anyone
+        else gets 404). Changing `owner_id` transfers ownership, is
+        `org:admin`-only, and revokes every active OAuth client grant bound to
+        the agent, so the new owner must re-consent any connected client. The
+        agent's API key, permissions and credential bindings are unaffected. An
+        archived agent cannot be updated (409). Returns the updated agent.
       operationId: updateAgent
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9028,16 +9104,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update Agent
+      summary: Update an agent
       tags:
       - Agents
+    summary: Get an agent; Update an agent; Archive Agent
   /agents/{agent_id}/api-key:
     get:
-      description: Get API key metadata for an agent. Returns info even after revocation.
+      description: |-
+        Describe an agent's API key without revealing it.
+
+        Returns the key record's `id`, `status` (`active`, or `revoked` once
+        revoked), `created_at`, `rotated_at` and `created_by`. The plaintext key
+        is never returned — it is shown once, by `:generate-api-key`. Metadata
+        stays available after revocation; the body is `null` if the agent never
+        had a key. Allowed for the agent's owner or an `org:admin`.
       operationId: getAgentApiKeyInfo
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9099,16 +9184,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Api Key Info
+      summary: Get an agent's API key metadata
       tags:
       - Agents
+    summary: Get an agent's API key metadata
   /agents/{agent_id}/api-key/history:
     get:
-      description: Get the audit history of API key operations for an agent.
+      description: |-
+        List recent API key rotations and revocations for an agent.
+
+        Each entry gives the audit `action`, its `reason` (key rotated or key
+        revoked), the acting `actor_id`, and `occurred_at`. Drawn from the agent's
+        50 most recent audit entries, newest first, so very old key events may
+        not appear; it is not paginated. Allowed for the agent's owner or an
+        `org:admin`.
       operationId: getAgentApiKeyHistory
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9167,16 +9261,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Agent Api Key History
+      summary: Get an agent's API key history
       tags:
       - Agents
+    summary: Get an agent's API key history
   /agents/{agent_id}/credentials:
     get:
-      description: List direct credential bindings for an agent — requires agents:read or self.
+      description: |-
+        List the credentials bound directly to an agent.
+
+        Each binding names the credential, the API it serves, when it was bound,
+        whether it is `suspended` (and why), and any attached permission
+        `rule_set_id`. Credential secrets are never returned. Readable by the
+        agent itself, its owner, and `org:admin` (404 otherwise). The list is not
+        paginated.
       operationId: listAgentCredentials
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9235,19 +9338,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Credentials
+      summary: List an agent's credential bindings
       tags:
       - Agents
     post:
       description: |-
-        Directly bind a credential to an agent (theme 5 phase 1).
+        Let an agent use a credential by binding it directly.
 
-        The caller must own the target credential (or hold ``org:admin``); a
-        credential that does not exist or that the caller does not own returns 404.
+        A new binding starts with no permission rules, so the agent can make no
+        calls with it until rules are set or a rule set is attached. The caller
+        must be able to see the agent and must own the credential (or hold
+        `org:admin`). A credential that does not exist or that the caller does
+        not own returns 404; binding the same credential twice returns 409
+        (`credential_binding_conflict`).
+        Returns the new binding.
       operationId: bindAgentCredential
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9312,16 +9421,27 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Bind Credential
+      summary: Bind a credential to an agent
       tags:
       - Agents
+    summary: List an agent's credential bindings; Bind a credential to an agent
   /agents/{agent_id}/credentials/{credential_id}:
     delete:
-      description: Unbind a credential from an agent — suspend by default, purge on request.
+      description: |-
+        Stop an agent using a credential: suspend the binding, or purge it.
+
+        By default the binding is **suspended**: the agent loses access at once,
+        but the binding and its permission rules are kept, and
+        `POST /agents/{agent_id}/credentials/{credential_id}:resume` restores it.
+        With `purge=true` the binding and its inline permission rules are deleted
+        outright, so a later re-bind starts from deny-all. An agent may suspend
+        its own binding but not purge it. Both modes are audited. Returns 204; a
+        missing binding returns 404.
       operationId: unbindAgentCredential
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9331,6 +9451,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -9341,6 +9462,7 @@ paths:
       - description: 'Default false: the binding is suspended (reversible; its permission rules survive and :resume restores access). true deletes the binding row outright, together with its inline permission rules.'
         examples:
           example:
+            summary: Example query value for `purge`
             value: true
         in: query
         name: purge
@@ -9397,16 +9519,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Unbind Credential
+      summary: Suspend or remove a credential binding
       tags:
       - Agents
+    summary: Suspend or remove a credential binding
   /agents/{agent_id}/credentials/{credential_id}:resume:
     post:
-      description: Lift a suspended credential binding — the reverse of the default unbind.
+      description: |-
+        Restore an agent's access to a credential whose binding was suspended.
+
+        Reverses the default (non-purge) unbind; a purged binding is gone and must
+        be bound again instead. Because resuming re-grants the credential, the
+        caller must own the credential (or hold `org:admin`) as well as see the
+        agent, and an agent cannot resume its own binding. Returns the binding;
+        404 when no binding exists.
       operationId: resumeAgentCredentialBinding
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9416,6 +9547,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -9474,9 +9606,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Resume Credential Binding
+      summary: Resume a suspended credential binding
       tags:
       - Agents
+    summary: Resume a suspended credential binding
   /agents/{agent_id}/jwks:
     put:
       description: |-
@@ -9489,6 +9622,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9556,21 +9690,24 @@ paths:
       summary: Update Agent Jwks
       tags:
       - Agents
+    summary: Update Agent Jwks
   /agents/{agent_id}/oauth-grants:
     get:
       description: |-
-        List OAuth consent grants binding clients to this agent.
+        List the OAuth clients a user has consented to act as this agent.
 
-        The "Connected clients" surface: every grant carries the client's display
-        name and redirect-URI origin, the granted scopes, the consenting user,
-        and created/last-used timestamps. Allowed for the agent's owner or an
-        admin — authorization is enforced in the service layer, mirroring the
-        ``:revoke`` semantics. An agent the caller cannot see answers 404, the
-        same as an agent that does not exist.
+        Each grant gives the client's display name and redirect-URI origin, the
+        granted scopes, the consenting user, its `status`, created and last-used
+        timestamps, and `can_revoke` for the caller. Filter by `status`
+        (`active` or `revoked`); results are cursor-paginated. Allowed for the
+        agent's owner or an admin. An agent the caller cannot see answers 404,
+        the same as one that does not exist. Revoke a grant with
+        `POST /oauth-grants/{grant_id}:revoke`.
       operationId: listAgentOauthGrants
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9581,6 +9718,7 @@ paths:
       - description: Filter by grant lifecycle state.
         examples:
           example:
+            summary: Example query value for `status`
             value: active
         in: query
         name: status
@@ -9596,6 +9734,7 @@ paths:
           title: Status
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -9608,6 +9747,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -9675,9 +9815,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List agent OAuth grants
+      summary: List an agent's connected OAuth clients
       tags:
       - Agents
+    summary: List an agent's connected OAuth clients
   /agents/{agent_id}/permissions:
     get:
       description: List permissions granted to an agent.
@@ -9685,6 +9826,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9752,6 +9894,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9819,6 +9962,7 @@ paths:
       summary: Replace Agent Permissions
       tags:
       - Agents
+    summary: Get Agent Permissions; Replace Agent Permissions
   /agents/{agent_id}:approve:
     post:
       description: |-
@@ -9833,6 +9977,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9894,6 +10039,7 @@ paths:
       summary: Approve Agent
       tags:
       - Agents
+    summary: Approve Agent
   /agents/{agent_id}:claim:
     post:
       description: |-
@@ -9918,6 +10064,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -9985,6 +10132,7 @@ paths:
       summary: Claim Agent
       tags:
       - Agents
+    summary: Claim Agent
   /agents/{agent_id}:deny:
     post:
       description: |-
@@ -9997,6 +10145,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -10064,6 +10213,7 @@ paths:
       summary: Deny Agent
       tags:
       - Agents
+    summary: Deny Agent
   /agents/{agent_id}:disable:
     post:
       description: Disable an active agent.
@@ -10071,6 +10221,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -10128,6 +10279,7 @@ paths:
       summary: Disable Agent
       tags:
       - Agents
+    summary: Disable Agent
   /agents/{agent_id}:enable:
     post:
       description: Enable a disabled agent.
@@ -10135,6 +10287,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -10192,6 +10345,7 @@ paths:
       summary: Enable Agent
       tags:
       - Agents
+    summary: Enable Agent
   /agents/{agent_id}:generate-api-key:
     post:
       description: Generate a new API key for an active agent. Rotates any existing key.
@@ -10199,6 +10353,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -10260,6 +10415,7 @@ paths:
       summary: Generate Agent Api Key
       tags:
       - Agents
+    summary: Generate Agent Api Key
   /agents/{agent_id}:revoke-api-key:
     post:
       description: Revoke an agent's API key without generating a new one.
@@ -10267,6 +10423,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -10324,6 +10481,7 @@ paths:
       summary: Revoke Agent Api Key
       tags:
       - Agents
+    summary: Revoke Agent Api Key
   /apis:
     get:
       description: |-
@@ -10336,6 +10494,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: query
         name: vendor
@@ -10347,6 +10506,7 @@ paths:
           title: Vendor
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -10358,6 +10518,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -10484,6 +10645,7 @@ paths:
       summary: Import Apis
       tags:
       - APIs
+    summary: List Apis; Import Apis
   /apis/{vendor}/{name}/{version}:
     delete:
       description: Delete an API and all its revisions.
@@ -10491,6 +10653,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10500,6 +10663,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10509,6 +10673,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10591,6 +10756,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10600,6 +10766,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10609,6 +10776,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10676,6 +10844,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10685,6 +10854,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10694,6 +10864,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10760,6 +10931,7 @@ paths:
       summary: Update Api
       tags:
       - APIs
+    summary: Get Api; Update Api; Delete Api
   /apis/{vendor}/{name}/{version}/openapi:
     get:
       description: Download the OpenAPI spec for the API's current (live) revision.
@@ -10767,6 +10939,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10776,6 +10949,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10785,6 +10959,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10794,6 +10969,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `overlays`
             value: false
         in: query
         name: overlays
@@ -10855,13 +11031,23 @@ paths:
       summary: Get Api Spec
       tags:
       - API Spec
+    summary: Get Api Spec
   /apis/{vendor}/{name}/{version}/operations:
     get:
-      description: List operations for the API's current (live) revision.
+      description: |-
+        List every operation in the API's current (live) revision.
+
+        Each row gives the operation's id, method, path, name, description, tags,
+        `deprecated` flag, and an `inspect` link for its full detail. Rows come in
+        a stable, unranked order and are cursor-paginated (`cursor`, `limit`).
+        Use this to browse an API exhaustively; to find operations by intent,
+        use `GET /search` instead. 404 (`no_current_revision`) when the API has no live
+        revision.
       operationId: listApiOperations
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10871,6 +11057,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10880,6 +11067,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10889,6 +11077,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -10900,6 +11089,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -10961,16 +11151,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Operations
+      summary: List the operations an API currently serves
       tags:
       - API Operations
+    summary: List the operations an API currently serves
   /apis/{vendor}/{name}/{version}/overlays:
     get:
-      description: List overlays for an API with optional status filter and cursor pagination.
+      description: |-
+        List the overlays submitted against an API, newest first.
+
+        Each overlay gives its `status` — `pending` (awaiting review), `confirmed`
+        (applied to the served spec) or `deprecated` (retired) — and links to the
+        actions valid in that state. Filter with `status`. Results are
+        cursor-paginated: pass `next_cursor` as `cursor` while `has_more` is
+        true.
       operationId: listOverlays
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -10980,6 +11179,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -10989,6 +11189,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -10998,6 +11199,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -11009,6 +11211,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -11021,6 +11224,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Example query value for `status`
             value: confirmed
         in: query
         name: status
@@ -11081,15 +11285,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Overlays
+      summary: List an API's overlays
       tags:
       - Overlays
     post:
-      description: Submit a new overlay for an API.
+      description: |-
+        Propose a change to an API's spec as an OpenAPI Overlay document.
+
+        An overlay is a list of `actions` that patch the API's OpenAPI document —
+        for example correcting a description or adding a missing parameter.
+        Submitting stores it as `pending`; it changes nothing until an operator
+        confirms it (`:confirm`). Optionally pin it to a `target_revision_id` and
+        record a `contributed_by` label. The document must be a JSON object with
+        an `actions` array (at most 512 actions, 1 MB), else 422
+        (`invalid_overlay_document`). Requires `apis:write`. Returns the overlay.
       operationId: submitOverlay
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11099,6 +11313,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11108,6 +11323,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11172,16 +11388,24 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Submit Overlay
+      summary: Submit an OpenAPI overlay
       tags:
       - Overlays
+    summary: Submit an OpenAPI overlay; List an API's overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:
     delete:
-      description: Deprecate an overlay (soft delete).
+      description: |-
+        Retire an overlay so it is no longer offered for confirmation.
+
+        The overlay moves to `deprecated` but is kept, and remains readable for
+        history; nothing is deleted. Deprecating does not rewrite the served
+        spec: to undo a confirmed overlay's change, use `:rollback`. Requires
+        `apis:write`. Returns 204.
       operationId: deprecateOverlay
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11191,6 +11415,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11200,6 +11425,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11209,6 +11435,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Overlay ID
             value: ovr_6968b398ae1c9a6e2fe6520a
         in: path
         name: overlay_id
@@ -11263,7 +11490,7 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Deprecate Overlay
+      summary: Deprecate an overlay
       tags:
       - Overlays
     get:
@@ -11272,6 +11499,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11281,6 +11509,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11290,6 +11519,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11299,6 +11529,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Overlay ID
             value: ovr_6968b398ae1c9a6e2fe6520a
         in: path
         name: overlay_id
@@ -11362,21 +11593,25 @@ paths:
       - Overlays
     patch:
       description: |-
-        Update an overlay's document or target revision.
+        Change an overlay's `document` or `target_revision_id`.
 
-        Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
-        ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
-        (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
-        is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
-        the API's served spec (D1). That is an operator action, so it additionally requires
-        ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
-        (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
-        overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
-        if no clean base was recorded to re-apply over.
+        What the edit does depends on the overlay's state:
+
+        - **Pending** (or confirmed but not yet applied): the stored overlay is
+          updated; the served spec is untouched. Requires `apis:write`.
+        - **Confirmed and live**: the edited document is re-applied over the
+          overlay's original base and the result replaces the API's served spec.
+          This also requires `overlays:confirm`, else 403
+          (`overlay_rematerialize_forbidden`). It is refused with 409 if the
+          overlay is no longer the live revision, or
+          (`overlay_rollback_target_missing`) if no clean base was recorded.
+
+        Returns the updated overlay.
       operationId: updateOverlay
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11386,6 +11621,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11395,6 +11631,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11404,6 +11641,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Overlay ID
             value: ovr_6968b398ae1c9a6e2fe6520a
         in: path
         name: overlay_id
@@ -11468,27 +11706,30 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update Overlay
+      summary: Edit an overlay
       tags:
       - Overlays
+    summary: Get Overlay; Edit an overlay; Deprecate an overlay
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm:
     post:
       description: |-
-        Confirm an overlay, materializing it onto the served spec.
+        Apply a pending overlay, producing a new current revision of the API.
 
-        Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
-        re-ingests the base spec with the overlay applied and promotes the result to the
-        current revision), so it is an operator action, not a contributor one (contributors
-        ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
-        purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
-        owner can grant it to a trusted operator without handing over full admin power.
-        ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
-        deliberately excluded from an agent's self-service grantable set so a low-privilege
-        agent cannot escalate into it.
+        The base spec is re-imported with the overlay applied and the result is
+        promoted to the API's current revision, so it is what the API now serves.
+        The overlay becomes `confirmed`. Confirming an already-applied overlay is
+        a no-op that returns it unchanged; a deprecated overlay is refused with
+        409 (`overlay_conflict`), and an overlay whose actions cannot be applied
+        with 409 (`overlay_apply_conflict`).
+
+        Requires `overlays:confirm` (implied by `org:admin`): contributors submit
+        overlays with `apis:write`, and an operator reviews and confirms them.
+        Agents cannot grant themselves this permission. Returns the overlay.
       operationId: confirmOverlay
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11498,6 +11739,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11507,6 +11749,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11516,6 +11759,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Overlay ID
             value: ovr_6968b398ae1c9a6e2fe6520a
         in: path
         name: overlay_id
@@ -11580,26 +11824,31 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Confirm Overlay
+      summary: Confirm an overlay and apply it to the served spec
       tags:
       - Overlays
+    summary: Confirm an overlay and apply it to the served spec
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback:
     post:
       description: |-
-        Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+        Undo a confirmed overlay by restoring the revision it replaced.
 
-        Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
-        rewrites the API's served spec (it archives the overlay's materialized revision and
-        promotes the prior revision back to current), so it is the same operator action as
-        confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
-        carry a recorded superseded revision that is still restorable; otherwise a 409 is
-        returned (``overlay_conflict``, ``overlay_rollback_target_missing``, or
-        ``host_owned_by_other_vendor`` when another vendor's live API now serves one of the
-        restored revision's hosts) and nothing changes.
+        The overlay's revision is archived and the revision it superseded becomes
+        the API's current revision again, so the served spec reverts, and the
+        overlay is marked `deprecated`. Requires `overlays:confirm`, like
+        confirming.
+
+        Preconditions: the overlay is `confirmed`, its revision is still the
+        live one, and the revision it replaced is still restorable. Otherwise
+        nothing changes and 409 is returned: `overlay_conflict`,
+        `overlay_rollback_target_missing`, or `host_owned_by_other_vendor` when
+        another vendor's live API now serves one of the restored revision's
+        hosts. Returns 204.
       operationId: rollbackOverlay
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11609,6 +11858,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11618,6 +11868,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11627,6 +11878,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Overlay ID
             value: ovr_6968b398ae1c9a6e2fe6520a
         in: path
         name: overlay_id
@@ -11681,16 +11933,27 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Rollback Overlay
+      summary: Roll back a confirmed overlay
       tags:
       - Overlays
+    summary: Roll back a confirmed overlay
   /apis/{vendor}/{name}/{version}/revisions:
     get:
-      description: List revisions for an API with optional state filter and cursor pagination.
+      description: |-
+        List every revision imported for an API, newest first.
+
+        Each revision gives its `state` (`draft`, `published`, `imported` or
+        `archived`), whether it `is_current` (the one served), its source, spec
+        digest, operation count and lifecycle timestamps, plus links to the
+        actions valid in its state. Repeat `state` to filter by several states.
+        Results are cursor-paginated: pass `next_cursor` as `cursor` while
+        `has_more` is true. Fetch one revision with
+        `GET /apis/{vendor}/{name}/{version}/revisions/{revision_id}`.
       operationId: listApiRevisions
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11700,6 +11963,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11709,6 +11973,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11718,6 +11983,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `state`
             value:
             - published
         in: query
@@ -11732,6 +11998,7 @@ paths:
           title: State
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -11743,6 +12010,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -11803,16 +12071,23 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Revisions
+      summary: List an API's revisions
       tags:
       - APIs
+    summary: List an API's revisions
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:
     delete:
-      description: Delete an archived revision.
+      description: |-
+        Permanently delete an archived revision.
+
+        Only an `archived` revision can be deleted — archive it first; any other
+        state is refused with 409 (`revision_state_conflict`). Deletion cannot
+        be undone. Requires `apis:write`. Returns 204.
       operationId: deleteRevision
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11822,6 +12097,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11831,6 +12107,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11840,6 +12117,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -11894,15 +12172,23 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Delete Revision
+      summary: Delete an archived API revision
       tags:
       - APIs
     get:
-      description: Retrieve a single revision by ID.
+      description: |-
+        Get one revision's metadata and lifecycle state.
+
+        Returns the same fields as an entry in the revision list: `state`,
+        `is_current`, source, spec digest, operation count, timestamps, and links
+        to the actions valid in its state. This is metadata only — download the
+        spec itself from `.../revisions/{revision_id}/openapi`. 404 if the API or
+        revision does not exist.
       operationId: getApiRevision
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -11912,6 +12198,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -11921,6 +12208,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -11930,6 +12218,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -11987,16 +12276,26 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Api Revision
+      summary: Get an API revision
       tags:
       - APIs
+    summary: Get an API revision; Delete an archived API revision
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}/openapi:
     get:
-      description: Download the OpenAPI spec for a specific revision.
+      description: |-
+        Download the stored OpenAPI document of one revision.
+
+        Choose the format with `Accept`: `application/json` (the default), or
+        `application/openapi+yaml` / `application/yaml`; anything else returns
+        406. The response carries `Content-Disposition: attachment` with a
+        `.json` or `.yaml` filename. The document is served exactly as stored —
+        a revision produced by confirming an overlay already includes it, so the
+        `overlays` flag currently has no effect.
       operationId: getApiRevisionSpec
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -12006,6 +12305,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -12015,6 +12315,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -12024,6 +12325,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -12033,6 +12335,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `overlays`
             value: false
         in: query
         name: overlays
@@ -12091,16 +12394,24 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get Api Revision Spec
+      summary: Download an API revision's OpenAPI document
       tags:
       - API Spec
+    summary: Download an API revision's OpenAPI document
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}/operations:
     get:
-      description: List operations for a specific revision.
+      description: |-
+        List every operation in one specific revision, live or not.
+
+        Same rows, ordering and cursor pagination as the live-revision listing,
+        but for the named revision, so you can review a draft before promoting
+        it or compare against an archived one. Follow each row's `inspect` link
+        for full detail. 404 if the API or revision does not exist.
       operationId: listApiRevisionOperations
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -12110,6 +12421,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -12119,6 +12431,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -12128,6 +12441,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -12137,6 +12451,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -12148,6 +12463,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -12208,16 +12524,25 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Api Revision Operations
+      summary: List the operations in an API revision
       tags:
       - API Operations
+    summary: List the operations in an API revision
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive:
     post:
-      description: Archive a draft revision.
+      description: |-
+        Retire a `draft` or `imported` revision without deleting it.
+
+        The revision moves to `archived` and is kept for reference; it can then
+        be deleted. If it was the API's current revision, the API is left with
+        no live revision until another is promoted. A revision in any other
+        state is refused with 409 (`revision_state_conflict`). Requires
+        `apis:write`. Returns the archived revision.
       operationId: archiveRevision
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -12227,6 +12552,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -12236,6 +12562,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -12245,6 +12572,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -12302,9 +12630,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Archive Revision
+      summary: Archive an API revision
       tags:
       - APIs
+    summary: Archive an API revision
   /apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote:
     post:
       description: |-
@@ -12319,6 +12648,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -12328,6 +12658,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -12337,6 +12668,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -12346,6 +12678,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: path
         name: revision_id
@@ -12406,6 +12739,7 @@ paths:
       summary: Promote Revision
       tags:
       - APIs
+    summary: Promote Revision
   /apis/{vendor}/{name}/{version}/security-schemes:
     get:
       description: List security schemes (with OAuth2 flow URLs) for the API's current revision.
@@ -12413,6 +12747,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: vendor
@@ -12422,6 +12757,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API name
             value: stripe
         in: path
         name: name
@@ -12431,6 +12767,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: API version
             value: '2024-04-10'
         in: path
         name: version
@@ -12499,6 +12836,7 @@ paths:
       summary: List security schemes for an API
       tags:
       - APIs
+    summary: List security schemes for an API
   /audit:
     get:
       description: |-
@@ -12510,6 +12848,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `target_type`
             value: agent
         in: query
         name: target_type
@@ -12521,6 +12860,7 @@ paths:
           title: Target Type
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: target_id
@@ -12532,6 +12872,7 @@ paths:
           title: Target Id
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: actor_id
@@ -12543,6 +12884,7 @@ paths:
           title: Actor Id
       - examples:
           example:
+            summary: Example query value for `origin`
             value: dashboard
         in: query
         name: origin
@@ -12554,6 +12896,7 @@ paths:
           title: Origin
       - examples:
           example:
+            summary: Start of a time window (RFC 3339)
             value: '2026-01-01T00:00:00Z'
         in: query
         name: since
@@ -12566,6 +12909,7 @@ paths:
           title: Since
       - examples:
           example:
+            summary: End of a time window (RFC 3339)
             value: '2026-01-31T23:59:59Z'
         in: query
         name: until
@@ -12578,6 +12922,7 @@ paths:
           title: Until
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -12589,6 +12934,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -12653,6 +12999,7 @@ paths:
       summary: List Audit Entries
       tags:
       - Audit
+    summary: List Audit Entries
   /audit/{audit_id}:
     get:
       description: Get a single audit entry by ID.
@@ -12660,6 +13007,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Audit entry ID
             value: aud_6968b3984275d71e90f7f09f
         in: path
         name: audit_id
@@ -12721,6 +13069,7 @@ paths:
       summary: Get Audit Entry
       tags:
       - Audit
+    summary: Get Audit Entry
   /auth/health:
     get:
       description: |-
@@ -12772,6 +13121,7 @@ paths:
       summary: Auth health
       tags:
       - System
+    summary: Auth health
   /auth/idp:
     get:
       description: |-
@@ -12822,6 +13172,7 @@ paths:
       summary: External IdP login descriptor
       tags:
       - Discovery
+    summary: External IdP login descriptor
   /auth/login:
     post:
       description: Authenticate and return a JWT token bundle.
@@ -12871,6 +13222,7 @@ paths:
       summary: Log in
       tags:
       - Users
+    summary: Log in
   /auth/refresh:
     post:
       description: |-
@@ -12937,6 +13289,7 @@ paths:
       summary: Refresh session token
       tags:
       - Users
+    summary: Refresh session token
   /authorize:
     get:
       description: |-
@@ -12948,6 +13301,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `response_type`
             value: code
         in: query
         name: response_type
@@ -12957,6 +13311,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Public OAuth client_id
             value: oc_Xk3vQ9mT2pLw8RzN5bYc1HdF7gJs4AeU
         in: query
         name: client_id
@@ -12966,6 +13321,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Registered redirect URI
             value: https://client.example.com/oauth/callback
         in: query
         name: redirect_uri
@@ -12975,6 +13331,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: PKCE S256 code challenge
             value: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
         in: query
         name: code_challenge
@@ -12984,6 +13341,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `code_challenge_method`
             value: S256
         in: query
         name: code_challenge_method
@@ -12993,6 +13351,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `scope`
             value: openid
         in: query
         name: scope
@@ -13003,6 +13362,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Client OAuth state
             value: af0ifjsldkj
         in: query
         name: state
@@ -13014,6 +13374,7 @@ paths:
           title: State
       - examples:
           example:
+            summary: OIDC nonce
             value: n-0S6_WzA2Mj
         in: query
         name: nonce
@@ -13026,6 +13387,7 @@ paths:
       - description: Signed session-continuation blob minted by POST /oauth/session/continue (identity-ladder rung 1). Optional; an invalid or absent value leaves the flow byte-identical to before.
         examples:
           example:
+            summary: Signed flow state blob
             value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: sc
@@ -13074,6 +13436,7 @@ paths:
       summary: Authorize Endpoint
       tags:
       - OAuth
+    summary: Authorize Endpoint
   /catalog:
     get:
       description: |-
@@ -13087,6 +13450,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `q`
             value: charges
         in: query
         name: q
@@ -13099,6 +13463,7 @@ paths:
           title: Q
       - examples:
           example:
+            summary: Example query value for `registered_only`
             value: true
         in: query
         name: registered_only
@@ -13109,6 +13474,7 @@ paths:
           type: boolean
       - examples:
           example:
+            summary: Example query value for `unregistered_only`
             value: false
         in: query
         name: unregistered_only
@@ -13119,6 +13485,7 @@ paths:
           type: boolean
       - examples:
           example:
+            summary: Example query value for `outdated_only`
             value: true
         in: query
         name: outdated_only
@@ -13129,6 +13496,7 @@ paths:
           type: boolean
       - examples:
           example:
+            summary: Example query value for `include_snoozed`
             value: true
         in: query
         name: include_snoozed
@@ -13139,6 +13507,7 @@ paths:
           type: boolean
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -13150,6 +13519,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -13214,6 +13584,7 @@ paths:
       summary: List Catalog
       tags:
       - Catalog
+    summary: List Catalog
   /catalog/{api_id}:
     get:
       description: Retrieve a single catalog entry by api_id.
@@ -13221,6 +13592,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: api_id
@@ -13282,6 +13654,7 @@ paths:
       summary: Get Catalog Entry
       tags:
       - Catalog
+    summary: Get Catalog Entry
   /catalog/{api_id}/operations:
     get:
       description: |-
@@ -13294,6 +13667,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: api_id
@@ -13303,6 +13677,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Example query value for `offset`
             value: 0
         in: query
         name: offset
@@ -13314,6 +13689,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -13326,6 +13702,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Example query value for `tag`
             value: Charges
         in: query
         name: tag
@@ -13337,6 +13714,7 @@ paths:
           title: Tag
       - examples:
           example:
+            summary: Example query value for `q`
             value: charges
         in: query
         name: q
@@ -13401,6 +13779,7 @@ paths:
       summary: Preview Catalog Operations
       tags:
       - Catalog
+    summary: Preview Catalog Operations
   /catalog/{api_id}:import:
     post:
       description: Enqueue an async import of a catalog entry into the local registry.
@@ -13408,6 +13787,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: api_id
@@ -13469,6 +13849,7 @@ paths:
       summary: Import Catalog Entry
       tags:
       - Catalog
+    summary: Import Catalog Entry
   /catalog/{api_id}:snooze:
     post:
       description: |-
@@ -13483,6 +13864,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: api_id
@@ -13555,6 +13937,7 @@ paths:
       summary: Snooze Catalog Entry
       tags:
       - Catalog
+    summary: Snooze Catalog Entry
   /catalog/{api_id}:unsnooze:
     post:
       description: Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
@@ -13562,6 +13945,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: path
         name: api_id
@@ -13619,6 +14003,7 @@ paths:
       summary: Unsnooze Catalog Entry
       tags:
       - Catalog
+    summary: Unsnooze Catalog Entry
   /catalog:refresh:
     post:
       description: Force a refresh of the catalog cache from the upstream manifest (org:admin).
@@ -13677,6 +14062,7 @@ paths:
       summary: Refresh Catalog
       tags:
       - Catalog
+    summary: Refresh Catalog
   /connect-sessions:
     get:
       description: |-
@@ -13691,6 +14077,7 @@ paths:
       - description: Filter by session state
         examples:
           example:
+            summary: Example query value for `state`
             value: polling
         in: query
         name: state
@@ -13709,6 +14096,7 @@ paths:
       - description: Filter by vendor registry key
         examples:
           example:
+            summary: Vendor registry key
             value: github
         in: query
         name: vendor
@@ -13721,6 +14109,7 @@ paths:
           title: Vendor
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -13732,6 +14121,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -13796,6 +14186,7 @@ paths:
       summary: List connect sessions
       tags:
       - Integrations
+    summary: List connect sessions
   /connect-sessions/{session_id}:
     get:
       description: |-
@@ -13812,6 +14203,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Connect session ID
             value: cs_6968b3983b8b91c75627bee5
         in: path
         name: session_id
@@ -13822,6 +14214,7 @@ paths:
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         examples:
           example:
+            summary: Opaque flow handle
             value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
@@ -13892,6 +14285,7 @@ paths:
       summary: Get review data for a connect session
       tags:
       - Integrations
+    summary: Get review data for a connect session
   /connect-sessions/{session_id}/status:
     get:
       description: |-
@@ -13913,6 +14307,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Connect session ID
             value: cs_6968b3983b8b91c75627bee5
         in: path
         name: session_id
@@ -13923,6 +14318,7 @@ paths:
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         examples:
           example:
+            summary: Opaque flow handle
             value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
@@ -13986,6 +14382,7 @@ paths:
       summary: Poll a connect session's status
       tags:
       - Integrations
+    summary: Poll a connect session's status
   /connect-sessions/{session_id}:cancel:
     post:
       description: |-
@@ -14006,6 +14403,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Connect session ID
             value: cs_6968b3983b8b91c75627bee5
         in: path
         name: session_id
@@ -14016,6 +14414,7 @@ paths:
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         examples:
           example:
+            summary: Opaque flow handle
             value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
@@ -14076,6 +14475,7 @@ paths:
       summary: Cancel an in-flight connect session
       tags:
       - Integrations
+    summary: Cancel an in-flight connect session
   /connect-sessions/{session_id}:confirm:
     post:
       description: |-
@@ -14097,6 +14497,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Connect session ID
             value: cs_6968b3983b8b91c75627bee5
         in: path
         name: session_id
@@ -14107,6 +14508,7 @@ paths:
       - description: 'Opaque poll capability returned by :connect. Optional for the target agent''s owner (with credentials:write and agents:write) and org:admin. Deliberately a query parameter: it rides the approval URL a human opens in a browser, where a header cannot be set. It is a short-lived, single-session capability, not a reusable credential, and it only scopes reads/actions on that one connect session.'
         examples:
           example:
+            summary: Opaque flow handle
             value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: poll_token
@@ -14198,6 +14600,7 @@ paths:
       summary: Confirm a connect session
       tags:
       - Integrations
+    summary: Confirm a connect session
   /connect-sessions/{session_id}:reject:
     post:
       description: |-
@@ -14214,6 +14617,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Connect session ID
             value: cs_6968b3983b8b91c75627bee5
         in: path
         name: session_id
@@ -14271,6 +14675,7 @@ paths:
       summary: Reject an agent's connect request
       tags:
       - Integrations
+    summary: Reject an agent's connect request
   /control/health:
     get:
       description: |-
@@ -14322,6 +14727,7 @@ paths:
       summary: Control health
       tags:
       - System
+    summary: Control health
   /credentials:
     get:
       description: List credentials with cursor-based pagination.
@@ -14329,6 +14735,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -14340,6 +14747,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -14352,6 +14760,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: API vendor domain
             value: stripe.com
         in: query
         name: vendor
@@ -14494,6 +14903,7 @@ paths:
       summary: Create credential
       tags:
       - Credentials
+    summary: Create credential; List credentials
   /credentials/oauth/callback:
     get:
       description: |-
@@ -14521,6 +14931,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth authorization code
             value: SplxlOBeZQQYbYS6WxSbIA
         in: query
         name: code
@@ -14532,6 +14943,7 @@ paths:
           title: Code
       - examples:
           example:
+            summary: Client OAuth state
             value: af0ifjsldkj
         in: query
         name: state
@@ -14543,6 +14955,7 @@ paths:
           title: State
       - examples:
           example:
+            summary: Example query value for `error`
             value: access_denied
         in: query
         name: error
@@ -14590,6 +15003,7 @@ paths:
       summary: OAuth connect callback
       tags:
       - Credentials
+    summary: OAuth connect callback
   /credentials/providers:
     get:
       description: Return discovery metadata for all configured credential providers.
@@ -14648,6 +15062,7 @@ paths:
       summary: List credential providers
       tags:
       - Credentials
+    summary: List credential providers
   /credentials/{credential_id}:
     delete:
       description: Delete a credential.
@@ -14655,6 +15070,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -14725,6 +15141,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -14799,6 +15216,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -14887,6 +15305,7 @@ paths:
       summary: Update or rotate credential
       tags:
       - Credentials
+    summary: Get credential; Update or rotate credential; Delete credential
   /credentials/{credential_id}/agents:
     get:
       description: |-
@@ -14900,6 +15319,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -14909,6 +15329,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -14920,6 +15341,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -14991,6 +15413,7 @@ paths:
       summary: List agents bound to credential
       tags:
       - Credentials
+    summary: List agents bound to credential
   /credentials/{credential_id}/agents/{agent_id}/permissions:
     get:
       description: List the ordered PBAC rules for a direct `(agent, credential)` binding.
@@ -14998,6 +15421,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15007,6 +15431,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15081,6 +15506,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15090,6 +15516,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15170,6 +15597,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15179,6 +15607,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15257,6 +15686,7 @@ paths:
       summary: Replace binding permission rules
       tags:
       - Credentials
+    summary: List binding permission rules; Replace binding permission rules; Patch binding permission rules
   /credentials/{credential_id}/agents/{agent_id}/permissions:test:
     post:
       description: |-
@@ -15269,6 +15699,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15278,6 +15709,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15352,6 +15784,7 @@ paths:
       summary: Dry-run permission evaluation
       tags:
       - Credentials
+    summary: Dry-run permission evaluation
   /credentials/{credential_id}/agents/{agent_id}/rule-set:
     delete:
       description: |-
@@ -15362,6 +15795,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15371,6 +15805,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15450,6 +15885,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15459,6 +15895,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -15529,6 +15966,7 @@ paths:
       summary: Attach rule set to binding
       tags:
       - Credentials
+    summary: Attach rule set to binding; Detach rule set from binding
   /credentials/{credential_id}/connect:
     post:
       description: |-
@@ -15542,6 +15980,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: path
         name: credential_id
@@ -15622,6 +16061,7 @@ paths:
       summary: Begin OAuth connect flow
       tags:
       - Credentials
+    summary: Begin OAuth connect flow
   /error:
     get:
       description: Minimal error endpoint for browser-facing authorization failures.
@@ -15629,6 +16069,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `error`
             value: access_denied
         in: query
         name: error
@@ -15679,6 +16120,7 @@ paths:
       summary: Error Page
       tags:
       - OAuth
+    summary: Error Page
   /events:
     get:
       description: List events with optional filters.
@@ -15686,6 +16128,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `event_type`
             value:
             - import.completed
         in: query
@@ -15700,6 +16143,7 @@ paths:
           title: Event Type
       - examples:
           example:
+            summary: Example query value for `severity`
             value:
             - warning
             - error
@@ -15715,6 +16159,7 @@ paths:
           title: Severity
       - examples:
           example:
+            summary: Example query value for `requires_action`
             value: true
         in: query
         name: requires_action
@@ -15726,6 +16171,7 @@ paths:
           title: Requires Action
       - examples:
           example:
+            summary: Start of a time window (RFC 3339)
             value: '2026-01-01T00:00:00Z'
         in: query
         name: from
@@ -15738,6 +16184,7 @@ paths:
           title: From
       - examples:
           example:
+            summary: End of a time window (RFC 3339)
             value: '2026-01-31T23:59:59Z'
         in: query
         name: to
@@ -15750,6 +16197,7 @@ paths:
           title: To
       - examples:
           example:
+            summary: W3C trace ID
             value: 4bf92f3577b34da6a3ce929d0e0e4736
         in: query
         name: trace_id
@@ -15761,6 +16209,7 @@ paths:
           title: Trace Id
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: actor_id
@@ -15772,6 +16221,7 @@ paths:
           title: Actor Id
       - examples:
           example:
+            summary: Example query value for `actor_type`
             value: agent
         in: query
         name: actor_type
@@ -15783,6 +16233,7 @@ paths:
           title: Actor Type
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -15794,6 +16245,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -15858,6 +16310,7 @@ paths:
       summary: List Events
       tags:
       - Events
+    summary: List Events
   /events/stream:
     get:
       description: Stream events as Server-Sent Events.
@@ -15865,6 +16318,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Start of a time window (RFC 3339)
             value: '2026-01-01T00:00:00Z'
         in: query
         name: since
@@ -15877,6 +16331,7 @@ paths:
           title: Since
       - examples:
           example:
+            summary: Example query value for `event_type`
             value:
             - import.completed
         in: query
@@ -15891,6 +16346,7 @@ paths:
           title: Event Type
       - examples:
           example:
+            summary: Example query value for `severity`
             value:
             - warning
             - error
@@ -15906,6 +16362,7 @@ paths:
           title: Severity
       - examples:
           example:
+            summary: Example query value for `requires_action`
             value: true
         in: query
         name: requires_action
@@ -15917,6 +16374,7 @@ paths:
           title: Requires Action
       - examples:
           example:
+            summary: W3C trace ID
             value: 4bf92f3577b34da6a3ce929d0e0e4736
         in: query
         name: trace_id
@@ -15928,6 +16386,7 @@ paths:
           title: Trace Id
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: actor_id
@@ -15939,6 +16398,7 @@ paths:
           title: Actor Id
       - examples:
           example:
+            summary: Example query value for `actor_type`
             value: agent
         in: query
         name: actor_type
@@ -15950,6 +16410,7 @@ paths:
           title: Actor Type
       - examples:
           example:
+            summary: Event ID
             value: evt_6968b398b04f002b6dbff4d1
         in: header
         name: Last-Event-ID
@@ -16012,6 +16473,7 @@ paths:
       summary: Stream Events
       tags:
       - Events
+    summary: Stream Events
   /events/{event_id}:
     get:
       description: Get an event by ID.
@@ -16019,6 +16481,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Event ID
             value: evt_6968b398b04f002b6dbff4d1
         in: path
         name: event_id
@@ -16080,6 +16543,7 @@ paths:
       summary: Get Event
       tags:
       - Events
+    summary: Get Event
   /executions:
     get:
       description: List execution records with optional filters.
@@ -16087,6 +16551,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Toolkit ID
             value: tk_6968b3981ec22d56dbbc91e8
         in: query
         name: toolkit_id
@@ -16098,6 +16563,7 @@ paths:
           title: Toolkit Id
       - examples:
           example:
+            summary: W3C trace ID
             value: 4bf92f3577b34da6a3ce929d0e0e4736
         in: query
         name: trace_id
@@ -16109,6 +16575,7 @@ paths:
           title: Trace Id
       - examples:
           example:
+            summary: Example query value for `status`
             value:
             - completed
             - failed
@@ -16124,6 +16591,7 @@ paths:
           title: Status
       - examples:
           example:
+            summary: Start of a time window (RFC 3339)
             value: '2026-01-01T00:00:00Z'
         in: query
         name: from
@@ -16136,6 +16604,7 @@ paths:
           title: From
       - examples:
           example:
+            summary: End of a time window (RFC 3339)
             value: '2026-01-31T23:59:59Z'
         in: query
         name: to
@@ -16148,6 +16617,7 @@ paths:
           title: To
       - examples:
           example:
+            summary: API reference (vendor:name:version)
             value: stripe.com:stripe:2024-04-10
         in: query
         name: api
@@ -16159,6 +16629,7 @@ paths:
           title: Api
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: actor_id
@@ -16170,6 +16641,7 @@ paths:
           title: Actor Id
       - examples:
           example:
+            summary: Example query value for `origin`
             value: dashboard
         in: query
         name: origin
@@ -16181,6 +16653,7 @@ paths:
           title: Origin
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -16192,6 +16665,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -16256,6 +16730,7 @@ paths:
       summary: List Executions
       tags:
       - Executions
+    summary: List Executions
   /executions/{execution_id}:
     get:
       description: Get an execution record by ID.
@@ -16263,6 +16738,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Execution ID
             value: exec_6968b3982706c619fe73f0cf
         in: path
         name: execution_id
@@ -16324,6 +16800,7 @@ paths:
       summary: Get Execution
       tags:
       - Executions
+    summary: Get Execution
   /governed-hosts:
     get:
       description: |-
@@ -16352,6 +16829,7 @@ paths:
       - description: 'Change-poll precondition: the `ETag` from a previous response (quoted, `"<digest>"`; the bare digest is accepted as a compatibility form). When it still matches, the response is an empty `304`.'
         examples:
           example:
+            summary: Governed-hosts ETag
             value: '"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"'
         in: header
         name: if-none-match
@@ -16428,6 +16906,7 @@ paths:
       summary: Get Governed Hosts
       tags:
       - Governed Hosts
+    summary: Get Governed Hosts
   /health:
     get:
       description: |-
@@ -16447,6 +16926,7 @@ paths:
       summary: Health
       tags:
       - System
+    summary: Health
   /inspect:
     get:
       description: |-
@@ -16461,6 +16941,7 @@ paths:
       - description: METHOD URL identifier
         examples:
           example:
+            summary: Upstream operation (method and URL)
             value: GET https://api.stripe.com/v1/charges
         in: query
         name: id
@@ -16474,6 +16955,7 @@ paths:
       - description: Operation ID
         examples:
           example:
+            summary: Upstream operationId
             value: listCharges
         in: query
         name: operation_id
@@ -16487,6 +16969,7 @@ paths:
       - description: Pin to specific revision
         examples:
           example:
+            summary: Revision ID (UUID)
             value: 3f2b8c1e-7d4a-4e9b-a6c5-1d2e3f4a5b6c
         in: query
         name: revision_id
@@ -16499,6 +16982,7 @@ paths:
           title: Revision Id
       - examples:
           example:
+            summary: Example query value for `detail`
             value: summary
         in: query
         name: detail
@@ -16563,6 +17047,7 @@ paths:
       summary: Inspect operation
       tags:
       - Inspect
+    summary: Inspect operation
   /instance:
     get:
       description: |-
@@ -16583,6 +17068,7 @@ paths:
       summary: Backend identity
       tags:
       - System
+    summary: Backend identity
   /integrations:connect:
     post:
       description: |-
@@ -16681,6 +17167,7 @@ paths:
       summary: Start an integration connect session
       tags:
       - Integrations
+    summary: Start an integration connect session
   /jobs:
     get:
       description: List jobs with optional filters.
@@ -16688,6 +17175,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `kind`
             value: import
         in: query
         name: kind
@@ -16699,6 +17187,7 @@ paths:
           title: Kind
       - examples:
           example:
+            summary: Example query value for `status`
             value:
             - running
         in: query
@@ -16713,6 +17202,7 @@ paths:
           title: Status
       - examples:
           example:
+            summary: Start of a time window (RFC 3339)
             value: '2026-01-01T00:00:00Z'
         in: query
         name: from
@@ -16725,6 +17215,7 @@ paths:
           title: From
       - examples:
           example:
+            summary: End of a time window (RFC 3339)
             value: '2026-01-31T23:59:59Z'
         in: query
         name: to
@@ -16737,6 +17228,7 @@ paths:
           title: To
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -16748,6 +17240,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -16812,6 +17305,7 @@ paths:
       summary: List Jobs
       tags:
       - Jobs
+    summary: List Jobs
   /jobs/{job_id}:
     get:
       description: Get a job by ID.
@@ -16819,6 +17313,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Job ID
             value: job_6968b3985e8c9902207afaeb
         in: path
         name: job_id
@@ -16880,6 +17375,7 @@ paths:
       summary: Get Job
       tags:
       - Jobs
+    summary: Get Job
   /jobs/{job_id}/result:
     get:
       description: Get the result of a completed job — polymorphic by kind.
@@ -16887,6 +17383,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Job ID
             value: job_6968b3985e8c9902207afaeb
         in: path
         name: job_id
@@ -16947,6 +17444,7 @@ paths:
       summary: Get Job Result
       tags:
       - Jobs
+    summary: Get Job Result
   /jobs/{job_id}:cancel:
     post:
       description: Cancel an active job.
@@ -16954,6 +17452,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Job ID
             value: job_6968b3985e8c9902207afaeb
         in: path
         name: job_id
@@ -17015,6 +17514,7 @@ paths:
       summary: Cancel Job
       tags:
       - Jobs
+    summary: Cancel Job
   /login:
     get:
       description: |-
@@ -17030,6 +17530,7 @@ paths:
       - description: Signed authorization-flow state (carry-through token)
         examples:
           example:
+            summary: Signed flow state blob
             value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: ls
@@ -17154,6 +17655,7 @@ paths:
       summary: Local-account login submit (authorization flow)
       tags:
       - OAuth
+    summary: Local-account login form (authorization flow); Local-account login submit (authorization flow)
   /mcp/config-registrations:
     post:
       description: |-
@@ -17228,6 +17730,7 @@ paths:
       summary: Report MCP config registration
       tags:
       - MCP
+    summary: Report MCP config registration
   /me:
     get:
       description: Return the caller's identity and context, discriminated by actor type.
@@ -17294,6 +17797,7 @@ paths:
       summary: Get Me
       tags:
       - Identity
+    summary: Get Me
   /monitoring/executions:
     get:
       description: Return aggregated execution statistics for the dashboard.
@@ -17301,6 +17805,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `days`
             value: 7
         in: query
         name: days
@@ -17365,6 +17870,7 @@ paths:
       summary: Get Execution Stats
       tags:
       - Monitoring
+    summary: Get Execution Stats
   /monitoring/usage:
     get:
       description: Return detailed usage statistics for the monitoring overview.
@@ -17372,6 +17878,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Example query value for `since`
             value: 1767225600
         in: query
         name: since
@@ -17383,6 +17890,7 @@ paths:
           title: Since
       - examples:
           example:
+            summary: Example query value for `until`
             value: 1769903999
         in: query
         name: until
@@ -17394,6 +17902,7 @@ paths:
           title: Until
       - examples:
           example:
+            summary: Example query value for `group_by`
             value: api
         in: query
         name: group_by
@@ -17405,6 +17914,7 @@ paths:
           title: Group By
       - examples:
           example:
+            summary: Example query value for `top_limit`
             value: 10
         in: query
         name: top_limit
@@ -17417,6 +17927,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Toolkit ID
             value: tk_6968b3981ec22d56dbbc91e8
         in: query
         name: toolkit_id
@@ -17428,6 +17939,7 @@ paths:
           title: Toolkit Id
       - examples:
           example:
+            summary: API vendor and name (vendor/name)
             value: stripe.com/stripe
         in: query
         name: api_id
@@ -17439,6 +17951,7 @@ paths:
           title: Api Id
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: query
         name: agent_id
@@ -17450,6 +17963,7 @@ paths:
           title: Agent Id
       - examples:
           example:
+            summary: Example query value for `status`
             value: completed
         in: query
         name: status
@@ -17513,6 +18027,7 @@ paths:
       summary: Get Usage Stats
       tags:
       - Monitoring
+    summary: Get Usage Stats
   /notes:
     get:
       description: List notes with optional filters and cursor pagination.
@@ -17520,6 +18035,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -17531,6 +18047,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -17543,6 +18060,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: API reference (vendor:name:version)
             value: stripe.com:stripe:2024-04-10
         in: query
         name: api
@@ -17554,6 +18072,7 @@ paths:
           title: Api
       - examples:
           example:
+            summary: Upstream operationId
             value: listCharges
         in: query
         name: operation_id
@@ -17565,6 +18084,7 @@ paths:
           title: Operation Id
       - examples:
           example:
+            summary: Execution ID
             value: exec_6968b3982706c619fe73f0cf
         in: query
         name: execution_id
@@ -17576,6 +18096,7 @@ paths:
           title: Execution Id
       - examples:
           example:
+            summary: Credential ID
             value: cred_6968b39855d91a3561684b32
         in: query
         name: credential_id
@@ -17587,6 +18108,7 @@ paths:
           title: Credential Id
       - examples:
           example:
+            summary: Example query value for `type`
             value: usage_hint
         in: query
         name: type
@@ -17598,6 +18120,7 @@ paths:
           title: Type
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: query
         name: created_by
@@ -17722,6 +18245,7 @@ paths:
       summary: Create Note
       tags:
       - Notes
+    summary: Create Note; List Notes
   /notes/{note_id}:
     delete:
       description: Delete a note. Supports optimistic concurrency via If-Match.
@@ -17729,6 +18253,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Note ID
             value: note_6968b398edb465624291e405
         in: path
         name: note_id
@@ -17738,6 +18263,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Note ETag (quoted revision)
             value: '"3"'
         in: header
         name: if-match
@@ -17803,6 +18329,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Note ID
             value: note_6968b398edb465624291e405
         in: path
         name: note_id
@@ -17869,6 +18396,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Note ID
             value: note_6968b398edb465624291e405
         in: path
         name: note_id
@@ -17878,6 +18406,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Note ETag (quoted revision)
             value: '"3"'
         in: header
         name: if-match
@@ -17946,6 +18475,7 @@ paths:
       summary: Update Note
       tags:
       - Notes
+    summary: Get Note; Update Note; Delete Note
   /oauth-app-registrations:
     get:
       description: |-
@@ -17959,6 +18489,7 @@ paths:
       - description: Filter by vendor slug.
         examples:
           example:
+            summary: Vendor registry key
             value: github
         in: query
         name: api_vendor
@@ -17972,6 +18503,7 @@ paths:
       - description: Include registrations with is_active=false in the response.
         examples:
           example:
+            summary: Example query value for `include_inactive`
             value: true
         in: query
         name: include_inactive
@@ -17984,6 +18516,7 @@ paths:
       - description: Filter by OAuth flow kind.
         examples:
           example:
+            summary: Example query value for `flow_kind`
             value: authorization_code
         in: query
         name: flow_kind
@@ -17996,6 +18529,7 @@ paths:
           title: Flow Kind
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -18007,6 +18541,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -18148,6 +18683,7 @@ paths:
       summary: Register a shared OAuth application
       tags:
       - OAuth App Registrations
+    summary: Register a shared OAuth application; List OAuth app registrations
   /oauth-app-registrations/{id}:
     delete:
       description: |-
@@ -18159,6 +18695,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth app registration ID
             value: oar_6968b39821e5f89a6975f501
         in: path
         name: id
@@ -18236,6 +18773,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth app registration ID
             value: oar_6968b39821e5f89a6975f501
         in: path
         name: id
@@ -18314,6 +18852,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth app registration ID
             value: oar_6968b39821e5f89a6975f501
         in: path
         name: id
@@ -18388,6 +18927,7 @@ paths:
       summary: Update an OAuth app registration
       tags:
       - OAuth App Registrations
+    summary: Get an OAuth app registration; Update an OAuth app registration; Delete an OAuth app registration
   /oauth-app-registrations/{id}:rotate-secret:
     post:
       description: |-
@@ -18397,6 +18937,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth app registration ID
             value: oar_6968b39821e5f89a6975f501
         in: path
         name: id
@@ -18478,6 +19019,7 @@ paths:
       summary: Rotate the client secret
       tags:
       - OAuth App Registrations
+    summary: Rotate the client secret
   /oauth-clients:
     post:
       description: |-
@@ -18537,6 +19079,7 @@ paths:
       summary: Register OAuth client (anonymous DCR)
       tags:
       - OAuth Clients
+    summary: Register OAuth client (anonymous DCR)
   /oauth-grants/{grant_id}:revoke:
     post:
       description: |-
@@ -18551,6 +19094,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth consent grant ID
             value: ocg_6968b3985e21c5fdf643025d
         in: path
         name: grant_id
@@ -18615,6 +19159,7 @@ paths:
       summary: Revoke OAuth grant
       tags:
       - OAuth
+    summary: Revoke OAuth grant
   /oauth/approval/decision:
     post:
       description: |-
@@ -18689,6 +19234,7 @@ paths:
       summary: Approve or deny a pending client inline (approval-pending page)
       tags:
       - OAuth
+    summary: Approve or deny a pending client inline (approval-pending page)
   /oauth/approval/status:
     get:
       description: |-
@@ -18705,6 +19251,7 @@ paths:
       - description: Signed approval-state blob minted by /authorize
         examples:
           example:
+            summary: Signed flow state blob
             value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: st
@@ -18752,6 +19299,7 @@ paths:
       summary: Poll client approval status (approval-pending page)
       tags:
       - OAuth
+    summary: Poll client approval status (approval-pending page)
   /oauth/callback:
     get:
       description: External IdP callback — exchanges upstream code and issues platform auth code.
@@ -18759,6 +19307,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: OAuth authorization code
             value: SplxlOBeZQQYbYS6WxSbIA
         in: query
         name: code
@@ -18768,6 +19317,7 @@ paths:
           type: string
       - examples:
           example:
+            summary: Client OAuth state
             value: af0ifjsldkj
         in: query
         name: state
@@ -18813,6 +19363,7 @@ paths:
       summary: Authorize Oauth Callback
       tags:
       - OAuth
+    summary: Authorize Oauth Callback
   /oauth/consent:
     get:
       description: Display the OAuth consent screen.
@@ -18821,6 +19372,7 @@ paths:
       - description: Opaque consent-flow handle
         examples:
           example:
+            summary: Opaque flow handle
             value: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
         in: query
         name: ch
@@ -18926,6 +19478,7 @@ paths:
       summary: Consent Submit
       tags:
       - OAuth
+    summary: Consent Page; Consent Submit
   /oauth/consent/agent:
     post:
       description: |-
@@ -19004,6 +19557,7 @@ paths:
       summary: Create the consenting user's first agent inline (consent page)
       tags:
       - OAuth
+    summary: Create the consenting user's first agent inline (consent page)
   /oauth/consent/agent/status:
     get:
       description: |-
@@ -19028,6 +19582,7 @@ paths:
       - description: Signed agent-status blob minted by the consent flow's pending arm
         examples:
           example:
+            summary: Signed flow state blob
             value: eyJfcHVycG9zZSI6ICJleGFtcGxlIn0=.5d41402abc4b2a76b9719d911017c592
         in: query
         name: st
@@ -19075,6 +19630,7 @@ paths:
       summary: Poll pending-agent approval status (consent awaiting page)
       tags:
       - OAuth
+    summary: Poll pending-agent approval status (consent awaiting page)
   /oauth/introspect:
     post:
       description: |-
@@ -19179,6 +19735,7 @@ paths:
       summary: Introspect Endpoint
       tags:
       - OAuth
+    summary: Introspect Endpoint
   /oauth/revoke:
     post:
       description: |-
@@ -19293,6 +19850,7 @@ paths:
       summary: Revoke Endpoint
       tags:
       - OAuth
+    summary: Revoke Endpoint
   /oauth/session/continue:
     post:
       description: |-
@@ -19384,6 +19942,7 @@ paths:
       summary: Exchange a live platform session for an authorize continuation
       tags:
       - OAuth
+    summary: Exchange a live platform session for an authorize continuation
   /oauth/token:
     post:
       description: |-
@@ -19542,6 +20101,7 @@ paths:
       summary: Token Endpoint
       tags:
       - OAuth
+    summary: Token Endpoint
   /permission-rule-sets:
     get:
       description: List shared rule sets with per-set rule counts (cursor-paginated).
@@ -19549,6 +20109,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -19560,6 +20121,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -19626,10 +20188,17 @@ paths:
       - Permission Rule Sets
     post:
       description: |-
-        Create a named, shareable ordered rule list (theme 5 rule grouping).
+        Create a named, reusable list of permission rules.
 
-        N agent-credential bindings can point at one set, so `permissions:test`
-        and "revoke this operation everywhere" stay single-place edits.
+        Attach the set to any number of agent-credential bindings
+        (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+        its rules later updates every attached binding at once, so a policy
+        change such as "block this operation everywhere" is a single edit.
+        Supply a unique `name`, an optional `description`, and optional initial
+        ordered `rules`. A set created by an `org:admin` is *curated*: any
+        `credentials:write` holder may attach it, but only an `org:admin` may
+        edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+        if the name is taken.
       operationId: createPermissionRuleSet
       requestBody:
         content:
@@ -19698,13 +20267,21 @@ paths:
       summary: Create permission rule set
       tags:
       - Permission Rule Sets
+    summary: List permission rule sets; Create permission rule set
   /permission-rule-sets/{rule_set_id}:
     delete:
-      description: Delete a rule set nothing references (409 `rule_set_in_use` otherwise).
+      description: |-
+        Permanently delete a rule set that no binding uses.
+
+        Detach the set from every binding first: while any binding still
+        references it the delete fails with 409 (`rule_set_in_use`) and nothing
+        changes. Same edit permission as updating the set (403
+        `rule_set_access_denied`). Returns 204.
       operationId: deletePermissionRuleSet
       parameters:
       - examples:
           example:
+            summary: Permission rule set ID
             value: prs_6968b3987c22b63e87e79f05
         in: path
         name: rule_set_id
@@ -19782,6 +20359,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Permission rule set ID
             value: prs_6968b3987c22b63e87e79f05
         in: path
         name: rule_set_id
@@ -19852,14 +20430,19 @@ paths:
       - Permission Rule Sets
     patch:
       description: |-
-        Rename or re-describe a rule set.
+        Change a rule set's `name` and/or `description`.
 
-        A curated set is editable by an org admin; any other set by its creator
-        or an org admin (403 `rule_set_access_denied` otherwise).
+        The rules themselves are replaced separately, with
+        `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+        only by an `org:admin`; any other set by its creator or an `org:admin`
+        (403 `rule_set_access_denied` otherwise). Returns the updated set with
+        its rules and the number of bindings referencing it; 409
+        (`rule_set_name_conflict`) if the new name is taken.
       operationId: updatePermissionRuleSet
       parameters:
       - examples:
           example:
+            summary: Permission rule set ID
             value: prs_6968b3987c22b63e87e79f05
         in: path
         name: rule_set_id
@@ -19931,20 +20514,26 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Update permission rule set
+      summary: Rename or re-describe a permission rule set
       tags:
       - Permission Rule Sets
+    summary: Get permission rule set; Rename or re-describe a permission rule set; Delete permission rule set
   /permission-rule-sets/{rule_set_id}/rules:
     put:
       description: |-
-        Replace the set's full ordered rule list (idempotent PUT).
+        Replace a rule set's entire ordered rule list with the body.
 
-        Every binding pointing at the set picks the new list up at once — the
-        single-place edit rule grouping exists for.
+        This is a full replacement, not a merge: user rules missing from the body
+        are removed, and an empty list clears them. Platform-managed system rules
+        (`_system: true`) are kept. The request is idempotent.
+        Every binding attached to the set enforces the new rules immediately.
+        Same edit permission as updating the set (403 `rule_set_access_denied`).
+        Returns the stored rules in order.
       operationId: replacePermissionRuleSetRules
       parameters:
       - examples:
           example:
+            summary: Permission rule set ID
             value: prs_6968b3987c22b63e87e79f05
         in: path
         name: rule_set_id
@@ -20020,12 +20609,20 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Replace rule set rules
+      summary: Replace all rules in a permission rule set
       tags:
       - Permission Rule Sets
+    summary: Replace all rules in a permission rule set
   /permissions:
     get:
-      description: List the permission catalogue visible to the caller.
+      description: |-
+        List every permission, flagged with whether the caller may grant it to an agent.
+
+        Each entry gives the permission `name`, a `description`, the permissions
+        it `implies`, and `grantable_by_caller` — whether `POST /agents` and
+        `PUT /agents/{agent_id}/permissions` would accept it from this caller.
+        `org:admin` is listed only to callers who hold it. Use it to build an
+        agent permission picker. Any signed-in caller may call it.
       operationId: listPermissions
       responses:
         '200':
@@ -20078,9 +20675,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: List Permissions
+      summary: List the permission catalogue
       tags:
       - Permissions
+    summary: List the permission catalogue
   /register:
     post:
       description: Register a new agent client (RFC 7591).
@@ -20130,6 +20728,7 @@ paths:
       summary: Register Endpoint
       tags:
       - Agent Registration
+    summary: Register Endpoint
   /register/{agent_id}:
     delete:
       description: Client deletion not supported — returns 403.
@@ -20137,6 +20736,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -20203,6 +20803,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -20262,6 +20863,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Agent ID
             value: agnt_6968b3984d1c238dbe7e2e29
         in: path
         name: agent_id
@@ -20322,6 +20924,7 @@ paths:
       summary: Update Registration Endpoint
       tags:
       - Agent Registration
+    summary: Poll Status Endpoint; Update Registration Endpoint; Delete Registration Endpoint
   /registry/health:
     get:
       description: |-
@@ -20373,6 +20976,7 @@ paths:
       summary: Registry health
       tags:
       - System
+    summary: Registry health
   /search:
     post:
       description: Lexical (full-text) search over registered API operations.
@@ -20437,6 +21041,7 @@ paths:
       summary: Search operations
       tags:
       - Search
+    summary: Search operations
   /system/version:
     get:
       description: |-
@@ -20460,6 +21065,7 @@ paths:
       summary: Running and latest-available app version
       tags:
       - System
+    summary: Running and latest-available app version
   /users:
     get:
       description: |-
@@ -20470,6 +21076,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: Opaque cursor from a previous page
             value: eyJ0IjogIjIwMjYtMDEtMTVUMDk6MzA6MDArMDA6MDAiLCAiaWQiOiAiM2YyYjhjMWUtN2Q0YS00ZTliLWE2YzUtMWQyZTNmNGE1YjZjIn0=
         in: query
         name: cursor
@@ -20481,6 +21088,7 @@ paths:
           title: Cursor
       - examples:
           example:
+            summary: Example query value for `limit`
             value: 25
         in: query
         name: limit
@@ -20493,6 +21101,7 @@ paths:
           type: integer
       - examples:
           example:
+            summary: Example query value for `invite_state`
             value: pending
         in: query
         name: invite_state
@@ -20619,6 +21228,7 @@ paths:
       summary: Create User
       tags:
       - Users
+    summary: List Users; Create User
   /users/me:
     get:
       description: Return the authenticated user's profile.
@@ -20677,6 +21287,7 @@ paths:
       summary: Get current user
       tags:
       - Users
+    summary: Get current user
   /users/me:change-password:
     post:
       description: |-
@@ -20746,6 +21357,7 @@ paths:
       summary: Change own password
       tags:
       - Users
+    summary: Change own password
   /users/{user_id}:
     delete:
       description: |-
@@ -20759,6 +21371,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -20840,6 +21453,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -20914,6 +21528,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -20981,6 +21596,7 @@ paths:
       summary: Update User
       tags:
       - Users
+    summary: Get User; Update User; Delete User
   /users/{user_id}/permissions:
     put:
       description: Set the assigned permissions for a user.
@@ -20988,6 +21604,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -21069,6 +21686,7 @@ paths:
       summary: Set User Permissions
       tags:
       - Users
+    summary: Set User Permissions
   /users/{user_id}:disable:
     post:
       description: Disable a user account.
@@ -21076,6 +21694,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -21147,6 +21766,7 @@ paths:
       summary: Disable User
       tags:
       - Users
+    summary: Disable User
   /users/{user_id}:enable:
     post:
       description: Enable a user account.
@@ -21154,6 +21774,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -21211,6 +21832,7 @@ paths:
       summary: Enable User
       tags:
       - Users
+    summary: Enable User
   /users/{user_id}:reissue-invite:
     post:
       description: Reissue an invite token for a user.
@@ -21218,6 +21840,7 @@ paths:
       parameters:
       - examples:
           example:
+            summary: User ID
             value: usr_6968b3987ee4c3ec0b4ee3b9
         in: path
         name: user_id
@@ -21279,6 +21902,7 @@ paths:
       summary: Reissue Invite
       tags:
       - Users
+    summary: Reissue Invite
   /users:create-admin:
     post:
       description: |-
@@ -21345,6 +21969,7 @@ paths:
       summary: Create first admin (one-time setup)
       tags:
       - Users
+    summary: Create first admin (one-time setup)
   /users:redeem-invite:
     post:
       description: Redeem an invite token, set password, and return a JWT.
@@ -21394,6 +22019,7 @@ paths:
       summary: Redeem invite
       tags:
       - Users
+    summary: Redeem invite
   /vendors:
     get:
       description: |-
@@ -21459,18 +22085,26 @@ paths:
       summary: List verified vendors
       tags:
       - Vendors
+    summary: List verified vendors
   /vendors/{vendor_key}/auth-capabilities:
     get:
       description: |-
-        Full auth capabilities for one vendor — flows, scopes, classifications.
+        Describe how to connect a vendor: its OAuth flows and scope catalogue.
 
-        Never returns client_secret (authorization-code flow's secret is stripped
-        at response build time). ``UnknownVendorError`` maps to a 404 problem
-        detail via the handler registered in ``control/web/app.py``.
+        `vendor_key` is a key from `GET /vendors`. Returns the vendor's display
+        name, the OAuth `flows` it supports (`authorization_code` and/or
+        `device_authorization`), and every scope with its `classification`
+        (`read`, `write` or `admin`), whether it is requested by default, and a
+        description. Use it to build a connect screen before starting a connect
+        session. When the vendor has several admin-registered OAuth apps, pass
+        `oauth_app_registration_id` to pick one; without it the request fails
+        with 400 (`ambiguous_vendor`). The OAuth client secret is never returned.
+        An unknown vendor returns 404 (`unknown_vendor`).
       operationId: getAuthCapabilities
       parameters:
       - examples:
           example:
+            summary: Vendor registry key
             value: github
         in: path
         name: vendor_key
@@ -21481,6 +22115,7 @@ paths:
       - description: Pin to a specific admin-registered OAuth app when the vendor has more than one. Returns that registration's scopes + client_id, so the picker's tile and the connect payload stay aligned.
         examples:
           example:
+            summary: OAuth app registration ID
             value: oar_6968b39821e5f89a6975f501
         in: query
         name: oauth_app_registration_id
@@ -21542,9 +22177,10 @@ paths:
           description: Service Unavailable
       security:
       - BearerAuth: []
-      summary: Get a vendor's SSO capabilities
+      summary: Get a vendor's OAuth flows and scopes
       tags:
       - Vendors
+    summary: Get a vendor's OAuth flows and scopes
 security:
 - BearerAuth: []
 servers:

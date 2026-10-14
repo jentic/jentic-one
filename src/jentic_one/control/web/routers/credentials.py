@@ -699,10 +699,17 @@ async def create_rule_set(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> RuleSetResponse:
-    """Create a named, shareable ordered rule list (theme 5 rule grouping).
+    """Create a named, reusable list of permission rules.
 
-    N agent-credential bindings can point at one set, so `permissions:test`
-    and "revoke this operation everywhere" stay single-place edits.
+    Attach the set to any number of agent-credential bindings
+    (`PUT /credentials/{credential_id}/agents/{agent_id}/rule-set`); editing
+    its rules later updates every attached binding at once, so a policy
+    change such as "block this operation everywhere" is a single edit.
+    Supply a unique `name`, an optional `description`, and optional initial
+    ordered `rules`. A set created by an `org:admin` is *curated*: any
+    `credentials:write` holder may attach it, but only an `org:admin` may
+    edit it. Returns the set with its rules; 409 (`rule_set_name_conflict`)
+    if the name is taken.
     """
     rule_set, rules = await svc.create_rule_set(
         name=body.name,
@@ -734,7 +741,7 @@ async def get_rule_set(
 @router.patch(
     "/permission-rule-sets/{rule_set_id}",
     operation_id="updatePermissionRuleSet",
-    summary="Update permission rule set",
+    summary="Rename or re-describe a permission rule set",
     responses=not_found(),
 )
 async def update_rule_set(
@@ -743,10 +750,14 @@ async def update_rule_set(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> RuleSetResponse:
-    """Rename or re-describe a rule set.
+    """Change a rule set's `name` and/or `description`.
 
-    A curated set is editable by an org admin; any other set by its creator
-    or an org admin (403 `rule_set_access_denied` otherwise).
+    The rules themselves are replaced separately, with
+    `PUT /permission-rule-sets/{rule_set_id}/rules`. A curated set is editable
+    only by an `org:admin`; any other set by its creator or an `org:admin`
+    (403 `rule_set_access_denied` otherwise). Returns the updated set with
+    its rules and the number of bindings referencing it; 409
+    (`rule_set_name_conflict`) if the new name is taken.
     """
     await svc.update_rule_set(
         rule_set_id, identity=identity, name=body.name, description=body.description
@@ -758,7 +769,7 @@ async def update_rule_set(
 @router.put(
     "/permission-rule-sets/{rule_set_id}/rules",
     operation_id="replacePermissionRuleSetRules",
-    summary="Replace rule set rules",
+    summary="Replace all rules in a permission rule set",
     responses=not_found(),
 )
 async def replace_rule_set_rules(
@@ -767,10 +778,14 @@ async def replace_rule_set_rules(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> PermissionRuleListResponse:
-    """Replace the set's full ordered rule list (idempotent PUT).
+    """Replace a rule set's entire ordered rule list with the body.
 
-    Every binding pointing at the set picks the new list up at once — the
-    single-place edit rule grouping exists for.
+    This is a full replacement, not a merge: user rules missing from the body
+    are removed, and an empty list clears them. Platform-managed system rules
+    (`_system: true`) are kept. The request is idempotent.
+    Every binding attached to the set enforces the new rules immediately.
+    Same edit permission as updating the set (403 `rule_set_access_denied`).
+    Returns the stored rules in order.
     """
     rules_data = [r.model_dump(exclude_none=True) for r in body]
     rules = await svc.replace_rule_set_rules(rule_set_id, rules_data, identity=identity)
@@ -804,7 +819,13 @@ async def delete_rule_set(
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: CredentialService = Depends(get_credential_service),
 ) -> Response:
-    """Delete a rule set nothing references (409 `rule_set_in_use` otherwise)."""
+    """Permanently delete a rule set that no binding uses.
+
+    Detach the set from every binding first: while any binding still
+    references it the delete fails with 409 (`rule_set_in_use`) and nothing
+    changes. Same edit permission as updating the set (403
+    `rule_set_access_denied`). Returns 204.
+    """
     await svc.delete_rule_set(rule_set_id, identity=identity)
     return Response(status_code=204)
 

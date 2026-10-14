@@ -1151,8 +1151,41 @@ def install_openapi_metadata(app: FastAPI) -> None:
                     # returned.
                     operation.get("responses", {}).pop("422", None)
                 _normalise_error_responses(operation.get("responses", {}))
+                _summarise_parameter_examples(operation)
+            _summarise_path_item(path_item)
 
         app.openapi_schema = schema
         return schema
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
+def _summarise_parameter_examples(operation: dict[str, Any]) -> None:
+    """Give every parameter example a ``summary``.
+
+    ``openapi_examples.example()`` labels the canonical values itself; any other
+    value (a page size, a status filter) is labelled from its parameter here,
+    because only the spec knows which parameter an example is attached to.
+    """
+    for param in operation.get("parameters") or []:
+        for entry in (param.get("examples") or {}).values():
+            if isinstance(entry, dict) and not entry.get("summary"):
+                entry["summary"] = f"Example {param['in']} value for `{param['name']}`"
+
+
+def _summarise_path_item(path_item: dict[str, Any]) -> None:
+    """Set the path item's ``summary`` from its operations' summaries.
+
+    OpenAPI's path-level ``summary`` applies to every operation on the path;
+    FastAPI never emits one. Joining the operation summaries in spec order
+    (``"List agents; Register agent"``) states exactly what the path offers.
+    """
+    if path_item.get("summary"):
+        return
+    summaries = [
+        op["summary"]
+        for method, op in path_item.items()
+        if method.lower() in _HTTP_METHODS and isinstance(op, dict) and op.get("summary")
+    ]
+    if summaries:
+        path_item["summary"] = "; ".join(summaries)
