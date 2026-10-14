@@ -127,7 +127,7 @@ const EXECUTIONS = rebaseFixture([
 	},
 	{
 		// Header-less run: the backend stores `trace_id="unknown"`, so this row
-		// must open by execution_id (no trace deep-link / no audit lens).
+		// must open by execution_id (no trace deep-link).
 		_links: { self: '/executions/exec_4' },
 		actor_id: 'agent_billing',
 		actor_type: 'agent',
@@ -438,7 +438,7 @@ const EVENTS = rebaseFixture([
 
 const AUDIT = rebaseFixture([
 	{
-		action: 'execution.start',
+		action: 'credential.create',
 		actor_id: 'user_admin',
 		actor_session_id: 'sess_1',
 		actor_type: 'user',
@@ -451,10 +451,10 @@ const AUDIT = rebaseFixture([
 		occurred_at: '2026-06-19T10:00:00Z',
 		reason: null,
 		request_id: 'req_1',
-		target_id: 'exec_1',
+		target_id: 'cred_stripe',
 		target_parent_id: null,
-		target_type: 'execution_record',
-		trace_id: TRACE_A,
+		target_type: 'credential',
+		trace_id: null,
 		user_agent: 'jentic-cli/1.0',
 	},
 	{

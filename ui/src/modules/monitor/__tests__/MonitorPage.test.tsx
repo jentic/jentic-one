@@ -663,18 +663,73 @@ describe('MonitorPage', () => {
 		await user.click(await findToggle('Activity source', 'Audit log'));
 
 		// Audit entries read as sentences, not raw action codes.
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+		expect(await screen.findByText('Created a credential')).toBeInTheDocument();
 		expect(screen.getByText('Cancelled a job')).toBeInTheDocument();
 		expect(screen.getAllByText('Admin User').length).toBeGreaterThanOrEqual(1);
 		// The Audit log has no status axis.
 		expect(screen.queryByRole('group', { name: 'Status' })).not.toBeInTheDocument();
 	});
 
-	it('filters the Audit log by trace_id deep-link param', async () => {
+	it('explains an empty trace-filtered Audit log and links to the trace in API calls', async () => {
+		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit&trace_id=trace_aaaaaaaa');
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+
+		expect(await screen.findByText('No audit entries for this trace')).toBeInTheDocument();
+		expect(screen.getByText("API calls aren't recorded in the audit log.")).toBeInTheDocument();
+		expect(screen.queryByText('Cancelled a job')).not.toBeInTheDocument();
+
+		// The link's name is its visible text (WCAG 2.5.3).
+		await user.click(screen.getByRole('link', { name: 'Open this trace in API calls' }));
 		await waitFor(() => {
-			expect(screen.queryByText('Cancelled a job')).not.toBeInTheDocument();
+			const params = currentParams();
+			expect(params.get('show')).toBe('calls');
+			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
+		});
+	});
+
+	it('cross-links an Audit row that carries a trace to it in API calls', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/audit', () =>
+				HttpResponse.json({
+					data: [
+						{
+							action: 'credential.create',
+							actor_id: 'user_admin',
+							actor_session_id: null,
+							actor_type: 'user',
+							after: null,
+							before: null,
+							diff: null,
+							id: 'audit_traced',
+							ip_address: null,
+							job_id: null,
+							occurred_at: new Date(Date.now() - 60_000).toISOString(),
+							reason: null,
+							request_id: null,
+							target_id: 'cred_stripe',
+							target_parent_id: null,
+							target_type: 'credential',
+							trace_id: 'trace_crosslink1',
+							user_agent: null,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?show=audit');
+
+		const link = await screen.findByRole('link', {
+			name: 'Open trace trace_crosslink1 in API calls',
+		});
+		expect(link).toHaveTextContent('Trace');
+		await user.click(link);
+		await waitFor(() => {
+			const params = currentParams();
+			expect(params.get('show')).toBe('calls');
+			expect(params.get('trace_id')).toBe('trace_crosslink1');
 		});
 	});
 
@@ -845,23 +900,73 @@ describe('Monitor inter-linking', () => {
 		worker.use(...monitorHandlers);
 	});
 
-	it('API call row → trace sheet → "View in audit" carries trace_id', async () => {
+	it('the trace sheet offers no "View in audit" link, even to an audit reader', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await user.click(await screen.findByText('POST /v1/charges'));
 
-		await screen.findByRole('link', { name: /View trace .* in the audit log/ });
+		const sheet = await screen.findByRole('dialog');
+		expect(await within(sheet).findByText(/Billing Agent/)).toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBe('trace_aaaaaaaa');
-
-		await user.click(screen.getByRole('link', { name: /View trace .* in the audit log/ }));
-		await waitFor(() => {
-			const params = currentParams();
-			expect(params.get('show')).toBe('audit');
-			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
-		});
+		// The caller can read the audit log: the source is offered.
+		expect(await findToggle('Activity source', 'Audit log')).toBeInTheDocument();
+		expect(within(sheet).queryByRole('link', { name: /audit/i })).not.toBeInTheDocument();
+		expect(within(sheet).queryByText(/View in audit/)).not.toBeInTheDocument();
 	});
 
-	it('API call with unknown trace opens by execution_id, no audit link', async () => {
+	it('a trace whose execution has no actor says so, with no /audit lookup', async () => {
+		const calls = { audit: 0 };
+		const onRequest = ({ request }: { request: Request }) => {
+			if (new URL(request.url).pathname === '/audit') calls.audit += 1;
+		};
+		const noActor = {
+			_links: { self: '/executions/exec_noactor' },
+			actor_id: null,
+			actor_type: null,
+			api: {
+				vendor: 'stripe',
+				name: 'stripe-api',
+				version: '2024-01-01',
+				host: 'stripe.com',
+			},
+			created_at: new Date().toISOString(),
+			duration_ms: 120,
+			error: null,
+			execution_id: 'exec_noactor',
+			http_status: 200,
+			operation_id: 'op_noactor',
+			operation_path: '/v1/balance',
+			operation_method: 'GET',
+			origin: 'api',
+			pinned_revisions: null,
+			started_at: new Date().toISOString(),
+			status: 'completed',
+			credential_id: 'cred_payments',
+			credential_name: 'Stripe key',
+			trace_id: 'trace_noactor',
+		};
+		worker.use(
+			http.get('/executions', () =>
+				HttpResponse.json({ data: [noActor], has_more: false, next_cursor: null }),
+			),
+		);
+		worker.events.on('request:start', onRequest);
+		try {
+			renderMonitor('/app/monitor?show=calls&trace_id=trace_noactor');
+
+			const dialog = await screen.findByRole('dialog');
+			expect(
+				await within(dialog).findByText('No actor recorded for this trace.'),
+			).toBeInTheDocument();
+			// Give any audit request time to land before asserting none did.
+			await new Promise((r) => setTimeout(r, 500));
+			expect(calls.audit).toBe(0);
+		} finally {
+			worker.events.removeListener('request:start', onRequest);
+		}
+	});
+
+	it('API call with unknown trace opens by execution_id, with the opaque operation id only copyable', async () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_4');
 
 		// Legacy id-only row (no operation_path/method): the record falls back
@@ -880,10 +985,6 @@ describe('Monitor inter-linking', () => {
 		expect(
 			within(operationRow).getByRole('button', { name: 'Copy operation ID' }),
 		).toBeInTheDocument();
-		// No trace-scoped audit link is offered for an unusable trace.
-		expect(
-			screen.queryByRole('link', { name: /View trace .* in the audit log/ }),
-		).not.toBeInTheDocument();
 		expect(currentParams().get('trace_id')).toBeNull();
 	});
 
@@ -908,9 +1009,7 @@ describe('Monitor inter-linking', () => {
 		renderMonitor('/app/monitor?show=calls&execution_id=exec_1');
 		expect(await screen.findByText('Trace')).toBeInTheDocument();
 		expect(screen.queryByText(/No trace recorded/)).not.toBeInTheDocument();
-		expect(
-			await screen.findByRole('link', { name: /View trace .* in the audit log/ }),
-		).toBeInTheDocument();
+		expect((await screen.findAllByText('trace_aaaaaaaa')).length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('Jobs row → job sheet → "View in audit" sends target_type + target_id (no 400)', async () => {
@@ -1047,7 +1146,7 @@ describe('Monitor inter-linking', () => {
 			expect(params.get('target_id')).toBeNull();
 			expect(params.get('show')).toBe('audit');
 		});
-		expect(await screen.findByText('Started an execution')).toBeInTheDocument();
+		expect(await screen.findByText('Created a credential')).toBeInTheDocument();
 	});
 
 	it('Job sheet → linked execution deep-links by execution_id', async () => {
@@ -1062,18 +1161,10 @@ describe('Monitor inter-linking', () => {
 		});
 	});
 
-	it('Audit row → API calls (trace) and → Jobs (job) links round-trip', async () => {
+	it('Audit row → Jobs (job) link round-trips', async () => {
 		const user = userEvent.setup();
 		renderMonitor('/app/monitor?show=audit');
 
-		await user.click(await screen.findByRole('link', { name: /^Open trace .* in API calls$/ }));
-		await waitFor(() => {
-			const params = currentParams();
-			expect(params.get('show')).toBe('calls');
-			expect(params.get('trace_id')).toBe('trace_aaaaaaaa');
-		});
-
-		await user.click(await findToggle('Activity source', 'Audit log'));
 		await user.click(await screen.findByRole('link', { name: /^Open job .* in Jobs$/ }));
 		await waitFor(() => {
 			const params = currentParams();
