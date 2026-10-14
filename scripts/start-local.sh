@@ -31,15 +31,18 @@ for port in "$APP_PORT" "$BROKER_PORT"; do
 done
 [ "$busy" -eq 0 ] || exit 1
 
-# Job control gives each background job its own process group.
+# Job control gives each background job its own process group. It is on only
+# while the servers start: left on, every foreground command below (the wait
+# loop's sleep) would take the terminal, and Ctrl-C would reach that command
+# instead of this script.
 set -m
-
 JENTIC__SERVER__PORT="$APP_PORT" uv run python -m jentic_one &
 app_pid=$!
 JENTIC__APPS=broker JENTIC__SERVER__PORT="$BROKER_PORT" \
 	JENTIC__BROKER__JOBS_API_BASE_URL="http://127.0.0.1:$APP_PORT" \
 	uv run python -m jentic_one &
 broker_pid=$!
+set +m
 
 group_alive() {
 	kill -0 -- "-$1" 2>/dev/null
